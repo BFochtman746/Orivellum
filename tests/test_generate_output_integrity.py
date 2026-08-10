@@ -14,22 +14,22 @@ Scenarios:
   - Large Work (500+ knowledge items) — exercises truncation paths.
   - Work with very long per-item text (>500 chars per item) — slice guards.
 """
+
 from __future__ import annotations
 
-import threading
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def db(tmp_path):
     """Return a real OrivellumDB backed by a temporary SQLite file."""
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(str(tmp_path / "test.db"))
 
 
@@ -90,11 +90,12 @@ def _assert_valid_file(fpath: Path, min_bytes: int = 1) -> None:
 
 # ── Excel ─────────────────────────────────────────────────────────────────────
 
-class TestExcelIntegrity:
 
+class TestExcelIntegrity:
     def test_empty_work(self, db, cfg):
         """Excel generation on a Work with no knowledge/docs/tasks must not fail."""
         import openpyxl
+
         from orivellum.capabilities.generate import generate_excel
 
         work = _make_work(db, "Empty Excel Work")
@@ -111,6 +112,7 @@ class TestExcelIntegrity:
     def test_large_work_500_knowledge_items(self, db, cfg):
         """Excel generation handles 500 knowledge items without truncation bugs."""
         import openpyxl
+
         from orivellum.capabilities.generate import generate_excel
 
         work = _make_work(db, "Large Knowledge Work")
@@ -123,12 +125,13 @@ class TestExcelIntegrity:
         wb = openpyxl.load_workbook(str(fpath))
         ws_kn = wb["Knowledge"]
         # Header row + up to 500 data rows
-        data_rows = ws_kn.max_row - 1   # subtract header
+        data_rows = ws_kn.max_row - 1  # subtract header
         assert data_rows == 500, f"Expected 500 knowledge rows, got {data_rows}"
 
     def test_special_chars_in_work_title(self, db, cfg):
         """Excel workbook must be valid when the Work title contains &, <, >."""
         import openpyxl
+
         from orivellum.capabilities.generate import generate_excel
 
         work = _make_work(db, "Research & <Analysis> — 'Quotes' & \"More\"")
@@ -144,11 +147,12 @@ class TestExcelIntegrity:
 
 # ── DOCX ──────────────────────────────────────────────────────────────────────
 
-class TestDocxIntegrity:
 
+class TestDocxIntegrity:
     def test_empty_work(self, db, cfg):
         """DOCX generation on a Work with no knowledge must produce a valid file."""
         from docx import Document
+
         from orivellum.capabilities.generate import generate_docx_report
 
         work = _make_work(db, "Empty DOCX Work")
@@ -158,26 +162,29 @@ class TestDocxIntegrity:
         _assert_valid_doc(db, doc_id)
         # Document() would raise on structural corruption
         doc = Document(str(fpath))
-        assert any("Research Report" in p.text or "Empty DOCX Work" in p.text
-                   for p in doc.paragraphs)
+        assert any(
+            "Research Report" in p.text or "Empty DOCX Work" in p.text for p in doc.paragraphs
+        )
 
     def test_very_long_knowledge_text(self, db, cfg):
         """DOCX generator must not crash when knowledge items exceed 500 chars."""
         from docx import Document
+
         from orivellum.capabilities.generate import generate_docx_report
 
         work = _make_work(db, "Long Text Work")
-        long_text = "A" * 2_000   # well over the 500-char slice in generate_docx_report
+        long_text = "A" * 2_000  # well over the 500-char slice in generate_docx_report
         _add_knowledge(db, work["id"], 10, text_template=long_text)
         fpath, doc_id = _patched_generate(generate_docx_report, work["id"], db, cfg)
 
         _assert_valid_file(fpath)
         _assert_valid_doc(db, doc_id)
-        Document(str(fpath))   # validates XML structure
+        Document(str(fpath))  # validates XML structure
 
     def test_special_chars_in_work_title(self, db, cfg):
         """DOCX generator must survive XML-special chars in title and description."""
         from docx import Document
+
         from orivellum.capabilities.generate import generate_docx_report
 
         # python-docx handles its own XML escaping; verify no lxml crash
@@ -192,8 +199,8 @@ class TestDocxIntegrity:
 
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
-class TestPdfIntegrity:
 
+class TestPdfIntegrity:
     def test_empty_work(self, db, cfg):
         """PDF generation on a Work with no knowledge must produce a valid PDF."""
         from orivellum.capabilities.generate import generate_pdf_report
@@ -248,11 +255,12 @@ class TestPdfIntegrity:
 
 # ── PPTX ──────────────────────────────────────────────────────────────────────
 
-class TestPptxIntegrity:
 
+class TestPptxIntegrity:
     def test_empty_work(self, db, cfg):
         """PPTX generation on a Work with no knowledge must produce a valid deck."""
         from pptx import Presentation
+
         from orivellum.capabilities.generate import generate_pptx
 
         work = _make_work(db, "Empty Slides Work")
@@ -267,9 +275,10 @@ class TestPptxIntegrity:
     def test_special_chars_in_work_title(self, db, cfg):
         """PPTX generator must not crash with XML-special chars in title."""
         from pptx import Presentation
+
         from orivellum.capabilities.generate import generate_pptx
 
-        work = _make_work(db, "Slides & <Research> — \"Study\"")
+        work = _make_work(db, 'Slides & <Research> — "Study"')
         _add_knowledge(db, work["id"], 5, text_template="Bullet: a < b & c > d {i}")
         fpath, doc_id = _patched_generate(generate_pptx, work["id"], db, cfg)
 
@@ -280,6 +289,7 @@ class TestPptxIntegrity:
     def test_large_work_500_knowledge_items(self, db, cfg):
         """PPTX generator handles 500 knowledge items (multiple kind-slides)."""
         from pptx import Presentation
+
         from orivellum.capabilities.generate import generate_pptx
 
         work = _make_work(db, "PPTX Large Work")
@@ -295,6 +305,7 @@ class TestPptxIntegrity:
     def test_very_long_knowledge_text(self, db, cfg):
         """PPTX generator slices long text; deck must still be valid."""
         from pptx import Presentation
+
         from orivellum.capabilities.generate import generate_pptx
 
         work = _make_work(db, "PPTX Long Text Work")
@@ -309,8 +320,8 @@ class TestPptxIntegrity:
 
 # ── Registration atomicity ─────────────────────────────────────────────────────
 
-class TestRegistrationAtomicity:
 
+class TestRegistrationAtomicity:
     def test_doc_id_returned_is_fetchable(self, db, cfg):
         """_register_output must return a doc_id that get_document() can find."""
         from orivellum.capabilities.generate import generate_excel

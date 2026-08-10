@@ -1,4 +1,5 @@
 """Knowledge domain routes — /api/knowledge/*"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,6 +8,8 @@ from pydantic import BaseModel
 from orivellum.api._deps import get_db, require_auth
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+
+
 class KnowledgeReview(BaseModel):
     review_status: str  # "approved" | "rejected" | "auto" | "ai_auto"
     force: bool = False  # override an already-finalized decision (deliberate flip)
@@ -20,8 +23,7 @@ def list_knowledge(work_id: str | None = None, kind: str | None = None, limit: i
 
 
 @router.get("/knowledge/search")
-def search_knowledge(q: str, work_id: str | None = None, limit: int = 20,
-                     semantic: bool = True):
+def search_knowledge(q: str, work_id: str | None = None, limit: int = 20, semantic: bool = True):
     """Hybrid keyword + semantic search over knowledge items.
 
     Falls back to pure keyword (FTS) search automatically when the embeddings
@@ -32,8 +34,8 @@ def search_knowledge(q: str, work_id: str | None = None, limit: int = 20,
     db = get_db()
     if semantic:
         from orivellum.capabilities.embeddings import hybrid_search_knowledge
-        items = hybrid_search_knowledge(q.strip(), db, limit=min(limit, 50),
-                                        work_id=work_id)
+
+        items = hybrid_search_knowledge(q.strip(), db, limit=min(limit, 50), work_id=work_id)
     else:
         items = db.search_knowledge(q.strip(), work_id=work_id, limit=min(limit, 50))
     return {"query": q, "knowledge": items, "count": len(items)}
@@ -47,6 +49,7 @@ def get_knowledge(item_id: str):
     if not row:
         raise HTTPException(404, f"Knowledge item {item_id!r} not found")
     import json
+
     d = dict(row)
     d["meta"] = json.loads(d.get("meta") or "{}")
     return {"item": d}
@@ -67,6 +70,7 @@ def delete_knowledge(item_id: str):
     # so we must bump the vector cache version explicitly.
     try:
         from orivellum.capabilities.embeddings import bump_vector_cache_version
+
         bump_vector_cache_version(db._path, "knowledge")
     except Exception:
         pass
@@ -86,8 +90,9 @@ def review_knowledge(item_id: str, body: KnowledgeReview):
     db = get_db()
     expected = None if body.force else ("auto", "ai_auto")
     try:
-        result = db.update_knowledge_review_status(item_id, body.review_status,
-                                                   expected_status=expected)
+        result = db.update_knowledge_review_status(
+            item_id, body.review_status, expected_status=expected
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     if result == "not_found":

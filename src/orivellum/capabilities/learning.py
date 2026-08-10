@@ -12,6 +12,7 @@ Architecture (mirroring Monarch's study system):
 
 All public functions are synchronous and safe to call via asyncio.to_thread().
 """
+
 from __future__ import annotations
 
 import json
@@ -22,15 +23,15 @@ from typing import Any
 
 logger = logging.getLogger("orivellum.learning")
 
-_GRAD_THRESHOLD        = 0.75   # score at or above this counts as a pass
-_PASSES_TO_GRAD        = 3      # consecutive passes needed to graduate
-_MAX_SEED_SUBJ         = 20     # max subjects to seed from knowledge
-_MAX_KN_CONTEXT        = 5      # knowledge items to include in question/assess prompts
+_GRAD_THRESHOLD = 0.75  # score at or above this counts as a pass
+_PASSES_TO_GRAD = 3  # consecutive passes needed to graduate
+_MAX_SEED_SUBJ = 20  # max subjects to seed from knowledge
+_MAX_KN_CONTEXT = 5  # knowledge items to include in question/assess prompts
 
 # ── HLR (Half-Life Regression) spaced-repetition constants ───────────────────
-_HLR_MIN_HALF_LIFE     = 0.5    # floor: 12 h (never schedule sooner than this)
-_HLR_DURABLE_HALF_LIFE = 7.0   # a concept is "durably mastered" only when HL > 7 days
-_HLR_DURABLE_SESSIONS  = 3     # …AND reviewed on ≥ 3 distinct calendar days
+_HLR_MIN_HALF_LIFE = 0.5  # floor: 12 h (never schedule sooner than this)
+_HLR_DURABLE_HALF_LIFE = 7.0  # a concept is "durably mastered" only when HL > 7 days
+_HLR_DURABLE_SESSIONS = 3  # …AND reviewed on ≥ 3 distinct calendar days
 
 # ── Transfer question routing ─────────────────────────────────────────────────
 _TRANSFER_STREAK_THRESHOLD = 2  # consecutive passes before "auto" mode switches to transfer
@@ -38,22 +39,25 @@ _MAX_TRANSFER_STREAK_CREDIT = 2  # max consecutive_passes increment for a correc
 _VALID_QUESTION_TYPES = frozenset({"recall", "transfer", "auto"})
 
 # ── Interleaved practice mode ─────────────────────────────────────────────────
-_INTERLEAVED_MIN_CONCEPTS   = 3    # min in-progress concepts to activate interleaved mode
-_INTERLEAVED_SESSION_LENGTH = 10   # questions per interleaved session
+_INTERLEAVED_MIN_CONCEPTS = 3  # min in-progress concepts to activate interleaved mode
+_INTERLEAVED_SESSION_LENGTH = 10  # questions per interleaved session
 _VALID_SESSION_MODES = frozenset({"blocked", "interleaved"})
 
 # ── Error classification ──────────────────────────────────────────────────────
-_VALID_ERROR_TYPES = frozenset({
-    "careless_slip",          # mostly correct; minor arithmetic / wording slip
-    "procedural_gap",         # knows the concept but can't execute a step
-    "conceptual_misconception",  # holds a false belief about the concept
-    "knowledge_gap",          # no prior knowledge of a prerequisite
-})
+_VALID_ERROR_TYPES = frozenset(
+    {
+        "careless_slip",  # mostly correct; minor arithmetic / wording slip
+        "procedural_gap",  # knows the concept but can't execute a step
+        "conceptual_misconception",  # holds a false belief about the concept
+        "knowledge_gap",  # no prior knowledge of a prerequisite
+    }
+)
 # Threshold for "deep review needed" flag (same misconception ≥ N times)
 _DEEP_REVIEW_THRESHOLD = 2
 
 
 # ─── Internal helpers ──────────────────────────────────────────────────────────
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -63,16 +67,27 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-def _call(messages: list[dict], base_url: str, model: str, timeout: int = 30,
-          purpose: str = "learning", db: Any = None) -> str | None:
+def _call(
+    messages: list[dict],
+    base_url: str,
+    model: str,
+    timeout: int = 30,
+    purpose: str = "learning",
+    db: Any = None,
+) -> str | None:
     """Call the local LLM synchronously via the central gateway.
 
     Returns the reply text, or None on any failure (the gateway never raises).
     """
     from orivellum.capabilities.llm import llm_call
+
     result = llm_call(
-        messages, base_url=base_url, model=model,
-        timeout=timeout, purpose=purpose, db=db,
+        messages,
+        base_url=base_url,
+        model=model,
+        timeout=timeout,
+        purpose=purpose,
+        db=db,
     )
     return result.text
 
@@ -113,9 +128,13 @@ def reset_mastery(db: Any, work_id: str, concept_id: str | None = None) -> int:
         db._conn.commit()
     if cur.rowcount > 0:
         try:
-            db.audit("learning.mastery_reset", object_id=concept_id or work_id,
-                     object_type="work", actor="system",
-                     detail=f"{cur.rowcount} rows")
+            db.audit(
+                "learning.mastery_reset",
+                object_id=concept_id or work_id,
+                object_type="work",
+                actor="system",
+                detail=f"{cur.rowcount} rows",
+            )
         except Exception:
             pass
     return cur.rowcount
@@ -123,9 +142,7 @@ def reset_mastery(db: Any, work_id: str, concept_id: str | None = None) -> int:
 
 def _get_concept(db: Any, concept_id: str) -> dict | None:
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM work_concepts WHERE id=?", (concept_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM work_concepts WHERE id=?", (concept_id,)).fetchone()
     return dict(row) if row else None
 
 
@@ -151,9 +168,13 @@ def _get_mastery(db: Any, concept_id: str) -> dict:
         m = dict(row)
     else:
         m = {
-            "score": 0.0, "consecutive_passes": 0, "last_practised": None,
-            "last_reviewed_at": None, "next_review_at": None,
-            "half_life_days": 1.0, "review_session_count": 0,
+            "score": 0.0,
+            "consecutive_passes": 0,
+            "last_practised": None,
+            "last_reviewed_at": None,
+            "next_review_at": None,
+            "half_life_days": 1.0,
+            "review_session_count": 0,
         }
     now = _now()
     m["is_due"] = bool(m.get("next_review_at") and m["next_review_at"] <= now)
@@ -186,6 +207,7 @@ def _knowledge_for_concept(db: Any, work_id: str, subject: str) -> list[dict]:
 
 # ─── Public API ────────────────────────────────────────────────────────────────
 
+
 def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict]:
     """Auto-seed learning concepts from this Work's knowledge subjects.
 
@@ -212,7 +234,9 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             # Fall back to first sentence of knowledge text
             text = (item.get("text") or "")[:80].split(".")[0].strip()
             subj = text or "General concepts"
-        if subj.lower() not in existing_subjects and subj.lower() not in {s.lower() for s in seen_subjects}:
+        if subj.lower() not in existing_subjects and subj.lower() not in {
+            s.lower() for s in seen_subjects
+        }:
             seen_subjects.append(subj)
 
     # Ask AI to create a short description + ordering for new subjects.
@@ -228,13 +252,21 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             '[{"subject":"...","description":"...","prereqs":["<subject1>","<subject2>"]}]\n'
             "Use [] for prereqs when there are none. Only reference subjects that appear in the list above."
         )
-        raw = _call([{"role": "user", "content": prompt}], base_url, model,
-                    timeout=25, purpose="learning.seed", db=db)
+        raw = _call(
+            [{"role": "user", "content": prompt}],
+            base_url,
+            model,
+            timeout=25,
+            purpose="learning.seed",
+            db=db,
+        )
         if raw:
             try:
                 ordered = json.loads(_strip_fences(raw))
                 seen_subjects_ordered = [o["subject"] for o in ordered if isinstance(o, dict)]
-                descriptions = {o["subject"]: o.get("description", "") for o in ordered if isinstance(o, dict)}
+                descriptions = {
+                    o["subject"]: o.get("description", "") for o in ordered if isinstance(o, dict)
+                }
                 # Support both old "prereq" (string) and new "prereqs" (list) shapes
                 multi_prereqs: dict[str, list[str]] = {}
                 for o in ordered:
@@ -270,7 +302,7 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             subject_to_id[row["subject"].lower()] = row["id"]
 
     now = _now()
-    new_concept_ids: list[tuple[str, str]] = []   # (cid, subject)
+    new_concept_ids: list[tuple[str, str]] = []  # (cid, subject)
     for subj in seen_subjects_ordered:
         if subj.lower() in existing_subjects:
             continue
@@ -286,8 +318,13 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             )
             db._conn.commit()
         try:
-            db.audit("learning.concept_added", object_id=cid, object_type="learning_concept",
-                     actor="system", detail=subj[:80])
+            db.audit(
+                "learning.concept_added",
+                object_id=cid,
+                object_type="learning_concept",
+                actor="system",
+                detail=subj[:80],
+            )
         except Exception:
             pass
         subject_to_id[subj.lower()] = cid
@@ -425,12 +462,12 @@ def list_concepts(db: Any, work_id: str) -> list[dict]:
 
     result = []
     for c in concepts:
-        m   = mastery_map.get(c["id"]) or {}
-        cons       = int(m.get("consecutive_passes") or 0)
-        half_life  = float(m.get("half_life_days")   or 1.0)
+        m = mastery_map.get(c["id"]) or {}
+        cons = int(m.get("consecutive_passes") or 0)
+        half_life = float(m.get("half_life_days") or 1.0)
         nxt_review = m.get("next_review_at")
-        graduated  = cons >= _PASSES_TO_GRAD
-        is_due     = bool(nxt_review and nxt_review <= now)
+        graduated = cons >= _PASSES_TO_GRAD
+        is_due = bool(nxt_review and nxt_review <= now)
 
         prereqs = prereq_map.get(c["id"], [])
         # prereqs_met: True when every prerequisite has at least one pass recorded
@@ -443,18 +480,18 @@ def list_concepts(db: Any, work_id: str) -> list[dict]:
                 for p in prereqs
             )
 
-        c["score"]                = float(m.get("score") or 0.0)
-        c["consecutive_passes"]   = cons
-        c["graduated"]            = graduated
-        c["last_practised"]       = m.get("last_practised")
-        c["half_life_days"]       = half_life
-        c["next_review_at"]       = nxt_review
+        c["score"] = float(m.get("score") or 0.0)
+        c["consecutive_passes"] = cons
+        c["graduated"] = graduated
+        c["last_practised"] = m.get("last_practised")
+        c["half_life_days"] = half_life
+        c["next_review_at"] = nxt_review
         c["review_session_count"] = int(m.get("review_session_count") or 0)
-        c["is_due"]               = is_due
-        c["prereq_ids"]           = [p["id"]      for p in prereqs]
-        c["prereq_labels"]        = [p["subject"] for p in prereqs]
-        c["blocking_count"]       = blocking_count_map.get(c["id"], 0)
-        c["prereqs_met"]          = prereqs_met
+        c["is_due"] = is_due
+        c["prereq_ids"] = [p["id"] for p in prereqs]
+        c["prereq_labels"] = [p["subject"] for p in prereqs]
+        c["blocking_count"] = blocking_count_map.get(c["id"], 0)
+        c["prereqs_met"] = prereqs_met
         result.append(c)
     return result
 
@@ -476,12 +513,9 @@ def next_concept_id(db: Any, work_id: str) -> str | None:
     now = _now()
 
     # 1. Overdue graduated concepts (spaced-repetition reviews)
-    overdue = [
-        c for c in concepts
-        if c.get("is_due") and c.get("next_review_at", "") <= now
-    ]
+    overdue = [c for c in concepts if c.get("is_due") and c.get("next_review_at", "") <= now]
     if overdue:
-        overdue.sort(key=lambda c: (c.get("next_review_at") or ""))
+        overdue.sort(key=lambda c: c.get("next_review_at") or "")
         return overdue[0]["id"]
 
     # 2. Eligible ungraduated concepts (graph traversal)
@@ -490,7 +524,7 @@ def next_concept_id(db: Any, work_id: str) -> str | None:
         return None
 
     eligible = [c for c in ungrad if c.get("prereqs_met", True)]
-    pool = eligible if eligible else ungrad   # fallback: ignore gate
+    pool = eligible if eligible else ungrad  # fallback: ignore gate
     pool.sort(key=lambda c: (c["consecutive_passes"], c["created_at"]))
     return pool[0]["id"]
 
@@ -513,7 +547,7 @@ def select_interleaved_concept(db: Any, work_id: str) -> str | None:
 
     concepts = list_concepts(db, work_id)
 
-    in_progress  = [c for c in concepts if c["consecutive_passes"] > 0 and not c["graduated"]]
+    in_progress = [c for c in concepts if c["consecutive_passes"] > 0 and not c["graduated"]]
     due_graduated = [c for c in concepts if c["graduated"] and c.get("is_due")]
     pool = in_progress + due_graduated
 
@@ -533,7 +567,7 @@ def select_interleaved_concept(db: Any, work_id: str) -> str | None:
             except Exception:
                 urgency = 1.0
         else:
-            urgency = 0.5 + 0.5 * (1.0 - mastery_fraction)   # 0.5 – 1.0 range
+            urgency = 0.5 + 0.5 * (1.0 - mastery_fraction)  # 0.5 – 1.0 range
         weights.append(max(0.01, urgency * (1.0 - mastery_fraction)))
 
     selected = random.choices(pool, weights=weights, k=1)[0]
@@ -576,13 +610,16 @@ def get_question(
     """
     concept = _get_concept(db, concept_id)
     if not concept:
-        return {"question": "What do you understand about this concept so far?",
-                "context_snippet": "", "question_type": "recall"}
+        return {
+            "question": "What do you understand about this concept so far?",
+            "context_snippet": "",
+            "question_type": "recall",
+        }
 
     subject = concept["subject"]
     work_id = concept["work_id"]
-    items   = _knowledge_for_concept(db, work_id, subject)
-    ctx     = "\n".join(f"- {it.get('text','')[:200]}" for it in items[:_MAX_KN_CONTEXT])
+    items = _knowledge_for_concept(db, work_id, subject)
+    ctx = "\n".join(f"- {it.get('text', '')[:200]}" for it in items[:_MAX_KN_CONTEXT])
 
     resolved_type = _resolve_question_type(db, concept_id, question_type)
 
@@ -622,8 +659,9 @@ def get_question(
         )
         purpose = "learning.question"
 
-    raw = _call([{"role": "user", "content": prompt}], base_url, model,
-                timeout=20, purpose=purpose, db=db)
+    raw = _call(
+        [{"role": "user", "content": prompt}], base_url, model, timeout=20, purpose=purpose, db=db
+    )
     if raw:
         try:
             parsed = json.loads(_strip_fences(raw))
@@ -676,7 +714,11 @@ def _generate_socratic_followup(
     )
     raw = _call(
         [{"role": "user", "content": prompt}],
-        base_url, model, timeout=15, purpose="learning.socratic_followup", db=db,
+        base_url,
+        model,
+        timeout=15,
+        purpose="learning.socratic_followup",
+        db=db,
     )
     if raw:
         return raw.strip().strip('"').strip("'")
@@ -716,9 +758,14 @@ def assess_answer(
     resolved_qt = question_type if question_type in ("recall", "transfer") else "recall"
 
     _empty = {
-        "score": 0.5, "feedback": "Could not assess.", "route": "STAY_HERE", "graduated": False,
-        "error_type": None, "remediation_hint": None,
-        "deep_review_needed": False, "socratic_followup": None,
+        "score": 0.5,
+        "feedback": "Could not assess.",
+        "route": "STAY_HERE",
+        "graduated": False,
+        "error_type": None,
+        "remediation_hint": None,
+        "deep_review_needed": False,
+        "socratic_followup": None,
         "question_type": resolved_qt,
     }
 
@@ -728,14 +775,21 @@ def assess_answer(
 
     subject = concept["subject"]
     work_id = concept["work_id"]
-    items   = _knowledge_for_concept(db, work_id, subject)
-    ctx     = "\n".join(f"- {it.get('text','')[:200]}" for it in items[:_MAX_KN_CONTEXT])
+    items = _knowledge_for_concept(db, work_id, subject)
+    ctx = "\n".join(f"- {it.get('text', '')[:200]}" for it in items[:_MAX_KN_CONTEXT])
 
     offline_result = {**_empty, "feedback": "AI unavailable — keeping score neutral."}
 
     if not base_url:
-        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable",
-                        question_type=resolved_qt, session_mode=session_mode)
+        _record_mastery(
+            db,
+            concept_id,
+            0.5,
+            "STAY_HERE",
+            "AI unavailable",
+            question_type=resolved_qt,
+            session_mode=session_mode,
+        )
         return offline_result
 
     # Transfer questions get a richer critic preamble so the LLM knows it is
@@ -747,9 +801,7 @@ def assess_answer(
             "Evaluate whether they demonstrate genuine understanding of the underlying principle.\n"
         )
     else:
-        critic_preamble = (
-            f"You are an Assessment Critic for the topic '{subject}'.\n"
-        )
+        critic_preamble = f"You are an Assessment Critic for the topic '{subject}'.\n"
 
     critic_prompt = (
         critic_preamble + "\n"
@@ -770,30 +822,54 @@ def assess_answer(
         '{"score":0.0,"feedback":"1-2 sentence constructive feedback",'
         '"error_type":"null","remediation_hint":"1 sentence on what to review or do next"}'
     )
-    raw = _call([{"role": "user", "content": critic_prompt}], base_url, model,
-                timeout=25, purpose="learning.assess", db=db)
+    raw = _call(
+        [{"role": "user", "content": critic_prompt}],
+        base_url,
+        model,
+        timeout=25,
+        purpose="learning.assess",
+        db=db,
+    )
     if not raw:
-        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "AI unavailable",
-                        question_type=resolved_qt, session_mode=session_mode)
+        _record_mastery(
+            db,
+            concept_id,
+            0.5,
+            "STAY_HERE",
+            "AI unavailable",
+            question_type=resolved_qt,
+            session_mode=session_mode,
+        )
         return offline_result
 
     try:
-        parsed           = json.loads(_strip_fences(raw))
-        score            = max(0.0, min(1.0, float(parsed.get("score", 0.5))))
-        feedback         = str(parsed.get("feedback", ""))
-        raw_et           = parsed.get("error_type") or "null"
+        parsed = json.loads(_strip_fences(raw))
+        score = max(0.0, min(1.0, float(parsed.get("score", 0.5))))
+        feedback = str(parsed.get("feedback", ""))
+        raw_et = parsed.get("error_type") or "null"
         error_type: str | None = raw_et if raw_et in _VALID_ERROR_TYPES else None
         # Correct answers must have no error_type regardless of what the LLM said
         if score >= _GRAD_THRESHOLD:
             error_type = None
         remediation_hint: str | None = str(parsed.get("remediation_hint", "")).strip() or None
     except Exception:
-        _record_mastery(db, concept_id, 0.5, "STAY_HERE", "Could not parse assessment",
-                        question_type=resolved_qt, session_mode=session_mode)
+        _record_mastery(
+            db,
+            concept_id,
+            0.5,
+            "STAY_HERE",
+            "Could not parse assessment",
+            question_type=resolved_qt,
+            session_mode=session_mode,
+        )
         return offline_result
 
     # Compute streak increment: transfer + correct → +2, everything else → +1
-    _streak_inc = _MAX_TRANSFER_STREAK_CREDIT if (resolved_qt == "transfer" and score >= _GRAD_THRESHOLD) else 1
+    _streak_inc = (
+        _MAX_TRANSFER_STREAK_CREDIT
+        if (resolved_qt == "transfer" and score >= _GRAD_THRESHOLD)
+        else 1
+    )
     route = _compute_route(db, concept_id, score, streak_increment=_streak_inc)
 
     # Knowledge-gap consistency guard: if the critic identified a knowledge gap
@@ -801,10 +877,7 @@ def assess_answer(
     # and promote to STEP_BACKWARD so routing is consistent.
     if error_type == "knowledge_gap" and route == "STAY_HERE":
         prereq_ids = get_prereq_ids(db, concept_id)
-        if any(
-            _get_mastery(db, pid)["consecutive_passes"] == 0
-            for pid in prereq_ids
-        ):
+        if any(_get_mastery(db, pid)["consecutive_passes"] == 0 for pid in prereq_ids):
             route = "STEP_BACKWARD"
 
     # ── Transfer streak bonus ─────────────────────────────────────────────────
@@ -812,9 +885,17 @@ def assess_answer(
     # _record_mastery will award +2 consecutive passes instead of +1.
     # We pass this intent via the question_type; _record_mastery reads consecutive_passes
     # from the prev record and applies the multiplier internally.
-    _record_mastery(db, concept_id, score, route, feedback,
-                    error_type=error_type, remediation_hint=remediation_hint,
-                    question_type=resolved_qt, session_mode=session_mode)
+    _record_mastery(
+        db,
+        concept_id,
+        score,
+        route,
+        feedback,
+        error_type=error_type,
+        remediation_hint=remediation_hint,
+        question_type=resolved_qt,
+        session_mode=session_mode,
+    )
 
     graduated = _is_graduated(db, concept_id)
 
@@ -833,21 +914,25 @@ def assess_answer(
     socratic_followup: str | None = None
     if error_type == "conceptual_misconception":
         socratic_followup = _generate_socratic_followup(
-            db, concept_id, question, answer,
+            db,
+            concept_id,
+            question,
+            answer,
             remediation_hint or feedback,
-            base_url, model,
+            base_url,
+            model,
         )
 
     return {
-        "score":              score,
-        "feedback":           feedback,
-        "route":              route,
-        "graduated":          graduated,
-        "error_type":         error_type,
-        "remediation_hint":   remediation_hint,
+        "score": score,
+        "feedback": feedback,
+        "route": route,
+        "graduated": graduated,
+        "error_type": error_type,
+        "remediation_hint": remediation_hint,
         "deep_review_needed": deep_review_needed,
-        "socratic_followup":  socratic_followup,
-        "question_type":      resolved_qt,
+        "socratic_followup": socratic_followup,
+        "question_type": resolved_qt,
     }
 
 
@@ -868,12 +953,13 @@ def get_learning_analytics(db: Any, work_id: str) -> dict:
 
     now_dt = datetime.now(UTC)
     now_str = now_dt.isoformat()
-    seven_days_ago     = (now_dt - timedelta(days=7)).isoformat()
+    seven_days_ago = (now_dt - timedelta(days=7)).isoformat()
     twentyeight_days_ago = (now_dt - timedelta(days=28)).isoformat()
 
     with db._lock:
         concept_ids = [
-            r["id"] for r in db._conn.execute(
+            r["id"]
+            for r in db._conn.execute(
                 "SELECT id FROM work_concepts WHERE work_id=?", (work_id,)
             ).fetchall()
         ]
@@ -890,8 +976,13 @@ def get_learning_analytics(db: Any, work_id: str) -> dict:
             "stuck": [],
             "retention_forecast": [],
             "session_history": [],
-            "distribution": {"not_started": 0, "in_progress": 0, "graduated": 0,
-                             "due_for_review": 0, "total": 0},
+            "distribution": {
+                "not_started": 0,
+                "in_progress": 0,
+                "graduated": 0,
+                "due_for_review": 0,
+                "total": 0,
+            },
         }
 
     ph = ",".join("?" * len(concept_ids))
@@ -1022,9 +1113,9 @@ def get_learning_analytics(db: Any, work_id: str) -> dict:
 
     stuck = [
         {
-            "concept_id":  r["id"],
-            "subject":     r["subject"],
-            "fail_count":  r["fail_count"],
+            "concept_id": r["id"],
+            "subject": r["subject"],
+            "fail_count": r["fail_count"],
             "error_types": error_by_concept.get(r["id"], []),
         }
         for r in stuck_rows
@@ -1038,35 +1129,37 @@ def get_learning_analytics(db: Any, work_id: str) -> dict:
             days_overdue = max(0.0, (now_dt - nra_dt).total_seconds() / 86400)
         except Exception:
             days_overdue = 0.0
-        retention_forecast.append({
-            "concept_id":     r["concept_id"],
-            "subject":        r["subject"],
-            "next_review_at": r["next_review_at"],
-            "days_overdue":   round(days_overdue, 1),
-            "half_life_days": round(float(r["half_life_days"]), 1),
-        })
+        retention_forecast.append(
+            {
+                "concept_id": r["concept_id"],
+                "subject": r["subject"],
+                "next_review_at": r["next_review_at"],
+                "days_overdue": round(days_overdue, 1),
+                "half_life_days": round(float(r["half_life_days"]), 1),
+            }
+        )
 
     return {
-        "velocity":           velocity,
-        "stuck":              stuck,
+        "velocity": velocity,
+        "stuck": stuck,
         "retention_forecast": retention_forecast,
         "session_history": [
             {
-                "concept_id":    r["concept_id"],
-                "subject":       r["subject"],
-                "score":         float(r["score"]),
+                "concept_id": r["concept_id"],
+                "subject": r["subject"],
+                "score": float(r["score"]),
                 "question_type": r["question_type"] or "recall",
-                "error_type":    r["error_type"],
-                "date":          r["created_at"],
+                "error_type": r["error_type"],
+                "date": r["created_at"],
             }
             for r in history_rows
         ],
         "distribution": {
-            "not_started":   summary["not_started"],
-            "in_progress":   summary["in_progress"],
-            "graduated":     summary["graduated"],
+            "not_started": summary["not_started"],
+            "in_progress": summary["in_progress"],
+            "graduated": summary["graduated"],
             "due_for_review": summary["due_count"],
-            "total":         summary["total"],
+            "total": summary["total"],
         },
     }
 
@@ -1082,7 +1175,7 @@ def get_learn_health(db: Any) -> dict:
     """
     from datetime import timedelta
 
-    now_dt  = datetime.now(UTC)
+    now_dt = datetime.now(UTC)
     now_str = now_dt.isoformat()
     seven_days_ago = (now_dt - timedelta(days=7)).isoformat()
 
@@ -1131,42 +1224,43 @@ def get_learn_health(db: Any) -> dict:
         ).fetchone()[0]
 
     return {
-        "total_due":            int(total_due or 0),
-        "stuck_count":          int(stuck_count or 0),
+        "total_due": int(total_due or 0),
+        "stuck_count": int(stuck_count or 0),
         "graduating_this_week": int(graduating_this_week or 0),
     }
 
 
 def get_mastery_summary(db: Any, work_id: str) -> dict:
     """Return aggregate mastery stats for the work, including HLR due_count."""
-    concepts  = list_concepts(db, work_id)
-    total     = len(concepts)
+    concepts = list_concepts(db, work_id)
+    total = len(concepts)
     graduated = sum(1 for c in concepts if c["graduated"])
-    in_prog   = sum(1 for c in concepts if not c["graduated"] and c["consecutive_passes"] > 0)
+    in_prog = sum(1 for c in concepts if not c["graduated"] and c["consecutive_passes"] > 0)
     not_start = total - graduated - in_prog
-    pct       = round(graduated / total * 100) if total else 0
+    pct = round(graduated / total * 100) if total else 0
     due_count = sum(1 for c in concepts if c.get("is_due"))
     return {
-        "total":        total,
-        "graduated":    graduated,
-        "in_progress":  in_prog,
-        "not_started":  not_start,
-        "mastery_pct":  pct,
-        "due_count":    due_count,
-        "concepts":     concepts,
+        "total": total,
+        "graduated": graduated,
+        "in_progress": in_prog,
+        "not_started": not_start,
+        "mastery_pct": pct,
+        "due_count": due_count,
+        "concepts": concepts,
     }
 
 
 def list_due_concepts(db: Any, work_id: str) -> list[dict]:
     """Return concepts whose next_review_at is overdue, sorted by urgency (most overdue first)."""
-    now      = _now()
+    now = _now()
     concepts = list_concepts(db, work_id)
-    due      = [c for c in concepts if c.get("next_review_at") and c["next_review_at"] <= now]
+    due = [c for c in concepts if c.get("next_review_at") and c["next_review_at"] <= now]
     due.sort(key=lambda c: c.get("next_review_at") or "")
     return due
 
 
 # ─── Prerequisite graph helpers ────────────────────────────────────────────────
+
 
 def get_prereq_ids(db: Any, concept_id: str) -> list[str]:
     """Return prerequisite concept IDs, restricted to the same Work as concept_id.
@@ -1200,7 +1294,7 @@ def is_concept_eligible(db: Any, concept_id: str) -> bool:
     for pid in prereq_ids:
         m = _get_mastery(db, pid)
         if m["consecutive_passes"] == 0:
-            return False   # prerequisite not yet touched
+            return False  # prerequisite not yet touched
     return True
 
 
@@ -1220,9 +1314,8 @@ def get_blocking_concepts(db: Any, concept_id: str) -> list[str]:
 
 # ─── Private helpers ──────────────────────────────────────────────────────────
 
-def _compute_route(
-    db: Any, concept_id: str, score: float, streak_increment: int = 1
-) -> str:
+
+def _compute_route(db: Any, concept_id: str, score: float, streak_increment: int = 1) -> str:
     """Determine routing: STEP_FORWARD / STEP_BACKWARD / STAY_HERE.
 
     streak_increment: how many consecutive passes this assessment will award (normally 1;
@@ -1287,11 +1380,7 @@ def _record_mastery(
     # Transfer questions answered correctly award +2 (capped by _MAX_TRANSFER_STREAK_CREDIT)
     # to reward genuine deep understanding on a harder, novel-scenario question.
     if score >= _GRAD_THRESHOLD:
-        increment = (
-            _MAX_TRANSFER_STREAK_CREDIT
-            if question_type == "transfer"
-            else 1
-        )
+        increment = _MAX_TRANSFER_STREAK_CREDIT if question_type == "transfer" else 1
         cons = prev["consecutive_passes"] + increment
     else:
         cons = 0  # reset streak on failure
@@ -1302,13 +1391,18 @@ def _record_mastery(
 
     # next_review_at = now + new_half_life days
     import datetime as _dt
-    now_dt = _dt.datetime.fromisoformat(now.replace("Z", "+00:00")) if now.endswith("Z") else _dt.datetime.fromisoformat(now)
+
+    now_dt = (
+        _dt.datetime.fromisoformat(now.replace("Z", "+00:00"))
+        if now.endswith("Z")
+        else _dt.datetime.fromisoformat(now)
+    )
     next_review_dt = now_dt + _dt.timedelta(days=new_hl)
     next_review_at = next_review_dt.isoformat()
 
     # ── session-count gate (distinct calendar days) ──────────────────────────
     prev_session_count = int(prev.get("review_session_count") or 0)
-    prev_date = (prev.get("last_reviewed_at") or "")[:10]   # "YYYY-MM-DD"
+    prev_date = (prev.get("last_reviewed_at") or "")[:10]  # "YYYY-MM-DD"
     today = now[:10]
     if prev_date != today:
         new_session_count = prev_session_count + 1
@@ -1325,21 +1419,35 @@ def _record_mastery(
                    error_type, remediation_hint,
                    question_type, session_mode)
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (mid, concept_id, score, cons,
-             feedback, route, now,
-             now, next_review_at,
-             new_hl, new_session_count,
-             error_type, remediation_hint,
-             question_type if question_type in ("recall", "transfer") else "recall",
-             session_mode if session_mode in _VALID_SESSION_MODES else "blocked"),
+            (
+                mid,
+                concept_id,
+                score,
+                cons,
+                feedback,
+                route,
+                now,
+                now,
+                next_review_at,
+                new_hl,
+                new_session_count,
+                error_type,
+                remediation_hint,
+                question_type if question_type in ("recall", "transfer") else "recall",
+                session_mode if session_mode in _VALID_SESSION_MODES else "blocked",
+            ),
         )
         db._conn.commit()
     try:
-        db.audit("learning.mastery_recorded", object_id=concept_id,
-                 object_type="learning_concept", actor="system",
-                 detail=f"score={score:.2f} hl={new_hl:.2f}d next={next_review_at[:10]}"
-                        + (f" err={error_type}" if error_type else "")
-                        + (f" qtype={question_type}" if question_type == "transfer" else ""))
+        db.audit(
+            "learning.mastery_recorded",
+            object_id=concept_id,
+            object_type="learning_concept",
+            actor="system",
+            detail=f"score={score:.2f} hl={new_hl:.2f}d next={next_review_at[:10]}"
+            + (f" err={error_type}" if error_type else "")
+            + (f" qtype={question_type}" if question_type == "transfer" else ""),
+        )
     except Exception:
         pass
 

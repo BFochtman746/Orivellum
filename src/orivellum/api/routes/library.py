@@ -1,4 +1,5 @@
 """Library domain routes — /api/library/*"""
+
 from __future__ import annotations
 
 import base64
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Version-suggestion helpers ─────────────────────────────────────────────────
+
 
 def _stems_similar(a: str, b: str) -> bool:
     """Return True if two filename stems look like versions of the same document."""
@@ -70,14 +72,17 @@ def _maybe_suggest_version(db, new_doc_id: str, work_id: str, filename: str) -> 
                 if already:
                     continue
                 import datetime as _dt
+
                 now_iso = _dt.datetime.now(_dt.UTC).isoformat()
-                meta_payload = json.dumps({
-                    "doc_a_id": other["id"],
-                    "doc_b_id": new_doc_id,
-                    "doc_a_title": other.get("title", ""),
-                    "doc_b_title": filename,
-                    "similarity_basis": "filename_stem",
-                })
+                meta_payload = json.dumps(
+                    {
+                        "doc_a_id": other["id"],
+                        "doc_b_id": new_doc_id,
+                        "doc_a_title": other.get("title", ""),
+                        "doc_b_title": filename,
+                        "similarity_basis": "filename_stem",
+                    }
+                )
                 text_label = (
                     f'"{other.get("title") or other_stem}" and "{filename}" '
                     f"may be versions of the same document"
@@ -86,37 +91,68 @@ def _maybe_suggest_version(db, new_doc_id: str, work_id: str, filename: str) -> 
                     """INSERT INTO suggestions(id, work_id, kind, text, meta, created_at)
                        VALUES(?,?,?,?,?,?)""",
                     (
-                        str(_uuid_mod.uuid4()), work_id, "version_relationship",
-                        text_label, meta_payload, now_iso,
+                        str(_uuid_mod.uuid4()),
+                        work_id,
+                        "version_relationship",
+                        text_label,
+                        meta_payload,
+                        now_iso,
                     ),
                 )
                 db._conn.commit()
                 logger.debug(
                     "Version suggestion created: %s ↔ %s in work %s",
-                    other["id"], new_doc_id, work_id,
+                    other["id"],
+                    new_doc_id,
+                    work_id,
                 )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Version suggestion check failed: %s", exc)
 
+
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 _KIND_MAP = {
-    ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
-    ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
-    ".pptx": "pptx", ".ppt": "pptx",
-    ".txt": "text", ".md": "markdown",
-    ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image",
-    ".mp3": "audio", ".wav": "audio", ".m4a": "audio", ".ogg": "audio", ".flac": "audio",
-    ".py": "code", ".js": "code", ".ts": "code",
-    ".jsx": "code", ".tsx": "code", ".java": "code", ".cpp": "code",
-    ".c": "code", ".cs": "code", ".go": "code", ".rs": "code", ".rb": "code",
-    ".html": "html", ".htm": "html",
+    ".pdf": "pdf",
+    ".docx": "docx",
+    ".doc": "docx",
+    ".xlsx": "excel",
+    ".xls": "excel",
+    ".csv": "csv",
+    ".pptx": "pptx",
+    ".ppt": "pptx",
+    ".txt": "text",
+    ".md": "markdown",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".gif": "image",
+    ".mp3": "audio",
+    ".wav": "audio",
+    ".m4a": "audio",
+    ".ogg": "audio",
+    ".flac": "audio",
+    ".py": "code",
+    ".js": "code",
+    ".ts": "code",
+    ".jsx": "code",
+    ".tsx": "code",
+    ".java": "code",
+    ".cpp": "code",
+    ".c": "code",
+    ".cs": "code",
+    ".go": "code",
+    ".rs": "code",
+    ".rb": "code",
+    ".html": "html",
+    ".htm": "html",
     ".json": "json",
     ".zip": "zip",
     ".eml": "email",  # RFC 2822 email file — stdlib email module parses
     ".msg": "email",  # Outlook compound document — extract_msg or raw fallback
-    ".rtf": "file",   # handled by markitdown fallback
+    ".rtf": "file",  # handled by markitdown fallback
     ".epub": "file",  # handled by markitdown fallback
-    ".xml": "file",   # handled by markitdown fallback
+    ".xml": "file",  # handled by markitdown fallback
 }
 
 
@@ -130,21 +166,20 @@ def _kind_for(filename: str) -> str:
 # We check that the first `max_offset + len(sig)` bytes contain the signature
 # at position `max_offset` (or 0 for fixed-offset checks).
 _MIME_SIGNATURES: list[tuple[frozenset[str], bytes, int]] = [
-    (frozenset({".pdf"}),                       b"%PDF",              0),
-    (frozenset({".png"}),                       b"\x89PNG\r\n\x1a\n", 0),
-    (frozenset({".jpg", ".jpeg"}),              b"\xff\xd8\xff",      0),
-    (frozenset({".zip", ".docx", ".xlsx",
-                ".pptx", ".epub"}),             b"PK\x03\x04",       0),
-    (frozenset({".ogg"}),                       b"OggS",             0),
-    (frozenset({".wav"}),                       b"RIFF",             0),
-    (frozenset({".mp3"}),                       b"ID3",              0),
-    (frozenset({".mp3"}),                       b"\xff\xfb",         0),  # MP3 without ID3
-    (frozenset({".mp3"}),                       b"\xff\xfa",         0),  # MP3 without ID3 (MPEG-1 Layer 3)
-    (frozenset({".flac"}),                      b"fLaC",             0),
-    (frozenset({".m4a", ".mp4"}),               b"ftyp",             4),  # ISO base media container
-    (frozenset({".webm"}),                      b"\x1a\x45\xdf\xa3", 0),  # EBML (WebM/Matroska)
-    (frozenset({".webp"}),                      b"WEBP",             8),  # RIFF????WEBP
-    (frozenset({".gif"}),                       b"GIF8",             0),
+    (frozenset({".pdf"}), b"%PDF", 0),
+    (frozenset({".png"}), b"\x89PNG\r\n\x1a\n", 0),
+    (frozenset({".jpg", ".jpeg"}), b"\xff\xd8\xff", 0),
+    (frozenset({".zip", ".docx", ".xlsx", ".pptx", ".epub"}), b"PK\x03\x04", 0),
+    (frozenset({".ogg"}), b"OggS", 0),
+    (frozenset({".wav"}), b"RIFF", 0),
+    (frozenset({".mp3"}), b"ID3", 0),
+    (frozenset({".mp3"}), b"\xff\xfb", 0),  # MP3 without ID3
+    (frozenset({".mp3"}), b"\xff\xfa", 0),  # MP3 without ID3 (MPEG-1 Layer 3)
+    (frozenset({".flac"}), b"fLaC", 0),
+    (frozenset({".m4a", ".mp4"}), b"ftyp", 4),  # ISO base media container
+    (frozenset({".webm"}), b"\x1a\x45\xdf\xa3", 0),  # EBML (WebM/Matroska)
+    (frozenset({".webp"}), b"WEBP", 8),  # RIFF????WEBP
+    (frozenset({".gif"}), b"GIF8", 0),
 ]
 _MIME_CHECK_BYTES = 32  # how many bytes to read
 
@@ -158,11 +193,7 @@ def _validate_mime_signature(file_path: Path, original_name: str = "") -> None:
     """
     ext = Path(original_name).suffix.lower() if original_name else file_path.suffix.lower()
     # Find relevant signatures for this extension
-    relevant = [
-        (sig_bytes, offset)
-        for exts, sig_bytes, offset in _MIME_SIGNATURES
-        if ext in exts
-    ]
+    relevant = [(sig_bytes, offset) for exts, sig_bytes, offset in _MIME_SIGNATURES if ext in exts]
     if not relevant:
         return  # No known magic for this type — allow through
 
@@ -173,7 +204,7 @@ def _validate_mime_signature(file_path: Path, original_name: str = "") -> None:
         return  # Can't read — let the extractor handle it
 
     for sig_bytes, offset in relevant:
-        window = header[offset:offset + len(sig_bytes)]
+        window = header[offset : offset + len(sig_bytes)]
         if window == sig_bytes:
             return  # Signature matched — OK
 
@@ -204,12 +235,17 @@ class LibraryActiveWork(BaseModel):
 
 
 @router.get("/library")
-def library_list(work_id: str | None = None, kind: str | None = None,
-                 readiness: str | None = None, lifecycle: str | None = None,
-                 limit: int = 200):
+def library_list(
+    work_id: str | None = None,
+    kind: str | None = None,
+    readiness: str | None = None,
+    lifecycle: str | None = None,
+    limit: int = 200,
+):
     db = get_db()
-    docs = db.list_documents(work_id=work_id, kind=kind, readiness=readiness,
-                             lifecycle=lifecycle, limit=min(limit, 1000))
+    docs = db.list_documents(
+        work_id=work_id, kind=kind, readiness=readiness, lifecycle=lifecycle, limit=min(limit, 1000)
+    )
     # Attach extraction warnings to failed documents so the list UI can surface
     # them without a separate per-document request.
     _FAILED = {"error", "no_text"}
@@ -225,8 +261,7 @@ _SEARCH_MODES = {"keyword", "semantic", "hybrid"}
 
 
 @router.get("/library/search")
-def library_search(q: str, work_id: str | None = None, limit: int = 10,
-                   mode: str = "hybrid"):
+def library_search(q: str, work_id: str | None = None, limit: int = 10, mode: str = "hybrid"):
     """Document search — keyword (BM25), semantic (cosine), or hybrid (RRF).
 
     Queries chunks, then aggregates to document-level results so each
@@ -254,6 +289,7 @@ def library_search(q: str, work_id: str | None = None, limit: int = 10,
         chunk_results = db.search_chunks(query, work_id=work_id, limit=fetch)
     elif mode == "semantic":
         from orivellum.capabilities.embeddings import semantic_search
+
         chunk_results = semantic_search(query, db, "chunk", limit=fetch, work_id=work_id)
         if not chunk_results:
             # Degrade to keyword results (embeddings unavailable, or nothing
@@ -263,6 +299,7 @@ def library_search(q: str, work_id: str | None = None, limit: int = 10,
                 c.setdefault("match_type", "keyword")
     else:  # hybrid
         from orivellum.capabilities.embeddings import hybrid_search_chunks
+
         chunk_results = hybrid_search_chunks(query, db, limit=fetch, work_id=work_id)
 
     seen: dict[str, dict] = {}
@@ -287,6 +324,7 @@ def library_search(q: str, work_id: str | None = None, limit: int = 10,
 
 # ── Duplicates (must be registered BEFORE /{doc_id} so the literal segment wins) ─
 
+
 @router.post("/library/scan-duplicates")
 async def library_scan_duplicates(background_tasks: BackgroundTasks):
     """Backfill MinHash signatures for all ready documents that don't yet have one.
@@ -309,9 +347,7 @@ async def library_scan_duplicates(background_tasks: BackgroundTasks):
                  AND d.extracted_text IS NOT NULL
                  AND d.extracted_text != ''"""
         ).fetchall()
-        already_count = db._conn.execute(
-            "SELECT COUNT(*) FROM minhash_sig"
-        ).fetchone()[0]
+        already_count = db._conn.execute("SELECT COUNT(*) FROM minhash_sig").fetchone()[0]
 
     pending = [(r["id"], r["extracted_text"]) for r in rows]
 
@@ -320,6 +356,7 @@ async def library_scan_duplicates(background_tasks: BackgroundTasks):
             compute_and_store,
             find_and_record_near_duplicates,
         )
+
         for doc_id, text in doc_list:
             try:
                 sig = compute_and_store(doc_id, text, db)
@@ -352,7 +389,7 @@ _VALID_RESOLVE_ACTIONS = {"keep_both", "mark_versions", "mark_superseded"}
 
 
 class DupeResolveBody(BaseModel):
-    action: str                         # keep_both | mark_versions | mark_superseded
+    action: str  # keep_both | mark_versions | mark_superseded
     canonical_doc_id: str | None = None  # when mark_superseded: the doc that should SURVIVE
 
 
@@ -372,8 +409,7 @@ def library_resolve_duplicate(dupe_id: str, body: DupeResolveBody):
             f"action must be one of: {', '.join(sorted(_VALID_RESOLVE_ACTIONS))}",
         )
     db = get_db()
-    result = db.resolve_near_duplicate(dupe_id, body.action,
-                                       canonical_doc_id=body.canonical_doc_id)
+    result = db.resolve_near_duplicate(dupe_id, body.action, canonical_doc_id=body.canonical_doc_id)
     if result is None:
         raise HTTPException(404, f"Duplicate pair {dupe_id!r} not found")
     if result.get("already_resolved"):
@@ -381,8 +417,7 @@ def library_resolve_duplicate(dupe_id: str, body: DupeResolveBody):
     return {"ok": True, "dupe_id": dupe_id, "action": body.action}
 
 
-def _resolve_doc_file(lib_root: Path, content_path: str | None,
-                      source: str | None) -> Path | None:
+def _resolve_doc_file(lib_root: Path, content_path: str | None, source: str | None) -> Path | None:
     """Resolve a document's on-disk file the same way reprocess does."""
     if content_path:
         return lib_root / content_path
@@ -434,11 +469,7 @@ def library_get(doc_id: str):
         raise HTTPException(404, f"Document {doc_id!r} not found")
     # Always include warnings array; populated for any failure state.
     _FAILED = {"error", "no_text"}
-    doc["warnings"] = (
-        db.get_extraction_warnings(doc_id)
-        if doc.get("readiness") in _FAILED
-        else []
-    )
+    doc["warnings"] = db.get_extraction_warnings(doc_id) if doc.get("readiness") in _FAILED else []
     return {"document": doc}
 
 
@@ -456,7 +487,9 @@ def library_update(doc_id: str, body: DocumentUpdate):
         db.update_document_work(doc_id, body.work_id)
     if body.title is not None:
         with db._lock:
-            db._conn.execute("UPDATE documents SET title=? WHERE id=?", (body.title.strip(), doc_id))
+            db._conn.execute(
+                "UPDATE documents SET title=? WHERE id=?", (body.title.strip(), doc_id)
+            )
             db._conn.commit()
     return {"document": db.get_document(doc_id)}
 
@@ -562,6 +595,7 @@ def library_versions(doc_id: str):
 
 class VersionCreate(BaseModel):
     """FA-09: typed request body for creating a document version snapshot."""
+
     model_config = ConfigDict(extra="forbid")
     notes: str | None = Field(default=None, max_length=2000)
     is_canonical: bool = False
@@ -615,8 +649,7 @@ def library_chunks(doc_id: str):
         raise HTTPException(404, f"Document {doc_id!r} not found")
     with db._lock:
         rows = db._conn.execute(
-            "SELECT * FROM chunks WHERE doc_id=? ORDER BY page, created_at LIMIT 500",
-            (doc_id,)
+            "SELECT * FROM chunks WHERE doc_id=? ORDER BY page, created_at LIMIT 500", (doc_id,)
         ).fetchall()
     return {"chunks": [dict(r) for r in rows], "count": len(rows)}
 
@@ -646,8 +679,8 @@ def library_doc_progress(doc_id: str):
         raise HTTPException(404, f"Document {doc_id!r} not found")
 
     _TERMINAL = frozenset({"ready", "error", "no_text"})
-    _KEEPALIVE_INTERVAL = 10.0   # seconds between keepalive comments
-    _MAX_LIFETIME = 300.0        # 5-minute hard ceiling per stream
+    _KEEPALIVE_INTERVAL = 10.0  # seconds between keepalive comments
+    _MAX_LIFETIME = 300.0  # 5-minute hard ceiling per stream
 
     def _stream():
         deadline = _t.monotonic() + _MAX_LIFETIME
@@ -691,13 +724,15 @@ def library_doc_progress(doc_id: str):
                     stage = "harvesting"
                     pct = min(95, 70 + knowledge_count)
 
-                payload = _js.dumps({
-                    "stage": stage,
-                    "pct": pct,
-                    "items_found": knowledge_count,
-                    "readiness": readiness,
-                    "chunk_count": chunk_count,
-                })
+                payload = _js.dumps(
+                    {
+                        "stage": stage,
+                        "pct": pct,
+                        "items_found": knowledge_count,
+                        "readiness": readiness,
+                        "chunk_count": chunk_count,
+                    }
+                )
 
                 now = _t.monotonic()
                 if payload != last_payload:
@@ -747,9 +782,7 @@ def _ingest_file(
     Returns the JSON-serialisable response body.
     """
     with db._lock:
-        existing = db._conn.execute(
-            "SELECT id FROM documents WHERE sha256=?", (sha256,)
-        ).fetchone()
+        existing = db._conn.execute("SELECT id FROM documents WHERE sha256=?", (sha256,)).fetchone()
     if existing:
         doc = db.get_document(existing["id"])
         readiness = doc.get("readiness", "")
@@ -772,12 +805,29 @@ def _ingest_file(
                     doc["id"], "", 0, readiness="imported", error_message=None
                 )
                 kind = doc.get("kind") or _kind_for(name)
-                _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown",
-                               "code", "html", "json", "zip", "file", "audio", "image"}
+                _EXTRACTABLE = {
+                    "pdf",
+                    "docx",
+                    "excel",
+                    "csv",
+                    "pptx",
+                    "text",
+                    "markdown",
+                    "code",
+                    "html",
+                    "json",
+                    "zip",
+                    "file",
+                    "audio",
+                    "image",
+                }
                 if kind in _EXTRACTABLE:
                     logger.info(
                         "Re-queuing extraction for duplicate doc=%s kind=%s (force=%s readiness_was=%s)",
-                        doc["id"], kind, force, readiness,
+                        doc["id"],
+                        kind,
+                        force,
+                        readiness,
                     )
                     background_tasks.add_task(
                         process_document,
@@ -819,9 +869,11 @@ def _ingest_file(
     # Move (rename when possible) instead of rewriting — the bytes are already
     # on disk in the temp file, so no second copy is held in RAM.
     import shutil as _shutil
+
     _shutil.move(str(tmp_path), str(file_path))
 
     import sqlite3 as _sqlite3
+
     try:
         doc = db.create_document(
             title=name,
@@ -857,8 +909,22 @@ def _ingest_file(
 
     # Fire extraction + chunking + knowledge harvest in the background.
     # BackgroundTasks runs after the response is sent — safe with SQLite WAL mode.
-    _EXTRACTABLE = {"pdf", "docx", "excel", "csv", "pptx", "text", "markdown",
-                   "code", "html", "json", "zip", "file", "audio", "image"}
+    _EXTRACTABLE = {
+        "pdf",
+        "docx",
+        "excel",
+        "csv",
+        "pptx",
+        "text",
+        "markdown",
+        "code",
+        "html",
+        "json",
+        "zip",
+        "file",
+        "audio",
+        "image",
+    }
     if kind in _EXTRACTABLE:
         logger.info("Queuing extraction for doc=%s kind=%s", doc["id"], kind)
         background_tasks.add_task(
@@ -881,6 +947,7 @@ def _ingest_file(
 def _cleanup_stale_parts(lib_root: Path, max_age_s: int = 3600) -> None:
     """Remove orphaned .part temp files left by a crash mid-upload."""
     import time as _time
+
     now = _time.time()
     try:
         for p in lib_root.glob("*.part"):
@@ -932,6 +999,7 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
     sha256 = hashlib.sha256(data).hexdigest()
 
     import tempfile as _tempfile
+
     lib_root = _library_root()
     _cleanup_stale_parts(lib_root)
     tmp = _tempfile.NamedTemporaryFile(delete=False, dir=lib_root, suffix=".part")
@@ -941,9 +1009,14 @@ def library_import(body: LibraryImport, background_tasks: BackgroundTasks):
         finally:
             tmp.close()
         return _ingest_file(
-            db, background_tasks,
-            tmp_path=Path(tmp.name), name=name, sha256=sha256,
-            work_id=body.work_id, meta=body.meta, force=body.force,
+            db,
+            background_tasks,
+            tmp_path=Path(tmp.name),
+            name=name,
+            sha256=sha256,
+            work_id=body.work_id,
+            meta=body.meta,
+            force=body.force,
         )
     except BaseException:
         Path(tmp.name).unlink(missing_ok=True)
@@ -966,6 +1039,7 @@ async def library_upload(
     name = _validate_import_target(db, file.filename or "", work_id or None)
 
     import tempfile as _tempfile
+
     lib_root = _library_root()
     _cleanup_stale_parts(lib_root)
     tmp = _tempfile.NamedTemporaryFile(delete=False, dir=lib_root, suffix=".part")
@@ -984,8 +1058,7 @@ async def library_upload(
                     # the outer BaseException handler.
                     raise HTTPException(
                         413,
-                        f"File too large (limit "
-                        f"{_MAX_LIBRARY_FILE_BYTES // (1024 * 1024)} MB)",
+                        f"File too large (limit {_MAX_LIBRARY_FILE_BYTES // (1024 * 1024)} MB)",
                     )
                 tmp.write(chunk)
         finally:
@@ -995,9 +1068,14 @@ async def library_upload(
             raise HTTPException(400, "Uploaded file is empty")
         _validate_mime_signature(Path(tmp.name), original_name=name)
         return _ingest_file(
-            db, background_tasks,
-            tmp_path=Path(tmp.name), name=name, sha256=hasher.hexdigest(),
-            work_id=work_id or None, meta={}, force=force,
+            db,
+            background_tasks,
+            tmp_path=Path(tmp.name),
+            name=name,
+            sha256=hasher.hexdigest(),
+            work_id=work_id or None,
+            meta={},
+            force=force,
         )
     except BaseException:
         Path(tmp.name).unlink(missing_ok=True)
@@ -1043,7 +1121,8 @@ async def library_restore_file(
     # refuse here instead of double-queuing extraction.
     prior_readiness = doc.get("readiness") or "error"
     _BUSY = HTTPException(
-        409, "This document is being reprocessed right now — try again in a moment.",
+        409,
+        "This document is being reprocessed right now — try again in a moment.",
     )
     if prior_readiness == _REPROCESS_RESERVED:
         raise _BUSY
@@ -1059,12 +1138,13 @@ async def library_restore_file(
     import shutil as _shutil
     import sqlite3 as _sqlite3
     import tempfile as _tempfile
+
     _cleanup_stale_parts(lib_root)
     tmp = _tempfile.NamedTemporaryFile(delete=False, dir=lib_root, suffix=".part")
     hasher = hashlib.sha256()
     size = 0
     moved_path: Path | None = None  # set once bytes live in the library tree
-    committed = False               # set once the DB record points at them
+    committed = False  # set once the DB record points at them
     try:
         try:
             while True:
@@ -1076,8 +1156,7 @@ async def library_restore_file(
                 if size > _MAX_LIBRARY_FILE_BYTES:
                     raise HTTPException(
                         413,
-                        f"File too large (limit "
-                        f"{_MAX_LIBRARY_FILE_BYTES // (1024 * 1024)} MB)",
+                        f"File too large (limit {_MAX_LIBRARY_FILE_BYTES // (1024 * 1024)} MB)",
                     )
                 tmp.write(chunk)
         finally:
@@ -1115,8 +1194,7 @@ async def library_restore_file(
                            SET source=?, content_path=?, sha256=?,
                                readiness='imported', error_message=NULL
                            WHERE id=?""",
-                        (str(file_path), str(file_path.relative_to(lib_root)),
-                         sha256, doc_id),
+                        (str(file_path), str(file_path.relative_to(lib_root)), sha256, doc_id),
                     )
                     db._conn.commit()
                     committed = True
@@ -1132,8 +1210,7 @@ async def library_restore_file(
                     (sha256, doc_id),
                 ).fetchone()
             winner_path = (
-                (lib_root / winner["content_path"])
-                if winner and winner["content_path"] else None
+                (lib_root / winner["content_path"]) if winner and winner["content_path"] else None
             )
             if winner_path is None or file_path.resolve() != winner_path.resolve():
                 file_path.unlink(missing_ok=True)
@@ -1155,8 +1232,9 @@ async def library_restore_file(
             title=doc.get("title") or name,
             db=db,
         )
-        logger.info("restore-file: doc=%s re-attached %s (%d bytes), extraction queued",
-                    doc_id, name, size)
+        logger.info(
+            "restore-file: doc=%s re-attached %s (%d bytes), extraction queued", doc_id, name, size
+        )
         return {"ok": True, "document": db.get_document(doc_id)}
     except BaseException:
         Path(tmp.name).unlink(missing_ok=True)
@@ -1241,6 +1319,7 @@ def download_document(doc_id: str):
     import mimetypes
 
     from fastapi.responses import FileResponse
+
     db = get_db()
     doc = db.get_document(doc_id)
     if not doc:
@@ -1310,8 +1389,7 @@ def library_explode_zips(background_tasks: BackgroundTasks):
             continue
 
         db.delete_extraction_warnings(row["id"])
-        db.update_document_extracted(row["id"], "", 0,
-                                     readiness="imported", error_message=None)
+        db.update_document_extracted(row["id"], "", 0, readiness="imported", error_message=None)
         background_tasks.add_task(
             process_document,
             doc_id=row["id"],
@@ -1347,8 +1425,7 @@ _REPROCESS_RESERVED = "reprocessing"
 REPROCESS_INFLIGHT_STATES: tuple[str, ...] = ("imported", _REPROCESS_RESERVED)
 
 
-def queue_library_reprocess(db, background_tasks: BackgroundTasks,
-                            force: bool = False) -> dict:
+def queue_library_reprocess(db, background_tasks: BackgroundTasks, force: bool = False) -> dict:
     """Shared bulk re-extraction machinery used by both the library
     ``/reprocess-all`` route and the MCOS ``/rag/apply?reprocess_library`` path.
 
@@ -1404,15 +1481,15 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks,
             db._conn.commit()
 
     # ── Queue each reserved candidate ───────────────────────────────────────────
-    queued_zips    = 0
-    queued_stuck   = 0
-    skipped        = 0
+    queued_zips = 0
+    queued_stuck = 0
+    skipped = 0
     skipped_docs: list[dict] = []
 
     for row in candidates:
-        doc_id       = row["id"]
+        doc_id = row["id"]
         content_path = row["content_path"]
-        kind         = row["kind"] or "text"
+        kind = row["kind"] or "text"
 
         # Resolve file on disk
         if content_path:
@@ -1425,7 +1502,8 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks,
         if not file_path or not file_path.exists():
             logger.warning(
                 "reprocess-all: file missing for doc %s (kind=%s) — skipping",
-                doc_id, kind,
+                doc_id,
+                kind,
             )
             # Un-reserve: restore the doc's prior readiness so a stranded
             # 'reprocessing' marker never leaves it stuck / mis-counted.
@@ -1433,17 +1511,17 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks,
             if prior == _REPROCESS_RESERVED:  # was already reserved somehow
                 prior = "error"
             with db._lock:
-                db._conn.execute(
-                    "UPDATE documents SET readiness=? WHERE id=?", (prior, doc_id)
-                )
+                db._conn.execute("UPDATE documents SET readiness=? WHERE id=?", (prior, doc_id))
                 db._conn.commit()
             skipped += 1
-            skipped_docs.append({
-                "id": doc_id,
-                "title": row["title"] or doc_id[:8],
-                "kind": kind,
-                "readiness": prior,
-            })
+            skipped_docs.append(
+                {
+                    "id": doc_id,
+                    "title": row["title"] or doc_id[:8],
+                    "kind": kind,
+                    "readiness": prior,
+                }
+            )
             continue
 
         # Clear stale warnings.  Do NOT flip readiness back to 'imported' here —
@@ -1469,7 +1547,9 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks,
 
         logger.info(
             "reprocess-all: queued doc=%s kind=%s previous_readiness=%s",
-            doc_id, kind, row["readiness"],
+            doc_id,
+            kind,
+            row["readiness"],
         )
 
     total = queued_zips + queued_stuck
@@ -1482,12 +1562,12 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks,
         parts.append(f"{skipped} skipped (source file not found on disk)")
 
     return {
-        "queued":       total,
-        "queued_zips":  queued_zips,
+        "queued": total,
+        "queued_zips": queued_zips,
         "queued_stuck": queued_stuck,
-        "skipped":      skipped,
+        "skipped": skipped,
         "skipped_docs": skipped_docs,
-        "message":      ". ".join(parts) if parts else "Nothing to reprocess.",
+        "message": ". ".join(parts) if parts else "Nothing to reprocess.",
     }
 
 
@@ -1553,8 +1633,15 @@ def library_smart_organize():
         if zip_name:
             # Use zip filename stem, cleaned up
             key = Path(zip_name).stem
-            key = _re.sub(r"[_\-\s]+(archive|files|docs|documents|library|collection|pack)$",
-                          "", key, flags=_re.I).strip() or key
+            key = (
+                _re.sub(
+                    r"[_\-\s]+(archive|files|docs|documents|library|collection|pack)$",
+                    "",
+                    key,
+                    flags=_re.I,
+                ).strip()
+                or key
+            )
         elif zip_folder and zip_folder not in (".", ""):
             key = zip_folder.split("/")[0]
         else:
@@ -1592,7 +1679,6 @@ def library_smart_organize():
         "works": created_works,
         "docs_organised": total_assigned,
         "message": (
-            f"Created {len(created_works)} Work(s) and organised "
-            f"{total_assigned} document(s)."
+            f"Created {len(created_works)} Work(s) and organised {total_assigned} document(s)."
         ),
     }

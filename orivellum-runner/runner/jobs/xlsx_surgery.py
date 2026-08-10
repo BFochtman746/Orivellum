@@ -14,6 +14,7 @@ Two operations, both mechanical and both re-checkable:
                       recalculation produced (or insert one where the file was
                       shipped never-calculated)
 """
+
 import re
 import shutil
 import zipfile
@@ -21,21 +22,53 @@ from pathlib import Path
 
 # Correct OOXML child order inside <worksheet> (subset that occurs in practice;
 # anything unknown keeps its position at the tail, before the closing tag).
-SHEET_ORDER = ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols",
-               "sheetData", "sheetCalcPr", "sheetProtection", "protectedRanges",
-               "scenarios", "autoFilter", "sortState", "dataConsolidate",
-               "customSheetViews", "mergeCells", "phoneticPr",
-               "conditionalFormatting", "dataValidations", "hyperlinks",
-               "printOptions", "pageMargins", "pageSetup", "headerFooter",
-               "rowBreaks", "colBreaks", "customProperties", "cellWatches",
-               "ignoredErrors", "smartTags", "drawing", "legacyDrawing",
-               "legacyDrawingHF", "picture", "oleObjects", "controls",
-               "webPublishItems", "tableParts", "extLst"]
+SHEET_ORDER = [
+    "sheetPr",
+    "dimension",
+    "sheetViews",
+    "sheetFormatPr",
+    "cols",
+    "sheetData",
+    "sheetCalcPr",
+    "sheetProtection",
+    "protectedRanges",
+    "scenarios",
+    "autoFilter",
+    "sortState",
+    "dataConsolidate",
+    "customSheetViews",
+    "mergeCells",
+    "phoneticPr",
+    "conditionalFormatting",
+    "dataValidations",
+    "hyperlinks",
+    "printOptions",
+    "pageMargins",
+    "pageSetup",
+    "headerFooter",
+    "rowBreaks",
+    "colBreaks",
+    "customProperties",
+    "cellWatches",
+    "ignoredErrors",
+    "smartTags",
+    "drawing",
+    "legacyDrawing",
+    "legacyDrawingHF",
+    "picture",
+    "oleObjects",
+    "controls",
+    "webPublishItems",
+    "tableParts",
+    "extLst",
+]
 
 # Any XML tag, comment, CDATA or PI — used by the top-level tokenizer.
 _TOKEN = re.compile(
     r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|"
-    r"<(/?)((?:\w+:)?[\w.-]+)((?:\"[^\"]*\"|'[^']*'|[^>\"'])*)(/?)>", re.S)
+    r"<(/?)((?:\w+:)?[\w.-]+)((?:\"[^\"]*\"|'[^']*'|[^>\"'])*)(/?)>",
+    re.S,
+)
 
 
 def _split_worksheet(xml):
@@ -43,7 +76,7 @@ def _split_worksheet(xml):
     m_close = re.search(r"</(?:\w+:)?worksheet\s*>", xml)
     if not m_open or not m_close or m_close.start() < m_open.end():
         return None
-    return xml[:m_open.end()], xml[m_open.end():m_close.start()], xml[m_close.start():]
+    return xml[: m_open.end()], xml[m_open.end() : m_close.start()], xml[m_close.start() :]
 
 
 def _top_level_children(inner):
@@ -52,10 +85,10 @@ def _top_level_children(inner):
     when the content cannot be tokenized cleanly (surgery must then refuse)."""
     out, depth, start, name, pos = [], 0, None, None, 0
     for m in _TOKEN.finditer(inner):
-        if m.start() > pos and depth == 0 and inner[pos:m.start()].strip():
-            return None                      # stray top-level text: refuse
+        if m.start() > pos and depth == 0 and inner[pos : m.start()].strip():
+            return None  # stray top-level text: refuse
         pos = m.end()
-        if m.group(2) is None:               # comment / CDATA / PI
+        if m.group(2) is None:  # comment / CDATA / PI
             if depth == 0:
                 out.append((None, m.group(0)))
             continue
@@ -67,7 +100,8 @@ def _top_level_children(inner):
         if depth == 0 and not closing:
             start, name = m.start(), local
             if selfclose:
-                out.append((name, inner[m.start():m.end()])); start = None
+                out.append((name, inner[m.start() : m.end()]))
+                start = None
             else:
                 depth = 1
         elif not closing and not selfclose:
@@ -75,7 +109,8 @@ def _top_level_children(inner):
         elif closing:
             depth -= 1
             if depth == 0:
-                out.append((name, inner[start:m.end()])); start = None
+                out.append((name, inner[start : m.end()]))
+                start = None
             elif depth < 0:
                 return None
     if depth != 0 or (pos < len(inner) and inner[pos:].strip()):
@@ -92,8 +127,10 @@ def sheet_order_violations(xml):
     if children is None:
         # Fall back to a linear scan of known opening tags so detection still
         # reports, even where surgery would refuse to operate.
-        seen = [m.group(1) for m in re.finditer(
-            r"<(?:\w+:)?(" + "|".join(SHEET_ORDER) + r")(?=[\s/>])", xml)]
+        seen = [
+            m.group(1)
+            for m in re.finditer(r"<(?:\w+:)?(" + "|".join(SHEET_ORDER) + r")(?=[\s/>])", xml)
+        ]
     else:
         seen = [n for n, _ in children if n in SHEET_ORDER]
     out, last = [], -1
@@ -122,7 +159,7 @@ def reorder_sheet_xml(xml):
     if children is None:
         return xml
     if any(n is None or n not in SHEET_ORDER for n, _ in children):
-        return xml                      # unknown content: never restructure it
+        return xml  # unknown content: never restructure it
     ordered = sorted(children, key=lambda c: SHEET_ORDER.index(c[0]))
     return head + "".join(c[1] for c in ordered) + tail
 
@@ -144,7 +181,7 @@ def _fmt_value(v):
 
 
 def _xml_escape(s):
-    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def refresh_cached(xml, updates):
@@ -167,23 +204,25 @@ def refresh_cached(xml, updates):
         if text is None:
             return cell
         new = re.sub(r"<v>.*?</v>|<v/>", "", cell, flags=re.S)
-        new = re.sub(r"(</(?:\w+:)?f>|<(?:\w+:)?f[^>]*/>)",
-                     r"\1" + f"<v>{text}</v>", new, count=1)
+        new = re.sub(r"(</(?:\w+:)?f>|<(?:\w+:)?f[^>]*/>)", r"\1" + f"<v>{text}</v>", new, count=1)
         if new == cell and "<v>" not in cell:
-            return cell                       # could not place a value: skip
+            return cell  # could not place a value: skip
         # t attribute on the opening <c ...> tag
         open_tag = re.match(r"<(?:\w+:)?c\b[^>]*>", new).group(0)
         stripped = re.sub(r'\s+t="[^"]*"', "", open_tag)
         if t:
             stripped = stripped[:-1] + f' t="{t}">'
-        new = stripped + new[len(open_tag):]
+        new = stripped + new[len(open_tag) :]
         if new != cell:
             changed.append(coord)
         return new
 
     out = re.sub(
         r'<(?:\w+:)?c\b[^>]*\br="([A-Z]{1,3}\d{1,7})"[^>]*>.*?</(?:\w+:)?c>',
-        fix_cell, xml, flags=re.S)
+        fix_cell,
+        xml,
+        flags=re.S,
+    )
     return out, changed
 
 
@@ -193,8 +232,7 @@ def sheet_part_names(target):
         wb = z.read("xl/workbook.xml").decode("utf-8", errors="replace")
         rels = z.read("xl/_rels/workbook.xml.rels").decode("utf-8", errors="replace")
     rel_map = dict(re.findall(r'Id="([^"]+)"[^>]*Target="([^"]+)"', rels))
-    rel_map.update(dict((i, t) for t, i in
-                        re.findall(r'Target="([^"]+)"[^>]*Id="([^"]+)"', rels)))
+    rel_map.update(dict((i, t) for t, i in re.findall(r'Target="([^"]+)"[^>]*Id="([^"]+)"', rels)))
     out = {}
     for m in re.finditer(r'<sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"', wb):
         tgt = rel_map.get(m.group(2), "")
@@ -204,8 +242,13 @@ def sheet_part_names(target):
 
 
 def _xml_unescape(s):
-    return (s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
-             .replace("&apos;", "'").replace("&amp;", "&"))
+    return (
+        s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+    )
 
 
 def apply(target, out_path, part_edits):
@@ -217,15 +260,17 @@ def apply(target, out_path, part_edits):
         shutil.copyfile(target, out_path)
         return []
     touched = []
-    with zipfile.ZipFile(target) as zin, \
-         zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
+    with (
+        zipfile.ZipFile(target) as zin,
+        zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout,
+    ):
         for info in zin.infolist():
             data = zin.read(info.filename)
             if info.filename in part_edits:
                 new = part_edits[info.filename]
                 data = new.encode("utf-8") if isinstance(new, str) else new
                 touched.append(info.filename)
-        # preserve entry metadata; recompress with the entry's own method
+            # preserve entry metadata; recompress with the entry's own method
             zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
             zi.compress_type = info.compress_type
             zi.external_attr = info.external_attr
@@ -237,10 +282,14 @@ def parts_diff(a, b):
     """Which zip parts differ between two workbooks — the proof that surgery
     touched only what it claimed. Returns {"changed":[...], "added":[...],
     "removed":[...]}."""
+
     def load(p):
         with zipfile.ZipFile(p) as z:
             return {n: z.read(n) for n in z.namelist()}
+
     pa, pb = load(a), load(b)
-    return {"changed": sorted(n for n in pa.keys() & pb.keys() if pa[n] != pb[n]),
-            "added": sorted(pb.keys() - pa.keys()),
-            "removed": sorted(pa.keys() - pb.keys())}
+    return {
+        "changed": sorted(n for n in pa.keys() & pb.keys() if pa[n] != pb[n]),
+        "added": sorted(pb.keys() - pa.keys()),
+        "removed": sorted(pa.keys() - pb.keys()),
+    }

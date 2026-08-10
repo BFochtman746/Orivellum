@@ -7,6 +7,7 @@ Strategy:
 - Optionally enrich each chunk with a short AI-generated context prefix
   (Anthropic Contextual Retrieval technique) via generate_context_prefixes_for_doc()
 """
+
 from __future__ import annotations
 
 import logging
@@ -96,8 +97,9 @@ def _word_char_offsets(text: str) -> tuple[list[str], list[int], list[int]]:
     return words, starts, ends
 
 
-def _sliding_chunks(text: str, target: int = _TARGET_WORDS,
-                    overlap: int = _OVERLAP_WORDS) -> list[str]:
+def _sliding_chunks(
+    text: str, target: int = _TARGET_WORDS, overlap: int = _OVERLAP_WORDS
+) -> list[str]:
     """Split *text* into overlapping word-window chunks (text only, no spans)."""
     return [c for c, _, _ in _sliding_chunks_with_spans(text, target, overlap)]
 
@@ -119,7 +121,7 @@ def _sliding_chunks_with_spans(
     if not words:
         return []
     if len(words) <= target:
-        return [(text[word_starts[0]:word_ends[-1]], word_starts[0], word_ends[-1])]
+        return [(text[word_starts[0] : word_ends[-1]], word_starts[0], word_ends[-1])]
     results: list[tuple[str, int, int]] = []
     start = 0
     while start < len(words):
@@ -184,9 +186,7 @@ def generate_context_prefixes_for_doc(
                 chunk_sample = (row["text"] or "")[:_CTX_CHUNK_SAMPLE]
                 prompt_parts = [f'Document: "{title_str}"']
                 if excerpt:
-                    prompt_parts.append(
-                        f"Opening content:\n{excerpt}"
-                    )
+                    prompt_parts.append(f"Opening content:\n{excerpt}")
                 prompt_parts.append(
                     f"Passage:\n{chunk_sample}\n\n"
                     "Write a 1-2 sentence context for this passage that states "
@@ -210,9 +210,7 @@ def generate_context_prefixes_for_doc(
                     generated += 1
 
         if generated:
-            logger.info(
-                "Generated %d context prefix(es) for doc %s", generated, doc_id[:8]
-            )
+            logger.info("Generated %d context prefix(es) for doc %s", generated, doc_id[:8])
         return generated
 
     except Exception as exc:
@@ -243,9 +241,7 @@ def _build_page_boundaries(pages: list) -> list[tuple[int, int, int]]:
     return bounds
 
 
-def _find_page_for_offset(
-    char_start: int, page_boundaries: list[tuple[int, int, int]]
-) -> int:
+def _find_page_for_offset(char_start: int, page_boundaries: list[tuple[int, int, int]]) -> int:
     """Return the estimated page number for a chunk starting at *char_start*."""
     for page_num, start, end in page_boundaries:
         if start <= char_start < end:
@@ -302,8 +298,11 @@ def chunk_and_store(result: ExtractionResult, doc_id: str, db: OrivellumDB) -> i
                 cs = ce = None
 
             db.add_chunk(
-                doc_id=doc_id, text=chunk_text, page=page,
-                char_start=cs, char_end=ce,
+                doc_id=doc_id,
+                text=chunk_text,
+                page=page,
+                char_start=cs,
+                char_end=ce,
             )
             stored += 1
 

@@ -8,6 +8,7 @@ Covers three acceptance criteria:
   3. Duplicate idea deduplication — when workers produce near-identical texts,
      _deduplicate() removes the lesser copy so only unique ideas survive.
 """
+
 from __future__ import annotations
 
 import threading
@@ -18,23 +19,24 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import AUTH_HEADERS
 
-
 # ─── fixtures ─────────────────────────────────────────────────────────────────
 
+
 def _make_app(tmp_path):
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=str(tmp_path))
-    db  = OrivellumDB(str(tmp_path / "test.db"))
+    db = OrivellumDB(str(tmp_path / "test.db"))
     _deps.init(db=db, cfg=cfg)
     # raise_server_exceptions=False so we can inspect 502 responses
     return TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS), db
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _stub_scores(idea_texts, work_id, db):
     """Originality stub — returns 0.8 for every idea (no embeddings needed)."""
@@ -48,6 +50,7 @@ def _stub_usefulness(idea_texts, seed, context_type, db, cfg):
 
 # ─── Test 1: partial worker failure ───────────────────────────────────────────
 
+
 def test_partial_worker_failure_yields_surviving_ideas(tmp_path):
     """When N-1 domain workers fail, the session completes with the surviving idea.
 
@@ -56,6 +59,7 @@ def test_partial_worker_failure_yields_surviving_ideas(tmp_path):
     return at least 1 idea and mark the session 'done'.
     """
     from orivellum.capabilities.brainstorm import run_brainstorm_session
+
     _, db = _make_app(tmp_path)
     work = db.create_work("Brainstorm Work")
     session = db.create_brainstorm_session(
@@ -82,9 +86,12 @@ def test_partial_worker_failure_yields_surviving_ideas(tmp_path):
         patch("orivellum.capabilities.brainstorm._score_usefulness", side_effect=_stub_usefulness),
     ):
         ideas = run_brainstorm_session(
-            session["id"], work["id"],
+            session["id"],
+            work["id"],
             "How should I structure the opening chapter?",
-            "general", db, object(),  # cfg — not used because LLM calls are mocked
+            "general",
+            db,
+            object(),  # cfg — not used because LLM calls are mocked
             n_domains=5,
         )
 
@@ -132,9 +139,11 @@ def test_partial_failure_api_session_written_as_done(tmp_path):
 
 # ─── Test 2: total worker failure ────────────────────────────────────────────
 
+
 def test_total_worker_failure_raises_runtime_error(tmp_path):
     """run_brainstorm_session raises RuntimeError when all workers return None."""
     from orivellum.capabilities.brainstorm import run_brainstorm_session
+
     _, db = _make_app(tmp_path)
     work = db.create_work("All-Fail Work")
     session = db.create_brainstorm_session(
@@ -149,9 +158,12 @@ def test_total_worker_failure_raises_runtime_error(tmp_path):
     ):
         with pytest.raises(RuntimeError, match="All domain workers failed"):
             run_brainstorm_session(
-                session["id"], work["id"],
+                session["id"],
+                work["id"],
                 "Doomed session — every worker will fail",
-                "general", db, object(),
+                "general",
+                db,
+                object(),
                 n_domains=3,
             )
 
@@ -196,12 +208,11 @@ def test_failed_session_has_empty_ideas_list(tmp_path):
         )
 
     sessions = db.list_brainstorm_sessions(work["id"])
-    assert sessions[0]["ideas"] == [], (
-        "Failed session must have an empty ideas list"
-    )
+    assert sessions[0]["ideas"] == [], "Failed session must have an empty ideas list"
 
 
 # ─── Test 3: duplicate seed — intra-session idea deduplication ───────────────
+
 
 def test_deduplicate_removes_near_identical_ideas():
     """_deduplicate() removes near-duplicate idea texts, keeping the higher-scoring one.
@@ -213,13 +224,20 @@ def test_deduplicate_removes_near_identical_ideas():
     from orivellum.capabilities.brainstorm import _deduplicate, _new_idea
 
     # Two near-identical ideas — same meaning, slightly different wording
-    idea_a = _new_idea("ecology", "Use a cascade structure where each chapter feeds into the next like a food web.")
-    idea_b = _new_idea("music",   "Use a cascade structure where each chapter feeds into the next like a food web, building momentum.")
+    idea_a = _new_idea(
+        "ecology", "Use a cascade structure where each chapter feeds into the next like a food web."
+    )
+    idea_b = _new_idea(
+        "music",
+        "Use a cascade structure where each chapter feeds into the next like a food web, building momentum.",
+    )
     idea_a["originality"] = 0.6
     idea_b["originality"] = 0.9  # idea_b is better; dedup should keep it
 
     # Unrelated idea that must survive
-    idea_c = _new_idea("game theory", "Introduce a prisoner's dilemma between two competing narrators.")
+    idea_c = _new_idea(
+        "game theory", "Introduce a prisoner's dilemma between two competing narrators."
+    )
     idea_c["originality"] = 0.75
 
     result = _deduplicate([idea_a, idea_b, idea_c], threshold=0.5)
@@ -245,6 +263,7 @@ def test_deduplicate_with_duplicate_seed_prompt_session(tmp_path):
     Simulates two workers responding to the same seed with very similar phrasing.
     """
     from orivellum.capabilities.brainstorm import run_brainstorm_session
+
     _, db = _make_app(tmp_path)
     work = db.create_work("Dedup Session Work")
     session = db.create_brainstorm_session(
@@ -254,7 +273,9 @@ def test_deduplicate_with_duplicate_seed_prompt_session(tmp_path):
         n_domains=4,
     )
 
-    DUPLICATE_TEXT = "Open with a scene of high tension that immediately establishes the central conflict."
+    DUPLICATE_TEXT = (
+        "Open with a scene of high tension that immediately establishes the central conflict."
+    )
 
     call_count = {"n": 0}
     lock = threading.Lock()
@@ -270,7 +291,9 @@ def test_deduplicate_with_duplicate_seed_prompt_session(tmp_path):
             # Near-duplicate of the first (same words, one added at end)
             return DUPLICATE_TEXT + " Keep it brief."
         if n == 2:
-            return "Alternate between two timelines so the reader must piece together what happened."
+            return (
+                "Alternate between two timelines so the reader must piece together what happened."
+            )
         return "Open in medias res — then pause to lay out who everyone is and what they want."
 
     with (
@@ -279,9 +302,12 @@ def test_deduplicate_with_duplicate_seed_prompt_session(tmp_path):
         patch("orivellum.capabilities.brainstorm._score_usefulness", side_effect=_stub_usefulness),
     ):
         ideas = run_brainstorm_session(
-            session["id"], work["id"],
+            session["id"],
+            work["id"],
             "Structure the opening act",
-            "narrative_structure", db, object(),
+            "narrative_structure",
+            db,
+            object(),
             n_domains=4,
         )
 
@@ -299,6 +325,7 @@ def test_deduplicate_with_duplicate_seed_prompt_session(tmp_path):
 
 # ─── Test 4: session isolation — concurrent sessions don't interfere ──────────
 
+
 def test_two_sessions_for_same_work_are_independent(tmp_path):
     """Two brainstorm sessions for the same Work are stored and retrieved independently."""
     _, db = _make_app(tmp_path)
@@ -307,10 +334,24 @@ def test_two_sessions_for_same_work_are_independent(tmp_path):
     s1 = db.create_brainstorm_session(work["id"], "seed A", "general", 3)
     s2 = db.create_brainstorm_session(work["id"], "seed B", "general", 3)
 
-    idea_a = {"id": "aaa", "domain": "ecology", "text": "Idea A", "originality": 0.7,
-               "usefulness": 4, "on_pareto_front": True, "knowledge_item_id": None}
-    idea_b = {"id": "bbb", "domain": "music",   "text": "Idea B", "originality": 0.5,
-               "usefulness": 3, "on_pareto_front": False, "knowledge_item_id": None}
+    idea_a = {
+        "id": "aaa",
+        "domain": "ecology",
+        "text": "Idea A",
+        "originality": 0.7,
+        "usefulness": 4,
+        "on_pareto_front": True,
+        "knowledge_item_id": None,
+    }
+    idea_b = {
+        "id": "bbb",
+        "domain": "music",
+        "text": "Idea B",
+        "originality": 0.5,
+        "usefulness": 3,
+        "on_pareto_front": False,
+        "knowledge_item_id": None,
+    }
 
     db.update_brainstorm_session(s1["id"], status="done", ideas=[idea_a])
     db.update_brainstorm_session(s2["id"], status="failed", ideas=[])

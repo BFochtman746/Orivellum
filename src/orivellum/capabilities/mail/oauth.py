@@ -6,6 +6,7 @@ while A-01 polls for the token.
 
 Ref: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,8 +21,8 @@ from orivellum.capabilities.mail.models import MailStewardError
 logger = logging.getLogger("orivellum.mail.oauth")
 
 _DEVICE_CODE_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode"
-_TOKEN_URL       = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
-_TIMEOUT         = 15  # seconds for individual HTTP calls
+_TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+_TIMEOUT = 15  # seconds for individual HTTP calls
 
 
 def _client_id() -> str:
@@ -73,11 +74,14 @@ def poll_for_token(device_code: str, interval: int = 5, max_wait: int = 300) -> 
     while time.monotonic() < deadline:
         time.sleep(interval)
         with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.post(url, data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                "client_id": _client_id(),
-                "device_code": device_code,
-            })
+            resp = client.post(
+                url,
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    "client_id": _client_id(),
+                    "device_code": device_code,
+                },
+            )
         data = resp.json()
         if resp.status_code == 200 and "access_token" in data:
             logger.info("mail.oauth: token acquired successfully")
@@ -102,15 +106,20 @@ def refresh_access_token(refresh_token: str) -> dict[str, Any]:
     """
     url = _TOKEN_URL.format(tenant=_tenant())
     with httpx.Client(timeout=_TIMEOUT) as client:
-        resp = client.post(url, data={
-            "grant_type": "refresh_token",
-            "client_id": _client_id(),
-            "refresh_token": refresh_token,
-            "scope": _scopes(),
-        })
+        resp = client.post(
+            url,
+            data={
+                "grant_type": "refresh_token",
+                "client_id": _client_id(),
+                "refresh_token": refresh_token,
+                "scope": _scopes(),
+            },
+        )
     if resp.status_code != 200:
         raise MailStewardError(f"Token refresh failed: {resp.status_code} {resp.text[:200]}")
     data = resp.json()
     if "error" in data:
-        raise MailStewardError(f"Token refresh error: {data.get('error_description', data['error'])}")
+        raise MailStewardError(
+            f"Token refresh error: {data.get('error_description', data['error'])}"
+        )
     return data

@@ -1,4 +1,5 @@
 """Backups routes — /api/backups/*"""
+
 from __future__ import annotations
 
 import zipfile
@@ -11,6 +12,8 @@ from fastapi.responses import FileResponse
 from orivellum.api._deps import get_config, get_db, require_auth
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+
+
 def _backup_dir() -> Path:
     cfg = get_config()
     p = Path(cfg.data_dir) / "backups"
@@ -25,11 +28,13 @@ def list_backups():
     result = []
     for f in files[:50]:
         stat = f.stat()
-        result.append({
-            "name": f.name,
-            "size_bytes": stat.st_size,
-            "created_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
-        })
+        result.append(
+            {
+                "name": f.name,
+                "size_bytes": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+            }
+        )
     return {"backups": result, "count": len(result)}
 
 
@@ -56,6 +61,7 @@ def create_backup():
         # omit -wal contents if WAL is ever enabled on these files).
         import sqlite3
         import tempfile
+
         for side in ("atelier.db", "press.db"):
             sp = data_dir / side
             if not sp.exists():
@@ -76,6 +82,7 @@ def create_backup():
         # Resolve against the repo ROOT (same anchor load_config uses), never
         # the process CWD, which differs under workflow runners.
         from orivellum.configuration.config import ROOT as _root
+
         cfg_file = _root / "config.yaml"
         if cfg_file.exists():
             zf.write(cfg_file, "config.yaml")
@@ -119,10 +126,14 @@ def stage_restore(name: str):
     cfg = get_config()
     pending = Path(cfg.data_dir) / "restore-pending.zip"
     import shutil
+
     shutil.copy2(src, pending)
-    return {"staged": True, "backup": name,
-            "detail": "Restore staged. It will be applied the next time the server starts. "
-                      "Current data will be kept in a safety snapshot."}
+    return {
+        "staged": True,
+        "backup": name,
+        "detail": "Restore staged. It will be applied the next time the server starts. "
+        "Current data will be kept in a safety snapshot.",
+    }
 
 
 @router.get("/backups/restore/pending")

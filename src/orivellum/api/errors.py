@@ -10,6 +10,7 @@ provider URLs, …).
 Deliberate 4xx validation messages are *not* the target of this helper and
 should keep returning their explicit, user-facing detail.
 """
+
 from __future__ import annotations
 
 import logging

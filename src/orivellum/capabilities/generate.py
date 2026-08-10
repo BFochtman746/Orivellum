@@ -10,6 +10,7 @@ Each generator:
 No-pollution guarantee: generated outputs are always registered as
 ARTIFACT tier — they are never promoted into a Work's canonical corpus.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -19,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from orivellum.version import code_version as _code_version
+
 if TYPE_CHECKING:
     from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
@@ -26,6 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("orivellum.generate")
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
+
 
 def _now_label() -> str:
     return datetime.now(UTC).strftime("%Y%m%d_%H%M")
@@ -65,6 +69,7 @@ def _register_output(
     # files stored outside lib_root (outputs/generate/...) and returns the correct
     # lib-root-relative path so Library downloads, reprocess, and resolution all work.
     from orivellum.capabilities.persist import _ensure_lib_symlink
+
     lib_root = Path(cfg.data_dir) / "library"
     rel = _ensure_lib_symlink(doc_path, lib_root)
     sha = hashlib.sha256(doc_path.read_bytes()).hexdigest() if doc_path.exists() else None
@@ -82,6 +87,7 @@ def _register_output(
             "origin_id": work_id,
             "format": format_label,
             "generated_at": datetime.now(UTC).isoformat(),
+            "code_version": _code_version(),
         },
         tier="artifact",
     )
@@ -131,6 +137,7 @@ def _register_output(
     def _embed_bg(_doc_id=doc_id, _db=db) -> None:
         try:
             from orivellum.capabilities.embeddings import embed_chunks_for_doc
+
             embed_chunks_for_doc(_doc_id, _db)
         except Exception as _exc:
             logger.debug("_register_output background embed failed (non-fatal): %s", _exc)
@@ -154,11 +161,13 @@ def _format_knowledge_text(items: list[dict], max_items: int = 500) -> str:
 
 def _slug(text: str, max_len: int = 40) -> str:
     import re
+
     s = re.sub(r"[^a-z0-9]+", "_", text.lower().strip())
     return s[:max_len].strip("_")
 
 
 # ── Excel ──────────────────────────────────────────────────────────────────────
+
 
 def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[Path, str]:
     """Generate an xlsx workbook summarising a Work; return (file_path, doc_id)."""
@@ -224,6 +233,7 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
 
     # ── Summary chart: contents at a glance ──
     from openpyxl.chart import BarChart, Reference
+
     chart = BarChart()
     chart.type = "col"
     chart.title = "Work contents"
@@ -240,13 +250,15 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
     _apply_header(ws2, headers2)
     for i, item in enumerate(knowledge, 1):
         text = (item.get("text") or "").replace("\n", " ").strip()[:300]
-        ws2.append([
-            i,
-            item.get("kind", "note"),
-            text,
-            round(item.get("confidence", 0) * 100) if item.get("confidence") else "",
-            (item.get("created_at") or "")[:10],
-        ])
+        ws2.append(
+            [
+                i,
+                item.get("kind", "note"),
+                text,
+                round(item.get("confidence", 0) * 100) if item.get("confidence") else "",
+                (item.get("created_at") or "")[:10],
+            ]
+        )
     for row in ws2.iter_rows(min_row=2):
         for cell in row:
             cell.border = border
@@ -260,13 +272,15 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
     headers3 = ["#", "Title", "Kind", "Readiness", "Created"]
     _apply_header(ws3, headers3)
     for i, d in enumerate(doc_list, 1):
-        ws3.append([
-            i,
-            (d.get("title") or "")[:80],
-            d.get("kind", ""),
-            d.get("readiness", ""),
-            (d.get("created_at") or "")[:10],
-        ])
+        ws3.append(
+            [
+                i,
+                (d.get("title") or "")[:80],
+                d.get("kind", ""),
+                d.get("readiness", ""),
+                (d.get("created_at") or "")[:10],
+            ]
+        )
     for row in ws3.iter_rows(min_row=2):
         for cell in row:
             cell.border = border
@@ -280,13 +294,15 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
     headers4 = ["#", "Status", "Priority", "Text", "Created"]
     _apply_header(ws4, headers4)
     for i, t in enumerate(tasks, 1):
-        ws4.append([
-            i,
-            t.get("status", ""),
-            t.get("priority", 0),
-            (t.get("text") or "")[:200],
-            (t.get("created_at") or "")[:10],
-        ])
+        ws4.append(
+            [
+                i,
+                t.get("status", ""),
+                t.get("priority", 0),
+                (t.get("text") or "")[:200],
+                (t.get("created_at") or "")[:10],
+            ]
+        )
     for row in ws4.iter_rows(min_row=2):
         for cell in row:
             cell.border = border
@@ -310,6 +326,7 @@ def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple
 
 
 # ── DOCX ───────────────────────────────────────────────────────────────────────
+
 
 def generate_docx_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[Path, str]:
     """Generate a .docx research report from a Work; return (file_path, doc_id)."""
@@ -367,6 +384,7 @@ def generate_docx_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) ->
 
     # ── Knowledge by kind ──
     from collections import defaultdict
+
     by_kind: dict[str, list[dict]] = defaultdict(list)
     for item in knowledge:
         by_kind[item.get("kind", "note")].append(item)
@@ -425,6 +443,7 @@ def generate_docx_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) ->
 
 # ── PDF ────────────────────────────────────────────────────────────────────────
 
+
 def generate_pdf_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[Path, str]:
     """Generate a PDF research report from a Work; return (file_path, doc_id)."""
     from reportlab.lib import colors
@@ -470,33 +489,53 @@ def generate_pdf_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> 
 
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
-        "CustomTitle", parent=styles["Title"],
-        fontSize=28, spaceAfter=12, textColor=colors.HexColor("#0F172A"),
+        "CustomTitle",
+        parent=styles["Title"],
+        fontSize=28,
+        spaceAfter=12,
+        textColor=colors.HexColor("#0F172A"),
     )
     h1_style = ParagraphStyle(
-        "H1", parent=styles["Heading1"],
-        fontSize=16, spaceBefore=18, spaceAfter=8,
-        textColor=colors.HexColor("#1E293B"), borderPad=4,
+        "H1",
+        parent=styles["Heading1"],
+        fontSize=16,
+        spaceBefore=18,
+        spaceAfter=8,
+        textColor=colors.HexColor("#1E293B"),
+        borderPad=4,
     )
     h2_style = ParagraphStyle(
-        "H2", parent=styles["Heading2"],
-        fontSize=13, spaceBefore=14, spaceAfter=6,
+        "H2",
+        parent=styles["Heading2"],
+        fontSize=13,
+        spaceBefore=14,
+        spaceAfter=6,
         textColor=colors.HexColor("#334155"),
     )
     ParagraphStyle(
-        "Body", parent=styles["Normal"],
-        fontSize=10, leading=15, spaceAfter=4,
+        "Body",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=15,
+        spaceAfter=4,
         textColor=colors.HexColor("#374151"),
     )
     bullet_style = ParagraphStyle(
-        "Bullet", parent=styles["Normal"],
-        fontSize=10, leading=14, leftIndent=20,
-        bulletIndent=8, spaceAfter=3,
+        "Bullet",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=14,
+        leftIndent=20,
+        bulletIndent=8,
+        spaceAfter=3,
         textColor=colors.HexColor("#374151"),
     )
     meta_style = ParagraphStyle(
-        "Meta", parent=styles["Normal"],
-        fontSize=9, textColor=colors.HexColor("#94A3B8"), spaceAfter=6,
+        "Meta",
+        parent=styles["Normal"],
+        fontSize=9,
+        textColor=colors.HexColor("#94A3B8"),
+        spaceAfter=6,
     )
 
     def _xml(s: str) -> str:
@@ -511,10 +550,12 @@ def generate_pdf_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> 
     desc = work.get("description") or ""
     if desc:
         story.append(Paragraph(f"<i>{_xml(desc[:300])}</i>", meta_style))
-    story.append(Paragraph(
-        f"Generated {datetime.now(UTC).strftime('%B %d, %Y')}",
-        meta_style,
-    ))
+    story.append(
+        Paragraph(
+            f"Generated {datetime.now(UTC).strftime('%B %d, %Y')}",
+            meta_style,
+        )
+    )
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#E2E8F0")))
     story.append(Spacer(1, 0.5 * cm))
 
@@ -529,24 +570,29 @@ def generate_pdf_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> 
         ],
     ]
     tbl = Table(tbl_data, colWidths=[5 * cm, 5 * cm, 5 * cm])
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
     story.append(tbl)
     story.append(Spacer(1, 0.5 * cm))
 
     # Knowledge by kind
     story.append(Paragraph("Knowledge Base", h1_style))
     from collections import defaultdict
+
     by_kind: dict[str, list[dict]] = defaultdict(list)
     for item in knowledge:
         by_kind[item.get("kind", "note")].append(item)
@@ -573,23 +619,34 @@ def generate_pdf_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> 
         story.append(Paragraph("Source Documents", h1_style))
         doc_data = [["Title", "Kind", "Status"]]
         for d in doc_list[:40]:
-            doc_data.append([
-                _xml((d.get("title") or "")[:60]),
-                _xml(d.get("kind", "")),
-                _xml(d.get("readiness", "")),
-            ])
+            doc_data.append(
+                [
+                    _xml((d.get("title") or "")[:60]),
+                    _xml(d.get("kind", "")),
+                    _xml(d.get("readiness", "")),
+                ]
+            )
         doc_tbl = Table(doc_data, colWidths=[10 * cm, 3 * cm, 3 * cm])
-        doc_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]))
+        doc_tbl.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -1),
+                        [colors.white, colors.HexColor("#F8FAFC")],
+                    ),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
         story.append(doc_tbl)
 
     # Tasks
@@ -611,6 +668,7 @@ def generate_pdf_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> 
 
 
 # ── PPTX ───────────────────────────────────────────────────────────────────────
+
 
 def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[Path, str]:
     """Generate a PowerPoint deck from a Work; return (file_path, doc_id)."""
@@ -637,11 +695,11 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
     prs.slide_height = Inches(7.5)
 
     # ── Color palette ──
-    DARK_BG   = RGBColor(0x0F, 0x17, 0x2A)
-    LIGHT_BG  = RGBColor(0xF8, 0xFA, 0xFC)
-    ACCENT    = RGBColor(0x60, 0x81, 0xEB)
-    WHITE     = RGBColor(0xFF, 0xFF, 0xFF)
-    GRAY      = RGBColor(0x64, 0x74, 0x8B)
+    DARK_BG = RGBColor(0x0F, 0x17, 0x2A)
+    LIGHT_BG = RGBColor(0xF8, 0xFA, 0xFC)
+    ACCENT = RGBColor(0x60, 0x81, 0xEB)
+    WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+    GRAY = RGBColor(0x64, 0x74, 0x8B)
     DARK_TEXT = RGBColor(0x1E, 0x29, 0x3B)
 
     slide_layouts = prs.slide_layouts
@@ -653,9 +711,19 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
         fill.solid()
         fill.fore_color.rgb = color
 
-    def _add_text_box(slide, text: str, left, top, width, height,
-                      size: int = 14, bold: bool = False, color: RGBColor = WHITE,
-                      align = PP_ALIGN.LEFT, wrap: bool = True) -> None:
+    def _add_text_box(
+        slide,
+        text: str,
+        left,
+        top,
+        width,
+        height,
+        size: int = 14,
+        bold: bool = False,
+        color: RGBColor = WHITE,
+        align=PP_ALIGN.LEFT,
+        wrap: bool = True,
+    ) -> None:
         txBox = slide.shapes.add_textbox(left, top, width, height)
         tf = txBox.text_frame
         tf.word_wrap = wrap
@@ -675,29 +743,56 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
     _add_text_box(
         slide1,
         work.get("title", "Research Report"),
-        Inches(1), Inches(2.2), Inches(11.33), Inches(1.8),
-        size=40, bold=True, color=WHITE, align=PP_ALIGN.CENTER,
+        Inches(1),
+        Inches(2.2),
+        Inches(11.33),
+        Inches(1.8),
+        size=40,
+        bold=True,
+        color=WHITE,
+        align=PP_ALIGN.CENTER,
     )
     desc = work.get("description") or ""
     if desc:
         _add_text_box(
             slide1,
             desc[:200],
-            Inches(2), Inches(4.2), Inches(9.33), Inches(1),
-            size=16, bold=False, color=ACCENT, align=PP_ALIGN.CENTER,
+            Inches(2),
+            Inches(4.2),
+            Inches(9.33),
+            Inches(1),
+            size=16,
+            bold=False,
+            color=ACCENT,
+            align=PP_ALIGN.CENTER,
         )
     _add_text_box(
         slide1,
         f"Generated {datetime.now(UTC).strftime('%B %d, %Y')}",
-        Inches(1), Inches(6.6), Inches(11.33), Inches(0.5),
-        size=11, bold=False, color=GRAY, align=PP_ALIGN.CENTER,
+        Inches(1),
+        Inches(6.6),
+        Inches(11.33),
+        Inches(0.5),
+        size=11,
+        bold=False,
+        color=GRAY,
+        align=PP_ALIGN.CENTER,
     )
 
     # ── Slide 2: Overview ──
     slide2 = prs.slides.add_slide(slide_layouts[6])
     _bg_slide(slide2, LIGHT_BG)
-    _add_text_box(slide2, "Overview", Inches(1), Inches(0.5), Inches(11.33), Inches(0.8),
-                  size=28, bold=True, color=DARK_TEXT)
+    _add_text_box(
+        slide2,
+        "Overview",
+        Inches(1),
+        Inches(0.5),
+        Inches(11.33),
+        Inches(0.8),
+        size=28,
+        bold=True,
+        color=DARK_TEXT,
+    )
     stats = [
         (str(len(doc_list)), "Documents"),
         (str(len(knowledge)), "Knowledge Items"),
@@ -727,6 +822,7 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
 
     # ── Slides 3+: Knowledge by kind ──
     from collections import defaultdict
+
     by_kind: dict[str, list[dict]] = defaultdict(list)
     for item in knowledge:
         by_kind[item.get("kind", "note")].append(item)
@@ -742,9 +838,15 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
         slide = prs.slides.add_slide(slide_layouts[6])
         _bg_slide(slide, LIGHT_BG)
         _add_text_box(
-            slide, f"{kind.title()}s",
-            Inches(1), Inches(0.4), Inches(11.33), Inches(0.8),
-            size=26, bold=True, color=DARK_TEXT,
+            slide,
+            f"{kind.title()}s",
+            Inches(1),
+            Inches(0.4),
+            Inches(11.33),
+            Inches(0.8),
+            size=26,
+            bold=True,
+            color=DARK_TEXT,
         )
         # Bullet list
         txBox = slide.shapes.add_textbox(Inches(1), Inches(1.4), Inches(11.33), Inches(5.5))
@@ -771,9 +873,15 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
         slide_d = prs.slides.add_slide(slide_layouts[6])
         _bg_slide(slide_d, DARK_BG)
         _add_text_box(
-            slide_d, "Source Documents",
-            Inches(1), Inches(0.4), Inches(11.33), Inches(0.8),
-            size=26, bold=True, color=WHITE,
+            slide_d,
+            "Source Documents",
+            Inches(1),
+            Inches(0.4),
+            Inches(11.33),
+            Inches(0.8),
+            size=26,
+            bold=True,
+            color=WHITE,
         )
         txBox = slide_d.shapes.add_textbox(Inches(1), Inches(1.4), Inches(11.33), Inches(5.5))
         tf = txBox.text_frame
@@ -799,9 +907,15 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
         slide_t = prs.slides.add_slide(slide_layouts[6])
         _bg_slide(slide_t, DARK_BG)
         _add_text_box(
-            slide_t, "Open Tasks",
-            Inches(1), Inches(0.4), Inches(11.33), Inches(0.8),
-            size=26, bold=True, color=WHITE,
+            slide_t,
+            "Open Tasks",
+            Inches(1),
+            Inches(0.4),
+            Inches(11.33),
+            Inches(0.8),
+            size=26,
+            bold=True,
+            color=WHITE,
         )
         txBox = slide_t.shapes.add_textbox(Inches(1), Inches(1.4), Inches(11.33), Inches(5.5))
         tf = txBox.text_frame
@@ -834,6 +948,7 @@ def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[
 
 
 # ── Bundle (ZIP) ───────────────────────────────────────────────────────────────
+
 
 def bundle_files(
     file_paths: list[str],
@@ -898,6 +1013,7 @@ def bundle_files(
 
 # ── Prompt-driven generation ───────────────────────────────────────────────────
 
+
 def _build_docx_from_data(data: dict, out_path: Path) -> str:
     """Create a DOCX from LLM-structured JSON and return plain-text content."""
     from docx import Document as _Doc
@@ -930,9 +1046,12 @@ def _build_pdf_from_data(data: dict, out_path: Path) -> str:
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
     doc = SimpleDocTemplate(
-        str(out_path), pagesize=A4,
-        leftMargin=2.5 * cm, rightMargin=2.5 * cm,
-        topMargin=2.5 * cm, bottomMargin=2.5 * cm,
+        str(out_path),
+        pagesize=A4,
+        leftMargin=2.5 * cm,
+        rightMargin=2.5 * cm,
+        topMargin=2.5 * cm,
+        bottomMargin=2.5 * cm,
     )
     styles = getSampleStyleSheet()
     story = []
@@ -951,7 +1070,12 @@ def _build_pdf_from_data(data: dict, out_path: Path) -> str:
             text_parts.append(heading)
         for para in section.get("paragraphs", []):
             if str(para).strip():
-                story.append(Paragraph(str(para).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), styles["BodyText"]))
+                story.append(
+                    Paragraph(
+                        str(para).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
+                        styles["BodyText"],
+                    )
+                )
                 story.append(Spacer(1, 0.15 * cm))
                 text_parts.append(str(para))
 
@@ -965,11 +1089,11 @@ def _build_pptx_from_data(data: dict, out_path: Path) -> str:
     from pptx.util import Inches
 
     prs = Presentation()
-    prs.slide_width  = Inches(13.33)
+    prs.slide_width = Inches(13.33)
     prs.slide_height = Inches(7.5)
 
     text_parts = []
-    title_str    = str(data.get("title", "Presentation"))
+    title_str = str(data.get("title", "Presentation"))
     subtitle_str = str(data.get("subtitle", ""))
 
     # ── Title slide ──
@@ -1109,8 +1233,8 @@ def generate_from_prompt(
 
     result = llm_call(
         messages=[
-            {"role": "system",  "content": system},
-            {"role": "user",    "content": prompt},
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
         ],
         cfg=cfg,
         db=db,
@@ -1137,7 +1261,7 @@ def generate_from_prompt(
     # ── Build file ──
     builders = {
         "docx": _build_docx_from_data,
-        "pdf":  _build_pdf_from_data,
+        "pdf": _build_pdf_from_data,
         "pptx": _build_pptx_from_data,
         "xlsx": _build_xlsx_from_data,
     }

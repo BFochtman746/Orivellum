@@ -6,6 +6,7 @@ request time so their responses are always up-to-date.
 
 To add a new capability: append an entry to CAPABILITY_REGISTRY.
 """
+
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------

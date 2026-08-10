@@ -36,6 +36,7 @@ is a guard against accidental damage from generated code on the operator's
 own machine, not a hostile-code security boundary; Orivellum is a
 single-operator local system and the operator reviews what they run.
 """
+
 from __future__ import annotations
 
 import ast
@@ -56,12 +57,13 @@ KINDS = ("xlsx", "code")
 _SCRIPT_TIMEOUT_S = 120
 _MAX_FIX_RETRIES = 2
 _MAX_OUTPUT_FILES = 200
-_MAX_OUTPUT_BYTES = 25 * 1024 * 1024      # 25 MB per version
-_CODE_CONTEXT_PER_FILE = 4000             # chars of each source file shown to the LLM
+_MAX_OUTPUT_BYTES = 25 * 1024 * 1024  # 25 MB per version
+_CODE_CONTEXT_PER_FILE = 4000  # chars of each source file shown to the LLM
 _CODE_CONTEXT_TOTAL = 24000
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
+
 
 def _workbench_root(cfg) -> pathlib.Path:
     return pathlib.Path(getattr(cfg, "data_dir", "data")) / "workbench"
@@ -81,6 +83,7 @@ def archives_dir(cfg) -> pathlib.Path:
 
 # ── File helpers ──────────────────────────────────────────────────────────────
 
+
 def _sha256(path: pathlib.Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -94,12 +97,18 @@ def _snapshot(dir_path: pathlib.Path) -> list[dict]:
     out = []
     for p in sorted(dir_path.rglob("*")):
         if p.is_file():
-            out.append({"name": str(p.relative_to(dir_path)),
-                        "size": p.stat().st_size, "sha256": _sha256(p)})
+            out.append(
+                {
+                    "name": str(p.relative_to(dir_path)),
+                    "size": p.stat().st_size,
+                    "sha256": _sha256(p),
+                }
+            )
     return out
 
 
 # ── Input description (what the LLM sees about the current version) ─────────
+
 
 def _describe_inputs(kind: str, inputs: pathlib.Path) -> str:
     files = sorted(p for p in inputs.rglob("*") if p.is_file())
@@ -108,6 +117,7 @@ def _describe_inputs(kind: str, inputs: pathlib.Path) -> str:
     lines: list[str] = []
     if kind == "xlsx":
         from openpyxl import load_workbook
+
         for p in files:
             rel = p.relative_to(inputs)
             if p.suffix.lower() != ".xlsx":
@@ -119,10 +129,12 @@ def _describe_inputs(kind: str, inputs: pathlib.Path) -> str:
                     header = []
                     for row in ws.iter_rows(min_row=1, max_row=1, values_only=True):
                         header = [str(v) for v in row if v is not None][:12]
-                    lines.append(f"- {rel} :: sheet '{ws.title}' dims={ws.calculate_dimension()}"
-                                 f" headers={header}")
+                    lines.append(
+                        f"- {rel} :: sheet '{ws.title}' dims={ws.calculate_dimension()}"
+                        f" headers={header}"
+                    )
                 wb.close()
-            except Exception as exc:                              # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 lines.append(f"- {rel} (unreadable: {exc})")
     else:
         budget = _CODE_CONTEXT_TOTAL
@@ -130,7 +142,7 @@ def _describe_inputs(kind: str, inputs: pathlib.Path) -> str:
             rel = p.relative_to(inputs)
             try:
                 text = p.read_text(encoding="utf-8", errors="replace")
-            except Exception:                                     # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 lines.append(f"- {rel} (binary, {p.stat().st_size} bytes)")
                 continue
             take = min(_CODE_CONTEXT_PER_FILE, max(0, budget))
@@ -182,8 +194,8 @@ def _user_prompt(kind: str, brief: str, instruction: str, inputs_desc: str) -> s
 
 # ── Sandbox execution (reuses the Workshop's hardened sandbox pieces) ────────
 
-def _run_build_script(script: str, workdir: pathlib.Path, cfg, db,
-                      request: str) -> dict:
+
+def _run_build_script(script: str, workdir: pathlib.Path, cfg, db, request: str) -> dict:
     """Run *script* sandboxed with ./inputs and ./out available under
     *workdir*. Retries with LLM correction, same policy as the Workshop."""
     from orivellum.capabilities.llm import llm_call
@@ -203,8 +215,11 @@ def _run_build_script(script: str, workdir: pathlib.Path, cfg, db,
         try:
             result = subprocess.run(
                 [sys.executable, "-I", str(runner_path), str(script_path)],
-                capture_output=True, text=True, timeout=_SCRIPT_TIMEOUT_S,
-                cwd=str(workdir), env=_sandbox_env(str(workdir)),
+                capture_output=True,
+                text=True,
+                timeout=_SCRIPT_TIMEOUT_S,
+                cwd=str(workdir),
+                env=_sandbox_env(str(workdir)),
                 preexec_fn=_sandbox_preexec if sys.platform != "win32" else None,
             )
         except subprocess.TimeoutExpired:
@@ -213,18 +228,31 @@ def _run_build_script(script: str, workdir: pathlib.Path, cfg, db,
         if result.returncode == 0:
             return {"ok": True, "stdout": stdout, "script": current}
         if attempt >= _MAX_FIX_RETRIES:
-            return {"ok": False, "error": f"Build failed after {attempt + 1} attempt(s):"
-                                          f"\n{stderr[-1000:]}", "stdout": stdout}
+            return {
+                "ok": False,
+                "error": f"Build failed after {attempt + 1} attempt(s):\n{stderr[-1000:]}",
+                "stdout": stdout,
+            }
         logger.warning("Workbench build attempt %d failed: %s", attempt + 1, stderr[:400])
         fix = llm_call(
-            [{"role": "system", "content":
-                "You are a Python debugging expert. A project build script failed. "
-                "Fix ONLY the errors shown. Return ONLY the corrected raw script."},
-             {"role": "user", "content":
-                f"Request:\n{request[:500]}\n\nScript:\n```python\n{current}\n```\n\n"
-                f"Error:\n{stderr[-2000:]}"}],
-            cfg=cfg, db=db, purpose="workbench.fix",
-            temperature=0.1, max_tokens=6000, timeout=90,
+            [
+                {
+                    "role": "system",
+                    "content": "You are a Python debugging expert. A project build script failed. "
+                    "Fix ONLY the errors shown. Return ONLY the corrected raw script.",
+                },
+                {
+                    "role": "user",
+                    "content": f"Request:\n{request[:500]}\n\nScript:\n```python\n{current}\n```\n\n"
+                    f"Error:\n{stderr[-2000:]}",
+                },
+            ],
+            cfg=cfg,
+            db=db,
+            purpose="workbench.fix",
+            temperature=0.1,
+            max_tokens=6000,
+            timeout=90,
         )
         if not (fix.ok and fix.text):
             return {"ok": False, "error": f"Fix generation failed: {fix.error}"}
@@ -233,6 +261,7 @@ def _run_build_script(script: str, workdir: pathlib.Path, cfg, db,
 
 
 # ── Verification ──────────────────────────────────────────────────────────────
+
 
 def _verify_output(kind: str, out_dir: pathlib.Path) -> tuple[bool, dict]:
     files = [p for p in out_dir.rglob("*") if p.is_file()]
@@ -252,6 +281,7 @@ def _verify_output(kind: str, out_dir: pathlib.Path) -> tuple[bool, dict]:
     problems: list[str] = []
     if kind == "xlsx":
         from openpyxl import load_workbook
+
         workbooks = [p for p in files if p.suffix.lower() == ".xlsx"]
         checks["workbooks"] = len(workbooks)
         if not workbooks:
@@ -261,9 +291,10 @@ def _verify_output(kind: str, out_dir: pathlib.Path) -> tuple[bool, dict]:
             for data_only in (False, True):
                 try:
                     load_workbook(p, data_only=data_only).close()
-                except Exception as exc:                          # noqa: BLE001
-                    problems.append(f"{rel} fails to load "
-                                    f"({'values' if data_only else 'formulas'}): {exc}")
+                except Exception as exc:  # noqa: BLE001
+                    problems.append(
+                        f"{rel} fails to load ({'values' if data_only else 'formulas'}): {exc}"
+                    )
                     break
     else:
         for p in files:
@@ -276,13 +307,14 @@ def _verify_output(kind: str, out_dir: pathlib.Path) -> tuple[bool, dict]:
             elif p.suffix == ".json":
                 try:
                     json.loads(p.read_text(encoding="utf-8", errors="replace"))
-                except Exception as exc:                          # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     problems.append(f"{rel}: invalid JSON: {exc}")
     checks["problems"] = problems
     return not problems, checks
 
 
 # ── Main entry points ─────────────────────────────────────────────────────────
+
 
 def run_build(db, cfg, project_id: str, instruction: str) -> None:
     """Build the next version of a project. Runs on the background executor.
@@ -314,11 +346,19 @@ def run_build(db, cfg, project_id: str, instruction: str) -> None:
 
             desc = _describe_inputs(proj["kind"], inputs)
             gen = llm_call(
-                [{"role": "system", "content": _system_prompt(proj["kind"])},
-                 {"role": "user", "content": _user_prompt(
-                     proj["kind"], proj["brief"], instruction, desc)}],
-                cfg=cfg, db=db, purpose="workbench.build",
-                temperature=0.2, max_tokens=8000, timeout=180,
+                [
+                    {"role": "system", "content": _system_prompt(proj["kind"])},
+                    {
+                        "role": "user",
+                        "content": _user_prompt(proj["kind"], proj["brief"], instruction, desc),
+                    },
+                ],
+                cfg=cfg,
+                db=db,
+                purpose="workbench.build",
+                temperature=0.2,
+                max_tokens=8000,
+                timeout=180,
             )
             if not (gen.ok and gen.text):
                 raise RuntimeError(f"model call failed: {gen.error or 'empty reply'}")
@@ -330,19 +370,19 @@ def run_build(db, cfg, project_id: str, instruction: str) -> None:
 
             ok, checks = _verify_output(proj["kind"], out)
             if not ok:
-                raise RuntimeError("verification failed: "
-                                   + "; ".join(checks.get("problems") or
-                                               [checks.get("error", "unknown")]))
+                raise RuntimeError(
+                    "verification failed: "
+                    + "; ".join(checks.get("problems") or [checks.get("error", "unknown")])
+                )
 
             # Accept: publish files FIRST (staging dir + atomic rename), and
             # only then commit the version row — a crash can leave an unused
             # staging dir behind, but never a version row without files.
             files = _snapshot(out)
             note = (run.get("stdout") or "").strip()[:500]
-            row = _publish_version(db, cfg, project_id, out, instruction,
-                                   files, checks, note)
+            row = _publish_version(db, cfg, project_id, out, instruction, files, checks, note)
         logger.info("Workbench %s built v%d", project_id, row["version_no"])
-    except Exception as exc:                                      # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         # Surfaced to the user on the project row — never swallowed.
         logger.exception("Workbench build failed for %s", project_id)
         db.update_wb_project(project_id, last_error=str(exc)[:500])
@@ -350,20 +390,29 @@ def run_build(db, cfg, project_id: str, instruction: str) -> None:
         db.update_wb_project(project_id, building=0)
 
 
-def _publish_version(db, cfg, project_id: str, src_dir: pathlib.Path,
-                     instruction: str, files: list[dict],
-                     checks: dict | None, note: str = "") -> dict:
+def _publish_version(
+    db,
+    cfg,
+    project_id: str,
+    src_dir: pathlib.Path,
+    instruction: str,
+    files: list[dict],
+    checks: dict | None,
+    note: str = "",
+) -> dict:
     """Copy *src_dir* into the project as the next version: stage, insert the
     row, atomically rename staging → v{n}. If the rename fails the row is
     deleted again, so a verified row always has its files."""
     import uuid as _uuid_mod
+
     pdir = project_dir(cfg, project_id)
     pdir.mkdir(parents=True, exist_ok=True)
     staging = pdir / f".staging-{_uuid_mod.uuid4().hex}"
     shutil.copytree(src_dir, staging)
     try:
-        row = db.create_wb_version(project_id, instruction, files,
-                                   checks=checks, verdict="verified", note=note)
+        row = db.create_wb_version(
+            project_id, instruction, files, checks=checks, verdict="verified", note=note
+        )
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -384,9 +433,9 @@ def revert_to(db, cfg, project_id: str, version_no: int) -> dict:
     if not src.is_dir():
         raise FileNotFoundError(f"version v{version_no} has no files on disk")
     files = _snapshot(src)
-    return _publish_version(db, cfg, project_id, src,
-                            f"Revert to v{version_no}", files,
-                            {"reverted_from": version_no})
+    return _publish_version(
+        db, cfg, project_id, src, f"Revert to v{version_no}", files, {"reverted_from": version_no}
+    )
 
 
 def archive_project(db, cfg, project_id: str) -> str:
@@ -399,19 +448,33 @@ def archive_project(db, cfg, project_id: str) -> str:
         raise ValueError("nothing to archive — the project has no versions")
 
     archives_dir(cfg).mkdir(parents=True, exist_ok=True)
-    safe_title = "".join(c if c.isalnum() or c in "-_" else "-"
-                         for c in proj["title"])[:60] or "project"
+    safe_title = (
+        "".join(c if c.isalnum() or c in "-_" else "-" for c in proj["title"])[:60] or "project"
+    )
     zip_path = archives_dir(cfg) / f"{safe_title}_{project_id[:8]}.zip"
 
+    from orivellum.version import code_version
+
     manifest = {
-        "project": {"id": proj["id"], "title": proj["title"], "kind": proj["kind"],
-                    "brief": proj["brief"], "created_at": proj["created_at"]},
-        "archived_at": __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc).isoformat(),
+        "code_version": code_version(),
+        "project": {
+            "id": proj["id"],
+            "title": proj["title"],
+            "kind": proj["kind"],
+            "brief": proj["brief"],
+            "created_at": proj["created_at"],
+        },
+        "archived_at": __import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .isoformat(),
         "versions": [
-            {"version_no": v["version_no"], "instruction": v["instruction"],
-             "verdict": v["verdict"], "created_at": v["created_at"],
-             "files": json.loads(v["files_json"] or "[]")}
+            {
+                "version_no": v["version_no"],
+                "instruction": v["instruction"],
+                "verdict": v["verdict"],
+                "created_at": v["created_at"],
+                "files": json.loads(v["files_json"] or "[]"),
+            }
             for v in versions
         ],
     }
@@ -425,8 +488,10 @@ def archive_project(db, cfg, project_id: str) -> str:
             if not p.is_file():
                 raise RuntimeError(f"v{v['version_no']}/{f['name']} is missing on disk")
             if _sha256(p) != f["sha256"]:
-                raise RuntimeError(f"v{v['version_no']}/{f['name']} does not match "
-                                   "its recorded hash — refusing to archive")
+                raise RuntimeError(
+                    f"v{v['version_no']}/{f['name']} does not match "
+                    "its recorded hash — refusing to archive"
+                )
 
     tmp_path = zip_path.with_suffix(".zip.part")
     with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -439,8 +504,7 @@ def archive_project(db, cfg, project_id: str) -> str:
                 if p.is_file():
                     z.write(p, f"v{v['version_no']}/{p.relative_to(vdir)}")
     tmp_path.replace(zip_path)
-    db.update_wb_project(project_id, status="archived",
-                         archive_path=str(zip_path))
+    db.update_wb_project(project_id, status="archived", archive_path=str(zip_path))
     return str(zip_path)
 
 

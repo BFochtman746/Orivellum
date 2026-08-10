@@ -1,19 +1,21 @@
 """Tests for entity graph DB methods and the works/graph + entities API endpoints."""
+
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import AUTH_HEADERS
 
-
 # ── Test app factory ──────────────────────────────────────────────────────────
 
+
 def _make_app(tmp_path: Path):
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=str(tmp_path))
@@ -24,11 +26,12 @@ def _make_app(tmp_path: Path):
 
 # ─── DB method unit tests ─────────────────────────────────────────────────────
 
+
 def test_upsert_entity_creates_and_deduplicates(tmp_path):
     _, db = _make_app(tmp_path)
 
     eid1 = db.upsert_entity("Paul", "person")
-    eid2 = db.upsert_entity("Paul", "person")   # duplicate → same id
+    eid2 = db.upsert_entity("Paul", "person")  # duplicate → same id
     assert eid1 == eid2
 
     eid3 = db.upsert_entity("Paul", "concept")  # different kind → new entity
@@ -105,6 +108,7 @@ def test_list_entities(tmp_path):
 
 # ─── API endpoint tests ───────────────────────────────────────────────────────
 
+
 def test_get_entities_endpoint(tmp_path):
     app, db = _make_app(tmp_path)
     client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
@@ -156,8 +160,8 @@ def test_works_graph_endpoint_with_entities(tmp_path):
     assert r.status_code == 200
     body = r.json()
     assert body["work_id"] == work["id"]
-    assert body["node_count"] >= 2   # doc + entity
-    assert body["edge_count"] >= 1   # MENTIONS edge
+    assert body["node_count"] >= 2  # doc + entity
+    assert body["edge_count"] >= 1  # MENTIONS edge
 
     node_ids = {n["id"] for n in body["nodes"]}
     assert eid in node_ids
@@ -173,14 +177,24 @@ def test_works_graph_fallback_to_knowledge_items(tmp_path):
     doc = db.create_document("Doc", work_id=work["id"])
     # Write knowledge items WITHOUT entity table rows (simulates pre-graph import)
     db.create_knowledge_item(
-        work_id=work["id"], kind="entity", text="Paul",
-        subject="Paul", predicate="mentioned in", obj="Doc",
-        confidence=0.5, source_doc_id=doc["id"],
+        work_id=work["id"],
+        kind="entity",
+        text="Paul",
+        subject="Paul",
+        predicate="mentioned in",
+        obj="Doc",
+        confidence=0.5,
+        source_doc_id=doc["id"],
     )
     db.create_knowledge_item(
-        work_id=work["id"], kind="relationship", text="Paul wrote Corinthians",
-        subject="Paul", predicate="wrote", obj="Corinthians",
-        confidence=0.75, source_doc_id=doc["id"],
+        work_id=work["id"],
+        kind="relationship",
+        text="Paul wrote Corinthians",
+        subject="Paul",
+        predicate="wrote",
+        obj="Corinthians",
+        confidence=0.75,
+        source_doc_id=doc["id"],
     )
 
     r = client.get(f"/api/works/{work['id']}/graph")
@@ -200,9 +214,11 @@ def test_works_graph_404_for_unknown_work(tmp_path):
 
 # ─── Harvest integration tests ────────────────────────────────────────────────
 
+
 def _fake_extraction(text: str, kind: str = "text"):
     """Build a minimal ExtractionResult suitable for harvest()."""
     from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+
     seg = PageSegment(page=1, text=text)
     return ExtractionResult(
         kind=kind,
@@ -263,17 +279,20 @@ def test_llm_harvest_writes_entity_mentions(tmp_path):
 
     import json
     from unittest.mock import patch
+
     from orivellum.capabilities import knowledge_harvest as kh
 
-    llm_payload = json.dumps({
-        "entities": [
-            {"name": "Timothy", "description": "companion of Paul"},
-        ],
-        "claims": [],
-        "relationships": [
-            {"subject": "Paul", "predicate": "mentored", "object": "Timothy"},
-        ],
-    })
+    llm_payload = json.dumps(
+        {
+            "entities": [
+                {"name": "Timothy", "description": "companion of Paul"},
+            ],
+            "claims": [],
+            "relationships": [
+                {"subject": "Paul", "predicate": "mentored", "object": "Timothy"},
+            ],
+        }
+    )
 
     work = db.create_work("LLM Work")
     doc = db.create_document("Philippians", work_id=work["id"])
@@ -282,8 +301,11 @@ def test_llm_harvest_writes_entity_mentions(tmp_path):
 
     with patch.object(kh, "_call_llm_sync", return_value=llm_payload):
         created = kh.llm_harvest(
-            result, doc_id=doc["id"], work_id=work["id"],
-            doc_title="Philippians", db=db,
+            result,
+            doc_id=doc["id"],
+            work_id=work["id"],
+            doc_title="Philippians",
+            db=db,
         )
 
     assert created >= 2, f"Expected at least 2 knowledge items, got {created}"
@@ -292,8 +314,9 @@ def test_llm_harvest_writes_entity_mentions(tmp_path):
     entities = db.list_entities()
     names = {e["name"] for e in entities}
     assert "Timothy" in names, f"LLM entity 'Timothy' missing from entities table. Got: {names}"
-    assert "Paul" in names or "Paul" in {n for n in names}, \
+    assert "Paul" in names or "Paul" in {n for n in names}, (
         f"LLM relationship subject 'Paul' missing. Got: {names}"
+    )
 
     # Graph must have MENTIONS edges connecting these entities to the document
     graph = db.get_work_graph(work["id"])

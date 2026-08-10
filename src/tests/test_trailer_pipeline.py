@@ -10,6 +10,7 @@ Verified behaviours:
   3. Runner failure: run_trailer_pipeline on a Work with no text at all
      marks the trailer status='failed' with a descriptive error message.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,6 +45,7 @@ _READY_VALIDATION = {
 # DB helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db() -> OrivellumDB:
     """Fresh in-memory DB with all migrations applied."""
     return OrivellumDB(":memory:")
@@ -53,9 +55,7 @@ def _create_canon_work(db: OrivellumDB, title: str = "Test Work") -> dict:
     """Create a Work and promote its lifecycle to 'canon' in the objects table."""
     work = db.create_work(title=title, work_type="writing")
     with db._lock:
-        db._conn.execute(
-            "UPDATE objects SET lifecycle='canon' WHERE id=?", (work["id"],)
-        )
+        db._conn.execute("UPDATE objects SET lifecycle='canon' WHERE id=?", (work["id"],))
         db._conn.commit()
     return db.get_work(work["id"])  # type: ignore[return-value]
 
@@ -76,6 +76,7 @@ def _add_ready_document(db: OrivellumDB, work_id: str, text: str) -> dict:
 # Test 1 — happy path: full package on a CANON Work
 # ---------------------------------------------------------------------------
 
+
 def test_full_trailer_pipeline_happy_path():
     """run_trailer_pipeline on a CANON Work with ready text must complete with
     status='ready', a package that has all 9 docs keys, and validation.status='READY'.
@@ -91,7 +92,8 @@ def test_full_trailer_pipeline_happy_path():
     work = _create_canon_work(db, "The Prometheus Codex")
     work_id = work["id"]
     _add_ready_document(
-        db, work_id,
+        db,
+        work_id,
         "A sweeping story about fire stolen from the gods. " * 60,
     )
 
@@ -118,8 +120,7 @@ def test_full_trailer_pipeline_happy_path():
     assert "docs" in pkg, "Package must contain a 'docs' key"
     actual_keys = set(pkg["docs"].keys())
     assert actual_keys == EXPECTED_DOCS_KEYS, (
-        f"Expected 9 docs keys {sorted(EXPECTED_DOCS_KEYS)}, "
-        f"got {sorted(actual_keys)}"
+        f"Expected 9 docs keys {sorted(EXPECTED_DOCS_KEYS)}, got {sorted(actual_keys)}"
     )
 
     # Each doc value must be a non-empty string (markdown content)
@@ -138,6 +139,7 @@ def test_full_trailer_pipeline_happy_path():
 # ---------------------------------------------------------------------------
 # Test 2 — route guard: Work with no eligible documents → HTTP 422
 # ---------------------------------------------------------------------------
+
 
 def test_post_trailer_returns_422_when_work_has_no_eligible_documents():
     """POST /api/works/{id}/trailer must return 422 when the Work has no
@@ -213,6 +215,7 @@ def test_post_trailer_returns_422_when_document_has_no_extracted_text():
 # Test 3 — runner failure: Work with no text → trailer status='failed'
 # ---------------------------------------------------------------------------
 
+
 def test_trailer_runner_sets_failed_when_work_has_no_text():
     """run_trailer_pipeline marks the trailer status='failed' (and stores an
     error message) when book_text_from_work() returns an empty string.
@@ -239,9 +242,7 @@ def test_trailer_runner_sets_failed_when_work_has_no_text():
     assert result["status"] == "failed", (
         f"Expected status='failed' when Work has no text; got {result['status']!r}"
     )
-    assert result.get("error"), (
-        "A failed trailer must store a non-empty error message"
-    )
+    assert result.get("error"), "A failed trailer must store a non-empty error message"
     assert "text" in result["error"].lower() or "extract" in result["error"].lower(), (
         f"Error message should mention text/extraction. Got: {result['error']!r}"
     )

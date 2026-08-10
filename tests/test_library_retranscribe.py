@@ -13,6 +13,7 @@ Coverage:
   - pipeline leaves doc in error state → job errors with the doc's message
   - duplicate: second request while a job for the same doc is active → 409
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -24,16 +25,15 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import AUTH_HEADERS
-
 from orivellum.api.routes import studio as studio_routes
+from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -47,6 +47,7 @@ from contextlib import contextmanager
 @contextmanager
 def _client(app, db, cfg):
     from orivellum.api import _deps
+
     with TestClient(app, headers=AUTH_HEADERS) as client:
         _deps.init(db=db, cfg=cfg)
         yield client
@@ -75,18 +76,17 @@ class LibraryRetranscribeTest(unittest.TestCase):
         self._jobs_patch.stop()
         self._tmp.cleanup()
 
-    def _make_audio_doc(self, with_file: bool = True, kind: str = "audio",
-                        content_path: str | None = "lecture.mp3"):
+    def _make_audio_doc(
+        self, with_file: bool = True, kind: str = "audio", content_path: str | None = "lecture.mp3"
+    ):
         if with_file and content_path:
             lib = Path(self.cfg.data_dir) / "library"
             lib.mkdir(parents=True, exist_ok=True)
             (lib / content_path).write_bytes(b"ID3" + b"\x00" * 32)
-        doc = self.db.create_document(
-            title="Lecture 1", kind=kind, content_path=content_path)
+        doc = self.db.create_document(title="Lecture 1", kind=kind, content_path=content_path)
         # Fresh docs default to readiness "imported" (extraction pending);
         # mark ready so the in-flight-extraction guard doesn't trip.
-        self.db.update_document_extracted(
-            doc["id"], "old transcript", 2, readiness="ready")
+        self.db.update_document_extracted(doc["id"], "old transcript", 2, readiness="ready")
         return doc["id"]
 
     # ── validation ────────────────────────────────────────────────────────────
@@ -125,23 +125,27 @@ class LibraryRetranscribeTest(unittest.TestCase):
         def fake_pipeline(doc_id, file_path, kind, work_id, title, db):
             self.assertEqual(kind, "audio")
             db.update_document_extracted(
-                doc_id, "[Audio transcript: Lecture 1]\nhello fresh world", 3,
-                readiness="ready")
+                doc_id, "[Audio transcript: Lecture 1]\nhello fresh world", 3, readiness="ready"
+            )
             with db._lock:
                 import json
+
                 db._conn.execute(
                     "UPDATE documents SET meta=? WHERE id=?",
-                    (json.dumps({"transcription": "faster-whisper (large-v3-turbo)"}),
-                     doc_id))
+                    (json.dumps({"transcription": "faster-whisper (large-v3-turbo)"}), doc_id),
+                )
                 db._conn.commit()
 
-        with mock.patch("orivellum.capabilities.pipeline.process_document",
-                        side_effect=fake_pipeline):
-            with _client(self.app, self.db, self.cfg) as client:
-                r = client.post(f"/api/studio/transcribe/library/{doc_id}")
-                self.assertEqual(r.status_code, 200)
-                job_id = r.json()["job_id"]
-                s = _wait_for_terminal(client, job_id)
+        with (
+            mock.patch(
+                "orivellum.capabilities.pipeline.process_document", side_effect=fake_pipeline
+            ),
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            r = client.post(f"/api/studio/transcribe/library/{doc_id}")
+            self.assertEqual(r.status_code, 200)
+            job_id = r.json()["job_id"]
+            s = _wait_for_terminal(client, job_id)
 
         self.assertEqual(s["state"], "done")
         self.assertEqual(s["doc_id"], doc_id)
@@ -159,15 +163,18 @@ class LibraryRetranscribeTest(unittest.TestCase):
 
         def failing_pipeline(doc_id, file_path, kind, work_id, title, db):
             db.update_document_extracted(
-                doc_id, "", 0, readiness="error",
-                error_message="No transcription engine available")
+                doc_id, "", 0, readiness="error", error_message="No transcription engine available"
+            )
 
-        with mock.patch("orivellum.capabilities.pipeline.process_document",
-                        side_effect=failing_pipeline):
-            with _client(self.app, self.db, self.cfg) as client:
-                r = client.post(f"/api/studio/transcribe/library/{doc_id}")
-                self.assertEqual(r.status_code, 200)
-                s = _wait_for_terminal(client, r.json()["job_id"])
+        with (
+            mock.patch(
+                "orivellum.capabilities.pipeline.process_document", side_effect=failing_pipeline
+            ),
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            r = client.post(f"/api/studio/transcribe/library/{doc_id}")
+            self.assertEqual(r.status_code, 200)
+            s = _wait_for_terminal(client, r.json()["job_id"])
 
         self.assertEqual(s["state"], "error")
         self.assertIn("No transcription engine", s["error"])
@@ -180,51 +187,54 @@ class LibraryRetranscribeTest(unittest.TestCase):
         work = self.db.create_work("Lectures")
         wid = work["id"]
         old_auto = self.db.create_knowledge_item(
-            wid, "fact", "the sky is green", source_doc_id=doc_id,
-            review_status="ai_auto")
+            wid, "fact", "the sky is green", source_doc_id=doc_id, review_status="ai_auto"
+        )
         kept_approved = self.db.create_knowledge_item(
-            wid, "fact", "water is wet", source_doc_id=doc_id,
-            review_status="approved")
+            wid, "fact", "water is wet", source_doc_id=doc_id, review_status="approved"
+        )
         self.db.store_vector(old_auto, "knowledge", b"\x00" * 16, 4)
 
         def fake_pipeline(doc_id, file_path, kind, work_id, title, db):
             db.create_knowledge_item(
-                wid, "fact", "the sky is blue", source_doc_id=doc_id,
-                review_status="ai_auto")
-            db.update_document_extracted(
-                doc_id, "the sky is blue", 4, readiness="ready")
+                wid, "fact", "the sky is blue", source_doc_id=doc_id, review_status="ai_auto"
+            )
+            db.update_document_extracted(doc_id, "the sky is blue", 4, readiness="ready")
             with db._lock:
                 import json
+
                 db._conn.execute(
                     "UPDATE documents SET meta=? WHERE id=?",
-                    (json.dumps({"transcription": "faster-whisper (base)"}),
-                     doc_id))
+                    (json.dumps({"transcription": "faster-whisper (base)"}), doc_id),
+                )
                 db._conn.commit()
 
-        with mock.patch("orivellum.capabilities.pipeline.process_document",
-                        side_effect=fake_pipeline):
-            with _client(self.app, self.db, self.cfg) as client:
-                r = client.post(f"/api/studio/transcribe/library/{doc_id}")
-                self.assertEqual(r.status_code, 200)
-                s = _wait_for_terminal(client, r.json()["job_id"])
+        with (
+            mock.patch(
+                "orivellum.capabilities.pipeline.process_document", side_effect=fake_pipeline
+            ),
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            r = client.post(f"/api/studio/transcribe/library/{doc_id}")
+            self.assertEqual(r.status_code, 200)
+            s = _wait_for_terminal(client, r.json()["job_id"])
         self.assertEqual(s["state"], "done")
 
         with self.db._lock:
             rows = self.db._conn.execute(
-                "SELECT id, text FROM knowledge WHERE source_doc_id=?",
-                (doc_id,)).fetchall()
+                "SELECT id, text FROM knowledge WHERE source_doc_id=?", (doc_id,)
+            ).fetchall()
             texts = {r["text"] for r in rows}
             fts = self.db._conn.execute(
-                "SELECT knowledge_id FROM knowledge_fts WHERE knowledge_id=?",
-                (old_auto,)).fetchall()
+                "SELECT knowledge_id FROM knowledge_fts WHERE knowledge_id=?", (old_auto,)
+            ).fetchall()
             vecs = self.db._conn.execute(
-                "SELECT id FROM vectors WHERE object_type='knowledge' AND object_id=?",
-                (old_auto,)).fetchall()
-        self.assertNotIn("the sky is green", texts)   # stale auto removed
-        self.assertIn("water is wet", texts)          # approved preserved
-        self.assertIn("the sky is blue", texts)       # fresh harvest present
-        self.assertEqual(fts, [])                     # FTS row gone
-        self.assertEqual(vecs, [])                    # vector gone
+                "SELECT id FROM vectors WHERE object_type='knowledge' AND object_id=?", (old_auto,)
+            ).fetchall()
+        self.assertNotIn("the sky is green", texts)  # stale auto removed
+        self.assertIn("water is wet", texts)  # approved preserved
+        self.assertIn("the sky is blue", texts)  # fresh harvest present
+        self.assertEqual(fts, [])  # FTS row gone
+        self.assertEqual(vecs, [])  # vector gone
         self.assertIn(kept_approved, {r["id"] for r in rows})
 
     def test_no_engine_metadata_only_errors(self):
@@ -234,15 +244,18 @@ class LibraryRetranscribeTest(unittest.TestCase):
         def placeholder_pipeline(doc_id, file_path, kind, work_id, title, db):
             # ready, but meta has no "transcription" key — engine never ran
             db.update_document_extracted(
-                doc_id, "Audio file: lecture.mp3\nNote: engine offline", 6,
-                readiness="ready")
+                doc_id, "Audio file: lecture.mp3\nNote: engine offline", 6, readiness="ready"
+            )
 
-        with mock.patch("orivellum.capabilities.pipeline.process_document",
-                        side_effect=placeholder_pipeline):
-            with _client(self.app, self.db, self.cfg) as client:
-                r = client.post(f"/api/studio/transcribe/library/{doc_id}")
-                self.assertEqual(r.status_code, 200)
-                s = _wait_for_terminal(client, r.json()["job_id"])
+        with (
+            mock.patch(
+                "orivellum.capabilities.pipeline.process_document", side_effect=placeholder_pipeline
+            ),
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            r = client.post(f"/api/studio/transcribe/library/{doc_id}")
+            self.assertEqual(r.status_code, 200)
+            s = _wait_for_terminal(client, r.json()["job_id"])
 
         self.assertEqual(s["state"], "error")
         self.assertIn("transcription engine", s["error"].lower())
@@ -259,30 +272,33 @@ class LibraryRetranscribeTest(unittest.TestCase):
         """Cancel that lands before the worker's destructive reset → job
         'cancelled' and the document keeps its stored transcript."""
         doc_id = self._make_audio_doc()
-        self.db.update_document_extracted(
-            doc_id, "original transcript", 2, readiness="ready")
+        self.db.update_document_extracted(doc_id, "original transcript", 2, readiness="ready")
 
         pipeline_ran = threading.Event()
 
         def tracked_pipeline(doc_id, file_path, kind, work_id, title, db):
             pipeline_ran.set()
 
-        with mock.patch("orivellum.capabilities.pipeline.process_document",
-                        side_effect=tracked_pipeline):
-            with _client(self.app, self.db, self.cfg) as client:
-                # Block the executor path: pre-set cancel before the worker
-                # can run by patching _tracked_submit to set cancel first.
-                real_submit = studio_routes._run_retranscribe_job
+        with (
+            mock.patch(
+                "orivellum.capabilities.pipeline.process_document", side_effect=tracked_pipeline
+            ),
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            # Block the executor path: pre-set cancel before the worker
+            # can run by patching _tracked_submit to set cancel first.
+            real_submit = studio_routes._run_retranscribe_job
 
-                def submit_with_cancel(job_id, doc_id_, file_path, db):
-                    studio_routes._transcribe_jobs[job_id]["cancel"].set()
-                    real_submit(job_id, doc_id_, file_path, db)
+            def submit_with_cancel(job_id, doc_id_, file_path, db):
+                studio_routes._transcribe_jobs[job_id]["cancel"].set()
+                real_submit(job_id, doc_id_, file_path, db)
 
-                with mock.patch.object(studio_routes, "_run_retranscribe_job",
-                                       side_effect=submit_with_cancel):
-                    r = client.post(f"/api/studio/transcribe/library/{doc_id}")
-                    self.assertEqual(r.status_code, 200)
-                    s = _wait_for_terminal(client, r.json()["job_id"])
+            with mock.patch.object(
+                studio_routes, "_run_retranscribe_job", side_effect=submit_with_cancel
+            ):
+                r = client.post(f"/api/studio/transcribe/library/{doc_id}")
+                self.assertEqual(r.status_code, 200)
+                s = _wait_for_terminal(client, r.json()["job_id"])
 
         self.assertEqual(s["state"], "cancelled")
         self.assertFalse(pipeline_ran.is_set())
@@ -298,17 +314,20 @@ class LibraryRetranscribeTest(unittest.TestCase):
             release.wait(timeout=5)
             db.update_document_extracted(doc_id, "x", 1, readiness="ready")
 
-        with mock.patch("orivellum.capabilities.pipeline.process_document",
-                        side_effect=slow_pipeline):
-            with _client(self.app, self.db, self.cfg) as client:
-                r1 = client.post(f"/api/studio/transcribe/library/{doc_id}")
-                self.assertEqual(r1.status_code, 200)
-                try:
-                    r2 = client.post(f"/api/studio/transcribe/library/{doc_id}")
-                    self.assertEqual(r2.status_code, 409)
-                finally:
-                    release.set()
-                _wait_for_terminal(client, r1.json()["job_id"])
+        with (
+            mock.patch(
+                "orivellum.capabilities.pipeline.process_document", side_effect=slow_pipeline
+            ),
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            r1 = client.post(f"/api/studio/transcribe/library/{doc_id}")
+            self.assertEqual(r1.status_code, 200)
+            try:
+                r2 = client.post(f"/api/studio/transcribe/library/{doc_id}")
+                self.assertEqual(r2.status_code, 409)
+            finally:
+                release.set()
+            _wait_for_terminal(client, r1.json()["job_id"])
 
 
 if __name__ == "__main__":

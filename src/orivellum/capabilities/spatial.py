@@ -14,6 +14,7 @@ Stages (all ffmpeg-based, all best-effort with non-spatial fallback):
      doc: ~-20 dB under speech, fast attack / slow release) and mixed at low
      level so the QA gate's silence/clipping checks still hold.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -80,7 +81,8 @@ def spatialize_parts(
     if len(parts) != len(part_voices):
         logger.warning(
             "spatialize_parts: %d parts but %d voice entries — skipping spatial",
-            len(parts), len(part_voices),
+            len(parts),
+            len(part_voices),
         )
         return None
     out: list[Path] = []
@@ -89,9 +91,21 @@ def spatialize_parts(
         filt = pan_filter(voice_pan(voice, narrator_voice))
         try:
             r = subprocess.run(
-                ["ffmpeg", "-y", "-v", "error", "-i", str(src),
-                 "-af", filt, "-ar", "22050", str(dst)],
-                capture_output=True, timeout=120,
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(src),
+                    "-af",
+                    filt,
+                    "-ar",
+                    "22050",
+                    str(dst),
+                ],
+                capture_output=True,
+                timeout=120,
             )
         except Exception as exc:
             logger.warning("Spatial pan failed on part %d: %s", idx, exc)
@@ -99,7 +113,8 @@ def spatialize_parts(
         if r.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
             logger.warning(
                 "Spatial pan failed on part %d: %s",
-                idx, r.stderr.decode(errors="replace")[:200],
+                idx,
+                r.stderr.decode(errors="replace")[:200],
             )
             return None
         out.append(dst)
@@ -126,10 +141,7 @@ def finish_spatial(
     ceiling (−3 dBTP) guards against widen/mix overshoot.  Returns False on
     any failure — the caller keeps the mastered non-spatial-polished file.
     """
-    widen = (
-        "stereowiden=delay=14:feedback=0.2:crossfeed=0.3:drymix=0.75,"
-        if mode == "wide" else ""
-    )
+    widen = "stereowiden=delay=14:feedback=0.2:crossfeed=0.3:drymix=0.75," if mode == "wide" else ""
     limiter = f"alimiter=limit={_LIMIT_LINEAR}:level=false"
 
     cmd: list[str] = ["ffmpeg", "-y", "-v", "error", "-i", mastered_path]
@@ -148,8 +160,7 @@ def finish_spatial(
         cmd += ["-filter_complex", filter_complex, "-map", "[out]"]
     else:
         cmd += ["-af", f"{widen}{limiter}"]
-    cmd += ["-codec:a", "libmp3lame", "-b:a", "192k",
-            "-ar", "44100", "-ac", "2", output_path]
+    cmd += ["-codec:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-ac", "2", output_path]
 
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT)

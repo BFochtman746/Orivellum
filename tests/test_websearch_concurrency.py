@@ -15,13 +15,12 @@ seconds slower with no error.  These tests make that regression loud:
   - The transcript mocks track peak in-flight concurrency.  If fetches are
     (wrongly) serialized again, peak concurrency is 1 and the test fails.
 """
+
 from __future__ import annotations
 
 import threading
 import time
 from unittest.mock import patch
-
-import pytest
 
 from orivellum.capabilities import websearch
 from orivellum.capabilities.websearch import SearchMode, research_web
@@ -29,6 +28,7 @@ from orivellum.capabilities.websearch import SearchMode, research_web
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _result(url: str, title: str = "t") -> dict:
     return {"url": url, "title": title, "content": "lorem ipsum " * 30}
@@ -42,6 +42,7 @@ class _PlannerResult:
 # ---------------------------------------------------------------------------
 # 1 — Searches must start while the query planner is still thinking
 # ---------------------------------------------------------------------------
+
 
 class TestPlannerOverlapsSearches:
     def test_first_search_fires_before_planner_returns(self):
@@ -71,7 +72,7 @@ class TestPlannerOverlapsSearches:
 
         with patch.object(websearch, "_call_tavily", fake_tavily):
             _ctx, _cites, diag = research_web(
-                "quantum error correction",   # no news/biblical signals
+                "quantum error correction",  # no news/biblical signals
                 profile="balanced",
                 llm_call_fn=fake_llm,
             )
@@ -101,7 +102,7 @@ class TestPlannerOverlapsSearches:
         with patch.object(websearch, "_call_tavily", fake_tavily):
             _ctx, _cites, diag = research_web(
                 "quantum error correction",
-                profile="balanced",       # n_variants=2 → primary + 2 variants
+                profile="balanced",  # n_variants=2 → primary + 2 variants
                 llm_call_fn=fake_llm,
             )
 
@@ -127,14 +128,12 @@ class TestPlannerOverlapsSearches:
         def fake_llm(messages, **kw):
             # First line duplicates the primary query (case-insensitively):
             # it must never spawn a second identical search.
-            return _PlannerResult(
-                "Quantum Error Correction\nvariant alpha\nvariant beta"
-            )
+            return _PlannerResult("Quantum Error Correction\nvariant alpha\nvariant beta")
 
         with patch.object(websearch, "_call_tavily", fake_tavily):
             _ctx, _cites, diag = research_web(
                 "quantum error correction",
-                profile="balanced",       # cap: primary + 2 variants
+                profile="balanced",  # cap: primary + 2 variants
                 llm_call_fn=fake_llm,
             )
 
@@ -169,6 +168,7 @@ class TestPlannerOverlapsSearches:
 # 2 — YouTube transcripts must download concurrently
 # ---------------------------------------------------------------------------
 
+
 class TestYoutubeTranscriptConcurrency:
     def test_transcripts_fetched_concurrently_with_mixed_outcomes(self):
         """Staggered transcript fetches: track peak in-flight concurrency and
@@ -187,7 +187,7 @@ class TestYoutubeTranscriptConcurrency:
             with lock:
                 active += 1
                 peak = max(peak, active)
-            time.sleep(0.05)   # hold the slot so overlap is observable
+            time.sleep(0.05)  # hold the slot so overlap is observable
             with lock:
                 active -= 1
             # vid0 and vid2 succeed; vid1 and vid3 have no captions
@@ -195,8 +195,10 @@ class TestYoutubeTranscriptConcurrency:
                 return f"transcript for {video_id}"
             return None
 
-        with patch.object(websearch, "_call_tavily", fake_tavily), \
-             patch.object(websearch, "_fetch_youtube_transcript", fake_transcript):
+        with (
+            patch.object(websearch, "_call_tavily", fake_tavily),
+            patch.object(websearch, "_fetch_youtube_transcript", fake_transcript),
+        ):
             results = websearch._search_youtube("some talk")
 
         assert peak >= 2, (
@@ -221,8 +223,10 @@ class TestYoutubeTranscriptConcurrency:
         def fake_transcript(video_id):  # pragma: no cover — must not be called
             raise AssertionError("transcript fetch attempted for non-video URL")
 
-        with patch.object(websearch, "_call_tavily", fake_tavily), \
-             patch.object(websearch, "_fetch_youtube_transcript", fake_transcript):
+        with (
+            patch.object(websearch, "_call_tavily", fake_tavily),
+            patch.object(websearch, "_fetch_youtube_transcript", fake_transcript),
+        ):
             results = websearch._search_youtube("some channel")
 
         assert results[0]["_has_transcript"] is False
@@ -233,6 +237,7 @@ class TestYoutubeTranscriptConcurrency:
 # 3 — Mode lanes fire in the first wave alongside the primary search
 # ---------------------------------------------------------------------------
 
+
 class TestModeLanesInFirstWave:
     def test_all_requested_lanes_start_before_planner_returns(self):
         """Every requested mode lane (not just the primary search) must hit
@@ -241,9 +246,11 @@ class TestModeLanesInFirstWave:
         gates any lane on the planner deadlocks the wait and fails loudly."""
         seen_topics: list[str] = []
         lock = threading.Lock()
-        started = {"web": threading.Event(),
-                   "news": threading.Event(),
-                   "academic": threading.Event()}
+        started = {
+            "web": threading.Event(),
+            "news": threading.Event(),
+            "academic": threading.Event(),
+        }
 
         def fake_tavily(query, *, topic="general", include_domains=None, **kw):
             if include_domains and "arxiv.org" in include_domains:
@@ -284,5 +291,5 @@ class TestModeLanesInFirstWave:
         )
         # Variant search still ran after the planner
         lanes_only = [t for t in seen_topics if t != "planner:done"]
-        assert lanes_only.count("web") >= 2   # primary + variant
+        assert lanes_only.count("web") >= 2  # primary + variant
         assert diag.queries_executed == len(lanes_only)

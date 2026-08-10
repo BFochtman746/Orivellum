@@ -7,6 +7,7 @@ Covers:
   2. Those sources round-trip through the assistant message's meta column
      (persistence survives a refetch via get_messages).
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -15,15 +16,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helper: build a minimal real DB wired into deps
 # ---------------------------------------------------------------------------
 
+
 def _make_db(tmp: str):
-    from orivellum.database.db import OrivellumDB
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -37,9 +38,11 @@ def _seed_knowledge(db):
     work = db.create_work(title="Rocketry")
     doc = db.create_document(title="Thrust Notes", work_id=work["id"])
     kid = db.create_knowledge_item(
-        work_id=work["id"], kind="fact",
+        work_id=work["id"],
+        kind="fact",
         text="Specific impulse measures rocket engine efficiency.",
-        source_doc_id=doc["id"], review_status="approved",
+        source_doc_id=doc["id"],
+        review_status="approved",
     )
     conv = db.create_conversation(title="Chat", work_id=work["id"])
     hit = {
@@ -78,6 +81,7 @@ def _make_httpx_mock(sse_lines: list[str]):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_build_system_prompt_captures_sources():
     """A trusted knowledge item injected into the prompt is recorded in
     out_sources with the full machine-readable shape."""
@@ -86,9 +90,11 @@ def test_build_system_prompt_captures_sources():
         work = db.create_work(title="Rocketry")
         doc = db.create_document(title="Thrust Notes", work_id=work["id"])
         kid = db.create_knowledge_item(
-            work_id=work["id"], kind="fact",
+            work_id=work["id"],
+            kind="fact",
             text="Specific impulse measures rocket engine efficiency.",
-            source_doc_id=doc["id"], review_status="approved",
+            source_doc_id=doc["id"],
+            review_status="approved",
         )
         conv = db.create_conversation(title="Chat", work_id=work["id"])
 
@@ -104,11 +110,12 @@ def test_build_system_prompt_captures_sources():
             "review_status": "approved",
         }
         out_sources: list = []
-        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                   return_value=[hit]):
+        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[hit]):
             with patch.object(db, "search_chunks", return_value=[]):
                 prompt = C._build_system_prompt(
-                    db, conv, user_query="rocket efficiency",
+                    db,
+                    conv,
+                    user_query="rocket efficiency",
                     out_sources=out_sources,
                 )
 
@@ -132,12 +139,20 @@ def test_sources_persist_in_message_meta():
 
         sources = [
             {
-                "id": "k1", "title": "A fact about ships", "kind": "fact",
-                "work_id": "w1", "work_title": "Naval", "source_doc_id": "d1",
+                "id": "k1",
+                "title": "A fact about ships",
+                "kind": "fact",
+                "work_id": "w1",
+                "work_title": "Naval",
+                "source_doc_id": "d1",
             }
         ]
-        db.add_message(conv["id"], "assistant", "Ships float.",
-                       meta={"model": "test-model", "sources": sources})
+        db.add_message(
+            conv["id"],
+            "assistant",
+            "Ships float.",
+            meta={"model": "test-model", "sources": sources},
+        )
 
         messages = db.get_messages(conv["id"])
         assistant = [m for m in messages if m["role"] == "assistant"]
@@ -164,14 +179,19 @@ async def test_sources_persisted_on_disconnect():
 
         from orivellum.api.routes.conversations import _stream_response
 
-        with patch(
-            "orivellum.api.routes.conversations._maybe_dispatch_intent",
-            new_callable=AsyncMock, return_value=None,
-        ), patch(
-            "orivellum.capabilities.embeddings.hybrid_search_knowledge",
-            return_value=[hit],
-        ), patch.object(db, "search_chunks", return_value=[]), \
-                patch("httpx.AsyncClient", return_value=mock_client):
+        with (
+            patch(
+                "orivellum.api.routes.conversations._maybe_dispatch_intent",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                return_value=[hit],
+            ),
+            patch.object(db, "search_chunks", return_value=[]),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
             gen = _stream_response(db, conv, "How efficient are rockets?")
             # The generator now emits a control event (message_id/state) before the
             # first token.  Advance past all control events until the first token
@@ -198,6 +218,7 @@ async def test_sources_persisted_on_disconnect():
 # Graceful-degradation tests — malformed / missing meta
 # ---------------------------------------------------------------------------
 
+
 def test_sources_empty_when_no_knowledge_matched():
     """_build_system_prompt returns an empty out_sources list when no
     trusted knowledge items match the query."""
@@ -206,15 +227,18 @@ def test_sources_empty_when_no_knowledge_matched():
         work = db.create_work(title="Empty Work")
         conv = db.create_conversation(title="Chat", work_id=work["id"])
 
-        from orivellum.api.routes import conversations as C
         from unittest.mock import patch
 
+        from orivellum.api.routes import conversations as C
+
         out_sources: list = []
-        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                   return_value=[]):
+        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[]):
             with patch.object(db, "search_chunks", return_value=[]):
                 C._build_system_prompt(
-                    db, conv, user_query="anything", out_sources=out_sources,
+                    db,
+                    conv,
+                    user_query="anything",
+                    out_sources=out_sources,
                 )
 
         # No knowledge injected → out_sources must be empty, never crash
@@ -235,9 +259,11 @@ def test_sources_with_deleted_document_returns_safe_entry():
         work = db.create_work(title="Rocketry")
         doc = db.create_document(title="Thrust Notes", work_id=work["id"])
         kid = db.create_knowledge_item(
-            work_id=work["id"], kind="fact",
+            work_id=work["id"],
+            kind="fact",
             text="Specific impulse measures efficiency.",
-            source_doc_id=doc["id"], review_status="approved",
+            source_doc_id=doc["id"],
+            review_status="approved",
         )
         conv = db.create_conversation(title="Chat", work_id=work["id"])
 
@@ -251,15 +277,16 @@ def test_sources_with_deleted_document_returns_safe_entry():
             "text": "Specific impulse measures efficiency.",
             "kind": "fact",
             "work_id": work["id"],
-            "source_doc_id": doc["id"],   # still the original id
+            "source_doc_id": doc["id"],  # still the original id
             "review_status": "approved",
         }
         out_sources: list = []
-        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                   return_value=[hit]):
+        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[hit]):
             with patch.object(db, "search_chunks", return_value=[]):
                 C._build_system_prompt(
-                    db, conv, user_query="rocket efficiency",
+                    db,
+                    conv,
+                    user_query="rocket efficiency",
                     out_sources=out_sources,
                 )
 
@@ -278,8 +305,7 @@ def test_message_with_legacy_meta_no_sources_key():
         conv = db.create_conversation(title="Legacy")
 
         # Simulate a pre-sources message
-        db.add_message(conv["id"], "assistant", "The answer is 42.",
-                       meta={"model": "old-model"})
+        db.add_message(conv["id"], "assistant", "The answer is 42.", meta={"model": "old-model"})
 
         messages = db.get_messages(conv["id"])
         assistant = [m for m in messages if m["role"] == "assistant"]
@@ -289,7 +315,7 @@ def test_message_with_legacy_meta_no_sources_key():
         assert meta.get("model") == "old-model"
         # Must not crash; sources absent or falsy — both are fine
         srcs = meta.get("sources")
-        assert not srcs   # None or missing — SourcesFooter guard treats this as empty
+        assert not srcs  # None or missing — SourcesFooter guard treats this as empty
         db.close()
 
 
@@ -305,7 +331,8 @@ def test_sources_with_work_id_only_no_doc_id():
         work = db.create_work(title="Theory")
         # Knowledge item with no document backing
         kid = db.create_knowledge_item(
-            work_id=work["id"], kind="summary",
+            work_id=work["id"],
+            kind="summary",
             text="General overview of the theory.",
             review_status="approved",
         )
@@ -318,15 +345,16 @@ def test_sources_with_work_id_only_no_doc_id():
             "text": "General overview of the theory.",
             "kind": "summary",
             "work_id": work["id"],
-            "source_doc_id": None,   # no document backing
+            "source_doc_id": None,  # no document backing
             "review_status": "approved",
         }
         out_sources: list = []
-        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                   return_value=[hit]):
+        with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[hit]):
             with patch.object(db, "search_chunks", return_value=[]):
                 C._build_system_prompt(
-                    db, conv, user_query="theory overview",
+                    db,
+                    conv,
+                    user_query="theory overview",
                     out_sources=out_sources,
                 )
 
@@ -347,11 +375,9 @@ def test_message_with_null_and_empty_sources_stored_safely():
         conv = db.create_conversation(title="NullAndEmpty")
 
         # null sources
-        db.add_message(conv["id"], "assistant", "Reply A.",
-                       meta={"model": "m", "sources": None})
+        db.add_message(conv["id"], "assistant", "Reply A.", meta={"model": "m", "sources": None})
         # empty array sources
-        db.add_message(conv["id"], "assistant", "Reply B.",
-                       meta={"model": "m", "sources": []})
+        db.add_message(conv["id"], "assistant", "Reply B.", meta={"model": "m", "sources": []})
 
         messages = db.get_messages(conv["id"])
         assistant = [m for m in messages if m["role"] == "assistant"]
@@ -385,10 +411,11 @@ async def test_sources_persisted_and_emitted_on_intent_branch():
             return ("🌐 Web result text", {"intent": "web_search", "query": "q"})
 
         events: list[str] = []
-        with patch.object(C, "_maybe_dispatch_intent", _fake_intent), \
-                patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                      return_value=[hit]), \
-                patch.object(db, "search_chunks", return_value=[]):
+        with (
+            patch.object(C, "_maybe_dispatch_intent", _fake_intent),
+            patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[hit]),
+            patch.object(db, "search_chunks", return_value=[]),
+        ):
             async for ev in C._stream_response(db, conv, "search for rockets"):
                 events.append(ev)
 
@@ -402,7 +429,8 @@ async def test_sources_persisted_and_emitted_on_intent_branch():
         assert srcs and srcs[0]["source_doc_id"] == hit["source_doc_id"]
 
         # SSE: a terminal sources event was emitted before [DONE]
-        assert any('"sources"' in e for e in events), \
+        assert any('"sources"' in e for e in events), (
             "streaming intent branch must emit a sources SSE event"
+        )
         assert any("[DONE]" in e for e in events)
         db.close()

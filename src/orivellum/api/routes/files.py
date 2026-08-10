@@ -1,4 +1,5 @@
 """File browser routes — /api/files/* and /api/upload, /api/download/*"""
+
 from __future__ import annotations
 
 import base64
@@ -15,6 +16,8 @@ from orivellum.api._deps import get_config, require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+
+
 def _data_dir() -> Path:
     cfg = get_config()
     return Path(cfg.data_dir)
@@ -52,12 +55,14 @@ def list_files(subdir: str = ""):
             dirs.append({"name": item.name, "path": rel})
         else:
             stat = item.stat()
-            files.append({
-                "name": item.name,
-                "path": rel,
-                "size_bytes": stat.st_size,
-                "mime": mimetypes.guess_type(item.name)[0] or "application/octet-stream",
-            })
+            files.append(
+                {
+                    "name": item.name,
+                    "path": rel,
+                    "size_bytes": stat.st_size,
+                    "mime": mimetypes.guess_type(item.name)[0] or "application/octet-stream",
+                }
+            )
     return {"files": files, "dirs": dirs, "path": subdir}
 
 
@@ -122,6 +127,7 @@ async def extract_file_for_chat(body: ExtractFileRequest):
         raise HTTPException(400, "content_b64 is not valid base64")
 
     from pathlib import Path as _P
+
     ext = _P(body.filename).suffix.lower()
     text = ""
 
@@ -132,6 +138,7 @@ async def extract_file_for_chat(body: ExtractFileRequest):
         elif ext == ".pdf":
             try:
                 import fitz
+
                 doc = fitz.open(stream=raw, filetype="pdf")
                 parts = [page.get_text().strip() for page in doc if page.get_text().strip()]
                 text = "\n\n".join(parts)
@@ -139,6 +146,7 @@ async def extract_file_for_chat(body: ExtractFileRequest):
             except Exception:
                 try:
                     import pdfminer.high_level as _pml
+
                     text = _pml.extract_text(io.BytesIO(raw)) or ""
                 except Exception:
                     logger.exception("PDF extraction failed for %s", body.filename)
@@ -147,6 +155,7 @@ async def extract_file_for_chat(body: ExtractFileRequest):
         elif ext in (".docx",):
             try:
                 from docx import Document as _Doc
+
                 doc = _Doc(io.BytesIO(raw))
                 paras = [p.text for p in doc.paragraphs if p.text.strip()]
                 for table in doc.tables:
@@ -160,6 +169,7 @@ async def extract_file_for_chat(body: ExtractFileRequest):
         elif ext in (".xlsx", ".xls"):
             try:
                 import openpyxl
+
                 wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
                 rows_out: list[str] = []
                 for ws in wb.worksheets:
@@ -177,13 +187,16 @@ async def extract_file_for_chat(body: ExtractFileRequest):
         elif ext in (".pptx",):
             try:
                 from pptx import Presentation as _Prs
+
                 prs = _Prs(io.BytesIO(raw))
                 slides_text: list[str] = []
                 for i, slide in enumerate(prs.slides, 1):
                     slide_parts: list[str] = [f"--- Slide {i} ---"]
                     for shape in slide.shapes:
                         if shape.has_text_frame:
-                            slide_parts.extend(p.text for p in shape.text_frame.paragraphs if p.text.strip())
+                            slide_parts.extend(
+                                p.text for p in shape.text_frame.paragraphs if p.text.strip()
+                            )
                     slides_text.append("\n".join(slide_parts))
                 text = "\n\n".join(slides_text)
             except Exception:

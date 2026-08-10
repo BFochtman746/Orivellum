@@ -14,6 +14,7 @@ This module:
 The detection is pattern-based (fast, zero latency on the hot path).
 The extraction uses a lightweight LLM call in a background thread.
 """
+
 from __future__ import annotations
 
 import json
@@ -73,9 +74,7 @@ _SPECS_PAT = re.compile(
     re.IGNORECASE,
 )
 
-_ASSERTION_PATTERNS = [
-    _HAVE_PAT, _MY_IS_PAT, _RUNNING_PAT, _QUANTITY_PAT, _SPECS_PAT
-]
+_ASSERTION_PATTERNS = [_HAVE_PAT, _MY_IS_PAT, _RUNNING_PAT, _QUANTITY_PAT, _SPECS_PAT]
 
 
 def detect_factual_assertions(text: str) -> bool:
@@ -127,12 +126,15 @@ def extract_claims_from_text(
     """
     try:
         import httpx
+
         prompt = _EXTRACTION_PROMPT.format(message=text[:1500])
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content":
-                 "You extract structured facts from text. Return only valid JSON arrays."},
+                {
+                    "role": "system",
+                    "content": "You extract structured facts from text. Return only valid JSON arrays.",
+                },
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0,
@@ -153,14 +155,18 @@ def extract_claims_from_text(
         claims = json.loads(content)
         if not isinstance(claims, list):
             return []
-        return [c for c in claims if isinstance(c, dict)
-                and "subject" in c and "predicate" in c and "value" in c]
+        return [
+            c
+            for c in claims
+            if isinstance(c, dict) and "subject" in c and "predicate" in c and "value" in c
+        ]
     except Exception as exc:
         logger.debug("Claim extraction failed (non-fatal): %s", exc)
         return []
 
 
 # ── Capture stamp writer ───────────────────────────────────────────────────────
+
 
 class CaptureStamp:
     """Records a boundary provenance stamp and writes extracted claims."""
@@ -205,17 +211,19 @@ class CaptureStamp:
 
             # 3. Write each claim to the ledger
             for claim in extracted:
-                subject   = str(claim.get("subject") or SUBJECT_USER_SYSTEM)
+                subject = str(claim.get("subject") or SUBJECT_USER_SYSTEM)
                 predicate = str(claim.get("predicate") or "").strip()
-                value     = str(claim.get("value") or "").strip()
-                unit      = claim.get("unit")
-                ttl       = str(claim.get("ttl_class") or TTLClass.DURABLE.value)
+                value = str(claim.get("value") or "").strip()
+                unit = claim.get("unit")
+                ttl = str(claim.get("ttl_class") or TTLClass.DURABLE.value)
 
                 if not predicate or not value:
                     continue
 
                 cid = self._db.upsert_claim(
-                    subject, predicate, value,
+                    subject,
+                    predicate,
+                    value,
                     unit=unit,
                     authority_tier=AuthorityTier.A7.value,
                     source_id=stamp_id,
@@ -226,7 +234,10 @@ class CaptureStamp:
                 claim_ids.append(cid)
                 logger.info(
                     "Claim captured from chat: %s.%s = %r (id=%s)",
-                    subject, predicate, value, cid[:8]
+                    subject,
+                    predicate,
+                    value,
+                    cid[:8],
                 )
 
         except Exception as exc:

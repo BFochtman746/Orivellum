@@ -6,6 +6,7 @@ Uses load_config() (the real config accessor) and reads base_url /
 workhorse_model from cfg.serving.  Falls back to offline mode only when
 base_url is genuinely absent (e.g. the config file cannot be found).
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,6 +28,7 @@ def build_trailer_config(offline: bool = False) -> dict:
 
     try:
         from orivellum.configuration.config import load_config
+
         cfg = load_config()
         base_url = (cfg.serving.base_url or "").rstrip("/")
         workhorse = cfg.serving.workhorse_model or ""
@@ -66,6 +68,7 @@ def _get_cfg_obj():
     """Return the raw OrivellumConfig object, or None on failure."""
     try:
         from orivellum.configuration.config import load_config
+
         return load_config()
     except Exception:
         return None

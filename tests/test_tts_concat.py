@@ -12,9 +12,9 @@ Also covers:
   5. Single-segment: concat event IS emitted (path reused, no ffmpeg needed).
   6. Empty concat file (size=0): treated as failure — no concat event.
 """
+
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -35,10 +35,12 @@ from tests.conftest import AUTH_HEADERS  # noqa: E402
 
 try:
     from fastapi.testclient import TestClient
-    from orivellum.api.app import create_app
+
     from orivellum.api import _deps
+    from orivellum.api.app import create_app
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
     from orivellum.database.db import OrivellumDB
+
     _DEPS_OK = True
     _MISSING = ""
 except Exception as _e:
@@ -49,6 +51,7 @@ except Exception as _e:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_sse(body: str) -> list[dict]:
     """Extract all data: … frames from a buffered SSE body."""
@@ -63,7 +66,7 @@ def _parse_sse(body: str) -> list[dict]:
     return events
 
 
-def _make_client(tmp_path: Path) -> "TestClient":
+def _make_client(tmp_path: Path) -> TestClient:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     db = OrivellumDB(str(data_dir / "test.db"))
@@ -76,9 +79,9 @@ def _make_client(tmp_path: Path) -> "TestClient":
     return TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
 
-async def _fake_synth_stub(text: str, voice: str, speed: float,
-                           out_dir: "Path", cfg,
-                           quality: str = "final") -> "Path":
+async def _fake_synth_stub(
+    text: str, voice: str, speed: float, out_dir: Path, cfg, quality: str = "final"
+) -> Path:
     """Minimal synthesis mock: writes a small stub file (no ffmpeg needed).
 
     The concat step in _stream_tts_events only needs these files to exist in
@@ -86,6 +89,7 @@ async def _fake_synth_stub(text: str, voice: str, speed: float,
     itself (not audio quality), so real MP3 content is not required.
     """
     import secrets
+
     p = Path(out_dir) / f"seg_{secrets.token_hex(4)}.mp3"
     # Write a trivially small fake MP3 header so stat().st_size > 0
     p.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 256)
@@ -110,6 +114,7 @@ _LONG_TEXT = ("The ancient library stretched across marble halls. " * 60).strip(
 # Test class A — ffmpeg concat fails (returncode=1)
 # ---------------------------------------------------------------------------
 
+
 @unittest.skipUnless(_DEPS_OK, f"deps unavailable: {_MISSING}")
 class TestConcatFailurePath(unittest.TestCase):
     """Confirms the share-button fallback contract when ffmpeg concat fails."""
@@ -127,6 +132,7 @@ class TestConcatFailurePath(unittest.TestCase):
         # rare untracked fallback thread spawned if a job submits new work
         # while the pool is shutting down.
         from orivellum.api import executor as _exec
+
         _exec.shutdown(wait=True)  # lazily re-created by the next test
         self._tmp.cleanup()
 
@@ -144,8 +150,7 @@ class TestConcatFailurePath(unittest.TestCase):
         ):
             resp = self.client.post(
                 "/api/studio/tts",
-                json={"text": _LONG_TEXT, "voice": "af_sarah", "speed": 1.0,
-                      "stream": True},
+                json={"text": _LONG_TEXT, "voice": "af_sarah", "speed": 1.0, "stream": True},
             )
         self.assertEqual(resp.status_code, 200, resp.text[:400])
         return _parse_sse(resp.text)
@@ -155,7 +160,8 @@ class TestConcatFailurePath(unittest.TestCase):
         events = self._post_multi_segment()
         done_events = [e for e in events if e.get("type") == "done"]
         self.assertEqual(
-            len(done_events), 1,
+            len(done_events),
+            1,
             f"Expected exactly 1 done event; got {len(done_events)}\n"
             f"All events: {[e.get('type') for e in events]}",
         )
@@ -165,7 +171,8 @@ class TestConcatFailurePath(unittest.TestCase):
         events = self._post_multi_segment()
         concat_events = [e for e in events if e.get("type") == "concat"]
         self.assertEqual(
-            len(concat_events), 0,
+            len(concat_events),
+            0,
             f"Unexpected concat event(s) emitted despite ffmpeg failure: {concat_events}",
         )
 
@@ -175,7 +182,8 @@ class TestConcatFailurePath(unittest.TestCase):
         done = next((e for e in events if e.get("type") == "done"), None)
         self.assertIsNotNone(done, "done event not found")
         self.assertNotIn(
-            "concat_path", done,
+            "concat_path",
+            done,
             f"concat_path must be absent when concat failed; got: {done}",
         )
 
@@ -184,7 +192,8 @@ class TestConcatFailurePath(unittest.TestCase):
         events = self._post_multi_segment()
         seg_events = [e for e in events if e.get("type") == "segment" and e.get("ok")]
         self.assertGreater(
-            len(seg_events), 0,
+            len(seg_events),
+            0,
             "Expected ≥1 successful segment events even when concat fails",
         )
 
@@ -204,7 +213,8 @@ class TestConcatFailurePath(unittest.TestCase):
         done = next((e for e in events if e.get("type") == "done"), None)
         self.assertIsNotNone(done)
         self.assertGreater(
-            done.get("ok_count", 0), 0,
+            done.get("ok_count", 0),
+            0,
             f"done.ok_count must be > 0 when segments succeeded; got: {done}",
         )
 
@@ -214,7 +224,8 @@ class TestConcatFailurePath(unittest.TestCase):
         if not events:
             self.fail("No SSE events received")
         self.assertEqual(
-            events[-1].get("type"), "done",
+            events[-1].get("type"),
+            "done",
             f"Last event must be 'done'; got '{events[-1].get('type')}'",
         )
 
@@ -222,6 +233,7 @@ class TestConcatFailurePath(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Test class B — single segment: concat event IS emitted (no ffmpeg needed)
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_DEPS_OK, f"deps unavailable: {_MISSING}")
 class TestConcatSingleSegmentPath(unittest.TestCase):
@@ -240,6 +252,7 @@ class TestConcatSingleSegmentPath(unittest.TestCase):
         # rare untracked fallback thread spawned if a job submits new work
         # while the pool is shutting down.
         from orivellum.api import executor as _exec
+
         _exec.shutdown(wait=True)  # lazily re-created by the next test
         self._tmp.cleanup()
 
@@ -253,8 +266,7 @@ class TestConcatSingleSegmentPath(unittest.TestCase):
         ):
             resp = self.client.post(
                 "/api/studio/tts",
-                json={"text": self._SHORT_TEXT, "voice": "af_sarah", "speed": 1.0,
-                      "stream": True},
+                json={"text": self._SHORT_TEXT, "voice": "af_sarah", "speed": 1.0, "stream": True},
             )
         self.assertEqual(resp.status_code, 200, resp.text[:400])
         return _parse_sse(resp.text)
@@ -264,7 +276,8 @@ class TestConcatSingleSegmentPath(unittest.TestCase):
         events = self._post_single_segment()
         concat_events = [e for e in events if e.get("type") == "concat"]
         self.assertEqual(
-            len(concat_events), 1,
+            len(concat_events),
+            1,
             f"Expected 1 concat event for single-segment text; got {len(concat_events)}\n"
             f"All event types: {[e.get('type') for e in events]}",
         )
@@ -281,7 +294,8 @@ class TestConcatSingleSegmentPath(unittest.TestCase):
         done = next((e for e in events if e.get("type") == "done"), None)
         self.assertIsNotNone(done)
         self.assertIn(
-            "concat_path", done,
+            "concat_path",
+            done,
             f"done must carry concat_path for single-segment success; got: {done}",
         )
 
@@ -295,6 +309,7 @@ class TestConcatSingleSegmentPath(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Test class C — empty concat output (size=0) is treated as failure
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_DEPS_OK, f"deps unavailable: {_MISSING}")
 class TestConcatEmptyOutputFallback(unittest.TestCase):
@@ -313,6 +328,7 @@ class TestConcatEmptyOutputFallback(unittest.TestCase):
         # rare untracked fallback thread spawned if a job submits new work
         # while the pool is shutting down.
         from orivellum.api import executor as _exec
+
         _exec.shutdown(wait=True)  # lazily re-created by the next test
         self._tmp.cleanup()
 
@@ -347,8 +363,7 @@ class TestConcatEmptyOutputFallback(unittest.TestCase):
         ):
             resp = self.client.post(
                 "/api/studio/tts",
-                json={"text": _LONG_TEXT, "voice": "af_sarah", "speed": 1.0,
-                      "stream": True},
+                json={"text": _LONG_TEXT, "voice": "af_sarah", "speed": 1.0, "stream": True},
             )
         self.assertEqual(resp.status_code, 200, resp.text[:400])
         return _parse_sse(resp.text)
@@ -358,15 +373,17 @@ class TestConcatEmptyOutputFallback(unittest.TestCase):
         events = self._post_with_empty_concat()
         concat_events = [e for e in events if e.get("type") == "concat"]
         self.assertEqual(
-            len(concat_events), 0,
+            len(concat_events),
+            0,
             f"concat event must not be emitted when output file is 0 bytes: {concat_events}",
         )
 
     def test_done_event_emitted_despite_empty_concat(self):
         events = self._post_with_empty_concat()
         done_events = [e for e in events if e.get("type") == "done"]
-        self.assertEqual(len(done_events), 1,
-                         "done must still be emitted when concat output is empty")
+        self.assertEqual(
+            len(done_events), 1, "done must still be emitted when concat output is empty"
+        )
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ They call ``require_auth`` directly (so no middleware runs at all) and also
 exercise a dependency-protected route with an isolated app that has the auth
 middleware deliberately removed.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -69,9 +70,7 @@ class RequireAuthDependencyTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
 
     def test_valid_bearer_passes(self):
-        r = self.client.get(
-            "/guarded", headers={"Authorization": f"Bearer {TEST_API_KEY}"}
-        )
+        r = self.client.get("/guarded", headers={"Authorization": f"Bearer {TEST_API_KEY}"})
         self.assertEqual(r.status_code, 200)
 
 

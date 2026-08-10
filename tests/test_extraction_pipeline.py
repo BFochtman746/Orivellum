@@ -8,6 +8,7 @@ Covers:
 - File-path resolution via content_path survives a simulated server restart
   (process_document called with a stale absolute path falls back to content_path)
 """
+
 from __future__ import annotations
 
 import base64
@@ -16,17 +17,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Test app factory (mirrors test_library_api.py)
 # ---------------------------------------------------------------------------
 
+
 def _make_app(tmp: str):
     """Return (app, db) wired to a fresh temp directory."""
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -38,9 +39,11 @@ def _make_app(tmp: str):
 # Fixture builders
 # ---------------------------------------------------------------------------
 
+
 def _make_pdf_bytes(text: str = "Orivellum pipeline test content.") -> bytes:
     """Return a minimal PDF containing *text* using reportlab."""
     from reportlab.pdfgen import canvas as rl_canvas
+
     buf = io.BytesIO()
     c = rl_canvas.Canvas(buf)
     c.drawString(72, 720, text)
@@ -51,6 +54,7 @@ def _make_pdf_bytes(text: str = "Orivellum pipeline test content.") -> bytes:
 def _make_docx_bytes(text: str = "Orivellum pipeline test content.") -> bytes:
     """Return a minimal DOCX containing *text* using python-docx."""
     import docx as _docx
+
     doc = _docx.Document()
     doc.add_paragraph(text)
     buf = io.BytesIO()
@@ -73,6 +77,7 @@ def _b64(data: bytes) -> str:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _import(client, filename: str, data: bytes, work_id: str | None = None):
     """POST /api/library/import and return the response JSON."""
@@ -97,12 +102,15 @@ def _chunk_count(db, doc_id: str) -> int:
 # Base class with shared app/client fixture
 # ---------------------------------------------------------------------------
 
+
 class _PipelineBase(unittest.TestCase):
     """Sets up a fresh app + TestClient per test method."""
 
     def setUp(self):
         from fastapi.testclient import TestClient
+
         from tests.conftest import AUTH_HEADERS
+
         self._tmpdir = tempfile.TemporaryDirectory()
         self.app, self.db = _make_app(self._tmpdir.name)
         self.client = TestClient(self.app, raise_server_exceptions=True, headers=AUTH_HEADERS)
@@ -116,6 +124,7 @@ class _PipelineBase(unittest.TestCase):
 # Plain-text import
 # ---------------------------------------------------------------------------
 
+
 class TestTextImportPipeline(_PipelineBase):
     """Plain-text file: full round-trip."""
 
@@ -128,26 +137,32 @@ class TestTextImportPipeline(_PipelineBase):
 
     def test_readiness_is_ready(self):
         doc = self.db.get_document(self.doc_id)
-        self.assertEqual(doc["readiness"], "ready",
-                         f"Expected readiness=ready, got {doc['readiness']!r}; "
-                         f"error_message={doc.get('error_message')!r}")
+        self.assertEqual(
+            doc["readiness"],
+            "ready",
+            f"Expected readiness=ready, got {doc['readiness']!r}; "
+            f"error_message={doc.get('error_message')!r}",
+        )
 
     def test_chunks_created(self):
-        self.assertGreater(_chunk_count(self.db, self.doc_id), 0,
-                           "At least one chunk must be created after extraction")
+        self.assertGreater(
+            _chunk_count(self.db, self.doc_id),
+            0,
+            "At least one chunk must be created after extraction",
+        )
 
     def test_fts_search_returns_result(self):
         resp = self.client.get("/api/library/search", params={"q": "Orivellum pipeline"})
         self.assertEqual(resp.status_code, 200)
         results = resp.json()["results"]
         doc_ids = [r["id"] for r in results]
-        self.assertIn(self.doc_id, doc_ids,
-                      "FTS search must return the imported text document")
+        self.assertIn(self.doc_id, doc_ids, "FTS search must return the imported text document")
 
 
 # ---------------------------------------------------------------------------
 # CSV import
 # ---------------------------------------------------------------------------
+
 
 class TestCsvImportPipeline(_PipelineBase):
     """CSV file: readiness, chunks, and search."""
@@ -161,9 +176,11 @@ class TestCsvImportPipeline(_PipelineBase):
 
     def test_readiness_is_ready(self):
         doc = self.db.get_document(self.doc_id)
-        self.assertEqual(doc["readiness"], "ready",
-                         f"readiness={doc['readiness']!r}; "
-                         f"error_message={doc.get('error_message')!r}")
+        self.assertEqual(
+            doc["readiness"],
+            "ready",
+            f"readiness={doc['readiness']!r}; error_message={doc.get('error_message')!r}",
+        )
 
     def test_chunks_created(self):
         self.assertGreater(_chunk_count(self.db, self.doc_id), 0)
@@ -179,6 +196,7 @@ class TestCsvImportPipeline(_PipelineBase):
 # DOCX import
 # ---------------------------------------------------------------------------
 
+
 class TestDocxImportPipeline(_PipelineBase):
     """DOCX file: readiness, chunks, and search."""
 
@@ -191,9 +209,11 @@ class TestDocxImportPipeline(_PipelineBase):
 
     def test_readiness_is_ready(self):
         doc = self.db.get_document(self.doc_id)
-        self.assertEqual(doc["readiness"], "ready",
-                         f"readiness={doc['readiness']!r}; "
-                         f"error_message={doc.get('error_message')!r}")
+        self.assertEqual(
+            doc["readiness"],
+            "ready",
+            f"readiness={doc['readiness']!r}; error_message={doc.get('error_message')!r}",
+        )
 
     def test_chunks_created(self):
         self.assertGreater(_chunk_count(self.db, self.doc_id), 0)
@@ -209,6 +229,7 @@ class TestDocxImportPipeline(_PipelineBase):
 # PDF import
 # ---------------------------------------------------------------------------
 
+
 class TestPdfImportPipeline(_PipelineBase):
     """PDF file: readiness, chunks, and search."""
 
@@ -221,9 +242,11 @@ class TestPdfImportPipeline(_PipelineBase):
 
     def test_readiness_is_ready(self):
         doc = self.db.get_document(self.doc_id)
-        self.assertEqual(doc["readiness"], "ready",
-                         f"readiness={doc['readiness']!r}; "
-                         f"error_message={doc.get('error_message')!r}")
+        self.assertEqual(
+            doc["readiness"],
+            "ready",
+            f"readiness={doc['readiness']!r}; error_message={doc.get('error_message')!r}",
+        )
 
     def test_chunks_created(self):
         self.assertGreater(_chunk_count(self.db, self.doc_id), 0)
@@ -238,6 +261,7 @@ class TestPdfImportPipeline(_PipelineBase):
 # ---------------------------------------------------------------------------
 # Knowledge nodes via work_id
 # ---------------------------------------------------------------------------
+
 
 class TestKnowledgeViaWorkId(_PipelineBase):
     """Knowledge items appear in /api/works/:id/knowledge after import."""
@@ -254,7 +278,8 @@ class TestKnowledgeViaWorkId(_PipelineBase):
         work = self.db.create_work(title="Test Work", work_type="research")
         self.work_id = work["id"]
         result = _import(
-            self.client, "brief.txt",
+            self.client,
+            "brief.txt",
             _make_text_bytes(self.CONTENT),
             work_id=self.work_id,
         )
@@ -268,21 +293,26 @@ class TestKnowledgeViaWorkId(_PipelineBase):
         resp = self.client.get(f"/api/works/{self.work_id}/knowledge")
         self.assertEqual(resp.status_code, 200)
         items = resp.json()["knowledge"]
-        self.assertGreater(len(items), 0,
-                           "At least one knowledge item must be harvested and linked to the work")
+        self.assertGreater(
+            len(items), 0, "At least one knowledge item must be harvested and linked to the work"
+        )
 
     def test_knowledge_items_linked_to_doc(self):
         # All harvested items must be traceable back to our document
         resp = self.client.get(f"/api/works/{self.work_id}/knowledge")
         items = resp.json()["knowledge"]
         source_doc_ids = {item.get("source_doc_id") for item in items}
-        self.assertIn(self.doc_id, source_doc_ids,
-                      "Harvested knowledge items must reference the source document")
+        self.assertIn(
+            self.doc_id,
+            source_doc_ids,
+            "Harvested knowledge items must reference the source document",
+        )
 
 
 # ---------------------------------------------------------------------------
 # Content-path fallback: simulates a server restart with a stale file_path
 # ---------------------------------------------------------------------------
+
 
 class TestContentPathFallback(_PipelineBase):
     """resolve_file_path falls back to content_path when the absolute path is stale.
@@ -308,8 +338,7 @@ class TestContentPathFallback(_PipelineBase):
 
         # Now simulate a restart: reset the document to 'imported' and delete
         # chunks so we can reprocess with a stale absolute path.
-        self.db.update_document_extracted(doc_id, "", 0, readiness="imported",
-                                          error_message=None)
+        self.db.update_document_extracted(doc_id, "", 0, readiness="imported", error_message=None)
         self.db.delete_chunks(doc_id)
 
         self.assertEqual(_chunk_count(self.db, doc_id), 0, "Chunks must be cleared")
@@ -328,12 +357,15 @@ class TestContentPathFallback(_PipelineBase):
         # Pipeline must succeed via content_path fallback
         doc = self.db.get_document(doc_id)
         self.assertEqual(
-            doc["readiness"], "ready",
+            doc["readiness"],
+            "ready",
             f"readiness={doc['readiness']!r} after content_path fallback; "
-            f"error_message={doc.get('error_message')!r}"
+            f"error_message={doc.get('error_message')!r}",
         )
-        self.assertGreater(_chunk_count(self.db, doc_id), 0,
-                           "Chunks must be re-created via content_path fallback")
+        self.assertGreater(
+            _chunk_count(self.db, doc_id), 0, "Chunks must be re-created via content_path fallback"
+        )
+
 
 class TestDuplicateErroredDocument(_PipelineBase):
     """Re-uploading the same file when the existing record is in 'error' state
@@ -348,8 +380,9 @@ class TestDuplicateErroredDocument(_PipelineBase):
 
     CONTENT = "Orivellum duplicate error recovery test. Unique sentinel value 8f3a."
 
-    def _import_with_force(self, filename: str, data: bytes,
-                           force: bool = False, work_id: str | None = None):
+    def _import_with_force(
+        self, filename: str, data: bytes, force: bool = False, work_id: str | None = None
+    ):
         payload: dict = {
             "filename": filename,
             "content_b64": _b64(data),
@@ -381,8 +414,9 @@ class TestDuplicateErroredDocument(_PipelineBase):
 
         second = _import(self.client, "dup.txt", data)
         self.assertEqual(second["duplicate"], True)
-        self.assertIn("readiness", second,
-                      "duplicate import response must include top-level 'readiness'")
+        self.assertIn(
+            "readiness", second, "duplicate import response must include top-level 'readiness'"
+        )
         self.assertEqual(second["readiness"], second["document"]["readiness"])
 
     def test_errored_duplicate_is_requeued_automatically(self):
@@ -406,12 +440,16 @@ class TestDuplicateErroredDocument(_PipelineBase):
         # Extraction must have been re-queued and completed (TestClient runs bg tasks sync)
         doc = self.db.get_document(doc_id)
         self.assertEqual(
-            doc["readiness"], "ready",
+            doc["readiness"],
+            "ready",
             f"Expected readiness=ready after auto-requeue; got {doc['readiness']!r}; "
-            f"error_message={doc.get('error_message')!r}"
+            f"error_message={doc.get('error_message')!r}",
         )
-        self.assertGreater(_chunk_count(self.db, doc_id), 0,
-                           "Chunks must be re-created after errored-duplicate recovery")
+        self.assertGreater(
+            _chunk_count(self.db, doc_id),
+            0,
+            "Chunks must be re-created after errored-duplicate recovery",
+        )
 
     def test_no_text_duplicate_is_requeued_automatically(self):
         """Re-uploading a file whose record is in 'no_text' state auto-requeues extraction."""
@@ -421,9 +459,7 @@ class TestDuplicateErroredDocument(_PipelineBase):
         doc_id = first["document"]["id"]
 
         # Force 'no_text' state
-        self.db.update_document_extracted(
-            doc_id, "", 0, readiness="no_text", error_message=None
-        )
+        self.db.update_document_extracted(doc_id, "", 0, readiness="no_text", error_message=None)
         self.db.delete_chunks(doc_id)
 
         second = _import(self.client, "notext.txt", data)
@@ -431,8 +467,9 @@ class TestDuplicateErroredDocument(_PipelineBase):
 
         doc = self.db.get_document(doc_id)
         self.assertEqual(
-            doc["readiness"], "ready",
-            f"Expected readiness=ready after no_text auto-requeue; got {doc['readiness']!r}"
+            doc["readiness"],
+            "ready",
+            f"Expected readiness=ready after no_text auto-requeue; got {doc['readiness']!r}",
         )
 
     # ------------------------------------------------------------------
@@ -448,9 +485,7 @@ class TestDuplicateErroredDocument(_PipelineBase):
         self.assertEqual(self.db.get_document(doc_id)["readiness"], "ready")
 
         # Simulate a stuck document
-        self.db.update_document_extracted(
-            doc_id, "", 0, readiness="imported", error_message=None
-        )
+        self.db.update_document_extracted(doc_id, "", 0, readiness="imported", error_message=None)
         self.db.delete_chunks(doc_id)
 
         second = self._import_with_force("stuck.txt", data, force=True)
@@ -458,8 +493,9 @@ class TestDuplicateErroredDocument(_PipelineBase):
 
         doc = self.db.get_document(doc_id)
         self.assertEqual(
-            doc["readiness"], "ready",
-            f"Expected readiness=ready after force re-queue; got {doc['readiness']!r}"
+            doc["readiness"],
+            "ready",
+            f"Expected readiness=ready after force re-queue; got {doc['readiness']!r}",
         )
         self.assertGreater(_chunk_count(self.db, doc_id), 0)
 
@@ -478,8 +514,11 @@ class TestDuplicateErroredDocument(_PipelineBase):
         self.assertEqual(second["readiness"], "ready")
 
         # Chunk count should be unchanged — no re-extraction ran
-        self.assertEqual(_chunk_count(self.db, doc_id), chunk_before,
-                         "A ready duplicate without force must not re-extract")
+        self.assertEqual(
+            _chunk_count(self.db, doc_id),
+            chunk_before,
+            "A ready duplicate without force must not re-extract",
+        )
 
     def test_force_flag_requeues_ready_document(self):
         """force=True must re-queue extraction even when the document is already 'ready'."""
@@ -502,12 +541,16 @@ class TestDuplicateErroredDocument(_PipelineBase):
         # the DB state must reflect the completed extraction.
         doc = self.db.get_document(doc_id)
         self.assertEqual(
-            doc["readiness"], "ready",
+            doc["readiness"],
+            "ready",
             f"Expected readiness=ready after force re-queue on ready doc; got {doc['readiness']!r}; "
-            f"error_message={doc.get('error_message')!r}"
+            f"error_message={doc.get('error_message')!r}",
         )
-        self.assertGreater(_chunk_count(self.db, doc_id), 0,
-                           "Chunks must be re-created when force=True is used on a ready document")
+        self.assertGreater(
+            _chunk_count(self.db, doc_id),
+            0,
+            "Chunks must be re-created when force=True is used on a ready document",
+        )
 
     def test_duplicate_response_has_top_level_warnings(self):
         """Every duplicate import response must include a top-level 'warnings' list."""
@@ -520,11 +563,9 @@ class TestDuplicateErroredDocument(_PipelineBase):
         # Normal duplicate (ready) — warnings should be an empty list at top level
         second = _import(self.client, "warn.txt", data)
         self.assertEqual(second["duplicate"], True)
-        self.assertIn("warnings", second,
-                      "duplicate response must include top-level 'warnings'")
+        self.assertIn("warnings", second, "duplicate response must include top-level 'warnings'")
         self.assertIsInstance(second["warnings"], list)
-        self.assertEqual(second["warnings"], [],
-                         "warnings must be empty for a ready document")
+        self.assertEqual(second["warnings"], [], "warnings must be empty for a ready document")
 
     def test_duplicate_response_warnings_populated_for_errored_doc(self):
         """top-level warnings must be populated when the duplicate is in 'error' state."""
@@ -535,8 +576,9 @@ class TestDuplicateErroredDocument(_PipelineBase):
 
         # Force error state and write a warning using the public API
         self._force_error(doc_id)
-        self.db.add_extraction_warning(doc_id, kind="extraction_error",
-                                       detail="simulated extraction warning")
+        self.db.add_extraction_warning(
+            doc_id, kind="extraction_error", detail="simulated extraction warning"
+        )
 
         # Re-upload without force so we stay in error (file path doesn't exist after delete_chunks;
         # recovery requires a valid file — use force=False to stay in error just long enough to check)
@@ -551,8 +593,7 @@ class TestDuplicateErroredDocument(_PipelineBase):
         # Now do a second import — it auto-requeues but we can still assert the response shape
         second = _import(self.client, "errwarn.txt", data)
         self.assertEqual(second["duplicate"], True)
-        self.assertIn("warnings", second,
-                      "duplicate response must include top-level 'warnings'")
+        self.assertIn("warnings", second, "duplicate response must include top-level 'warnings'")
         self.assertIsInstance(second["warnings"], list)
 
 
@@ -560,10 +601,11 @@ class TestDuplicateErroredDocument(_PipelineBase):
 # Edge-case: password-protected PDF
 # ---------------------------------------------------------------------------
 
+
 def _make_encrypted_pdf_bytes() -> bytes:
     """Return a minimal PDF encrypted with a user password using pypdf."""
-    from reportlab.pdfgen import canvas as rl_canvas
     import pypdf
+    from reportlab.pdfgen import canvas as rl_canvas
 
     buf = io.BytesIO()
     c = rl_canvas.Canvas(buf)
@@ -593,14 +635,16 @@ class TestEncryptedPdfPipeline(_PipelineBase):
     def test_readiness_is_error_or_no_text(self):
         doc = self.db.get_document(self.doc_id)
         self.assertIn(
-            doc["readiness"], ("error", "no_text"),
+            doc["readiness"],
+            ("error", "no_text"),
             f"Expected error/no_text for encrypted PDF, got {doc['readiness']!r}",
         )
 
     def test_error_message_is_set(self):
         doc = self.db.get_document(self.doc_id)
         self.assertIn(
-            doc["readiness"], ("error", "no_text"),
+            doc["readiness"],
+            ("error", "no_text"),
             "readiness must be non-ready before checking error_message",
         )
         self.assertTrue(
@@ -612,6 +656,7 @@ class TestEncryptedPdfPipeline(_PipelineBase):
 # ---------------------------------------------------------------------------
 # Edge-case: corrupt / malformed DOCX
 # ---------------------------------------------------------------------------
+
 
 def _make_corrupt_docx_bytes() -> bytes:
     """Return bytes that look vaguely like a DOCX but are not valid."""
@@ -630,14 +675,16 @@ class TestCorruptDocxPipeline(_PipelineBase):
     def test_readiness_is_error_or_no_text(self):
         doc = self.db.get_document(self.doc_id)
         self.assertIn(
-            doc["readiness"], ("error", "no_text"),
+            doc["readiness"],
+            ("error", "no_text"),
             f"Expected error/no_text for corrupt DOCX, got {doc['readiness']!r}",
         )
 
     def test_error_message_is_set(self):
         doc = self.db.get_document(self.doc_id)
         self.assertIn(
-            doc["readiness"], ("error", "no_text"),
+            doc["readiness"],
+            ("error", "no_text"),
             "readiness must be non-ready before checking error_message",
         )
         self.assertTrue(
@@ -650,6 +697,7 @@ class TestCorruptDocxPipeline(_PipelineBase):
 # Edge-case: zero-byte upload
 # ---------------------------------------------------------------------------
 
+
 class TestZeroBytePipeline(_PipelineBase):
     """A zero-byte file must land in 'no_text' with an error_message."""
 
@@ -661,14 +709,16 @@ class TestZeroBytePipeline(_PipelineBase):
     def test_readiness_is_no_text(self):
         doc = self.db.get_document(self.doc_id)
         self.assertIn(
-            doc["readiness"], ("error", "no_text"),
+            doc["readiness"],
+            ("error", "no_text"),
             f"Expected no_text/error for zero-byte file, got {doc['readiness']!r}",
         )
 
     def test_error_message_is_set(self):
         doc = self.db.get_document(self.doc_id)
         self.assertIn(
-            doc["readiness"], ("error", "no_text"),
+            doc["readiness"],
+            ("error", "no_text"),
             "readiness must be non-ready before checking error_message",
         )
         self.assertTrue(
@@ -681,9 +731,11 @@ class TestZeroBytePipeline(_PipelineBase):
 # Happy-path: Excel (.xlsx) with multiple sheets
 # ---------------------------------------------------------------------------
 
+
 def _make_xlsx_multi_sheet_bytes() -> bytes:
     """Return a minimal .xlsx workbook with two named sheets."""
     import openpyxl
+
     wb = openpyxl.Workbook()
 
     ws1 = wb.active
@@ -714,14 +766,16 @@ class TestXlsxMultiSheetPipeline(_PipelineBase):
     def test_readiness_is_ready(self):
         doc = self.db.get_document(self.doc_id)
         self.assertEqual(
-            doc["readiness"], "ready",
+            doc["readiness"],
+            "ready",
             f"Expected readiness=ready for multi-sheet XLSX, got {doc['readiness']!r}; "
             f"error_message={doc.get('error_message')!r}",
         )
 
     def test_chunks_created(self):
         self.assertGreater(
-            _chunk_count(self.db, self.doc_id), 0,
+            _chunk_count(self.db, self.doc_id),
+            0,
             "At least one chunk must be created from the XLSX workbook",
         )
 
@@ -729,11 +783,13 @@ class TestXlsxMultiSheetPipeline(_PipelineBase):
         doc = self.db.get_document(self.doc_id)
         extracted = doc.get("extracted_text", "") or ""
         self.assertIn(
-            "Revenue", extracted,
+            "Revenue",
+            extracted,
             "Sheet name 'Revenue' must appear in the extracted text",
         )
         self.assertIn(
-            "Expenses", extracted,
+            "Expenses",
+            extracted,
             "Sheet name 'Expenses' must appear in the extracted text",
         )
 
@@ -741,8 +797,7 @@ class TestXlsxMultiSheetPipeline(_PipelineBase):
         resp = self.client.get("/api/library/search", params={"q": "Revenue"})
         self.assertEqual(resp.status_code, 200)
         doc_ids = [r["id"] for r in resp.json()["results"]]
-        self.assertIn(self.doc_id, doc_ids,
-                      "FTS search must return the imported XLSX document")
+        self.assertIn(self.doc_id, doc_ids, "FTS search must return the imported XLSX document")
 
 
 if __name__ == "__main__":
@@ -753,6 +808,7 @@ if __name__ == "__main__":
 # Task #79 — Images without readable text land in 'no_text'
 # ---------------------------------------------------------------------------
 
+
 class TestImageNoTextReadiness(_PipelineBase):
     """Confirm that an image file with no recoverable text ends up readiness='no_text'.
 
@@ -762,28 +818,38 @@ class TestImageNoTextReadiness(_PipelineBase):
 
     def _make_tiny_png(self) -> bytes:
         """Return a minimal valid 1×1 black PNG."""
-        import zlib, struct
+        import struct
+        import zlib
+
         def chunk(name: bytes, data: bytes) -> bytes:
             c = name + data
             return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+
         ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
         idat = zlib.compress(b"\x00\x00\x00\x00")
-        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+        return (
+            b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+        )
 
     def _setup_image_doc(self, filename: str) -> tuple:
         """Write a tiny PNG to disk, create a DB record, return (doc_id, path)."""
         from pathlib import Path
+
         png_path = Path(self._tmpdir.name) / filename
         png_path.write_bytes(self._make_tiny_png())
         doc = self.db.create_document(
-            title=filename, source=str(png_path), kind="image",
-            work_id=None, content_path=str(png_path),
+            title=filename,
+            source=str(png_path),
+            kind="image",
+            work_id=None,
+            content_path=str(png_path),
         )
         return doc["id"], str(png_path)
 
     def test_image_with_no_text_becomes_no_text(self):
         """An image that yields no text must land in readiness='no_text'."""
         from unittest.mock import patch
+
         from orivellum.capabilities.extraction import ExtractionResult
         from orivellum.capabilities.pipeline import process_document
 
@@ -795,14 +861,16 @@ class TestImageNoTextReadiness(_PipelineBase):
 
         doc = self.db.get_document(doc_id)
         self.assertEqual(
-            doc["readiness"], "no_text",
+            doc["readiness"],
+            "no_text",
             f"Expected readiness='no_text'; got {doc['readiness']!r}. "
-            f"error_message={doc.get('error_message')!r}"
+            f"error_message={doc.get('error_message')!r}",
         )
 
     def test_image_no_text_sets_error_message(self):
         """A no_text image must also store a human-readable error_message."""
         from unittest.mock import patch
+
         from orivellum.capabilities.extraction import ExtractionResult
         from orivellum.capabilities.pipeline import process_document
 
@@ -814,8 +882,7 @@ class TestImageNoTextReadiness(_PipelineBase):
 
         doc = self.db.get_document(doc_id)
         self.assertIsNotNone(
-            doc.get("error_message"),
-            "no_text documents must store a non-null error_message"
+            doc.get("error_message"), "no_text documents must store a non-null error_message"
         )
         self.assertGreater(len(doc["error_message"]), 0)
 
@@ -823,6 +890,7 @@ class TestImageNoTextReadiness(_PipelineBase):
 # ---------------------------------------------------------------------------
 # Task #125 — Confidence scores stored correctly + tier thresholds
 # ---------------------------------------------------------------------------
+
 
 def _make_work_db(db, title: str = "Conf Work") -> str:
     """Insert a work directly into the DB and return its id."""
@@ -840,9 +908,7 @@ def _make_knowledge_item(db, work_id: str, confidence: float) -> dict:
         confidence=confidence,
     )
     with db._lock:
-        row = db._conn.execute(
-            "SELECT id, confidence FROM knowledge WHERE id=?", (kid,)
-        ).fetchone()
+        row = db._conn.execute("SELECT id, confidence FROM knowledge WHERE id=?", (kid,)).fetchone()
     return dict(row) if row else {}
 
 
@@ -855,8 +921,9 @@ class TestConfidenceScoreStorage(_PipelineBase):
         wid = _make_work_db(self.db)
         item = _make_knowledge_item(self.db, wid, 0.90)
         self.assertIn("confidence", item)
-        self.assertGreaterEqual(item["confidence"], 0.80,
-                                f"Expected High-tier; got {item['confidence']}")
+        self.assertGreaterEqual(
+            item["confidence"], 0.80, f"Expected High-tier; got {item['confidence']}"
+        )
 
     def test_medium_confidence_stored_and_retrieved(self):
         """A confidence of 0.65 must come back in [0.50, 0.80) (Medium tier)."""
@@ -869,8 +936,7 @@ class TestConfidenceScoreStorage(_PipelineBase):
         """A confidence of 0.30 must come back < 0.50 (Low tier)."""
         wid = _make_work_db(self.db)
         item = _make_knowledge_item(self.db, wid, 0.30)
-        self.assertLess(item["confidence"], 0.50,
-                        f"Expected Low-tier; got {item['confidence']}")
+        self.assertLess(item["confidence"], 0.50, f"Expected Low-tier; got {item['confidence']}")
 
     def test_confidence_boundary_0_80_stored_precisely(self):
         """Exactly 0.80 must be stored without floating-point loss."""
@@ -888,13 +954,14 @@ class TestConfidenceScoreStorage(_PipelineBase):
         """Items created without explicit confidence must get a sensible non-zero default."""
         wid = _make_work_db(self.db)
         kid = self.db.create_knowledge_item(
-            work_id=wid, kind="fact",
-            text="default conf test", subject="default conf",
+            work_id=wid,
+            kind="fact",
+            text="default conf test",
+            subject="default conf",
         )
         with self.db._lock:
             row = self.db._conn.execute(
                 "SELECT confidence FROM knowledge WHERE id=?", (kid,)
             ).fetchone()
         self.assertIsNotNone(row)
-        self.assertGreater(row["confidence"], 0.0,
-                           "Default confidence must be > 0")
+        self.assertGreater(row["confidence"], 0.0, "Default confidence must be > 0")

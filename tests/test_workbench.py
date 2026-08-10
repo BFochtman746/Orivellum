@@ -10,6 +10,7 @@ Covers:
 - Routes: create/list/detail, iterate guards, revert, complete, download,
   delete, archived projects are read-only
 """
+
 from __future__ import annotations
 
 import json
@@ -38,13 +39,14 @@ def _make_app(tmp: str):
 
 def _make_db(tmp: str):
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(str(Path(tmp) / "test.db"))
 
 
 # ── DB layer ──────────────────────────────────────────────────────────────────
 
-class TestWorkbenchDB(unittest.TestCase):
 
+class TestWorkbenchDB(unittest.TestCase):
     def test_project_crud_and_version_numbering(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = _make_db(tmp)
@@ -52,7 +54,9 @@ class TestWorkbenchDB(unittest.TestCase):
             self.assertEqual(p["status"], "active")
             self.assertEqual(p["kind"], "xlsx")
 
-            v1 = db.create_wb_version(p["id"], "first", [{"name": "a.xlsx", "size": 1, "sha256": "x"}])
+            v1 = db.create_wb_version(
+                p["id"], "first", [{"name": "a.xlsx", "size": 1, "sha256": "x"}]
+            )
             v2 = db.create_wb_version(p["id"], "second", [])
             self.assertEqual((v1["version_no"], v2["version_no"]), (1, 2))
             self.assertEqual([v["version_no"] for v in db.list_wb_versions(p["id"])], [1, 2])
@@ -71,21 +75,22 @@ class TestWorkbenchDB(unittest.TestCase):
             db = _make_db(tmp)
             p = db.create_wb_project("Tool", "code", "t")
             self.assertTrue(db.claim_wb_build(p["id"]))
-            self.assertFalse(db.claim_wb_build(p["id"]))      # already claimed
+            self.assertFalse(db.claim_wb_build(p["id"]))  # already claimed
             db.update_wb_project(p["id"], building=0)
-            self.assertTrue(db.claim_wb_build(p["id"]))       # released → claimable
+            self.assertTrue(db.claim_wb_build(p["id"]))  # released → claimable
             db.update_wb_project(p["id"], building=0, status="archived")
-            self.assertFalse(db.claim_wb_build(p["id"]))      # archived + active-only
+            self.assertFalse(db.claim_wb_build(p["id"]))  # archived + active-only
             self.assertTrue(db.claim_wb_build(p["id"], require_active=False))
             self.assertFalse(db.claim_wb_build("no-such-id"))
 
 
 # ── Verification ──────────────────────────────────────────────────────────────
 
-class TestVerifyOutput(unittest.TestCase):
 
+class TestVerifyOutput(unittest.TestCase):
     def test_empty_output_fails(self):
         from orivellum.capabilities.workbench import _verify_output
+
         with tempfile.TemporaryDirectory() as tmp:
             ok, checks = _verify_output("xlsx", Path(tmp))
             self.assertFalse(ok)
@@ -95,6 +100,7 @@ class TestVerifyOutput(unittest.TestCase):
         from openpyxl import Workbook
 
         from orivellum.capabilities.workbench import _verify_output
+
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
             wb = Workbook()
@@ -111,6 +117,7 @@ class TestVerifyOutput(unittest.TestCase):
 
     def test_xlsx_requires_a_workbook(self):
         from orivellum.capabilities.workbench import _verify_output
+
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "readme.txt").write_text("no workbook here")
             ok, checks = _verify_output("xlsx", Path(tmp))
@@ -119,6 +126,7 @@ class TestVerifyOutput(unittest.TestCase):
 
     def test_code_syntax_and_json_checks(self):
         from orivellum.capabilities.workbench import _verify_output
+
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
             (out / "main.py").write_text("def ok():\n    return 1\n")
@@ -151,7 +159,6 @@ print("built budget workbook")
 
 
 class TestRunBuild(unittest.TestCase):
-
     def test_happy_path_creates_verified_version(self):
         from orivellum.capabilities.llm import LLMResult
         from orivellum.capabilities.workbench import run_build, version_dir
@@ -159,8 +166,10 @@ class TestRunBuild(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, db, cfg = _make_app(tmp)
             p = db.create_wb_project("Budget", "xlsx", "a budget workbook")
-            with patch("orivellum.capabilities.llm.llm_call",
-                       return_value=LLMResult(_GOOD_XLSX_SCRIPT, True, "test", 0)):
+            with patch(
+                "orivellum.capabilities.llm.llm_call",
+                return_value=LLMResult(_GOOD_XLSX_SCRIPT, True, "test", 0),
+            ):
                 run_build(db, cfg, p["id"], "build it")
 
             proj = db.get_wb_project(p["id"])
@@ -182,8 +191,10 @@ class TestRunBuild(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, db, cfg = _make_app(tmp)
             p = db.create_wb_project("Budget", "xlsx", "a budget workbook")
-            with patch("orivellum.capabilities.llm.llm_call",
-                       return_value=LLMResult(None, False, "test", 0, error="down")):
+            with patch(
+                "orivellum.capabilities.llm.llm_call",
+                return_value=LLMResult(None, False, "test", 0, error="down"),
+            ):
                 run_build(db, cfg, p["id"], "build it")
 
             proj = db.get_wb_project(p["id"])
@@ -193,6 +204,7 @@ class TestRunBuild(unittest.TestCase):
 
     def test_archived_project_never_builds(self):
         from orivellum.capabilities.workbench import run_build
+
         with tempfile.TemporaryDirectory() as tmp:
             _, db, cfg = _make_app(tmp)
             p = db.create_wb_project("Budget", "xlsx", "b")
@@ -203,10 +215,13 @@ class TestRunBuild(unittest.TestCase):
 
 # ── Revert + archive ──────────────────────────────────────────────────────────
 
+
 def _write_version(db, cfg, project_id: str, content: str):
     """Create a version row + on-disk files directly (bypasses the LLM)."""
-    from orivellum.capabilities.workbench import _snapshot, version_dir
     import shutil
+
+    from orivellum.capabilities.workbench import _snapshot, version_dir
+
     with tempfile.TemporaryDirectory() as t:
         f = Path(t) / "main.py"
         f.write_text(content)
@@ -219,9 +234,9 @@ def _write_version(db, cfg, project_id: str, content: str):
 
 
 class TestRevertAndArchive(unittest.TestCase):
-
     def test_revert_copies_forward_as_new_version(self):
         from orivellum.capabilities.workbench import revert_to, version_dir
+
         with tempfile.TemporaryDirectory() as tmp:
             _, db, cfg = _make_app(tmp)
             p = db.create_wb_project("Tool", "code", "a tool")
@@ -237,6 +252,7 @@ class TestRevertAndArchive(unittest.TestCase):
 
     def test_archive_builds_zip_with_manifest_and_locks_project(self):
         from orivellum.capabilities.workbench import archive_project
+
         with tempfile.TemporaryDirectory() as tmp:
             _, db, cfg = _make_app(tmp)
             p = db.create_wb_project("My Tool!", "code", "a tool")
@@ -260,6 +276,7 @@ class TestRevertAndArchive(unittest.TestCase):
 
     def test_archive_refuses_on_tampered_or_missing_files(self):
         from orivellum.capabilities.workbench import archive_project, version_dir
+
         with tempfile.TemporaryDirectory() as tmp:
             _, db, cfg = _make_app(tmp)
             p = db.create_wb_project("Tool", "code", "a tool")
@@ -278,6 +295,7 @@ class TestRevertAndArchive(unittest.TestCase):
 
     def test_archive_empty_project_rejected(self):
         from orivellum.capabilities.workbench import archive_project
+
         with tempfile.TemporaryDirectory() as tmp:
             _, db, cfg = _make_app(tmp)
             p = db.create_wb_project("Empty", "code", "nothing")
@@ -287,8 +305,8 @@ class TestRevertAndArchive(unittest.TestCase):
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-class TestWorkbenchRoutes(unittest.TestCase):
 
+class TestWorkbenchRoutes(unittest.TestCase):
     def test_full_route_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db, cfg = _make_app(tmp)
@@ -296,27 +314,39 @@ class TestWorkbenchRoutes(unittest.TestCase):
 
             with patch("orivellum.api.routes.workbench._start_build") as start:
                 # create
-                r = client.post("/api/workbench/projects", headers=AUTH_HEADERS,
-                                json={"title": "Budget", "kind": "xlsx", "brief": "a budget"})
+                r = client.post(
+                    "/api/workbench/projects",
+                    headers=AUTH_HEADERS,
+                    json={"title": "Budget", "kind": "xlsx", "brief": "a budget"},
+                )
                 self.assertEqual(r.status_code, 200, r.text)
                 pid = r.json()["id"]
                 self.assertTrue(r.json()["building"])
                 start.assert_called_once()
 
                 # invalid kind
-                r = client.post("/api/workbench/projects", headers=AUTH_HEADERS,
-                                json={"title": "X", "kind": "pptx", "brief": "b"})
+                r = client.post(
+                    "/api/workbench/projects",
+                    headers=AUTH_HEADERS,
+                    json={"title": "X", "kind": "pptx", "brief": "b"},
+                )
                 self.assertEqual(r.status_code, 422)
 
                 # iterate while building → 409
-                r = client.post(f"/api/workbench/projects/{pid}/iterate",
-                                headers=AUTH_HEADERS, json={"instruction": "more"})
+                r = client.post(
+                    f"/api/workbench/projects/{pid}/iterate",
+                    headers=AUTH_HEADERS,
+                    json={"instruction": "more"},
+                )
                 self.assertEqual(r.status_code, 409)
 
                 # finish the "build", then iterate works
                 db.update_wb_project(pid, building=0)
-                r = client.post(f"/api/workbench/projects/{pid}/iterate",
-                                headers=AUTH_HEADERS, json={"instruction": "more"})
+                r = client.post(
+                    f"/api/workbench/projects/{pid}/iterate",
+                    headers=AUTH_HEADERS,
+                    json={"instruction": "more"},
+                )
                 self.assertEqual(r.status_code, 200, r.text)
                 db.update_wb_project(pid, building=0)
 
@@ -326,8 +356,9 @@ class TestWorkbenchRoutes(unittest.TestCase):
 
             # add a real version, then download + complete
             _write_version(db, cfg, pid, "x = 1\n")
-            r = client.get(f"/api/workbench/projects/{pid}/versions/1/download",
-                           headers=AUTH_HEADERS)
+            r = client.get(
+                f"/api/workbench/projects/{pid}/versions/1/download", headers=AUTH_HEADERS
+            )
             self.assertEqual(r.status_code, 200)
             self.assertEqual(r.headers["content-type"], "application/zip")
 
@@ -335,18 +366,22 @@ class TestWorkbenchRoutes(unittest.TestCase):
             self.assertEqual(r.status_code, 200, r.text)
 
             # archived project is read-only
-            r = client.post(f"/api/workbench/projects/{pid}/iterate",
-                            headers=AUTH_HEADERS, json={"instruction": "more"})
+            r = client.post(
+                f"/api/workbench/projects/{pid}/iterate",
+                headers=AUTH_HEADERS,
+                json={"instruction": "more"},
+            )
             self.assertEqual(r.status_code, 409)
 
             # archive download works
-            r = client.get(f"/api/workbench/projects/{pid}/archive/download",
-                           headers=AUTH_HEADERS)
+            r = client.get(f"/api/workbench/projects/{pid}/archive/download", headers=AUTH_HEADERS)
             self.assertEqual(r.status_code, 200)
 
             # detail lists versions
             r = client.get(f"/api/workbench/projects/{pid}", headers=AUTH_HEADERS)
-            self.assertEqual(r.json()["version_count"], 1)  # builds were mocked; only the direct write exists
+            self.assertEqual(
+                r.json()["version_count"], 1
+            )  # builds were mocked; only the direct write exists
             # delete
             r = client.delete(f"/api/workbench/projects/{pid}", headers=AUTH_HEADERS)
             self.assertEqual(r.status_code, 200)

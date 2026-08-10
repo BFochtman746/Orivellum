@@ -13,6 +13,7 @@ Design (SECURITY-AND-ACTION-POLICY §Data boundaries):
 
 Ref: https://openphish.com/  |  https://urlhaus.abuse.ch/api/
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -27,9 +28,9 @@ from orivellum.capabilities.mail.models import ThreatEvidence
 
 logger = logging.getLogger("orivellum.mail.threat")
 
-_OPENPHISH_URL   = "https://openphish.com/feed.txt"
-_URLHAUS_URL     = "https://urlhaus.abuse.ch/downloads/text/"
-_HTTP_TIMEOUT    = 30
+_OPENPHISH_URL = "https://openphish.com/feed.txt"
+_URLHAUS_URL = "https://urlhaus.abuse.ch/downloads/text/"
+_HTTP_TIMEOUT = 30
 
 # In-memory feed snapshots
 _feed_cache: dict[str, dict[str, Any]] = {}
@@ -130,13 +131,15 @@ def inspect_message(message_body: str) -> list[ThreatEvidence]:
         stale = cache.get("stale", False)
         for host, original_url in hostnames.items():
             if host and host in hosts:
-                evidence.append(ThreatEvidence(
-                    feed=feed_name + (" (stale)" if stale else ""),
-                    indicator=host,
-                    indicator_type="domain",
-                    confidence=0.6 if stale else 0.85,
-                    description=f"Matched in {feed_name} feed",
-                ))
+                evidence.append(
+                    ThreatEvidence(
+                        feed=feed_name + (" (stale)" if stale else ""),
+                        indicator=host,
+                        indicator_type="domain",
+                        confidence=0.6 if stale else 0.85,
+                        description=f"Matched in {feed_name} feed",
+                    )
+                )
 
     return evidence
 

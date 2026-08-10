@@ -8,6 +8,7 @@ GET  /api/generate/download           → stream a generated file for download
 POST /api/generate/workshop/plan      → clarifying-question planner (self-prompting)
 POST /api/generate/workshop/execute   → AI code-gen → safe sandbox → critique loop
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,13 +26,14 @@ logger = logging.getLogger("orivellum.api.generate")
 router = APIRouter(prefix="/api", tags=["generate"], dependencies=[Depends(require_auth)])
 # ── Pydantic request models ────────────────────────────────────────────────────
 
+
 class GenerateWorkRequest(BaseModel):
     work_id: str
 
 
 class GenerateReportRequest(BaseModel):
     work_id: str
-    format: str = "pdf"   # "pdf" | "docx"
+    format: str = "pdf"  # "pdf" | "docx"
 
 
 class BundleRequest(BaseModel):
@@ -42,9 +44,10 @@ class BundleRequest(BaseModel):
 
 # ── Workshop request models ────────────────────────────────────────────────────
 
+
 class WorkshopPlanRequest(BaseModel):
     request: str
-    format: str | None = None   # xlsx | docx | pdf | pptx
+    format: str | None = None  # xlsx | docx | pdf | pptx
     work_id: str | None = None
 
 
@@ -57,6 +60,7 @@ class WorkshopExecuteRequest(BaseModel):
 
 
 # ── Response shape ─────────────────────────────────────────────────────────────
+
 
 def _generation_result(file_path: Path, doc_id: str, cfg) -> dict:
     """Build the standard response payload for a successful generation."""
@@ -75,6 +79,7 @@ def _generation_result(file_path: Path, doc_id: str, cfg) -> dict:
 
 # ── Excel ──────────────────────────────────────────────────────────────────────
 
+
 @router.post("/generate/excel")
 def generate_excel_endpoint(body: GenerateWorkRequest):
     """Generate an xlsx workbook summarising a Work's knowledge, docs, and tasks."""
@@ -86,6 +91,7 @@ def generate_excel_endpoint(body: GenerateWorkRequest):
 
     try:
         from orivellum.capabilities.generate import generate_excel
+
         fpath, doc_id = generate_excel(body.work_id, db, cfg)
     except Exception as exc:
         raise internal_error(logger, exc, f"excel generation for work {body.work_id!r}") from exc
@@ -94,6 +100,7 @@ def generate_excel_endpoint(body: GenerateWorkRequest):
 
 
 # ── Report (PDF / DOCX) ────────────────────────────────────────────────────────
+
 
 @router.post("/generate/report")
 def generate_report_endpoint(body: GenerateReportRequest):
@@ -111,17 +118,22 @@ def generate_report_endpoint(body: GenerateReportRequest):
     try:
         if fmt == "pdf":
             from orivellum.capabilities.generate import generate_pdf_report
+
             fpath, doc_id = generate_pdf_report(body.work_id, db, cfg)
         else:
             from orivellum.capabilities.generate import generate_docx_report
+
             fpath, doc_id = generate_docx_report(body.work_id, db, cfg)
     except Exception as exc:
-        raise internal_error(logger, exc, f"report generation ({fmt}) for work {body.work_id!r}") from exc
+        raise internal_error(
+            logger, exc, f"report generation ({fmt}) for work {body.work_id!r}"
+        ) from exc
 
     return _generation_result(fpath, doc_id, cfg)
 
 
 # ── Slides (PPTX) ─────────────────────────────────────────────────────────────
+
 
 @router.post("/generate/slides")
 def generate_slides_endpoint(body: GenerateWorkRequest):
@@ -134,6 +146,7 @@ def generate_slides_endpoint(body: GenerateWorkRequest):
 
     try:
         from orivellum.capabilities.generate import generate_pptx
+
         fpath, doc_id = generate_pptx(body.work_id, db, cfg)
     except Exception as exc:
         raise internal_error(logger, exc, f"pptx generation for work {body.work_id!r}") from exc
@@ -142,6 +155,7 @@ def generate_slides_endpoint(body: GenerateWorkRequest):
 
 
 # ── Bundle (ZIP) ───────────────────────────────────────────────────────────────
+
 
 @router.post("/generate/bundle")
 def generate_bundle_endpoint(body: BundleRequest):
@@ -157,6 +171,7 @@ def generate_bundle_endpoint(body: BundleRequest):
 
     try:
         from orivellum.capabilities.generate import bundle_files
+
         fpath, doc_id = bundle_files(body.paths, body.name or "bundle", body.work_id, db, cfg)
     except Exception as exc:
         raise internal_error(logger, exc, f"bundle generation for work {body.work_id!r}") from exc
@@ -165,6 +180,7 @@ def generate_bundle_endpoint(body: BundleRequest):
 
 
 # ── Download ───────────────────────────────────────────────────────────────────
+
 
 @router.get("/generate/download")
 def download_generated_file(path: str):
@@ -179,7 +195,7 @@ def download_generated_file(path: str):
 
     try:
         target = (data_dir / path).resolve()
-        target.relative_to(generate_root.resolve())   # path-traversal guard
+        target.relative_to(generate_root.resolve())  # path-traversal guard
     except (ValueError, Exception):
         raise HTTPException(status_code=400, detail="Invalid path")
 
@@ -190,8 +206,8 @@ def download_generated_file(path: str):
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ".pdf":  "application/pdf",
-        ".zip":  "application/zip",
+        ".pdf": "application/pdf",
+        ".zip": "application/zip",
     }
     media_type = suffix_mime.get(target.suffix.lower(), "application/octet-stream")
 
@@ -205,12 +221,13 @@ def download_generated_file(path: str):
 
 # ── Prompt-driven generation (chat-native) ────────────────────────────────────
 
+
 class GenerateFromPromptRequest(BaseModel):
     prompt: str
-    format: str = "docx"          # docx | pdf | pptx | xlsx
+    format: str = "docx"  # docx | pdf | pptx | xlsx
     filename: str | None = None
     work_id: str | None = None
-    conversation_id: str | None = None   # informational only (not used server-side)
+    conversation_id: str | None = None  # informational only (not used server-side)
 
 
 @router.post("/generate/from-prompt")
@@ -238,6 +255,7 @@ async def generate_from_prompt_endpoint(body: GenerateFromPromptRequest):
 
     try:
         from orivellum.capabilities.generate import generate_from_prompt
+
         fpath, doc_id = generate_from_prompt(
             prompt=body.prompt,
             format=fmt,
@@ -254,6 +272,7 @@ async def generate_from_prompt_endpoint(body: GenerateFromPromptRequest):
 
 # ── Workshop — self-prompting, AI code-generated, critique-looped ──────────────
 
+
 @router.post("/generate/workshop/plan")
 def workshop_plan(body: WorkshopPlanRequest):
     """Step 1: LLM generates clarifying questions for the document request.
@@ -269,6 +288,7 @@ def workshop_plan(body: WorkshopPlanRequest):
 
     try:
         from orivellum.capabilities.workshop import plan_document
+
         session = plan_document(
             request=body.request.strip(),
             format_hint=body.format,
@@ -299,6 +319,7 @@ def workshop_execute(body: WorkshopExecuteRequest):
 
     try:
         from orivellum.capabilities.workshop import execute_workshop
+
         result = execute_workshop(
             session_id=body.session_id,
             request=body.request.strip(),

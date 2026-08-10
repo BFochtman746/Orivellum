@@ -13,6 +13,7 @@ Available tools:
 
 Reference: https://modelcontextprotocol.io/specification
 """
+
 from __future__ import annotations
 
 import json
@@ -34,6 +35,7 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 # model rather than trusting an unbounded raw dict, while preserving batch and
 # notification semantics that the protocol requires.
 
+
 class MCPMessage(BaseModel):
     model_config = ConfigDict(extra="ignore")
     jsonrpc: str = Field(default="2.0", max_length=10)
@@ -41,6 +43,7 @@ class MCPMessage(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     # id may be a string, int, or null per the JSON-RPC spec.
     id: str | int | None = None
+
 
 # ── MCP helpers ───────────────────────────────────────────────────────────────
 
@@ -61,7 +64,11 @@ _TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
-                "limit": {"type": "integer", "description": "Max results (default 10, max 50)", "default": 10},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 10, max 50)",
+                    "default": 10,
+                },
                 "work_id": {"type": "string", "description": "Filter by Work ID (optional)"},
             },
             "required": ["query"],
@@ -90,7 +97,11 @@ _TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "work_id": {"type": "string", "description": "Filter by Work ID (optional)"},
-                "limit": {"type": "integer", "description": "Max results (default 50)", "default": 50},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 50)",
+                    "default": 50,
+                },
             },
         },
     },
@@ -129,17 +140,23 @@ def _call_tool(name: str, arguments: dict) -> dict:
         # Text chunks
         chunks = db.search_chunks(query, work_id=work_id, limit=limit)
 
-        return _tool_result({
-            "knowledge_items": knowledge,
-            "text_chunks": [
-                {"doc_id": c.get("doc_id"), "text": c.get("text", "")[:600],
-                 "doc_title": c.get("doc_title"), "score": c.get("score")}
-                for c in chunks
-            ],
-            "count": len(knowledge) + len(chunks),
-        })
+        return _tool_result(
+            {
+                "knowledge_items": knowledge,
+                "text_chunks": [
+                    {
+                        "doc_id": c.get("doc_id"),
+                        "text": c.get("text", "")[:600],
+                        "doc_title": c.get("doc_title"),
+                        "score": c.get("score"),
+                    }
+                    for c in chunks
+                ],
+                "count": len(knowledge) + len(chunks),
+            }
+        )
 
-    elif name == "get_document":
+    if name == "get_document":
         doc_id = str(arguments.get("doc_id", "")).strip()
         if not doc_id:
             return _tool_error("doc_id is required")
@@ -148,21 +165,21 @@ def _call_tool(name: str, arguments: dict) -> dict:
             return _tool_error(f"Document {doc_id!r} not found")
         return _tool_result(doc)
 
-    elif name == "list_works":
+    if name == "list_works":
         works = db.list_works()
         return _tool_result({"works": works, "count": len(works)})
 
-    elif name == "list_documents":
+    if name == "list_documents":
         work_id = arguments.get("work_id")
         limit = min(int(arguments.get("limit", 50)), 200)
         docs = db.list_documents(work_id=work_id, limit=limit)
         return _tool_result({"documents": docs, "count": len(docs)})
 
-    else:
-        return _tool_error(f"Unknown tool: {name!r}")
+    return _tool_error(f"Unknown tool: {name!r}")
 
 
 # ── MCP HTTP endpoint ─────────────────────────────────────────────────────────
+
 
 @router.post("/mcp")
 async def mcp_endpoint(request: Request):
@@ -223,23 +240,25 @@ def _handle_jsonrpc(raw: Any) -> dict | None:
     try:
         # ── Standard MCP methods ────────────────────────────────────────────
         if method == "initialize":
-            return ok({
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": _SERVER_INFO,
-                "instructions": (
-                    "Orivellum knowledge base. Use search_knowledge to find relevant information, "
-                    "list_works to browse projects, and get_document for full document content."
-                ),
-            })
+            return ok(
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": _SERVER_INFO,
+                    "instructions": (
+                        "Orivellum knowledge base. Use search_knowledge to find relevant information, "
+                        "list_works to browse projects, and get_document for full document content."
+                    ),
+                }
+            )
 
-        elif method == "initialized":
+        if method == "initialized":
             return None  # notification — no response
 
-        elif method == "tools/list":
+        if method == "tools/list":
             return ok({"tools": _TOOLS})
 
-        elif method == "tools/call":
+        if method == "tools/call":
             tool_name = params.get("name", "")
             arguments = params.get("arguments", {})
             try:
@@ -249,11 +268,10 @@ def _handle_jsonrpc(raw: Any) -> dict | None:
                 return err(-32603, f"Tool execution error: {exc}")
             return ok(result)
 
-        elif method == "ping":
+        if method == "ping":
             return ok({})
 
-        else:
-            return err(-32601, f"Method not found: {method!r}")
+        return err(-32601, f"Method not found: {method!r}")
 
     except Exception as exc:
         logger.exception("MCP JSON-RPC error")

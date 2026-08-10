@@ -8,6 +8,7 @@ Every adapter:
 
 ENF-REQ-002: adapters expose narrow typed operations, never 'run_any_command'.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -21,11 +22,12 @@ class Recipe:
     Describes how to collect evidence: which sources to try,
     in what order, with what corroboration threshold and tolerance.
     """
+
     predicate: str
-    sources: list[str]                    # ordered source identifiers to try
-    minimum_authority: str = "A7"         # minimum tier required for this adapter
-    minimum_corroboration: int = 1        # how many independent sources needed
-    tolerance: float = 0.02              # relative tolerance for numeric agreement
+    sources: list[str]  # ordered source identifiers to try
+    minimum_authority: str = "A7"  # minimum tier required for this adapter
+    minimum_corroboration: int = 1  # how many independent sources needed
+    tolerance: float = 0.02  # relative tolerance for numeric agreement
     notes: str = ""
 
 
@@ -35,10 +37,11 @@ class Evidence:
 
     This is NOT a Claim — it feeds the ClaimVerifier which produces Claims.
     """
-    source_type: str                      # e.g. "user_assertion", "windows_cim"
-    source_locator: str                   # e.g. "Win32_ComputerSystem.TotalPhysicalMemory"
-    authority: str                        # A0–A8
-    raw_value: str                        # as-returned, before normalization
+
+    source_type: str  # e.g. "user_assertion", "windows_cim"
+    source_locator: str  # e.g. "Win32_ComputerSystem.TotalPhysicalMemory"
+    authority: str  # A0–A8
+    raw_value: str  # as-returned, before normalization
     predicate: str = ""
     subject: str = ""
     captured_at: str = ""

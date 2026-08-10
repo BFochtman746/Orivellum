@@ -15,6 +15,7 @@ Callers
 - api/routes/studio.py      → TTS / image-gen / audiobook routes
 - Any future create-path
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("orivellum.persist")
 
-_CHUNK_SIZE = 1_000   # chars per chunk (matches generate.py)
+_CHUNK_SIZE = 1_000  # chars per chunk (matches generate.py)
 
 
 def _now() -> str:
@@ -44,6 +45,7 @@ def _uuid() -> str:
 
 
 # ── Provenance recording ───────────────────────────────────────────────────────
+
 
 def record_provenance(
     object_id: str,
@@ -68,6 +70,7 @@ def record_provenance(
 
 
 # ── Chunk helpers ──────────────────────────────────────────────────────────────
+
 
 def _ensure_lib_symlink(doc_path: Path, lib_root: Path) -> str:
     """Return a lib-root-relative content_path that Library can resolve.
@@ -97,17 +100,17 @@ def _ensure_lib_symlink(doc_path: Path, lib_root: Path) -> str:
     # instead of creating a duplicate entry under a UUID-prefixed name.
     if link_path.exists() or link_path.is_symlink():
         try:
-            link_stat   = link_path.stat()
+            link_stat = link_path.stat()
             source_stat = doc_path.stat()
-            same_inode  = (link_stat.st_ino == source_stat.st_ino and
-                           link_stat.st_dev == source_stat.st_dev)
+            same_inode = (
+                link_stat.st_ino == source_stat.st_ino and link_stat.st_dev == source_stat.st_dev
+            )
             if same_inode:
                 # Link already points to our file — return it directly.
                 return str(link_path.relative_to(lib_root))
-            else:
-                # Name collision with a different file — add short prefix.
-                link_name = f"{_uuid()[:8]}_{doc_path.name}"
-                link_path = gen_dir / link_name
+            # Name collision with a different file — add short prefix.
+            link_name = f"{_uuid()[:8]}_{doc_path.name}"
+            link_path = gen_dir / link_name
         except Exception:
             link_name = f"{_uuid()[:8]}_{doc_path.name}"
             link_path = gen_dir / link_name
@@ -122,6 +125,7 @@ def _ensure_lib_symlink(doc_path: Path, lib_root: Path) -> str:
         except OSError:
             try:
                 import shutil
+
                 shutil.copy2(str(doc_path.resolve()), str(link_path))
             except Exception as exc:
                 logger.debug("_ensure_lib_symlink: copy failed (%s) — using abs path", exc)
@@ -151,6 +155,7 @@ def _chunk_text(text: str) -> list[str]:
 
 
 # ── Main registration hook ────────────────────────────────────────────────────
+
 
 def register_and_index(
     doc_path: Path,
@@ -221,8 +226,14 @@ def register_and_index(
         if existing:
             doc_id: str = existing["id"]
             # Still record provenance in case the source/caller changed.
-            record_provenance(doc_id, provenance_source, db,
-                              origin_id=origin_id, work_id=work_id, topic_id=topic_id)
+            record_provenance(
+                doc_id,
+                provenance_source,
+                db,
+                origin_id=origin_id,
+                work_id=work_id,
+                topic_id=topic_id,
+            )
             return doc_id
 
     # ── Create library-root-relative content path ──────────────────────────────
@@ -278,6 +289,7 @@ def register_and_index(
     def _embed() -> None:
         try:
             from orivellum.capabilities.embeddings import embed_chunks_for_doc
+
             embed_chunks_for_doc(doc_id, db)
         except Exception as exc:
             logger.debug("register_and_index background embed failed: %s", exc)
@@ -287,22 +299,27 @@ def register_and_index(
     # the executor has not been initialised yet (test harnesses, CLI scripts).
     try:
         from orivellum.api.executor import _tracked_submit as _ts_embed
+
         _ts_embed(_embed, kind="embed", label=f"embed:{doc_id[:8]}")
     except Exception as _exc_embed:
-        logger.warning("Executor unavailable for embed:%s, falling back to thread: %s",
-                       doc_id[:8], _exc_embed)
+        logger.warning(
+            "Executor unavailable for embed:%s, falling back to thread: %s", doc_id[:8], _exc_embed
+        )
         threading.Thread(target=_embed, daemon=True).start()
 
     # ── Provenance record ─────────────────────────────────────────────────────
-    record_provenance(doc_id, provenance_source, db,
-                      origin_id=origin_id, work_id=work_id, topic_id=topic_id)
+    record_provenance(
+        doc_id, provenance_source, db, origin_id=origin_id, work_id=work_id, topic_id=topic_id
+    )
 
-    logger.debug("register_and_index: registered doc %s (%s) source=%s",
-                 doc_id[:8], kind, provenance_source)
+    logger.debug(
+        "register_and_index: registered doc %s (%s) source=%s", doc_id[:8], kind, provenance_source
+    )
     return doc_id
 
 
 # ── Convenience wrapper for in-memory text content (no file) ──────────────────
+
 
 def register_text_note(
     text: str,

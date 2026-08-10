@@ -4,6 +4,7 @@ Frictionless capture into a daily inbox, on-demand processing (the nightly
 Night Scriptorium pass does the same), and the derived daily report.
 Approval itself happens in the unified review inbox (/api/review).
 """
+
 from __future__ import annotations
 
 import logging

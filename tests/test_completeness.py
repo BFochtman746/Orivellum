@@ -8,20 +8,20 @@ Covers:
 - GET /api/works/{id}/completeness endpoint returns the expected shape
 - 404 for unknown Work
 """
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
-
 from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp_path):
     """Return (TestClient, db) wired to an isolated temp database."""
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=str(tmp_path))
@@ -31,6 +31,7 @@ def _make_app(tmp_path):
 
 
 # ── Calculator unit tests ──────────────────────────────────────────────────────
+
 
 def test_empty_work_is_draft(tmp_path):
     """A brand-new Work with no documents should be Draft at 0%."""
@@ -60,7 +61,10 @@ def test_five_dimensions_always_present(tmp_path):
 def test_content_score_rises_with_word_count(tmp_path):
     """Content score should scale with document word counts."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.completeness import calculate_work_completeness, _CONTENT_BASELINE_WORDS
+    from orivellum.capabilities.completeness import (
+        _CONTENT_BASELINE_WORDS,
+        calculate_work_completeness,
+    )
 
     work = db.create_work("Word-Rich Work")
     doc = db.create_document("Big Doc", work_id=work["id"])
@@ -125,22 +129,22 @@ def test_source_diversity_score(tmp_path):
 
 def test_readiness_labels_span_range(tmp_path):
     """Verify all five readiness labels can be produced by patching scores."""
-    from orivellum.capabilities.completeness import (
-        calculate_work_completeness, Dimension, CompletenessReport, _WEIGHTS
-    )
-    import datetime
 
     def _report_at(overall: int) -> str:
         """Infer readiness label from overall score directly."""
         return (
-            "Ready"         if overall >= 80 else
-            "Near-Complete" if overall >= 60 else
-            "Substantial"   if overall >= 40 else
-            "Developing"    if overall >= 20 else
-            "Draft"
+            "Ready"
+            if overall >= 80
+            else "Near-Complete"
+            if overall >= 60
+            else "Substantial"
+            if overall >= 40
+            else "Developing"
+            if overall >= 20
+            else "Draft"
         )
 
-    assert _report_at(0)  == "Draft"
+    assert _report_at(0) == "Draft"
     assert _report_at(20) == "Developing"
     assert _report_at(40) == "Substantial"
     assert _report_at(60) == "Near-Complete"
@@ -172,6 +176,7 @@ def test_dimension_rule_is_non_empty(tmp_path):
 
 
 # ── API endpoint tests ─────────────────────────────────────────────────────────
+
 
 def test_completeness_endpoint_returns_expected_shape(tmp_path):
     """GET /api/works/{id}/completeness must return the full structured report."""
@@ -240,6 +245,7 @@ def test_completeness_scores_update_after_adding_knowledge(tmp_path):
 
 # ── Custom completeness targets ────────────────────────────────────────────────
 
+
 def test_custom_word_target_changes_content_score(tmp_path):
     """Setting a lower word_target raises the content score for a short Work."""
     _, db = _make_app(tmp_path)
@@ -254,7 +260,9 @@ def test_custom_word_target_changes_content_score(tmp_path):
     content_default = next(d for d in report_default.dimensions if d.name == "content")
 
     # Custom target (5,000 words) → 40%
-    db.update_work(work["id"], meta={"completeness_targets": {"word_target": 5000, "chapter_target": 10}})
+    db.update_work(
+        work["id"], meta={"completeness_targets": {"word_target": 5000, "chapter_target": 10}}
+    )
     report_custom = calculate_work_completeness(work["id"], db)
     content_custom = next(d for d in report_custom.dimensions if d.name == "content")
 
@@ -277,6 +285,7 @@ def test_custom_chapter_target_changes_structural_score(tmp_path):
 
     # Inject 2 book_chapters using the object registry (required for FK integrity)
     from orivellum.database.db import _now as _db_now
+
     for i in range(2):
         ch_id = db._create_object("book_chapter")
         with db._lock:
@@ -285,8 +294,16 @@ def test_custom_chapter_target_changes_structural_score(tmp_path):
                        (id, work_id, source_doc_id, seq, level, title, text,
                         status, meta, created_at, updated_at)
                    VALUES (?, ?, ?, ?, 1, ?, ?, 'extracted', '{}', ?, ?)""",
-                (ch_id, work["id"], doc["id"], i + 1,
-                 f"Chapter {i + 1}", "Some text here", _db_now(), _db_now()),
+                (
+                    ch_id,
+                    work["id"],
+                    doc["id"],
+                    i + 1,
+                    f"Chapter {i + 1}",
+                    "Some text here",
+                    _db_now(),
+                    _db_now(),
+                ),
             )
             db._conn.commit()
 
@@ -295,7 +312,9 @@ def test_custom_chapter_target_changes_structural_score(tmp_path):
     struct_default = next(d for d in report_default.dimensions if d.name == "structural")
 
     # Custom: 2 chapters → structural score = 100%
-    db.update_work(work["id"], meta={"completeness_targets": {"word_target": 50000, "chapter_target": 2}})
+    db.update_work(
+        work["id"], meta={"completeness_targets": {"word_target": 50000, "chapter_target": 2}}
+    )
     report_custom = calculate_work_completeness(work["id"], db)
     struct_custom = next(d for d in report_custom.dimensions if d.name == "structural")
 
@@ -307,7 +326,8 @@ def test_works_without_custom_targets_use_defaults(tmp_path):
     """A Work with no meta.completeness_targets must behave identically to before."""
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.completeness import (
-        calculate_work_completeness, _CONTENT_BASELINE_WORDS, _EXPECTED_CHAPTERS_DEFAULT
+        _CONTENT_BASELINE_WORDS,
+        calculate_work_completeness,
     )
 
     work = db.create_work("Default Work")
@@ -338,6 +358,7 @@ def test_patch_works_sets_completeness_targets_via_api(tmp_path):
     returned_meta = patch_resp.json()["work"].get("meta") or {}
     if isinstance(returned_meta, str):
         import json
+
         returned_meta = json.loads(returned_meta)
     assert returned_meta.get("completeness_targets", {}).get("word_target") == 3000
 

@@ -10,18 +10,17 @@ Covers:
   - Document nodes survive entity_kinds filtering
   - Edge trimming when a node is hidden
 """
+
 from __future__ import annotations
-
-import pytest
-from unittest.mock import patch
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db():
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(":memory:")
 
 
@@ -36,7 +35,7 @@ def _populate_graph(db):
 
     # Create entities via the public API
     eid1 = db.upsert_entity("Alice", "person")
-    eid2 = db.upsert_entity("Paris",  "place")
+    eid2 = db.upsert_entity("Paris", "place")
 
     # Record MENTIONS edges (entity → document)
     db.create_entity_mention(eid1, doc_id, work_id=wid)
@@ -48,6 +47,7 @@ def _populate_graph(db):
 # ---------------------------------------------------------------------------
 # 1 — get_global_graph: empty state
 # ---------------------------------------------------------------------------
+
 
 class TestGetGlobalGraphEmpty:
     def test_returns_empty_payload_when_no_entities(self):
@@ -69,6 +69,7 @@ class TestGetGlobalGraphEmpty:
 # ---------------------------------------------------------------------------
 # 2 — get_global_graph: populated state
 # ---------------------------------------------------------------------------
+
 
 class TestGetGlobalGraphPopulated:
     def test_returns_entity_and_doc_nodes(self):
@@ -121,10 +122,10 @@ class TestGetGlobalGraphPopulated:
         _populate_graph(db)
         result = db.get_global_graph()
         for node in result["nodes"]:
-            assert "id"    in node, f"Node missing id: {node}"
+            assert "id" in node, f"Node missing id: {node}"
             assert "label" in node, f"Node missing label: {node}"
-            assert "type"  in node, f"Node missing type: {node}"
-            assert "kind"  in node, f"Node missing kind: {node}"
+            assert "type" in node, f"Node missing type: {node}"
+            assert "kind" in node, f"Node missing kind: {node}"
 
     def test_edges_have_required_fields(self):
         db = _make_db()
@@ -133,8 +134,8 @@ class TestGetGlobalGraphPopulated:
         for edge in result["edges"]:
             assert "source" in edge, f"Edge missing source: {edge}"
             assert "target" in edge, f"Edge missing target: {edge}"
-            assert "label"  in edge, f"Edge missing label: {edge}"
-            assert "type"   in edge, f"Edge missing type: {edge}"
+            assert "label" in edge, f"Edge missing label: {edge}"
+            assert "type" in edge, f"Edge missing type: {edge}"
 
     def test_edge_endpoints_always_in_node_set(self):
         """Every edge must connect two nodes that are actually in the returned node list."""
@@ -143,26 +144,28 @@ class TestGetGlobalGraphPopulated:
         result = db.get_global_graph()
         node_ids = {n["id"] for n in result["nodes"]}
         for edge in result["edges"]:
-            assert edge["source"] in node_ids, (
-                f"Edge source {edge['source']!r} not in node set"
-            )
-            assert edge["target"] in node_ids, (
-                f"Edge target {edge['target']!r} not in node set"
-            )
+            assert edge["source"] in node_ids, f"Edge source {edge['source']!r} not in node set"
+            assert edge["target"] in node_ids, f"Edge target {edge['target']!r} not in node set"
 
 
 # ---------------------------------------------------------------------------
 # 3 — API route: works_graph
 # ---------------------------------------------------------------------------
 
+
 class TestWorksGraphAPI:
-    def _call_works_graph(self, work_id: str, db, entity_kinds: str | None = None, limit: int = 100):
+    def _call_works_graph(
+        self, work_id: str, db, entity_kinds: str | None = None, limit: int = 100
+    ):
         import orivellum.api._deps as _deps
+
         saved = _deps._DB
         try:
             _deps._DB = db
-            from orivellum.api.routes.works import works_graph
             from fastapi import HTTPException
+
+            from orivellum.api.routes.works import works_graph
+
             try:
                 return 200, works_graph(work_id, limit=limit, entity_kinds=entity_kinds)
             except HTTPException as exc:
@@ -202,6 +205,7 @@ class TestWorksGraphAPI:
 # ---------------------------------------------------------------------------
 # 5 — Fallback path (knowledge-projection, no entity MENTIONS relationships)
 # ---------------------------------------------------------------------------
+
 
 class TestFallbackKnowledgeProjection:
     """Exercises get_global_graph when no entity-MENTIONS rows exist,
@@ -289,6 +293,7 @@ class TestFallbackKnowledgeProjection:
 # 6 — Non-fallback path: dangling-edge + count correctness
 # ---------------------------------------------------------------------------
 
+
 class TestNonFallbackDanglingEdges:
     """Exercises the entity-MENTIONS non-fallback path with a limit that
     cuts the node list, confirming no edges dangle outside the bounded set."""
@@ -319,10 +324,12 @@ class TestNonFallbackDanglingEdges:
 class TestGlobalGraphAPI:
     def _call_global_graph(self, db, work_id=None, entity_kinds=None, limit=200):
         import orivellum.api._deps as _deps
+
         saved = _deps._DB
         try:
             _deps._DB = db
             from orivellum.api.routes.works import global_graph
+
             return 200, global_graph(work_id=work_id, entity_kinds=entity_kinds, limit=limit)
         finally:
             _deps._DB = saved

@@ -26,12 +26,10 @@ import struct
 import uuid
 from pathlib import Path
 
-import pytest
-
 from orivellum.database.db import OrivellumDB
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _db(tmp_path: Path) -> OrivellumDB:
     return OrivellumDB(str(tmp_path / "test.db"))
@@ -89,6 +87,7 @@ def _make_entity(db: OrivellumDB) -> str:
 
 # ── Test 1: add_chunk produces no outbox / audit rows ────────────────────────
 
+
 def test_add_chunk_produces_no_outbox_events(tmp_path):
     """50 add_chunk calls must not write a single outbox event."""
     db = _db(tmp_path)
@@ -125,14 +124,13 @@ def test_add_chunk_data_is_persisted(tmp_path):
     db.add_chunk(doc_id, "Hello, trace world!", page=1)
 
     with db._lock:
-        row = db._conn.execute(
-            "SELECT text FROM chunks WHERE doc_id=?", (doc_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT text FROM chunks WHERE doc_id=?", (doc_id,)).fetchone()
     assert row is not None, "Chunk row must be persisted"
     assert row["text"] == "Hello, trace world!"
 
 
 # ── Test 2: store_vector produces no outbox / audit rows ─────────────────────
+
 
 def test_store_vector_produces_no_outbox_events(tmp_path):
     """50 store_vector calls must not write any outbox events."""
@@ -168,6 +166,7 @@ def test_store_vector_produces_no_audit_rows(tmp_path):
 
 # ── Test 3: create_entity_mention produces no outbox rows ────────────────────
 
+
 def test_create_entity_mention_produces_no_outbox_events(tmp_path):
     """N entity mentions must not write any outbox events."""
     db = _db(tmp_path)
@@ -185,6 +184,7 @@ def test_create_entity_mention_produces_no_outbox_events(tmp_path):
 
 # ── Test 4: create_entity_edge produces no outbox rows ───────────────────────
 
+
 def test_create_entity_edge_produces_no_outbox_events(tmp_path):
     """N entity edges must not write any outbox events."""
     db = _db(tmp_path)
@@ -201,6 +201,7 @@ def test_create_entity_edge_produces_no_outbox_events(tmp_path):
 
 # ── Test 5: full writes still emit exactly one audit + one outbox ─────────────
 
+
 def test_full_governed_write_still_emits_audit_and_outbox(tmp_path):
     """A full governed_write must still produce exactly one audit + one outbox row."""
     db = _db(tmp_path)
@@ -209,7 +210,7 @@ def test_full_governed_write_still_emits_audit_and_outbox(tmp_path):
     doc_id = _make_doc(db)
     db.add_chunk(doc_id, "trace chunk", page=0)
 
-    audit_before  = _audit_count(db)
+    audit_before = _audit_count(db)
     outbox_before = _outbox_count(db)
 
     # A "full" write (default audit_level)
@@ -220,9 +221,7 @@ def test_full_governed_write_still_emits_audit_and_outbox(tmp_path):
         object_type="document",
         detail="full write test",
     ):
-        db._conn.execute(
-            "UPDATE documents SET title='Updated' WHERE id=?", (doc_id,)
-        )
+        db._conn.execute("UPDATE documents SET title='Updated' WHERE id=?", (doc_id,))
 
     assert _audit_count(db) == audit_before + 1, (
         "A full governed_write must add exactly one audit row"
@@ -235,6 +234,7 @@ def test_full_governed_write_still_emits_audit_and_outbox(tmp_path):
 
 
 # ── Test 6: verify_audit_chain passes after mixed trace + full writes ─────────
+
 
 def test_audit_chain_intact_after_mixed_writes(tmp_path):
     """Many trace writes interleaved with full writes must leave the chain intact."""
@@ -254,6 +254,7 @@ def test_audit_chain_intact_after_mixed_writes(tmp_path):
 
 
 # ── Test 7: outbox stays O(1) for a full 50-chunk document pipeline ──────────
+
 
 def test_outbox_does_not_grow_with_chunk_count(tmp_path):
     """Processing a 50-chunk document must not add any outbox entries."""
@@ -278,6 +279,7 @@ def test_outbox_does_not_grow_with_chunk_count(tmp_path):
 
 # ── Test 8: trace write still rolls back on exception ────────────────────────
 
+
 def test_trace_write_rolls_back_on_exception(tmp_path):
     """A trace governed_write that raises inside the block must roll back."""
     db = _db(tmp_path)
@@ -285,9 +287,7 @@ def test_trace_write_rolls_back_on_exception(tmp_path):
 
     chunks_before = 0
     with db._lock:
-        row = db._conn.execute(
-            "SELECT COUNT(*) FROM chunks WHERE doc_id=?", (doc_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT COUNT(*) FROM chunks WHERE doc_id=?", (doc_id,)).fetchone()
         chunks_before = row[0] if row else 0
 
     # Attempt a trace write that fails mid-block
@@ -318,14 +318,10 @@ def test_trace_write_rolls_back_on_exception(tmp_path):
         pass  # expected
 
     with db._lock:
-        row = db._conn.execute(
-            "SELECT COUNT(*) FROM chunks WHERE doc_id=?", (doc_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT COUNT(*) FROM chunks WHERE doc_id=?", (doc_id,)).fetchone()
         chunks_after = row[0] if row else 0
 
-    assert chunks_after == chunks_before, (
-        "Trace write must roll back domain change on exception"
-    )
+    assert chunks_after == chunks_before, "Trace write must roll back domain change on exception"
     # No outbox or audit rows from the failed write
     assert _outbox_count(db, "document.chunk_added") == 0
     assert _audit_count(db, "document.chunk_added") == 0

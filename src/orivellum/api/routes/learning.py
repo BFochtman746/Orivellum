@@ -1,4 +1,5 @@
 """Adaptive learning API — /api/works/{work_id}/learning/*"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,6 +8,8 @@ from pydantic import BaseModel
 from orivellum.api._deps import get_config, get_db, require_auth
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+
+
 def _cfg():
     c = get_config()
     return c.serving.base_url, c.serving.workhorse_model
@@ -14,15 +17,17 @@ def _cfg():
 
 # ─── Pydantic models ───────────────────────────────────────────────────────────
 
+
 class AssessBody(BaseModel):
     concept_id: str
     question: str
     answer: str
-    question_type: str = "recall"   # "recall" | "transfer" — echoed from the question endpoint
-    session_mode: str = "blocked"   # "blocked" | "interleaved" — echoed from the session
+    question_type: str = "recall"  # "recall" | "transfer" — echoed from the question endpoint
+    session_mode: str = "blocked"  # "blocked" | "interleaved" — echoed from the session
 
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @router.get("/works/{work_id}/learning/summary")
 def learning_summary(work_id: str):
@@ -31,6 +36,7 @@ def learning_summary(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.learning import get_mastery_summary
+
     return get_mastery_summary(db, work_id)
 
 
@@ -41,6 +47,7 @@ def work_concepts(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.learning import list_concepts
+
     return {"concepts": list_concepts(db, work_id)}
 
 
@@ -48,11 +55,13 @@ def work_concepts(work_id: str):
 async def learning_seed(work_id: str):
     """Auto-seed concept nodes from the Work's knowledge subjects (idempotent)."""
     import asyncio
+
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     base_url, model = _cfg()
     from orivellum.capabilities.learning import seed_concepts
+
     concepts = await asyncio.to_thread(seed_concepts, db, work_id, base_url, model)
     return {"seeded": len(concepts), "concepts": concepts}
 
@@ -77,6 +86,7 @@ async def learning_question(
                       and mastery weakness); requires ≥ 3 in-progress concepts
     """
     import asyncio
+
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
@@ -88,6 +98,7 @@ async def learning_question(
         next_concept_id,
         select_interleaved_concept,
     )
+
     if type not in _VALID_QUESTION_TYPES:
         raise HTTPException(422, f"Invalid type {type!r}. Must be one of: recall, transfer, auto")
     if mode not in _VALID_SESSION_MODES:
@@ -117,10 +128,10 @@ async def learning_question(
         raise HTTPException(404, f"Concept {concept_id!r} not found in work {work_id!r}")
     base_url, model = _cfg()
     result = await asyncio.to_thread(get_question, db, concept_id, base_url, model, type)
-    result["concept_id"]   = concept_id
-    result["concept_name"] = row["subject"]     # always present so UI can reveal post-answer
-    result["subject"]      = row["subject"]
-    result["description"]  = row["description"] or ""
+    result["concept_id"] = concept_id
+    result["concept_name"] = row["subject"]  # always present so UI can reveal post-answer
+    result["subject"] = row["subject"]
+    result["description"] = row["description"] or ""
     result["session_mode"] = mode
     return result
 
@@ -132,6 +143,7 @@ def learning_reset_all(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.learning import reset_mastery
+
     deleted = reset_mastery(db, work_id)
     return {"reset": deleted, "scope": "all"}
 
@@ -149,6 +161,7 @@ def learning_reset_concept(work_id: str, concept_id: str):
     if not row or row["work_id"] != work_id:
         raise HTTPException(404, f"Concept {concept_id!r} not found in work {work_id!r}")
     from orivellum.capabilities.learning import reset_mastery
+
     deleted = reset_mastery(db, work_id, concept_id)
     return {"reset": deleted, "concept_id": concept_id, "scope": "concept"}
 
@@ -164,21 +177,22 @@ def learning_graph(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.learning import list_concepts
+
     concepts = list_concepts(db, work_id)
 
     nodes = [
         {
-            "id":                 c["id"],
-            "subject":            c["subject"],
-            "description":        c.get("description") or "",
-            "graduated":          c["graduated"],
+            "id": c["id"],
+            "subject": c["subject"],
+            "description": c.get("description") or "",
+            "graduated": c["graduated"],
             "consecutive_passes": c["consecutive_passes"],
-            "prereqs_met":        c.get("prereqs_met", True),
-            "prereq_ids":         c.get("prereq_ids", []),
-            "prereq_labels":      c.get("prereq_labels", []),
-            "blocking_count":     c.get("blocking_count", 0),
-            "is_due":             c.get("is_due", False),
-            "half_life_days":     c.get("half_life_days", 1.0),
+            "prereqs_met": c.get("prereqs_met", True),
+            "prereq_ids": c.get("prereq_ids", []),
+            "prereq_labels": c.get("prereq_labels", []),
+            "blocking_count": c.get("blocking_count", 0),
+            "is_due": c.get("is_due", False),
+            "half_life_days": c.get("half_life_days", 1.0),
         }
         for c in concepts
     ]
@@ -187,8 +201,7 @@ def learning_graph(work_id: str):
         for c in concepts
         for pid in c.get("prereq_ids", [])
     ]
-    return {"nodes": nodes, "edges": edges,
-            "node_count": len(nodes), "edge_count": len(edges)}
+    return {"nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges)}
 
 
 @router.get("/works/{work_id}/learning/due")
@@ -203,6 +216,7 @@ def learning_due(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.learning import list_due_concepts
+
     due = list_due_concepts(db, work_id)
     return {"due": due, "count": len(due)}
 
@@ -223,6 +237,7 @@ def learning_analytics(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.learning import get_learning_analytics
+
     return get_learning_analytics(db, work_id)
 
 
@@ -230,6 +245,7 @@ def learning_analytics(work_id: str):
 async def learning_assess(work_id: str, body: AssessBody):
     """Score the student's answer, update streak, and return routing decision."""
     import asyncio
+
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
@@ -250,6 +266,7 @@ async def learning_assess(work_id: str, body: AssessBody):
         get_mastery_summary,
         next_concept_id,
     )
+
     # Re-derive question_type server-side from the concept's current streak using
     # the same "auto" logic as get_question.  This prevents clients from forging a
     # transfer question_type to obtain +2 mastery bonus on a recall question.
@@ -257,20 +274,28 @@ async def learning_assess(work_id: str, body: AssessBody):
     qt = _resolve_question_type(db, body.concept_id, "auto")
     smode = body.session_mode if body.session_mode in _VALID_SESSION_MODES else "blocked"
     result = await asyncio.to_thread(
-        assess_answer, db, body.concept_id, body.question, body.answer,
-        base_url, model, qt, smode,
+        assess_answer,
+        db,
+        body.concept_id,
+        body.question,
+        body.answer,
+        base_url,
+        model,
+        qt,
+        smode,
     )
     # Attach summary + next concept hint
-    result["summary"]         = get_mastery_summary(db, work_id)
+    result["summary"] = get_mastery_summary(db, work_id)
     if result["route"] == "STEP_FORWARD":
-        result["next_concept_id"]        = next_concept_id(db, work_id)
-        result["suggested_prereq_id"]    = None
+        result["next_concept_id"] = next_concept_id(db, work_id)
+        result["suggested_prereq_id"] = None
         result["suggested_prereq_subject"] = None
     elif result["route"] == "STEP_BACKWARD":
         # Pick the weakest-mastery prerequisite using the latest mastery row per prereq.
         # Window-function ranking by created_at DESC, rowid DESC is deterministic even
         # when two records share the same timestamp (rowid is monotonically increasing).
         from orivellum.capabilities.learning import get_prereq_ids
+
         prereq_ids = get_prereq_ids(db, body.concept_id)
         if prereq_ids:
             _ph = ",".join("?" * len(prereq_ids))
@@ -304,11 +329,9 @@ async def learning_assess(work_id: str, body: AssessBody):
             _prereq_row = db._conn.execute(
                 "SELECT subject FROM work_concepts WHERE id=?", (weakest_prereq_id,)
             ).fetchone()
-        result["suggested_prereq_subject"] = (
-            _prereq_row["subject"] if _prereq_row else None
-        )
+        result["suggested_prereq_subject"] = _prereq_row["subject"] if _prereq_row else None
     else:
-        result["next_concept_id"]        = body.concept_id
-        result["suggested_prereq_id"]    = None
+        result["next_concept_id"] = body.concept_id
+        result["suggested_prereq_id"] = None
         result["suggested_prereq_subject"] = None
     return result

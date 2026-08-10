@@ -13,6 +13,7 @@ HONESTY RULES
     library-generated files) is a mismatch: the file would show blanks or
     zeros until Excel recalculates it.
 """
+
 import datetime as _dt
 import math
 import re
@@ -27,8 +28,9 @@ ABS_TOL = 1e-9
 def available():
     try:
         import formulas  # noqa: F401
+
         return True
-    except Exception:                                            # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -37,13 +39,14 @@ def _scalar(v):
     val = getattr(v, "value", v)
     try:
         import numpy as np
+
         if isinstance(val, np.ndarray):
             if val.size != 1:
                 return None
             val = val.ravel()[0]
         if isinstance(val, np.generic):
             val = val.item()
-    except Exception:                                            # noqa: BLE001
+    except Exception:  # noqa: BLE001
         pass
     if type(val).__name__ == "XlError":
         return str(val)
@@ -54,10 +57,11 @@ def _to_serial(value):
     """Cached datetimes come back as datetime objects; the engine speaks
     Excel serial numbers. Compare in serial space."""
     from openpyxl.utils.datetime import to_excel
+
     if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
         try:
             return float(to_excel(value))
-        except Exception:                                        # noqa: BLE001
+        except Exception:  # noqa: BLE001
             return value
     return value
 
@@ -70,11 +74,9 @@ def _matches(computed, cached):
     if computed is None and cached is None:
         return True
     if isinstance(computed, bool) or isinstance(cached, bool):
-        return (isinstance(computed, bool) and isinstance(cached, bool)
-                and computed == cached)
+        return isinstance(computed, bool) and isinstance(cached, bool) and computed == cached
     if isinstance(computed, (int, float)) and isinstance(cached, (int, float)):
-        return math.isclose(float(computed), float(cached),
-                            rel_tol=REL_TOL, abs_tol=ABS_TOL)
+        return math.isclose(float(computed), float(cached), rel_tol=REL_TOL, abs_tol=ABS_TOL)
     if isinstance(computed, str) and isinstance(cached, str):
         return computed.strip() == cached.strip()
     return False
@@ -90,20 +92,28 @@ def recalculate(target):
     `available: False` means the verdict is UNAVAILABLE, not clean.
     """
     if not available():
-        return {"available": False, "error": "formulas package not installed",
-                "cells": {}, "checked": 0}
+        return {
+            "available": False,
+            "error": "formulas package not installed",
+            "cells": {},
+            "checked": 0,
+        }
     import warnings
+
     try:
         import formulas
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             xl = formulas.ExcelModel().loads(str(target)).finish()
             sol = xl.calculate()
-    except Exception as e:                                       # noqa: BLE001
-        return {"available": False,
-                "error": f"engine could not compute this workbook: "
-                         f"{type(e).__name__}: {e}"[:400],
-                "cells": {}, "checked": 0}
+    except Exception as e:  # noqa: BLE001
+        return {
+            "available": False,
+            "error": f"engine could not compute this workbook: {type(e).__name__}: {e}"[:400],
+            "cells": {},
+            "checked": 0,
+        }
     fname = Path(target).name.upper()
     cells = {}
     for k, v in sol.items():
@@ -122,6 +132,7 @@ def compare(target, recalc):
     engine produced nothing for]} — uncovered formulas block a PROVEN verdict.
     """
     from openpyxl import load_workbook
+
     wbf = load_workbook(target, data_only=False, read_only=True)
     wbv = load_workbook(target, data_only=True, read_only=True)
     mismatches, uncovered, agreed = [], [], 0
@@ -148,17 +159,26 @@ def compare(target, recalc):
                     if _matches(computed, cached):
                         agreed += 1
                     else:
-                        mismatches.append({
-                            "ref": f"{name}!{c.coordinate}",
-                            "sheet": name, "cell": c.coordinate,
-                            "formula": c.value[:200],
-                            "cached": _repr(cached), "computed": _repr(computed),
-                            "computed_raw": computed,
-                        })
+                        mismatches.append(
+                            {
+                                "ref": f"{name}!{c.coordinate}",
+                                "sheet": name,
+                                "cell": c.coordinate,
+                                "formula": c.value[:200],
+                                "cached": _repr(cached),
+                                "computed": _repr(computed),
+                                "computed_raw": computed,
+                            }
+                        )
     finally:
-        wbf.close(); wbv.close()
-    return {"mismatches": mismatches, "agreed": agreed, "uncovered": uncovered,
-            "formula_cells": formula_cells}
+        wbf.close()
+        wbv.close()
+    return {
+        "mismatches": mismatches,
+        "agreed": agreed,
+        "uncovered": uncovered,
+        "formula_cells": formula_cells,
+    }
 
 
 def _repr(v):
@@ -190,23 +210,25 @@ def build_test_manifest(target, recalc, compare_result):
     wanted = set(compare_result.get("formula_cells") or recalc["cells"])
     for (sheet, coord), computed in sorted(recalc["cells"].items()):
         if (sheet, coord) not in wanted:
-            continue                     # inputs are data, not tests
-        cases.append({"sheet": sheet, "cell": coord,
-                      "expected": _canon(computed)})
+            continue  # inputs are data, not tests
+        cases.append({"sheet": sheet, "cell": coord, "expected": _canon(computed)})
     return {
         "target": Path(target).name,
         "engine": "formulas",
         "formula_cells": len(cases),
-        "structural": ["no-error-cells", "no-sum-mismatch", "ooxml-order",
-                       "cached-values-match-recalculation"],
+        "structural": [
+            "no-error-cells",
+            "no-sum-mismatch",
+            "ooxml-order",
+            "cached-values-match-recalculation",
+        ],
         "cases": cases,
         "note": "expected values are engine-computed, not copied from the "
-                "file — a stale cache cannot certify itself",
+        "file — a stale cache cannot certify itself",
     }
 
 
-ERRVALS = ("#REF!", "#VALUE!", "#DIV/0!", "#N/A", "#NAME?", "#NULL!",
-           "#NUM!", "#SPILL!", "#CALC!")
+ERRVALS = ("#REF!", "#VALUE!", "#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#SPILL!", "#CALC!")
 
 
 def structural_checks(target):
@@ -214,8 +236,11 @@ def structural_checks(target):
     assumed: saved error values and OOXML child order."""
     import re
     import zipfile
+
     from openpyxl import load_workbook
+
     from . import xlsx_surgery as surgery
+
     problems = []
     wv = load_workbook(target, data_only=True, read_only=True)
     for name in wv.sheetnames:
@@ -225,10 +250,8 @@ def structural_checks(target):
                     problems.append(f"error cell {name}!{c.coordinate} = {c.value.strip()}")
     wv.close()
     with zipfile.ZipFile(target) as z:
-        for n in [x for x in z.namelist()
-                  if re.match(r"xl/worksheets/sheet\d+\.xml$", x)]:
-            bad = surgery.sheet_order_violations(
-                z.read(n).decode("utf-8", errors="replace"))
+        for n in [x for x in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", x)]:
+            bad = surgery.sheet_order_violations(z.read(n).decode("utf-8", errors="replace"))
             if bad:
                 problems.append(f"OOXML order violated in {n}: {', '.join(bad)}")
     return problems
@@ -239,8 +262,13 @@ def run_manifest(target, manifest):
     formula cases AND the structural rules it declares."""
     recalc = recalculate(target)
     if not recalc["available"]:
-        return {"status": "UNAVAILABLE", "error": recalc["error"],
-                "passed": 0, "failed": [], "total": len(manifest["cases"])}
+        return {
+            "status": "UNAVAILABLE",
+            "error": recalc["error"],
+            "passed": 0,
+            "failed": [],
+            "total": len(manifest["cases"]),
+        }
     cmp_now = compare(target, recalc)
     failed = []
     for case in manifest["cases"]:
@@ -252,9 +280,12 @@ def run_manifest(target, manifest):
         if not _matches(actual, case["expected"]):
             failed.append({**case, "actual": actual, "why": "value changed"})
     structural = structural_checks(target)
-    status = ("PASS" if not failed and not cmp_now["mismatches"] and not structural
-              else "FAIL")
-    return {"status": status, "passed": len(manifest["cases"]) - len(failed),
-            "failed": failed[:100], "total": len(manifest["cases"]),
-            "stale_cache": [m["ref"] for m in cmp_now["mismatches"]][:50],
-            "structural": structural[:50]}
+    status = "PASS" if not failed and not cmp_now["mismatches"] and not structural else "FAIL"
+    return {
+        "status": status,
+        "passed": len(manifest["cases"]) - len(failed),
+        "failed": failed[:100],
+        "total": len(manifest["cases"]),
+        "stale_cache": [m["ref"] for m in cmp_now["mismatches"]][:50],
+        "structural": structural[:50],
+    }

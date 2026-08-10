@@ -10,22 +10,25 @@ Covers:
   - The 5-document cap is enforced.
   - The 2 000-character per-doc truncation is enforced.
 """
+
 import inspect
-import pytest
 
 from orivellum.api.routes.conversations import (
-    _build_system_prompt,
-    _build_messages,
-    _stream_response,
     MessageSend,
+    _build_messages,
+    _build_system_prompt,
+    _stream_response,
 )
-
 
 # ── Minimal in-memory DB stub ─────────────────────────────────────────────────
 
+
 class _Lock:
-    def __enter__(self): return self
-    def __exit__(self, *a): pass
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
 
 
 class _FakeDB:
@@ -98,17 +101,20 @@ class _FakeConn:
             doc = self._docs.get(doc_id)
             if doc is None:
                 return _FakeCursor(None)
-            row = _FakeRow({
-                "title": doc.get("title", ""),
-                "extracted_text": doc.get("extracted_text", ""),
-                "work_id": doc.get("work_id"),
-            })
+            row = _FakeRow(
+                {
+                    "title": doc.get("title", ""),
+                    "extracted_text": doc.get("extracted_text", ""),
+                    "work_id": doc.get("work_id"),
+                }
+            )
             return _FakeCursor(row)
         # Any other query → empty cursor
         return _FakeCursor(None)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_conv(work_id: str | None = None):
     return {
@@ -124,7 +130,8 @@ def _build(docs, conv_work_id, context_doc_ids, scope="work"):
     db = _FakeDB(docs, work_id=conv_work_id)
     conv = _make_conv(work_id=conv_work_id)
     return _build_system_prompt(
-        db, conv,
+        db,
+        conv,
         scope=scope,
         user_query=None,
         context_doc_ids=context_doc_ids,
@@ -133,8 +140,8 @@ def _build(docs, conv_work_id, context_doc_ids, scope="work"):
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-class TestContextDocIds:
 
+class TestContextDocIds:
     def test_pinned_doc_same_work_appears_in_prompt(self):
         """A doc from the linked Work should be injected into the prompt."""
         docs = {
@@ -287,9 +294,7 @@ class TestBoundaryEdgeCases:
                 "work_id": "work-WRONG",
             },
         }
-        prompt = _build(
-            docs, "work-A", ["doc-good", "doc-bad", "nonexistent-id"], scope="work"
-        )
+        prompt = _build(docs, "work-A", ["doc-good", "doc-bad", "nonexistent-id"], scope="work")
         assert "Valid content from correct work" in prompt
         assert "Content from wrong work" not in prompt
         assert "nonexistent-id" not in prompt
@@ -324,9 +329,7 @@ class TestStreamSignatureIncludesContextDocIds:
 
     def test_build_messages_has_context_doc_ids_param(self):
         sig = inspect.signature(_build_messages)
-        assert "context_doc_ids" in sig.parameters, (
-            "_build_messages must accept context_doc_ids"
-        )
+        assert "context_doc_ids" in sig.parameters, "_build_messages must accept context_doc_ids"
 
     def test_message_send_model_has_context_doc_ids_field(self):
         """MessageSend Pydantic model must declare context_doc_ids."""

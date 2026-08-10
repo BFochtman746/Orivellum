@@ -1,4 +1,5 @@
 """Book packaging — readiness reporting and EPUB/ZIP assembly."""
+
 import io
 import json
 import zipfile
@@ -12,8 +13,15 @@ PIPELINE = {"id": "pl-1", "work_id": "w-1", "title": "The Test Book", "status": 
 
 
 def _chapter(seq, title, text):
-    return {"id": f"ch-{seq}", "pipeline_id": "pl-1", "work_id": "w-1",
-            "seq": seq, "title": title, "text": text, "status": "drafted"}
+    return {
+        "id": f"ch-{seq}",
+        "pipeline_id": "pl-1",
+        "work_id": "w-1",
+        "seq": seq,
+        "title": title,
+        "text": text,
+        "status": "drafted",
+    }
 
 
 class TestReadiness:
@@ -30,9 +38,7 @@ class TestReadiness:
         assert any("empty" in reason for reason in r["reasons"])
 
     def test_ready_with_mixed_chapters(self):
-        r = package_readiness(
-            PIPELINE, [_chapter(1, "One", "Some prose."), _chapter(2, "Two", "")]
-        )
+        r = package_readiness(PIPELINE, [_chapter(1, "One", "Some prose."), _chapter(2, "Two", "")])
         assert r["ready"] is True
         assert r["chapters_with_text"] == 1
         assert r["chapters_empty"] == 1

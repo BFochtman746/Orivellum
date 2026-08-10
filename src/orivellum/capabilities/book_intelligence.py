@@ -8,6 +8,7 @@ next recommended action.
 All data derives from existing records (documents.extracted_text,
 book_chapters, knowledge) — nothing here mutates state.
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,14 +20,38 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger("orivellum.book_intelligence")
 
-_WORD_BASELINE = 50_000        # typical full-length manuscript
-_EXPECTED_CHAPTERS = 10        # fallback when no TOC/meta hint exists
+_WORD_BASELINE = 50_000  # typical full-length manuscript
+_EXPECTED_CHAPTERS = 10  # fallback when no TOC/meta hint exists
 _MIN_RESEARCH_PER_CHAPTER = 3  # chapters below this are "under-researched"
-_INCOMPLETE_WORDS = 200        # chapters below this word count are "incomplete"
+_INCOMPLETE_WORDS = 200  # chapters below this word count are "incomplete"
 
 _STOPWORDS = frozenset(
-    "the a an and or of in on for to with from by at is are was were chapter "
-    "part section introduction conclusion".split())
+    [
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "in",
+        "on",
+        "for",
+        "to",
+        "with",
+        "from",
+        "by",
+        "at",
+        "is",
+        "are",
+        "was",
+        "were",
+        "chapter",
+        "part",
+        "section",
+        "introduction",
+        "conclusion",
+    ]
+)
 
 
 def _word_count(text: str | None) -> int:
@@ -64,8 +89,7 @@ def _knowledge_count_for_title(title: str, knowledge_texts: list[str]) -> int:
     tokens = _title_tokens(title)
     if not tokens or not knowledge_texts:
         return 0
-    pattern = re.compile(
-        r"\b(" + "|".join(re.escape(t.lower()) for t in tokens) + r")\b")
+    pattern = re.compile(r"\b(" + "|".join(re.escape(t.lower()) for t in tokens) + r")\b")
     return sum(1 for blob in knowledge_texts if pattern.search(blob))
 
 
@@ -100,12 +124,17 @@ def build_book_intelligence(work_id: str, db: OrivellumDB) -> dict:
     # changes).
     declared = sorted(
         (v for v in versions if v["lifecycle"] == "canonical"),
-        key=lambda v: v.get("lifecycle_updated_at") or "", reverse=True)
+        key=lambda v: v.get("lifecycle_updated_at") or "",
+        reverse=True,
+    )
     canonical: dict | None = declared[0] if declared else None
     canonical_source = "declared" if canonical else None
     if canonical is None:
-        docx = [v for v in versions
-                if (v["kind"] or "").lower() in ("docx", "doc") and v["word_count"] > 0]
+        docx = [
+            v
+            for v in versions
+            if (v["kind"] or "").lower() in ("docx", "doc") and v["word_count"] > 0
+        ]
         pool = docx or [v for v in versions if v["word_count"] > 0]
         canonical = pool[0] if pool else None
         canonical_source = "auto" if canonical else None
@@ -147,7 +176,7 @@ def build_book_intelligence(work_id: str, db: OrivellumDB) -> dict:
     for c in outline:
         c["knowledge_count"] = _knowledge_count_for_title(c["title"] or "", knowledge_texts)
         if c["word_count"] <= 1:
-            c["chapter_status"] = "missing"        # placeholder heading, no body
+            c["chapter_status"] = "missing"  # placeholder heading, no body
         elif c["word_count"] < _INCOMPLETE_WORDS:
             c["chapter_status"] = "incomplete"
         else:
@@ -176,8 +205,7 @@ def build_book_intelligence(work_id: str, db: OrivellumDB) -> dict:
     knowledge_total = int(krow["total"] or 0)
     knowledge_reviewed = int(krow["reviewed"] or 0)
 
-    researched = sum(1 for c in outline
-                     if c["knowledge_count"] >= _MIN_RESEARCH_PER_CHAPTER)
+    researched = sum(1 for c in outline if c["knowledge_count"] >= _MIN_RESEARCH_PER_CHAPTER)
 
     def pct(n: float, d: float) -> int:
         return min(100, round(100 * n / d)) if d else 0
@@ -192,75 +220,101 @@ def build_book_intelligence(work_id: str, db: OrivellumDB) -> dict:
     # ── Gaps + ranked next action ────────────────────────────────────────
     gaps: list[dict] = []
 
-    unresearched = [c for c in outline
-                    if c["knowledge_count"] < _MIN_RESEARCH_PER_CHAPTER]
+    unresearched = [c for c in outline if c["knowledge_count"] < _MIN_RESEARCH_PER_CHAPTER]
     zero_research = [c for c in unresearched if c["knowledge_count"] == 0]
     placeholders = [c for c in outline if c["chapter_status"] == "missing"]
 
     # Conflicting canonical declarations across document kinds
     if len(declared) > 1:
-        gaps.append({
-            "kind": "canonical_conflict", "severity": "high",
-            "title": f"{len(declared)} documents are marked canonical",
-            "description": "Documents of different kinds are each marked canonical — the most recently declared one is used. Demote the others to remove ambiguity.",
-        })
+        gaps.append(
+            {
+                "kind": "canonical_conflict",
+                "severity": "high",
+                "title": f"{len(declared)} documents are marked canonical",
+                "description": "Documents of different kinds are each marked canonical — the most recently declared one is used. Demote the others to remove ambiguity.",
+            }
+        )
     # Multiple substantial manuscripts with no declared canonical
     substantial = [v for v in versions if v["word_count"] > 500]
     if canonical_source == "auto" and len(substantial) > 1:
-        gaps.append({
-            "kind": "canonical_unconfirmed", "severity": "high",
-            "title": f"{len(substantial)} manuscript versions found",
-            "description": "Multiple substantial documents exist — confirm which one is the canonical manuscript.",
-        })
+        gaps.append(
+            {
+                "kind": "canonical_unconfirmed",
+                "severity": "high",
+                "title": f"{len(substantial)} manuscript versions found",
+                "description": "Multiple substantial documents exist — confirm which one is the canonical manuscript.",
+            }
+        )
     for c in zero_research:
-        gaps.append({
-            "kind": "no_research", "severity": "high",
-            "title": f"“{c['title']}” has no supporting research",
-            "description": "No knowledge items reference this chapter — add sources.",
-            "chapter_id": c["id"],
-        })
+        gaps.append(
+            {
+                "kind": "no_research",
+                "severity": "high",
+                "title": f"“{c['title']}” has no supporting research",
+                "description": "No knowledge items reference this chapter — add sources.",
+                "chapter_id": c["id"],
+            }
+        )
     for c in unresearched:
         if c["knowledge_count"] > 0:
-            gaps.append({
-                "kind": "weak_research", "severity": "medium",
-                "title": f"“{c['title']}” is under-researched ({c['knowledge_count']} item{'s' if c['knowledge_count'] != 1 else ''})",
-                "description": f"Fewer than {_MIN_RESEARCH_PER_CHAPTER} knowledge items support this chapter.",
-                "chapter_id": c["id"],
-            })
+            gaps.append(
+                {
+                    "kind": "weak_research",
+                    "severity": "medium",
+                    "title": f"“{c['title']}” is under-researched ({c['knowledge_count']} item{'s' if c['knowledge_count'] != 1 else ''})",
+                    "description": f"Fewer than {_MIN_RESEARCH_PER_CHAPTER} knowledge items support this chapter.",
+                    "chapter_id": c["id"],
+                }
+            )
     for c in placeholders:
-        gaps.append({
-            "kind": "placeholder_chapter", "severity": "medium",
-            "title": f"“{c['title']}” is a heading with no content",
-            "description": "This chapter exists in the outline but has no words yet.",
-            "chapter_id": c["id"],
-        })
+        gaps.append(
+            {
+                "kind": "placeholder_chapter",
+                "severity": "medium",
+                "title": f"“{c['title']}” is a heading with no content",
+                "description": "This chapter exists in the outline but has no words yet.",
+                "chapter_id": c["id"],
+            }
+        )
     # Missing standard book sections
     titles_lower = " | ".join((c["title"] or "").lower() for c in outline)
     if outline:
         if not re.search(r"\b(introduction|preface|foreword|prologue)\b", titles_lower):
-            gaps.append({
-                "kind": "missing_section", "severity": "low",
-                "title": "No introduction detected",
-                "description": "The outline has no introduction, preface, or prologue section.",
-            })
+            gaps.append(
+                {
+                    "kind": "missing_section",
+                    "severity": "low",
+                    "title": "No introduction detected",
+                    "description": "The outline has no introduction, preface, or prologue section.",
+                }
+            )
         if not re.search(r"\b(conclusion|epilogue|afterword|summary)\b", titles_lower):
-            gaps.append({
-                "kind": "missing_section", "severity": "low",
-                "title": "No conclusion detected",
-                "description": "The outline has no conclusion, epilogue, or afterword section.",
-            })
+            gaps.append(
+                {
+                    "kind": "missing_section",
+                    "severity": "low",
+                    "title": "No conclusion detected",
+                    "description": "The outline has no conclusion, epilogue, or afterword section.",
+                }
+            )
     if not outline and versions:
-        gaps.append({
-            "kind": "no_structure", "severity": "high",
-            "title": "No chapter structure detected",
-            "description": "No headings could be extracted from the linked documents — the outline is empty.",
-        })
+        gaps.append(
+            {
+                "kind": "no_structure",
+                "severity": "high",
+                "title": "No chapter structure detected",
+                "description": "No headings could be extracted from the linked documents — the outline is empty.",
+            }
+        )
     if not versions:
-        gaps.append({
-            "kind": "no_documents", "severity": "high",
-            "title": "No documents linked",
-            "description": "Link manuscript or research documents to this Work to build its intelligence view.",
-        })
+        gaps.append(
+            {
+                "kind": "no_documents",
+                "severity": "high",
+                "title": "No documents linked",
+                "description": "Link manuscript or research documents to this Work to build its intelligence view.",
+            }
+        )
 
     sev_rank = {"high": 0, "medium": 1, "low": 2}
     gaps.sort(key=lambda g: sev_rank.get(g["severity"], 3))
@@ -289,11 +343,13 @@ def build_book_intelligence(work_id: str, db: OrivellumDB) -> dict:
 
     return {
         "work_id": work_id,
-        "work": {"id": work["id"], "title": work.get("title"),
-                 "description": work.get("description"),
-                 "work_type": work.get("work_type")},
-        "canonical": ({**canonical, "canonical_source": canonical_source}
-                      if canonical else None),
+        "work": {
+            "id": work["id"],
+            "title": work.get("title"),
+            "description": work.get("description"),
+            "work_type": work.get("work_type"),
+        },
+        "canonical": ({**canonical, "canonical_source": canonical_source} if canonical else None),
         "versions": versions,
         "outline": outline,
         "expected_chapters": expected_chapters,

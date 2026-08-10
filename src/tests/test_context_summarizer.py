@@ -13,6 +13,7 @@ Verified behaviours:
      falls outside the verbatim window appears in the batch passed to
      _summarize_early_context — confirming it cannot be silently lost.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -23,6 +24,7 @@ from orivellum.database.db import OrivellumDB
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db() -> OrivellumDB:
     """Return a fresh in-memory OrivellumDB with all migrations applied."""
     return OrivellumDB(":memory:")
@@ -32,11 +34,11 @@ def _seed_messages(db: OrivellumDB, conv_id: str, n_pairs: int) -> list[str]:
     """Insert n_pairs of user+assistant messages; return all message IDs."""
     ids: list[str] = []
     for i in range(n_pairs):
-        u = db.add_message(conv_id, "user",
-                           f"User message {i}: tell me about topic {i}.")
+        u = db.add_message(conv_id, "user", f"User message {i}: tell me about topic {i}.")
         ids.append(u["id"])
-        a = db.add_message(conv_id, "assistant",
-                           f"Assistant reply {i}: here is information on topic {i}.")
+        a = db.add_message(
+            conv_id, "assistant", f"Assistant reply {i}: here is information on topic {i}."
+        )
         ids.append(a["id"])
     return ids
 
@@ -52,6 +54,7 @@ def _seed_messages(db: OrivellumDB, conv_id: str, n_pairs: int) -> list[str]:
 # ---------------------------------------------------------------------------
 # Test 1 — threshold trigger
 # ---------------------------------------------------------------------------
+
 
 def test_maybe_summarize_triggers_when_conversation_is_long_enough():
     """_maybe_summarize writes context_summary once the conversation has
@@ -113,6 +116,7 @@ def test_maybe_summarize_skips_short_conversation():
 # ---------------------------------------------------------------------------
 # Test 2 — summary block injected into LLM messages
 # ---------------------------------------------------------------------------
+
 
 def test_build_messages_injects_summary_block():
     """When context_summary is set on a conversation, _build_messages must
@@ -180,6 +184,7 @@ def test_build_messages_no_summary_block_when_summary_absent():
 # Test 3 — early fact present in the summarisation batch
 # ---------------------------------------------------------------------------
 
+
 def test_early_fact_present_in_summarization_batch():
     """A fact stated in the very first message must appear in the batch passed
     to _summarize_early_context when the conversation is long enough for that
@@ -230,11 +235,7 @@ def test_early_fact_present_in_summarization_batch():
         "Check that total >= _HISTORY_LIMIT + 4 (= 44)."
     )
 
-    all_texts = [
-        m.get("text", "")
-        for batch in captured_batches
-        for m in batch
-    ]
+    all_texts = [m.get("text", "") for batch in captured_batches for m in batch]
     assert any(EARLY_FACT in t for t in all_texts), (
         f"The early fact {EARLY_FACT!r} was not found in any summarization batch.\n"
         f"Texts passed to _summarize_early_context: {all_texts[:10]}"

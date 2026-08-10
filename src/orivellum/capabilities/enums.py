@@ -11,6 +11,7 @@ Adding a new state:
 
 Never remove a value — old rows in the DB may still reference it.
 """
+
 from __future__ import annotations
 
 import enum
@@ -18,6 +19,7 @@ import enum
 # ---------------------------------------------------------------------------
 # Message states (chat messages)
 # ---------------------------------------------------------------------------
+
 
 class MessageState(str, enum.Enum):
     """Lifecycle of a single assistant message from creation to completion.
@@ -27,16 +29,18 @@ class MessageState(str, enum.Enum):
         running → failed
         streaming → failed
     """
-    queued    = "queued"     # placeholder written before any model call
-    running   = "running"    # inference has started
+
+    queued = "queued"  # placeholder written before any model call
+    running = "running"  # inference has started
     streaming = "streaming"  # tokens are flowing to the client
-    done      = "done"       # message is complete and immutable
-    failed    = "failed"     # unrecoverable error; surface reason + Retry
+    done = "done"  # message is complete and immutable
+    failed = "failed"  # unrecoverable error; surface reason + Retry
 
 
 # ---------------------------------------------------------------------------
 # Job states (background / async jobs)
 # ---------------------------------------------------------------------------
+
 
 class JobState(str, enum.Enum):
     """State of a background processing job (document pipeline, batch ops …).
@@ -47,10 +51,11 @@ class JobState(str, enum.Enum):
         running → cancelled
         queued  → cancelled
     """
-    queued    = "queued"
-    running   = "running"
-    done      = "done"
-    failed    = "failed"
+
+    queued = "queued"
+    running = "running"
+    done = "done"
+    failed = "failed"
     cancelled = "cancelled"
 
 
@@ -58,13 +63,15 @@ class JobState(str, enum.Enum):
 # Finding states (governance blockers)
 # ---------------------------------------------------------------------------
 
+
 class FindingState(str, enum.Enum):
     """State of a governance finding (blocker on a lifecycle transition).
 
     An ``open`` finding blocks all forward transitions on its target object
     until a human resolves it.  ``resolved`` findings are kept for audit.
     """
-    open     = "open"
+
+    open = "open"
     resolved = "resolved"
 
 
@@ -72,17 +79,20 @@ class FindingState(str, enum.Enum):
 # Finding severity
 # ---------------------------------------------------------------------------
 
+
 class FindingSeverity(str, enum.Enum):
     """How urgently a finding must be resolved."""
-    info     = "info"     # informational only, does not block
-    warning  = "warning"  # advisory; does not block by default
-    high     = "high"     # blocks all forward transitions
-    critical = "critical" # blocks all transitions including backward
+
+    info = "info"  # informational only, does not block
+    warning = "warning"  # advisory; does not block by default
+    high = "high"  # blocks all forward transitions
+    critical = "critical"  # blocks all transitions including backward
 
 
 # ---------------------------------------------------------------------------
 # Book production states (B0–B17)
 # ---------------------------------------------------------------------------
+
 
 class BookState(str, enum.Enum):
     """18-stage production lifecycle for a book chapter or full manuscript.
@@ -113,16 +123,17 @@ class BookState(str, enum.Enum):
         B15 → B16 Revision open
         B16 → B17 Archived / superseded
     """
-    B0  = "B0"   # Intake
-    B1  = "B1"   # Outline
-    B2  = "B2"   # Research
-    B3  = "B3"   # First Draft
-    B4  = "B4"   # Self-Review
-    B5  = "B5"   # Peer Review
-    B6  = "B6"   # Revision
-    B7  = "B7"   # Copy Edit
-    B8  = "B8"   # Proof
-    B9  = "B9"   # Layout
+
+    B0 = "B0"  # Intake
+    B1 = "B1"  # Outline
+    B2 = "B2"  # Research
+    B3 = "B3"  # First Draft
+    B4 = "B4"  # Self-Review
+    B5 = "B5"  # Peer Review
+    B6 = "B6"  # Revision
+    B7 = "B7"  # Copy Edit
+    B8 = "B8"  # Proof
+    B9 = "B9"  # Layout
     B10 = "B10"  # Final Check
     B11 = "B11"  # Production Approval
     B12 = "B12"  # Published
@@ -137,24 +148,28 @@ class BookState(str, enum.Enum):
 # Document readiness states (existing; mirrored as enum for validation)
 # ---------------------------------------------------------------------------
 
+
 class DocumentReadiness(str, enum.Enum):
     """Processing readiness of a library document."""
-    imported     = "imported"     # uploaded, not yet processed
-    ready        = "ready"        # fully processed
-    error        = "error"        # processing failed
-    no_text      = "no_text"      # image/scan with no extractable text
-    reprocessing = "reprocessing" # in-flight re-extraction
+
+    imported = "imported"  # uploaded, not yet processed
+    ready = "ready"  # fully processed
+    error = "error"  # processing failed
+    no_text = "no_text"  # image/scan with no extractable text
+    reprocessing = "reprocessing"  # in-flight re-extraction
 
 
 # ---------------------------------------------------------------------------
 # Document lifecycle states (existing; mirrored as enum for validation)
 # ---------------------------------------------------------------------------
 
+
 class DocumentLifecycle(str, enum.Enum):
     """Editorial lifecycle of a library document."""
-    draft       = "draft"       # default; work in progress
-    canonical   = "canonical"   # the authoritative version for a role
-    superseded  = "superseded"  # replaced by a newer canonical
-    reference   = "reference"   # kept for reference, not authoritative
-    active      = "active"      # legacy alias for draft
-    deleted     = "deleted"     # soft-deleted
+
+    draft = "draft"  # default; work in progress
+    canonical = "canonical"  # the authoritative version for a role
+    superseded = "superseded"  # replaced by a newer canonical
+    reference = "reference"  # kept for reference, not authoritative
+    active = "active"  # legacy alias for draft
+    deleted = "deleted"  # soft-deleted

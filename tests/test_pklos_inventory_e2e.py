@@ -13,26 +13,27 @@ claim ledger → PolicyEnforcer, without manual status promotion:
 4. AdapterRAM payloads (INV-REQ-001) never produce any VRAM claim.
 5. FastAPI route model accepts the full collector payload shape.
 """
+
 from __future__ import annotations
 
 import os
 import sys
-import tempfile
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
-from orivellum.capabilities.pklos.authority import ClaimStatus, SUBJECT_DEVICE_A01
+from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
 from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
 
-
 # ── Fixture + payload ──────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def db(tmp_path):
     from orivellum.database.db import OrivellumDB
+
     d = OrivellumDB(str(tmp_path / "test.db"))
     yield d
     try:
@@ -54,7 +55,7 @@ _FULL_PAYLOAD = {
     },
     "memory": {
         # Two independent CIM sources — both agree → ClaimVerifier produces VERIFIED
-        "TotalPhysicalMemory":       137_438_953_472,  # 128 GiB (Win32_ComputerSystem)
+        "TotalPhysicalMemory": 137_438_953_472,  # 128 GiB (Win32_ComputerSystem)
         "PhysicalMemoryCapacitySum": 137_438_953_472,  # 128 GiB (Win32_PhysicalMemory sum)
     },
     "gpu": {
@@ -63,18 +64,18 @@ _FULL_PAYLOAD = {
     },
     "vram": {
         # Single A0 Lemonade source; policy minimum_corroboration=1 → VERIFIED
-        "source":      "lemonade_api:13305",
-        "total_bytes": 103_079_215_104,   # ~96 GiB
-        "free_bytes":  90_000_000_000,
+        "source": "lemonade_api:13305",
+        "total_bytes": 103_079_215_104,  # ~96 GiB
+        "free_bytes": 90_000_000_000,
     },
     "os": {
-        "Caption":     "Microsoft Windows 11 Pro",
-        "Version":     "10.0.22631",
+        "Caption": "Microsoft Windows 11 Pro",
+        "Version": "10.0.22631",
         "BuildNumber": "22631",
     },
     "bios": {
-        "Manufacturer":       "American Megatrends International, LLC.",
-        "SMBIOSBIOSVersion":  "3.03",
+        "Manufacturer": "American Megatrends International, LLC.",
+        "SMBIOSBIOSVersion": "3.03",
     },
     "storage": {
         "TotalBytes": 4_000_787_030_016,
@@ -84,6 +85,7 @@ _FULL_PAYLOAD = {
 
 
 # ── 1. Verifier-derived status is persisted (no manual promotion) ─────────────
+
 
 class TestLedgerStatusAfterIngestion:
     """Proves upsert_claim() + update_claim_status() work together so the ledger
@@ -152,6 +154,7 @@ class TestLedgerStatusAfterIngestion:
 
 # ── 2. Authority guard: higher-authority claim is never overwritten ────────────
 
+
 class TestAuthorityGuard:
     """Regression tests for the upsert_claim authority-race guard.
 
@@ -172,8 +175,9 @@ class TestAuthorityGuard:
 
         # Now manually insert an A7 assertion (lower authority than A0)
         db.upsert_claim(
-            SUBJECT_DEVICE_A01, "installed_physical_memory_bytes",
-            "64000000000",   # wrong value at lower authority
+            SUBJECT_DEVICE_A01,
+            "installed_physical_memory_bytes",
+            "64000000000",  # wrong value at lower authority
             authority_tier="A7",
         )
 
@@ -200,7 +204,9 @@ class TestAuthorityGuard:
         # Second ingest (same tier, same value) — upsert_claim writes (equal tier),
         # update_claim_status is a no-op (status already VERIFIED).
         adapter.ingest_inventory(_FULL_PAYLOAD)
-        second_ram = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "installed_physical_memory_bytes")
+        second_ram = db.get_claim_by_predicate(
+            SUBJECT_DEVICE_A01, "installed_physical_memory_bytes"
+        )
         assert second_ram["status"] == "VERIFIED", (
             f"Second identical ingest must leave VERIFIED status intact; got {second_ram['status']!r}"
         )
@@ -209,7 +215,8 @@ class TestAuthorityGuard:
         """A0 ingest must be able to promote a pre-existing USER_ASSERTED A7 claim."""
         # Start with a user assertion (A7 → USER_ASSERTED)
         db.upsert_claim(
-            SUBJECT_DEVICE_A01, "ram_gb",
+            SUBJECT_DEVICE_A01,
+            "ram_gb",
             "128",
             authority_tier="A7",
         )
@@ -229,6 +236,7 @@ class TestAuthorityGuard:
 
 
 # ── 3. PolicyEnforcer after ingestion (no manual promotion) ───────────────────
+
 
 class TestEnforcerAfterIngestion:
     """PolicyEnforcer must supply context from real ingested claims.
@@ -257,8 +265,7 @@ class TestEnforcerAfterIngestion:
         enforcer = PolicyEnforcer(db)
         decision = enforcer.enforce("how much RAM does my system have")
         # 128 GiB = 137438953472 bytes; context should mention either
-        assert ("128" in decision.verified_context
-                or "137" in decision.verified_context), (
+        assert "128" in decision.verified_context or "137" in decision.verified_context, (
             f"Context must contain the RAM value; got: {decision.verified_context!r}"
         )
 
@@ -285,29 +292,31 @@ class TestEnforcerAfterIngestion:
 
 # ── 4. INV-REQ-001 E2E: AdapterRAM never produces a VRAM claim ────────────────
 
-class TestAdapterRAMNeverVerified:
 
+class TestAdapterRAMNeverVerified:
     def test_adapterram_payload_produces_no_vram_claim(self, db):
         """A payload containing AdapterRAM but no Lemonade source must produce
         no vram_usable_bytes claim at all."""
         adapter = WindowsInventoryAdapter(db)
-        result = adapter.ingest_inventory({
-            "subject": SUBJECT_DEVICE_A01,
-            "gpu": {"Name": "Fake GPU", "AdapterRAM": 4_294_967_295},
-        })
+        result = adapter.ingest_inventory(
+            {
+                "subject": SUBJECT_DEVICE_A01,
+                "gpu": {"Name": "Fake GPU", "AdapterRAM": 4_294_967_295},
+            }
+        )
         assert any("INV-REQ-001" in v for v in result["violations"])
         vram = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes")
-        assert vram is None, (
-            "No vram_usable_bytes claim should be stored from AdapterRAM alone"
-        )
+        assert vram is None, "No vram_usable_bytes claim should be stored from AdapterRAM alone"
 
     def test_32bit_cap_never_stored_as_vram_value(self, db):
         """The 32-bit cap (4 294 967 295) must never appear as a stored VRAM value."""
         adapter = WindowsInventoryAdapter(db)
-        adapter.ingest_inventory({
-            "subject": SUBJECT_DEVICE_A01,
-            "gpu": {"Name": "AMD GPU", "AdapterRAM": 4_294_967_295},
-        })
+        adapter.ingest_inventory(
+            {
+                "subject": SUBJECT_DEVICE_A01,
+                "gpu": {"Name": "AMD GPU", "AdapterRAM": 4_294_967_295},
+            }
+        )
         vram = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes")
         if vram is not None:
             assert int(vram["value"]) != 4_294_967_295
@@ -315,10 +324,11 @@ class TestAdapterRAMNeverVerified:
 
 # ── 5. FastAPI route model ────────────────────────────────────────────────────
 
-class TestInventoryRouteModel:
 
+class TestInventoryRouteModel:
     def test_inventory_payload_model_accepts_full_collector_json(self):
         from orivellum.api.routes.pklos import InventoryPayload
+
         model = InventoryPayload(**_FULL_PAYLOAD)
         assert model.subject == SUBJECT_DEVICE_A01
         assert model.memory["TotalPhysicalMemory"] == 137_438_953_472
@@ -327,13 +337,19 @@ class TestInventoryRouteModel:
 
     def test_inventory_payload_model_accepts_empty_payload(self):
         from orivellum.api.routes.pklos import InventoryPayload
+
         model = InventoryPayload()
         assert model.cpu == {}
 
     def test_ingest_summary_has_required_keys(self, db):
         adapter = WindowsInventoryAdapter(db)
         result = adapter.ingest_inventory(_FULL_PAYLOAD)
-        assert {"claims_written", "claims_verified", "claims_conflicted",
-                "claims_unavailable", "violations"}.issubset(result.keys())
+        assert {
+            "claims_written",
+            "claims_verified",
+            "claims_conflicted",
+            "claims_unavailable",
+            "violations",
+        }.issubset(result.keys())
         assert result["claims_written"] > 0
         assert isinstance(result["violations"], list)

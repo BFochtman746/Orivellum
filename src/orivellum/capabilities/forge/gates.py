@@ -1,4 +1,5 @@
 """Forge quality gates — run in parallel via asyncio.gather."""
+
 from __future__ import annotations
 
 import logging
@@ -14,7 +15,11 @@ TIMEOUT = 30  # seconds per gate
 def _run(cmd: list[str], cwd: pathlib.Path, timeout: int = TIMEOUT) -> tuple[int, str]:
     try:
         proc = subprocess.run(
-            cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return proc.returncode, (proc.stdout + proc.stderr)[:3000]
     except FileNotFoundError:
@@ -27,13 +32,17 @@ def _run(cmd: list[str], cwd: pathlib.Path, timeout: int = TIMEOUT) -> tuple[int
 
 # ── Individual gate functions ──────────────────────────────────────────────────
 
+
 def _gate_structure(build_dir: pathlib.Path) -> dict:
     """Check that required files exist."""
     required = ["index.html", "styles.css", "app.js", "design-tokens.css"]
     missing = [f for f in required if not (build_dir / f).exists()]
     if missing:
-        return {"name": "structure", "status": "blocked",
-                "detail": f"Missing required files: {', '.join(missing)}"}
+        return {
+            "name": "structure",
+            "status": "blocked",
+            "detail": f"Missing required files: {', '.join(missing)}",
+        }
     return {"name": "structure", "status": "passed", "detail": "All required files present."}
 
 
@@ -52,8 +61,7 @@ def _gate_tokens(build_dir: pathlib.Path) -> dict:
         if grp not in content:
             issues.append(f"no {grp} variables")
     if issues:
-        return {"name": "tokens", "status": "conditional",
-                "detail": "; ".join(issues)}
+        return {"name": "tokens", "status": "conditional", "detail": "; ".join(issues)}
     return {"name": "tokens", "status": "passed", "detail": "Token sheet valid."}
 
 
@@ -87,13 +95,17 @@ def _gate_js_syntax(build_dir: pathlib.Path) -> dict:
             errors.append(f"{f.name}: {out[:200]}")
     if errors:
         return {"name": "js_syntax", "status": "blocked", "detail": "\n".join(errors)}
-    return {"name": "js_syntax", "status": "passed",
-            "detail": f"{len(js_files)} JS file(s) syntax-clean."}
+    return {
+        "name": "js_syntax",
+        "status": "passed",
+        "detail": f"{len(js_files)} JS file(s) syntax-clean.",
+    }
 
 
 def _gate_links(build_dir: pathlib.Path) -> dict:
     """Check that all <a href> and <link href> targets exist within the build dir."""
     import re
+
     html_files = list(build_dir.glob("**/*.html"))
     broken = []
     href_pat = re.compile(r'href=["\']([^"\'#?]+)["\']', re.IGNORECASE)
@@ -106,10 +118,16 @@ def _gate_links(build_dir: pathlib.Path) -> dict:
             if not target.exists():
                 broken.append(f"{html.name}: {href}")
     if broken:
-        return {"name": "links", "status": "conditional",
-                "detail": f"{len(broken)} broken internal link(s): " + "; ".join(broken[:5])}
-    return {"name": "links", "status": "passed",
-            "detail": f"All internal links OK ({len(html_files)} HTML files checked)."}
+        return {
+            "name": "links",
+            "status": "conditional",
+            "detail": f"{len(broken)} broken internal link(s): " + "; ".join(broken[:5]),
+        }
+    return {
+        "name": "links",
+        "status": "passed",
+        "detail": f"All internal links OK ({len(html_files)} HTML files checked).",
+    }
 
 
 def _gate_scope(build_dir: pathlib.Path) -> dict:
@@ -121,12 +139,16 @@ def _gate_scope(build_dir: pathlib.Path) -> dict:
         if p.is_file() and p.suffix.lower() in bad_extensions
     ]
     if found:
-        return {"name": "scope", "status": "conditional",
-                "detail": f"Non-static files found: {', '.join(found[:5])}"}
+        return {
+            "name": "scope",
+            "status": "conditional",
+            "detail": f"Non-static files found: {', '.join(found[:5])}",
+        }
     return {"name": "scope", "status": "passed", "detail": "Output is static-only."}
 
 
 # ── Orchestrator ───────────────────────────────────────────────────────────────
+
 
 def run_quality_gates(
     build_dir: pathlib.Path,
@@ -170,9 +192,11 @@ def run_quality_gates(
     }
 
     if on_event:
-        on_event("gates_done",
-                 f"Gates complete — {overall.upper()} "
-                 f"({len(blocked)} blocked, {len(conditional)} conditional).",
-                 summary)
+        on_event(
+            "gates_done",
+            f"Gates complete — {overall.upper()} "
+            f"({len(blocked)} blocked, {len(conditional)} conditional).",
+            summary,
+        )
 
     return summary

@@ -3,6 +3,7 @@
 Covers: score parsing, circuit-breaker behaviour, config gating, and the
 integration of cross-encoder ordering into rerank_candidates.
 """
+
 from __future__ import annotations
 
 import io
@@ -41,47 +42,58 @@ def test_scores_none_when_model_unconfigured(monkeypatch):
 
 
 def test_scores_parsed_and_aligned(monkeypatch):
-    monkeypatch.setattr(rerank, "_serving_reranker",
-                        lambda: ("http://x", "bge-reranker-v2-m3-GGUF"))
-    payload = {"results": [
-        {"index": 1, "relevance_score": 9.5},
-        {"index": 0, "relevance_score": 1.2},
-    ]}
-    monkeypatch.setattr(rerank.urllib.request, "urlopen",
-                        lambda req, timeout: _fake_response(payload))
+    monkeypatch.setattr(
+        rerank, "_serving_reranker", lambda: ("http://x", "bge-reranker-v2-m3-GGUF")
+    )
+    payload = {
+        "results": [
+            {"index": 1, "relevance_score": 9.5},
+            {"index": 0, "relevance_score": 1.2},
+        ]
+    }
+    monkeypatch.setattr(
+        rerank.urllib.request, "urlopen", lambda req, timeout: _fake_response(payload)
+    )
     scores = rerank.cross_encoder_scores("capital of France", ["berlin", "paris"])
     assert scores == [1.2, 9.5]
 
 
 def test_malformed_response_returns_none_and_opens_breaker(monkeypatch):
-    monkeypatch.setattr(rerank, "_serving_reranker",
-                        lambda: ("http://x", "bge-reranker-v2-m3-GGUF"))
+    monkeypatch.setattr(
+        rerank, "_serving_reranker", lambda: ("http://x", "bge-reranker-v2-m3-GGUF")
+    )
     # Only one score for two documents → malformed
     payload = {"results": [{"index": 0, "relevance_score": 3.0}]}
-    monkeypatch.setattr(rerank.urllib.request, "urlopen",
-                        lambda req, timeout: _fake_response(payload))
+    monkeypatch.setattr(
+        rerank.urllib.request, "urlopen", lambda req, timeout: _fake_response(payload)
+    )
     assert rerank.cross_encoder_scores("q", ["a", "b"]) is None
     # A malformed endpoint is as unusable as a down one → cooldown opens
     assert rerank.cross_encoder_status()["circuit_open"] is True
 
 
 def test_duplicate_indices_rejected(monkeypatch):
-    monkeypatch.setattr(rerank, "_serving_reranker",
-                        lambda: ("http://x", "bge-reranker-v2-m3-GGUF"))
-    payload = {"results": [
-        {"index": 0, "relevance_score": 3.0},
-        {"index": 0, "relevance_score": 5.0},  # duplicate — doc 1 never scored
-    ]}
-    monkeypatch.setattr(rerank.urllib.request, "urlopen",
-                        lambda req, timeout: _fake_response(payload))
+    monkeypatch.setattr(
+        rerank, "_serving_reranker", lambda: ("http://x", "bge-reranker-v2-m3-GGUF")
+    )
+    payload = {
+        "results": [
+            {"index": 0, "relevance_score": 3.0},
+            {"index": 0, "relevance_score": 5.0},  # duplicate — doc 1 never scored
+        ]
+    }
+    monkeypatch.setattr(
+        rerank.urllib.request, "urlopen", lambda req, timeout: _fake_response(payload)
+    )
     assert rerank.cross_encoder_scores("q", ["a", "b"]) is None
     assert rerank.cross_encoder_status()["circuit_open"] is True
 
 
 def test_unproven_endpoint_single_flight(monkeypatch):
     """While the endpoint is unproven, a concurrent caller must not block."""
-    monkeypatch.setattr(rerank, "_serving_reranker",
-                        lambda: ("http://x", "bge-reranker-v2-m3-GGUF"))
+    monkeypatch.setattr(
+        rerank, "_serving_reranker", lambda: ("http://x", "bge-reranker-v2-m3-GGUF")
+    )
     inner_result = {}
 
     def _slow_urlopen(req, timeout):
@@ -111,8 +123,9 @@ def test_setting_normalization_case_insensitive():
 
 
 def test_failure_opens_breaker_and_skips_network(monkeypatch):
-    monkeypatch.setattr(rerank, "_serving_reranker",
-                        lambda: ("http://x", "bge-reranker-v2-m3-GGUF"))
+    monkeypatch.setattr(
+        rerank, "_serving_reranker", lambda: ("http://x", "bge-reranker-v2-m3-GGUF")
+    )
     calls = {"n": 0}
 
     def _boom(req, timeout):
@@ -133,11 +146,13 @@ def test_failure_opens_breaker_and_skips_network(monkeypatch):
 
 
 def test_success_closes_breaker(monkeypatch):
-    monkeypatch.setattr(rerank, "_serving_reranker",
-                        lambda: ("http://x", "bge-reranker-v2-m3-GGUF"))
+    monkeypatch.setattr(
+        rerank, "_serving_reranker", lambda: ("http://x", "bge-reranker-v2-m3-GGUF")
+    )
     payload = {"results": [{"index": 0, "relevance_score": 1.0}]}
-    monkeypatch.setattr(rerank.urllib.request, "urlopen",
-                        lambda req, timeout: _fake_response(payload))
+    monkeypatch.setattr(
+        rerank.urllib.request, "urlopen", lambda req, timeout: _fake_response(payload)
+    )
     rerank._ce_unavailable_until = 0.0  # ensure closed before the call
     assert rerank.cross_encoder_scores("q", ["a"]) == [1.0]
     assert rerank.cross_encoder_status()["circuit_open"] is False

@@ -15,6 +15,7 @@ Pipeline (one direction, never backwards):
   a searchable knowledge item; stated actions become tasks.
 - The daily report is derived from approved/filed blocks only.
 """
+
 from __future__ import annotations
 
 import json
@@ -41,22 +42,22 @@ __all__ = [
 # ── Category policy (server-owned; the model may only pick from these IDs) ──
 
 CATEGORIES: list[dict[str, str]] = [
-    {"id": "personal",      "label": "Personal",      "index_file": "Personal.md"},
-    {"id": "work",          "label": "Work",          "index_file": "Work.md"},
+    {"id": "personal", "label": "Personal", "index_file": "Personal.md"},
+    {"id": "work", "label": "Work", "index_file": "Work.md"},
     {"id": "relationships", "label": "Relationships", "index_file": "Relationships.md"},
-    {"id": "health",        "label": "Health",        "index_file": "Health.md"},
-    {"id": "faith",         "label": "Faith",         "index_file": "Faith.md"},
-    {"id": "home",          "label": "Home",          "index_file": "Home.md"},
-    {"id": "finance",       "label": "Finance",       "index_file": "Finance.md"},
-    {"id": "creative",      "label": "Creative",      "index_file": "Creative.md"},
-    {"id": "learning",      "label": "Learning",      "index_file": "Learning.md"},
-    {"id": "projects",      "label": "Projects",      "index_file": "Projects.md"},
-    {"id": "decisions",     "label": "Decisions",     "index_file": "Decisions.md"},
-    {"id": "ideas",         "label": "Ideas",         "index_file": "Ideas.md"},
-    {"id": "problems",      "label": "Problems",      "index_file": "Problems.md"},
-    {"id": "wins",          "label": "Wins",          "index_file": "Wins.md"},
-    {"id": "gratitude",     "label": "Gratitude",     "index_file": "Gratitude.md"},
-    {"id": "unsorted",      "label": "Needs Review",  "index_file": "Unsorted.md"},
+    {"id": "health", "label": "Health", "index_file": "Health.md"},
+    {"id": "faith", "label": "Faith", "index_file": "Faith.md"},
+    {"id": "home", "label": "Home", "index_file": "Home.md"},
+    {"id": "finance", "label": "Finance", "index_file": "Finance.md"},
+    {"id": "creative", "label": "Creative", "index_file": "Creative.md"},
+    {"id": "learning", "label": "Learning", "index_file": "Learning.md"},
+    {"id": "projects", "label": "Projects", "index_file": "Projects.md"},
+    {"id": "decisions", "label": "Decisions", "index_file": "Decisions.md"},
+    {"id": "ideas", "label": "Ideas", "index_file": "Ideas.md"},
+    {"id": "problems", "label": "Problems", "index_file": "Problems.md"},
+    {"id": "wins", "label": "Wins", "index_file": "Wins.md"},
+    {"id": "gratitude", "label": "Gratitude", "index_file": "Gratitude.md"},
+    {"id": "unsorted", "label": "Needs Review", "index_file": "Unsorted.md"},
 ]
 CATEGORY_IDS = {c["id"] for c in CATEGORIES}
 _INDEX_FILES = {c["id"]: c["index_file"] for c in CATEGORIES}
@@ -165,7 +166,8 @@ def _normalize_proposal(raw: dict, text: str) -> dict:
         if due and not any(d in text for d in re.findall(r"\d+", due)):
             if not re.search(r"\d", text) and not re.search(
                 r"\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
-                text, re.IGNORECASE,
+                text,
+                re.IGNORECASE,
             ):
                 warnings.append(f"dropped unstated due date '{due}'")
                 due = ""
@@ -196,8 +198,12 @@ def classify_block(db: Any, cfg: Any, block: dict) -> dict | None:
             {"role": "system", "content": _CLASSIFY_SYSTEM},
             {"role": "user", "content": _classify_prompt(block["text"])},
         ],
-        cfg=cfg, db=db, purpose="notes.classify",
-        timeout=60, temperature=0.2, max_tokens=800,
+        cfg=cfg,
+        db=db,
+        purpose="notes.classify",
+        timeout=60,
+        temperature=0.2,
+        max_tokens=800,
     )
     if not result.ok or not result.text:
         return None
@@ -219,7 +225,10 @@ def process_inbox(db: Any, cfg: Any, limit: int = 50) -> dict:
             logger.warning("notes: classify crashed for %s: %s", b["id"], exc)
             proposal = None
         if proposal is None:
-            db.set_note_block_error(b["id"], "AI was unreachable or returned an unusable answer; will retry on the next run.")
+            db.set_note_block_error(
+                b["id"],
+                "AI was unreachable or returned an unusable answer; will retry on the next run.",
+            )
             failed += 1
             continue
         if db.set_note_block_proposal(b["id"], proposal):
@@ -228,6 +237,7 @@ def process_inbox(db: Any, cfg: Any, limit: int = 50) -> dict:
 
 
 # ── Filing (append-only; server owns every path) ────────────────────────────
+
 
 def _append_once(path: Path, marker: str, content: str) -> bool:
     """Append ``content`` unless ``marker`` is already present (idempotent).
@@ -287,6 +297,7 @@ def file_block(db: Any, cfg: Any, block: dict, proposal: dict) -> list[str]:
 
 # ── Approval completion (idempotent; replayable after any partial failure) ──
 
+
 def complete_approval(db: Any, cfg: Any, block: dict) -> dict:
     """Run every approval side effect for an ``approved`` block, then mark it
     ``filed``. Fully idempotent — safe to replay after a crash at any point:
@@ -318,14 +329,18 @@ def complete_approval(db: Any, cfg: Any, block: dict) -> dict:
         ).fetchone()
     if not have_knowledge:
         db.create_knowledge_item(
-            work_id=None, kind=proposal.get("kind") or "note",
+            work_id=None,
+            kind=proposal.get("kind") or "note",
             text=block["text"][:2000],
             subject=proposal.get("title"),
             confidence=float(proposal.get("confidence") or 0.7),
             review_status="approved",
-            meta={"source": "commonplace", "block_id": block["id"],
-                  "day": block["day"],
-                  "categories": proposal.get("categories") or []},
+            meta={
+                "source": "commonplace",
+                "block_id": block["id"],
+                "day": block["day"],
+                "categories": proposal.get("categories") or [],
+            },
         )
 
     db.mark_note_block_filed(block["id"], paths)
@@ -365,8 +380,7 @@ def build_daily_report(db: Any, cfg: Any, day: str, write_vault: bool = True) ->
     """Compose the daily report for ``day`` from approved/filed blocks,
     store it, and (optionally) write it into the vault."""
     blocks = [
-        b for b in db.list_note_blocks(day=day, limit=500)
-        if b["status"] in ("approved", "filed")
+        b for b in db.list_note_blocks(day=day, limit=500) if b["status"] in ("approved", "filed")
     ]
     proposals = []
     for b in blocks:
@@ -392,8 +406,12 @@ def build_daily_report(db: Any, cfg: Any, day: str, write_vault: bool = True) ->
         joined = "\n".join(f"[{b['id'][:8]}] {b['text'][:600]}" for b, _ in proposals)
         result = llm_call(
             [{"role": "user", "content": f"{_NARRATIVE_PROMPT}\n\n{joined}"}],
-            cfg=cfg, db=db, purpose="notes.report",
-            timeout=60, temperature=0.3, max_tokens=400,
+            cfg=cfg,
+            db=db,
+            purpose="notes.report",
+            timeout=60,
+            temperature=0.3,
+            max_tokens=400,
         )
         if result.ok and result.text:
             narrative = result.text.strip()

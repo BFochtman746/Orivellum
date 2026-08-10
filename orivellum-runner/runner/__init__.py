@@ -26,4 +26,5 @@ TWO JOBS
   xlsx   a workbook: sheets, formula dependency graph, error cells, doctrine
          violations, and an invariant test suite that runs without Excel
 """
+
 __version__ = "1.0.0"

@@ -3,6 +3,7 @@
 Compiles a Work's knowledge, documents, and tasks into a downloadable
 .docx report (and optionally a .pdf) using the existing generate.py helpers.
 """
+
 from __future__ import annotations
 
 import logging
@@ -54,12 +55,15 @@ class ReportPackageAction(ActionBase):
 
         if fmt == "pdf":
             from orivellum.capabilities.generate import generate_pdf_report
+
             fpath, doc_id = generate_pdf_report(work_id, db, cfg)
         else:
             from orivellum.capabilities.generate import generate_docx_report
+
             fpath, doc_id = generate_docx_report(work_id, db, cfg)
 
         from pathlib import Path
+
         data_dir = Path(cfg.data_dir)
         rel_path = str(fpath.relative_to(data_dir))
         label = fpath.name

@@ -13,40 +13,45 @@ adapters, routers, or retrieval configuration.
   F — Derived:        retrieve inputs, expose assumptions, recommend benchmark
   G — Adversarial:    untrusted content ignored; authoritative evidence retained (SEC-REQ-001)
 """
+
 from __future__ import annotations
 
 import os
 import sys
 import tempfile
+
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
-from orivellum.capabilities.pklos.authority import (
-    AuthorityTier, ClaimStatus, SUBJECT_DEVICE_A01
-)
+from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01, ClaimStatus
 from orivellum.capabilities.pklos.claim_verifier import ClaimVerifier, normalize_value
-from orivellum.capabilities.pklos.fact_router import FactRouter, RequestClass, classify
-from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
+from orivellum.capabilities.pklos.fact_router import RequestClass, classify
 from orivellum.capabilities.pklos.output_validator import OutputValidator
-
+from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
 
 # ── Fixture ────────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def db():
     from orivellum.database.db import OrivellumDB
+
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name
     try:
         d = OrivellumDB(path)
         yield d
     finally:
-        try: d._conn.close()
-        except Exception: pass
-        try: os.unlink(path)
-        except Exception: pass
+        try:
+            d._conn.close()
+        except Exception:
+            pass
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
 
 
 _A01_PAYLOAD = {
@@ -61,7 +66,7 @@ _A01_PAYLOAD = {
         "MaxClockSpeed": 5100,
     },
     "memory": {
-        "TotalPhysicalMemory": 137438953472,     # 128 GiB
+        "TotalPhysicalMemory": 137438953472,  # 128 GiB
         "PhysicalMemoryCapacitySum": 137438953472,
     },
     "gpu": {
@@ -71,7 +76,7 @@ _A01_PAYLOAD = {
     },
     "vram": {
         "source": "lemonade_api:13305",
-        "total_bytes": 103079215104,   # ~96 GiB (usable from Lemonade)
+        "total_bytes": 103079215104,  # ~96 GiB (usable from Lemonade)
         "free_bytes": 90000000000,
     },
     "os": {
@@ -92,6 +97,7 @@ _A01_PAYLOAD = {
 
 
 # ── TEST A — Known-fact ────────────────────────────────────────────────────────
+
 
 class TestA_KnownFact:
     """Spec §9.1-A: system returns correct answer from verified adapter data."""
@@ -167,7 +173,9 @@ class TestA_KnownFact:
 
         # No INV-REQ-001 violations expected (payload doesn't include AdapterRAM)
         adapteram_violations = [v for v in result["violations"] if "INV-REQ-001" in v]
-        assert len(adapteram_violations) == 0, f"Unexpected INV-REQ-001 violations: {adapteram_violations}"
+        assert len(adapteram_violations) == 0, (
+            f"Unexpected INV-REQ-001 violations: {adapteram_violations}"
+        )
 
         vram = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes")
         assert vram is not None
@@ -175,6 +183,7 @@ class TestA_KnownFact:
 
 
 # ── TEST B — Missing-data ──────────────────────────────────────────────────────
+
 
 class TestB_MissingData:
     """Spec §9.1-B: controlled abstention when no verified data exists.
@@ -227,6 +236,7 @@ class TestB_MissingData:
 
 # ── TEST C — Contradiction ─────────────────────────────────────────────────────
 
+
 class TestC_Contradiction:
     """Spec §9.1-C: conflicting evidence detected; higher authority preferred.
 
@@ -237,12 +247,18 @@ class TestC_Contradiction:
         """A0 source says 128 GiB, A7 asserts 64 GB → CONFLICTED."""
         verifier = ClaimVerifier()
         evidence = [
-            {"source_type": "windows_cim",
-             "source_locator": "Win32_ComputerSystem.TotalPhysicalMemory",
-             "authority": "A0", "raw_value": "137438953472"},   # 128 GiB exact
-            {"source_type": "user_assertion",
-             "source_locator": "user_assertion",
-             "authority": "A7", "raw_value": "64 GB"},
+            {
+                "source_type": "windows_cim",
+                "source_locator": "Win32_ComputerSystem.TotalPhysicalMemory",
+                "authority": "A0",
+                "raw_value": "137438953472",
+            },  # 128 GiB exact
+            {
+                "source_type": "user_assertion",
+                "source_locator": "user_assertion",
+                "authority": "A7",
+                "raw_value": "64 GB",
+            },
         ]
         result = verifier.verify("installed_physical_memory_bytes", evidence)
         assert result.status == ClaimStatus.CONFLICTED
@@ -252,10 +268,18 @@ class TestC_Contradiction:
         """'128 GB' vs 137438953472 bytes → normalized_agreement (not material contradiction)."""
         verifier = ClaimVerifier()
         evidence = [
-            {"source_type": "user_assertion", "source_locator": "assertion",
-             "authority": "A7", "raw_value": "128 GB"},
-            {"source_type": "windows_cim", "source_locator": "TotalPhysicalMemory",
-             "authority": "A0", "raw_value": "137438953472"},
+            {
+                "source_type": "user_assertion",
+                "source_locator": "assertion",
+                "authority": "A7",
+                "raw_value": "128 GB",
+            },
+            {
+                "source_type": "windows_cim",
+                "source_locator": "TotalPhysicalMemory",
+                "authority": "A0",
+                "raw_value": "137438953472",
+            },
         ]
         result = verifier.verify("installed_physical_memory_bytes", evidence)
         assert result.status != ClaimStatus.CONFLICTED, (
@@ -286,6 +310,7 @@ class TestC_Contradiction:
 
 # ── TEST D — Adapter-failure ───────────────────────────────────────────────────
 
+
 class TestD_AdapterFailure:
     """Spec §9.1-D: controlled abstention when adapter fails.
 
@@ -295,12 +320,20 @@ class TestD_AdapterFailure:
     def test_d1_empty_payload_produces_no_claims(self, db):
         """Empty collector payload → no claims stored."""
         adapter = WindowsInventoryAdapter(db)
-        result = adapter.ingest_inventory({
-            "collector_version": "0.1.0",
-            "collected_at": "2026-08-03T00:00:00Z",
-            "subject": SUBJECT_DEVICE_A01,
-            "cpu": {}, "memory": {}, "gpu": {}, "vram": {}, "os": {}, "bios": {}, "storage": {},
-        })
+        result = adapter.ingest_inventory(
+            {
+                "collector_version": "0.1.0",
+                "collected_at": "2026-08-03T00:00:00Z",
+                "subject": SUBJECT_DEVICE_A01,
+                "cpu": {},
+                "memory": {},
+                "gpu": {},
+                "vram": {},
+                "os": {},
+                "bios": {},
+                "storage": {},
+            }
+        )
         assert result["claims_written"] == 0
 
     def test_d2_missing_required_fields_no_crash(self, db):
@@ -334,6 +367,7 @@ class TestD_AdapterFailure:
 
 
 # ── TEST E — Alias ────────────────────────────────────────────────────────────
+
 
 class TestE_Alias:
     """Spec §9.1-E: canonical CPU identity with aliases retained; no false merge."""
@@ -377,6 +411,7 @@ class TestE_Alias:
 
 # ── TEST F — Derived-fact ─────────────────────────────────────────────────────
 
+
 class TestF_DerivedFact:
     """Spec §9.1-F: derived claims retrieve inputs and expose assumptions.
 
@@ -395,7 +430,7 @@ class TestF_DerivedFact:
             assert cls == RequestClass.DERIVED_FACT, f"{q!r} → {cls!r}, expected DERIVED_FACT"
 
     def test_f2_derived_not_blocked_without_claims(self, db):
-        """Derived fact questions should not be forced to abstain immediately — 
+        """Derived fact questions should not be forced to abstain immediately —
         they need to retrieve their inputs first, then calculate."""
         enforcer = PolicyEnforcer(db)
         decision = enforcer.enforce("can my machine run Llama 3 70B")
@@ -416,6 +451,7 @@ class TestF_DerivedFact:
         """DER-REQ-001: the data model supports input_claim_ids and assumptions."""
         # The AnswerContract schema defines inferences with derived_from_claim_ids
         from orivellum.capabilities.pklos.output_validator import InferenceRef
+
         inf = InferenceRef(
             statement="model fits in available VRAM",
             derived_from_claim_ids=["clm_device_a01_vram_usable_bytes_20260803"],
@@ -426,6 +462,7 @@ class TestF_DerivedFact:
 
 
 # ── TEST G — Adversarial Injection ────────────────────────────────────────────
+
 
 class TestG_AdversarialInjection:
     """Spec §9.1-G: untrusted content is data, never instruction (SEC-REQ-001).
@@ -448,7 +485,8 @@ class TestG_AdversarialInjection:
 
         # Simulate an adversarial A7 assertion (e.g. from a retrieved document)
         db.upsert_claim(
-            SUBJECT_DEVICE_A01, "gpu_model",
+            SUBJECT_DEVICE_A01,
+            "gpu_model",
             "NVIDIA RTX 5090",  # injected false value
             authority_tier="A7",  # A7 is lower authority than A0
         )
@@ -477,10 +515,12 @@ class TestG_AdversarialInjection:
         verifier = ClaimVerifier()
         # AdapterRAM misreports 4 GiB (32-bit cap) on a 96 GiB system
         evidence = [
-            {"source_type": "windows_cim",
-             "source_locator": "Win32_VideoController.AdapterRAM",
-             "authority": "A0",
-             "raw_value": "4294967295"},   # 4 GiB — the classic 32-bit cap
+            {
+                "source_type": "windows_cim",
+                "source_locator": "Win32_VideoController.AdapterRAM",
+                "authority": "A0",
+                "raw_value": "4294967295",
+            },  # 4 GiB — the classic 32-bit cap
         ]
         result = verifier.verify("vram_usable_bytes", evidence)
         assert result.status == ClaimStatus.UNAVAILABLE, (
@@ -513,8 +553,8 @@ class TestG_AdversarialInjection:
         # (cpu, memory, gpu, etc.) — it does not eval or exec anything.
         # We verify this by feeding a payload with executable-looking content
         # and confirming it is treated as data.
-        import json
         from orivellum.database.db import OrivellumDB
+
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             path = f.name
         try:
@@ -534,7 +574,11 @@ class TestG_AdversarialInjection:
                 assert "__import__" in cpu_claim["value"] or "import" in cpu_claim["value"].lower()
                 # Stored as data — not executed
         finally:
-            try: d._conn.close()
-            except Exception: pass
-            try: os.unlink(path)
-            except Exception: pass
+            try:
+                d._conn.close()
+            except Exception:
+                pass
+            try:
+                os.unlink(path)
+            except Exception:
+                pass

@@ -5,6 +5,7 @@ All methods accept the main OrivellumDB instance and operate on its
 connection/lock.  Graph IDs are stored encrypted; only domains and
 display metadata are stored in the clear.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,14 +32,17 @@ class MailStore:
 
     def _now(self) -> str:
         from datetime import datetime
+
         return datetime.now(UTC).isoformat()
 
     # ── Delta links ────────────────────────────────────────────────────────────
 
     def get_delta_link(self, folder_id: str) -> str | None:
-        row = self._read().execute(
-            "SELECT delta_link FROM mail_delta_links WHERE folder_id=?", (folder_id,)
-        ).fetchone()
+        row = (
+            self._read()
+            .execute("SELECT delta_link FROM mail_delta_links WHERE folder_id=?", (folder_id,))
+            .fetchone()
+        )
         return row["delta_link"] if row else None
 
     def save_delta_link(self, folder_id: str, delta_link: str) -> None:
@@ -55,9 +59,7 @@ class MailStore:
 
     def clear_delta_link(self, folder_id: str) -> None:
         with self._lock():
-            self._conn().execute(
-                "DELETE FROM mail_delta_links WHERE folder_id=?", (folder_id,)
-            )
+            self._conn().execute("DELETE FROM mail_delta_links WHERE folder_id=?", (folder_id,))
             self._conn().commit()
 
     # ── Mail records ───────────────────────────────────────────────────────────
@@ -69,26 +71,30 @@ class MailStore:
         """
         from orivellum.capabilities.mail.token_vault import encrypt_str
 
-        graph_id     = msg.get("id", "")
-        change_key   = msg.get("changeKey", "")
-        conv_id      = msg.get("conversationId", "")
-        subject      = (msg.get("subject") or "")[:500]
-        received_at  = msg.get("receivedDateTime", "")
-        has_attach   = int(bool(msg.get("hasAttachments")))
-        importance   = msg.get("importance", "normal")
-        is_read      = int(bool(msg.get("isRead")))
+        graph_id = msg.get("id", "")
+        change_key = msg.get("changeKey", "")
+        conv_id = msg.get("conversationId", "")
+        subject = (msg.get("subject") or "")[:500]
+        received_at = msg.get("receivedDateTime", "")
+        has_attach = int(bool(msg.get("hasAttachments")))
+        importance = msg.get("importance", "normal")
+        is_read = int(bool(msg.get("isRead")))
 
-        sender_obj   = msg.get("sender") or msg.get("from") or {}
-        sender_ea    = sender_obj.get("emailAddress") or {} if isinstance(sender_obj, dict) else {}
-        sender_name  = (sender_ea.get("name") or "")[:200]
-        sender_addr  = (sender_ea.get("address") or "")
+        sender_obj = msg.get("sender") or msg.get("from") or {}
+        sender_ea = sender_obj.get("emailAddress") or {} if isinstance(sender_obj, dict) else {}
+        sender_name = (sender_ea.get("name") or "")[:200]
+        sender_addr = sender_ea.get("address") or ""
         # Store domain only — not the full address
         sender_domain = sender_addr.split("@")[-1].lower() if "@" in sender_addr else ""
 
-        existing = self._read().execute(
-            "SELECT id FROM mail_records WHERE graph_message_id_hash=?",
-            (self._id_hash(graph_id),),
-        ).fetchone()
+        existing = (
+            self._read()
+            .execute(
+                "SELECT id FROM mail_records WHERE graph_message_id_hash=?",
+                (self._id_hash(graph_id),),
+            )
+            .fetchone()
+        )
 
         now = self._now()
         if existing:
@@ -104,38 +110,37 @@ class MailStore:
                 )
                 self._conn().commit()
             return False
-        else:
-            record_id = str(uuid.uuid4())
-            with self._lock():
-                self._conn().execute(
-                    """INSERT INTO mail_records(
+        record_id = str(uuid.uuid4())
+        with self._lock():
+            self._conn().execute(
+                """INSERT INTO mail_records(
                          id, graph_message_id_enc, graph_message_id_hash,
                          graph_change_key_enc, graph_folder_id_enc,
                          conversation_id, subject, sender_name, sender_domain,
                          received_at, has_attachments, importance, is_read,
                          lifecycle_state, created_at, updated_at, meta
                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'METADATA_SYNCED',?,?,?)""",
-                    (
-                        record_id,
-                        encrypt_str(graph_id),
-                        self._id_hash(graph_id),
-                        encrypt_str(change_key),
-                        encrypt_str(folder_id),
-                        conv_id[:255],
-                        subject,
-                        sender_name,
-                        sender_domain[:255],
-                        received_at,
-                        has_attach,
-                        importance,
-                        is_read,
-                        now,
-                        now,
-                        "{}",
-                    ),
-                )
-                self._conn().commit()
-            return True
+                (
+                    record_id,
+                    encrypt_str(graph_id),
+                    self._id_hash(graph_id),
+                    encrypt_str(change_key),
+                    encrypt_str(folder_id),
+                    conv_id[:255],
+                    subject,
+                    sender_name,
+                    sender_domain[:255],
+                    received_at,
+                    has_attach,
+                    importance,
+                    is_read,
+                    now,
+                    now,
+                    "{}",
+                ),
+            )
+            self._conn().commit()
+        return True
 
     def mark_record_deleted(self, graph_id: str) -> None:
         """Mark a mail record as deleted in Outlook (soft delete locally)."""
@@ -149,9 +154,7 @@ class MailStore:
             self._conn().commit()
 
     def get_mail_record(self, record_id: str) -> dict[str, Any] | None:
-        row = self._read().execute(
-            "SELECT * FROM mail_records WHERE id=?", (record_id,)
-        ).fetchone()
+        row = self._read().execute("SELECT * FROM mail_records WHERE id=?", (record_id,)).fetchone()
         return dict(row) if row else None
 
     def list_mail_records(
@@ -166,16 +169,20 @@ class MailStore:
         if lifecycle_state:
             where.append("lifecycle_state=?")
             params.append(lifecycle_state)
-        rows = self._read().execute(
-            f"""SELECT r.*, a.attention_level, a.needs_reply, a.recommended_action,
+        rows = (
+            self._read()
+            .execute(
+                f"""SELECT r.*, a.attention_level, a.needs_reply, a.recommended_action,
                        a.confidence, a.is_high_risk, a.rationale
                 FROM mail_records r
                 LEFT JOIN mail_assessments a ON a.id = r.assessment_id
-                WHERE {' AND '.join(where)}
+                WHERE {" AND ".join(where)}
                 ORDER BY r.received_at DESC
                 LIMIT ? OFFSET ?""",
-            (*params, limit, offset),
-        ).fetchall()
+                (*params, limit, offset),
+            )
+            .fetchall()
+        )
         result = [dict(row) for row in rows]
         if attention_level:
             result = [r for r in result if (r.get("attention_level") or "") == attention_level]
@@ -240,11 +247,13 @@ class MailStore:
         assessment: Any,  # models.Assessment
         threat_evidence: list,
     ) -> None:
-        signals_json  = json.dumps(assessment.signals)
-        json.dumps([
-            {"feed": e.feed, "indicator": e.indicator, "type": e.indicator_type}
-            for e in threat_evidence
-        ])
+        signals_json = json.dumps(assessment.signals)
+        json.dumps(
+            [
+                {"feed": e.feed, "indicator": e.indicator, "type": e.indicator_type}
+                for e in threat_evidence
+            ]
+        )
         with self._lock():
             self._conn().execute(
                 """INSERT INTO mail_assessments(
@@ -254,22 +263,33 @@ class MailStore:
                      signals_json, created_at
                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    assessment_id, mail_record_id,
-                    assessment.attention_level, int(assessment.needs_reply),
-                    assessment.rationale, assessment.suggested_reply,
-                    assessment.recommended_action, assessment.confidence,
-                    int(assessment.is_high_risk), int(assessment.injection_flagged),
-                    assessment.model_id, signals_json, self._now(),
+                    assessment_id,
+                    mail_record_id,
+                    assessment.attention_level,
+                    int(assessment.needs_reply),
+                    assessment.rationale,
+                    assessment.suggested_reply,
+                    assessment.recommended_action,
+                    assessment.confidence,
+                    int(assessment.is_high_risk),
+                    int(assessment.injection_flagged),
+                    assessment.model_id,
+                    signals_json,
+                    self._now(),
                 ),
             )
             self._conn().commit()
 
     def get_latest_assessment(self, mail_record_id: str) -> dict[str, Any] | None:
-        row = self._read().execute(
-            """SELECT * FROM mail_assessments
+        row = (
+            self._read()
+            .execute(
+                """SELECT * FROM mail_assessments
                WHERE mail_record_id=? ORDER BY created_at DESC LIMIT 1""",
-            (mail_record_id,),
-        ).fetchone()
+                (mail_record_id,),
+            )
+            .fetchone()
+        )
         return dict(row) if row else None
 
     # ── Nonces ─────────────────────────────────────────────────────────────────
@@ -290,11 +310,15 @@ class MailStore:
 
     def consume_nonce(self, nonce: str, mail_record_id: str, action_type: str) -> bool:
         """Validate and consume a single-use nonce.  Returns True if valid."""
-        row = self._read().execute(
-            """SELECT id FROM mail_action_requests
+        row = (
+            self._read()
+            .execute(
+                """SELECT id FROM mail_action_requests
                WHERE nonce=? AND mail_record_id=? AND action_type=? AND status='PENDING'""",
-            (nonce, mail_record_id, action_type),
-        ).fetchone()
+                (nonce, mail_record_id, action_type),
+            )
+            .fetchone()
+        )
         if not row:
             return False
         with self._lock():
@@ -328,21 +352,30 @@ class MailStore:
                      original_folder_id_enc, actor, created_at, applied_at
                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    action_id, mail_record_id, assessment_id, action_type,
-                    destination_folder_id_enc, graph_draft_id_enc,
+                    action_id,
+                    mail_record_id,
+                    assessment_id,
+                    action_type,
+                    destination_folder_id_enc,
+                    graph_draft_id_enc,
                     str(uuid.uuid4()),  # consumed nonce placeholder
                     status,
-                    result_message_id_enc, original_folder_id_enc,
-                    "user", self._now(), self._now(),
+                    result_message_id_enc,
+                    original_folder_id_enc,
+                    "user",
+                    self._now(),
+                    self._now(),
                 ),
             )
             self._conn().commit()
         return action_id
 
     def get_action_request(self, action_id: str) -> dict[str, Any] | None:
-        row = self._read().execute(
-            "SELECT * FROM mail_action_requests WHERE id=?", (action_id,)
-        ).fetchone()
+        row = (
+            self._read()
+            .execute("SELECT * FROM mail_action_requests WHERE id=?", (action_id,))
+            .fetchone()
+        )
         return dict(row) if row else None
 
     def update_action_status(self, action_id: str, status: str) -> None:
@@ -368,6 +401,7 @@ class MailStore:
         result: str = "SUCCESS",
     ) -> str:
         from orivellum.capabilities.mail.action_policy import policy_version_tag
+
         event_id = str(uuid.uuid4())
         with self._lock():
             self._conn().execute(
@@ -377,9 +411,14 @@ class MailStore:
                      before_json, after_json, result
                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    event_id, mail_record_id, action_request_id,
-                    self._now(), "system", event_type,
-                    policy_version_tag(), model_id,
+                    event_id,
+                    mail_record_id,
+                    action_request_id,
+                    self._now(),
+                    "system",
+                    event_type,
+                    policy_version_tag(),
+                    model_id,
                     json.dumps(signals or []),
                     json.dumps(before or {}),
                     json.dumps(after or {}),
@@ -393,15 +432,23 @@ class MailStore:
         self, mail_record_id: str | None = None, limit: int = 100, offset: int = 0
     ) -> list[dict[str, Any]]:
         if mail_record_id:
-            rows = self._read().execute(
-                "SELECT * FROM mail_audit_events WHERE mail_record_id=? ORDER BY at DESC LIMIT ? OFFSET ?",
-                (mail_record_id, limit, offset),
-            ).fetchall()
+            rows = (
+                self._read()
+                .execute(
+                    "SELECT * FROM mail_audit_events WHERE mail_record_id=? ORDER BY at DESC LIMIT ? OFFSET ?",
+                    (mail_record_id, limit, offset),
+                )
+                .fetchall()
+            )
         else:
-            rows = self._read().execute(
-                "SELECT * FROM mail_audit_events ORDER BY at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
+            rows = (
+                self._read()
+                .execute(
+                    "SELECT * FROM mail_audit_events ORDER BY at DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+                .fetchall()
+            )
         return [dict(r) for r in rows]
 
     # ── Helpers ────────────────────────────────────────────────────────────────
@@ -410,11 +457,10 @@ class MailStore:
     def _id_hash(graph_id: str) -> str:
         """SHA-256 prefix used for dedup lookups without storing the raw ID."""
         import hashlib
+
         return hashlib.sha256(graph_id.encode()).hexdigest()[:32]
 
-    def list_mail_context_records(
-        self, limit: int = 5, days: int = 30
-    ) -> list[dict[str, Any]]:
+    def list_mail_context_records(self, limit: int = 5, days: int = 30) -> list[dict[str, Any]]:
         """Return redacted mail records for chat context injection.
 
         Only subject, sender_domain, received_at, attention_level, and
@@ -431,8 +477,10 @@ class MailStore:
         else:
             recency_clause = ""
 
-        rows = self._read().execute(
-            f"""SELECT r.id, r.subject, r.sender_name, r.sender_domain, r.received_at,
+        rows = (
+            self._read()
+            .execute(
+                f"""SELECT r.id, r.subject, r.sender_name, r.sender_domain, r.received_at,
                       a.attention_level, a.rationale, a.needs_reply
                FROM mail_records r
                LEFT JOIN mail_assessments a ON a.id = r.assessment_id
@@ -443,14 +491,18 @@ class MailStore:
                  CASE a.attention_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
                  r.received_at DESC
                LIMIT ?""",
-            (limit,),
-        ).fetchall()
+                (limit,),
+            )
+            .fetchall()
+        )
         return [dict(row) for row in rows]
 
     def summary(self) -> dict[str, Any]:
         """Return counts for the /api/mail/summary endpoint."""
         r = self._read()
-        total = r.execute("SELECT COUNT(*) c FROM mail_records WHERE lifecycle_state!='DELETED'").fetchone()["c"]
+        total = r.execute(
+            "SELECT COUNT(*) c FROM mail_records WHERE lifecycle_state!='DELETED'"
+        ).fetchone()["c"]
         attention = r.execute(
             "SELECT COUNT(*) c FROM mail_records r JOIN mail_assessments a ON a.id=r.assessment_id "
             "WHERE a.attention_level='high' AND r.lifecycle_state NOT IN ('DELETED','ACTION_APPLIED','VERIFIED')"

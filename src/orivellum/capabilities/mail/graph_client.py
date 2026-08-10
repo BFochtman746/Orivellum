@@ -7,6 +7,7 @@ Covers all operations from IMPLEMENTATION-SPECIFICATION §6:
 Never logs access tokens, refresh tokens, raw attachment content,
 or full message bodies in error paths.
 """
+
 from __future__ import annotations
 
 import logging
@@ -192,9 +193,7 @@ class GraphClient:
 
     # ── Move ───────────────────────────────────────────────────────────────────
 
-    def move_message(
-        self, message_id: str, destination_folder_id: str
-    ) -> dict[str, Any]:
+    def move_message(self, message_id: str, destination_folder_id: str) -> dict[str, Any]:
         """Move a message.  Returns the new message resource (new ID)."""
         return self._post(
             f"{_BASE}/messages/{message_id}/move",

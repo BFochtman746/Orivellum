@@ -72,14 +72,11 @@ def work_client(tmp_path):
     for title, text in (("ch1", CH1_TEXT), ("ch2", CH2_TEXT)):
         doc = db.create_document(title=title, work_id=work["id"], kind="text")
         with db._lock:
-            db._conn.execute(
-                "UPDATE documents SET readiness='ready' WHERE id=?", (doc["id"],)
-            )
+            db._conn.execute("UPDATE documents SET readiness='ready' WHERE id=?", (doc["id"],))
             db._conn.commit()
         db.add_chunk(doc["id"], text, page=0)
 
-    client = TestClient(create_app(), raise_server_exceptions=False,
-                        headers=AUTH_HEADERS)
+    client = TestClient(create_app(), raise_server_exceptions=False, headers=AUTH_HEADERS)
     return client, cfg, work["id"]
 
 
@@ -96,23 +93,21 @@ def _wait_job(client, job_id: str, timeout: float = 90.0) -> dict:
     raise AssertionError(f"work TTS job did not finish in time: {status}")
 
 
-BODY = {"voice": "af_heart", "speed": 1.0,
-        "include_credits": False, "acx_mastering": False}
+BODY = {"voice": "af_heart", "speed": 1.0, "include_credits": False, "acx_mastering": False}
 
 
 # ── resume-info endpoint ──────────────────────────────────────────────────────
 
+
 def test_resume_info_missing_work_404(work_client):
     client, _cfg, _wid = work_client
-    r = client.post("/api/studio/tts/work/resume-info",
-                    json={"work_id": "nope", **BODY})
+    r = client.post("/api/studio/tts/work/resume-info", json={"work_id": "nope", **BODY})
     assert r.status_code == 404
 
 
 def test_resume_info_fresh_work_not_resumable(work_client):
     client, _cfg, wid = work_client
-    r = client.post("/api/studio/tts/work/resume-info",
-                    json={"work_id": wid, **BODY})
+    r = client.post("/api/studio/tts/work/resume-info", json={"work_id": wid, **BODY})
     assert r.status_code == 200, r.text[:300]
     data = r.json()
     assert data["resumable"] is False
@@ -126,8 +121,9 @@ def test_resume_info_fresh_work_not_resumable(work_client):
 
 def test_resume_info_includes_credits_segments(work_client):
     client, _cfg, wid = work_client
-    r = client.post("/api/studio/tts/work/resume-info",
-                    json={"work_id": wid, **BODY, "include_credits": True})
+    r = client.post(
+        "/api/studio/tts/work/resume-info", json={"work_id": wid, **BODY, "include_credits": True}
+    )
     assert r.status_code == 200
     assert r.json()["total_segments"] == 6  # 4 chapter + opening/closing credits
 
@@ -149,8 +145,7 @@ def test_resume_info_reports_cached_chapter_complete(work_client, monkeypatch):
         p = _seg_cache_path(cfg, seg_text, "kokoro", BODY["voice"], BODY["speed"])
         p.write_bytes(b"RIFFfake")
 
-    r = client.post("/api/studio/tts/work/resume-info",
-                    json={"work_id": wid, **BODY})
+    r = client.post("/api/studio/tts/work/resume-info", json={"work_id": wid, **BODY})
     data = r.json()
     assert data["resumable"] is True
     assert data["complete_chapters"] == 1
@@ -162,9 +157,8 @@ def test_resume_info_reports_cached_chapter_complete(work_client, monkeypatch):
 
 # ── pause → resume through a real (fake-engine) render ───────────────────────
 
-def test_pause_keeps_progress_and_resume_skips_finished_segments(
-    work_client, monkeypatch
-):
+
+def test_pause_keeps_progress_and_resume_skips_finished_segments(work_client, monkeypatch):
     from orivellum.api.routes import studio
 
     client, _cfg, wid = work_client
@@ -182,8 +176,7 @@ def test_pause_keeps_progress_and_resume_skips_finished_segments(
     assert pausing.calls == 2
 
     # The paused progress is visible to the resume-info endpoint.
-    info = client.post("/api/studio/tts/work/resume-info",
-                       json={"work_id": wid, **BODY}).json()
+    info = client.post("/api/studio/tts/work/resume-info", json={"work_id": wid, **BODY}).json()
     assert info["resumable"] is True
     assert info["cached_segments"] == 2
     assert info["chapters"][0]["complete"] is True

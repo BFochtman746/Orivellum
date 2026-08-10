@@ -8,6 +8,7 @@ Covers:
 - Graceful handling of empty-chunk topics (no LLM call, counted as skipped)
 - LLM failure path: errors counted, no DB row written
 """
+
 from __future__ import annotations
 
 import json
@@ -28,9 +29,11 @@ _LLM_PATCH = "orivellum.capabilities.llm.llm_call"
 # Lightweight DB fixture (real OrivellumDB + schema migrations)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def db(tmp_path: Path):
     from orivellum.database.db import OrivellumDB
+
     instance = OrivellumDB(str(tmp_path / "test.db"))
     yield instance
 
@@ -76,8 +79,7 @@ def _add_chunk(db, topic_id: str, text: str) -> None:
             (chunk_id, doc_id, 1, text, now),
         )
         db._conn.execute(
-            "INSERT OR IGNORE INTO topic_members(topic_id,object_id,object_type)"
-            " VALUES(?,?,?)",
+            "INSERT OR IGNORE INTO topic_members(topic_id,object_id,object_type) VALUES(?,?,?)",
             (topic_id, doc_id, "document"),
         )
         db._conn.commit()
@@ -91,12 +93,14 @@ def _get_profile(db, topic_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-_GOOD_LLM_TEXT = json.dumps({
-    "what_it_is": "A cluster about policy research.",
-    "purpose": "Helps users understand regulations.",
-    "connected": ["law", "governance"],
-    "gaps": ["case studies"],
-})
+_GOOD_LLM_TEXT = json.dumps(
+    {
+        "what_it_is": "A cluster about policy research.",
+        "purpose": "Helps users understand regulations.",
+        "connected": ["law", "governance"],
+        "gaps": ["case studies"],
+    }
+)
 
 
 def _good_llm_result():
@@ -111,6 +115,7 @@ def _good_llm_result():
 # Gate tests: disabled mode NEVER calls llm_call
 # ---------------------------------------------------------------------------
 
+
 class TestGatingWhenAIDisabled:
     """When ai_extraction_enabled=false, llm_call must not be called."""
 
@@ -119,6 +124,7 @@ class TestGatingWhenAIDisabled:
         _make_topic(db)
         with patch(_LLM_PATCH) as mock_llm:
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None)
         mock_llm.assert_not_called()
         assert result["generated"] == 0
@@ -129,6 +135,7 @@ class TestGatingWhenAIDisabled:
         _add_chunk(db, tid, "Research on policy and governance frameworks in democratic systems.")
         with patch(_LLM_PATCH) as mock_llm:
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None)
         mock_llm.assert_not_called()
         assert result["generated"] == 0
@@ -138,9 +145,12 @@ class TestGatingWhenAIDisabled:
         """force=True must not bypass the ai_extraction_enabled gate."""
         db.set_setting("ai_extraction_enabled", "false")
         tid = _make_topic(db)
-        _add_chunk(db, tid, "Important policy content that must never be transmitted to an external LLM.")
+        _add_chunk(
+            db, tid, "Important policy content that must never be transmitted to an external LLM."
+        )
         with patch(_LLM_PATCH) as mock_llm:
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None, force=True)
         mock_llm.assert_not_called()
         assert result["generated"] == 0
@@ -151,6 +161,7 @@ class TestGatingWhenAIDisabled:
         _make_topic(db, "alpha")
         _make_topic(db, "beta")
         from orivellum.capabilities.topic_profile import generate_topic_profiles
+
         result = generate_topic_profiles(db, cfg=None)
         assert result == {"generated": 0, "skipped": 0, "errors": 0}
 
@@ -158,6 +169,7 @@ class TestGatingWhenAIDisabled:
 # ---------------------------------------------------------------------------
 # Gate tests: enabled mode DOES call llm_call and writes to DB
 # ---------------------------------------------------------------------------
+
 
 class TestGatingWhenAIEnabled:
     """When ai_extraction_enabled=true, llm_call is invoked and profiles are stored."""
@@ -169,6 +181,7 @@ class TestGatingWhenAIEnabled:
 
         with patch(_LLM_PATCH, return_value=_good_llm_result()) as mock_llm:
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None)
 
         mock_llm.assert_called_once()
@@ -187,11 +200,16 @@ class TestGatingWhenAIEnabled:
         tids = []
         for name in ("alpha", "beta", "gamma"):
             tid = _make_topic(db, name)
-            _add_chunk(db, tid, f"Comprehensive research content about {name} topics and related frameworks.")
+            _add_chunk(
+                db,
+                tid,
+                f"Comprehensive research content about {name} topics and related frameworks.",
+            )
             tids.append(tid)
 
         with patch(_LLM_PATCH, return_value=_good_llm_result()):
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None)
 
         assert result["generated"] == 3
@@ -203,11 +221,14 @@ class TestGatingWhenAIEnabled:
 # Idempotency tests
 # ---------------------------------------------------------------------------
 
+
 class TestIdempotency:
     def test_existing_profile_skipped_without_force(self, db):
         db.set_setting("ai_extraction_enabled", "true")
         tid = _make_topic(db)
-        _add_chunk(db, tid, "Comprehensive analysis of research methodologies and findings across domains.")
+        _add_chunk(
+            db, tid, "Comprehensive analysis of research methodologies and findings across domains."
+        )
         now = "2026-01-01T00:00:00+00:00"
         with db._lock:
             db._conn.execute(
@@ -219,6 +240,7 @@ class TestIdempotency:
 
         with patch(_LLM_PATCH, return_value=_good_llm_result()) as mock_llm:
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None)
 
         mock_llm.assert_not_called()
@@ -228,7 +250,11 @@ class TestIdempotency:
     def test_existing_profile_overwritten_with_force(self, db):
         db.set_setting("ai_extraction_enabled", "true")
         tid = _make_topic(db)
-        _add_chunk(db, tid, "Policy and governance research covering regulatory frameworks and civic institutions.")
+        _add_chunk(
+            db,
+            tid,
+            "Policy and governance research covering regulatory frameworks and civic institutions.",
+        )
         now = "2026-01-01T00:00:00+00:00"
         with db._lock:
             db._conn.execute(
@@ -240,6 +266,7 @@ class TestIdempotency:
 
         with patch(_LLM_PATCH, return_value=_good_llm_result()):
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None, force=True)
 
         assert result["generated"] == 1
@@ -250,6 +277,7 @@ class TestIdempotency:
 # Edge-case tests
 # ---------------------------------------------------------------------------
 
+
 class TestEdgeCases:
     def test_topic_without_chunks_is_skipped_not_errored(self, db):
         """A topic with no chunk text should count as skipped, not an error."""
@@ -258,6 +286,7 @@ class TestEdgeCases:
 
         with patch(_LLM_PATCH) as mock_llm:
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None)
 
         mock_llm.assert_not_called()
@@ -278,6 +307,7 @@ class TestEdgeCases:
 
         with patch(_LLM_PATCH, return_value=bad):
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None)
 
         assert result["errors"] == 1
@@ -288,7 +318,11 @@ class TestEdgeCases:
         """An LLM reply without what_it_is must not write a blank profile."""
         db.set_setting("ai_extraction_enabled", "true")
         tid = _make_topic(db)
-        _add_chunk(db, tid, "Detailed content for verifying the system handles a malformed LLM reply correctly.")
+        _add_chunk(
+            db,
+            tid,
+            "Detailed content for verifying the system handles a malformed LLM reply correctly.",
+        )
 
         partial = MagicMock()
         partial.ok = True
@@ -297,6 +331,7 @@ class TestEdgeCases:
 
         with patch(_LLM_PATCH, return_value=partial):
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None)
 
         assert result["errors"] == 1
@@ -311,6 +346,7 @@ class TestEdgeCases:
 
         with patch(_LLM_PATCH) as mock_llm:
             from orivellum.capabilities.topic_profile import generate_topic_profiles
+
             result = generate_topic_profiles(db, cfg=None, force=True)
 
         mock_llm.assert_not_called()

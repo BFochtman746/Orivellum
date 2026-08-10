@@ -25,6 +25,7 @@ _synthesize_text_to_mp3 is patched with _fast_synth, which generates a short
 silent MP3 via ``ffmpeg anullsrc`` (the same tool used throughout the pipeline).
 If ffmpeg itself is absent, the Phase G live-server test is skipped.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -60,11 +61,12 @@ from tests.conftest import AUTH_HEADERS  # noqa: E402
 # until the test class setUp so collection never fails on missing deps.
 # ---------------------------------------------------------------------------
 try:
-    from orivellum.api.app import create_app
     from orivellum.api import _deps
+    from orivellum.api.app import create_app
+    from orivellum.api.routes.studio import _split_text_into_segments
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
     from orivellum.database.db import OrivellumDB
-    from orivellum.api.routes.studio import _split_text_into_segments
+
     _DEPS_OK = True
     _MISSING = ""
 except Exception as _e:
@@ -74,6 +76,7 @@ except Exception as _e:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_sse(body: str) -> list[dict]:
     """Extract all data: … frames from a buffered SSE body."""
@@ -91,9 +94,7 @@ def _parse_sse(body: str) -> list[dict]:
 def _ffmpeg_ok() -> bool:
     """Return True if ffmpeg is available on PATH."""
     try:
-        r = subprocess.run(
-            ["ffmpeg", "-version"], capture_output=True, timeout=5
-        )
+        r = subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5)
         return r.returncode == 0
     except Exception:
         return False
@@ -103,25 +104,34 @@ async def _fast_synth(
     text: str,
     voice: str,
     speed: float,
-    out_dir: "Path",
+    out_dir: Path,
     cfg: Any,
     quality: str = "final",
-) -> "Path | None":
+) -> Path | None:
     """Fast mock synthesis: 50 ms silent MP3 via ffmpeg anullsrc.
 
     Identical audio quality to what the real pipeline produces for test
     purposes — valid MP3 container that ffmpeg concat can join.
     """
     import tempfile as _tmp
+
     tmp = _tmp.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp3")
     tmp.close()
     result = await asyncio.to_thread(
         subprocess.run,
         [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
-            "-t", "0.05",
-            "-codec:a", "libmp3lame", "-q:a", "9",
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=22050:cl=mono",
+            "-t",
+            "0.05",
+            "-codec:a",
+            "libmp3lame",
+            "-q:a",
+            "9",
             tmp.name,
         ],
         capture_output=True,
@@ -135,7 +145,7 @@ async def _fast_synth(
 
 async def _always_fail_synth(text, voice, speed, out_dir, cfg, quality="final") -> None:
     """Mock synthesis that always returns None (all backends down)."""
-    return None
+    return
 
 
 def _make_client(tmp_path: Path) -> TestClient:
@@ -155,12 +165,13 @@ def _make_client(tmp_path: Path) -> TestClient:
 def _make_app_and_dir(tmp_dir: str):
     """Create a FastAPI app wired to a fresh SQLite DB in tmp_dir."""
     cfg = OrivellumConfig(data_dir=tmp_dir)
-    db  = OrivellumDB(cfg.db_path)
+    db = OrivellumDB(cfg.db_path)
     _deps.init(db=db, cfg=cfg)
     return create_app(), db
 
 
 # ── Uvicorn live-server fixture ────────────────────────────────────────────────
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -183,8 +194,11 @@ def _live_server(app, tmp_dir: str):
     os.environ["ORIVELLUM_DATA_DIR"] = tmp_dir
 
     config = uvicorn.Config(
-        app, host="127.0.0.1", port=port,
-        log_level="error", loop="asyncio",
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="error",
+        loop="asyncio",
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
@@ -220,22 +234,25 @@ def _stream_post_sse(
     headers = {**AUTH_HEADERS, "Content-Type": "application/json"}
     deadline = time.monotonic() + timeout
 
-    with httpx.Client(timeout=timeout) as client:
-        with client.stream(
-            "POST", base_url + path,
+    with (
+        httpx.Client(timeout=timeout) as client,
+        client.stream(
+            "POST",
+            base_url + path,
             content=json.dumps(body).encode(),
             headers=headers,
-        ) as resp:
-            for raw_line in resp.iter_lines():
-                if time.monotonic() > deadline:
-                    break
-                line = raw_line.strip()
-                if line.startswith("data: "):
-                    try:
-                        events.append(json.loads(line[6:]))
-                        timestamps.append(time.monotonic())
-                    except json.JSONDecodeError:
-                        pass
+        ) as resp,
+    ):
+        for raw_line in resp.iter_lines():
+            if time.monotonic() > deadline:
+                break
+            line = raw_line.strip()
+            if line.startswith("data: "):
+                try:
+                    events.append(json.loads(line[6:]))
+                    timestamps.append(time.monotonic())
+                except json.JSONDecodeError:
+                    pass
 
     return events, timestamps
 
@@ -265,6 +282,7 @@ _LONG_TEXT = (
 # Phase A — Segmentation
 # ===========================================================================
 
+
 @unittest.skipUnless(_DEPS_OK, f"dependencies unavailable: {_MISSING}")
 class TestSegmentation(unittest.TestCase):
     """_split_text_into_segments unit tests (no HTTP, no synthesis)."""
@@ -277,7 +295,8 @@ class TestSegmentation(unittest.TestCase):
     def test_long_text_over_900_gives_multiple_segments(self):
         segs = _split_text_into_segments(_LONG_TEXT, max_chars=900)
         self.assertGreaterEqual(
-            len(segs), 2,
+            len(segs),
+            2,
             f"Expected ≥2 segments for {len(_LONG_TEXT)}-char text, got {len(segs)}",
         )
 
@@ -285,7 +304,8 @@ class TestSegmentation(unittest.TestCase):
         segs = _split_text_into_segments(_LONG_TEXT, max_chars=900)
         for i, seg in enumerate(segs):
             self.assertLessEqual(
-                len(seg), 900,
+                len(seg),
+                900,
                 f"Segment {i} has {len(seg)} chars, exceeds max_chars=900: {seg[:60]!r}…",
             )
 
@@ -294,10 +314,9 @@ class TestSegmentation(unittest.TestCase):
         text = "alpha beta gamma delta " * 100  # 2400 chars, no punctuation
         segs = _split_text_into_segments(text, max_chars=900)
         original_words = text.strip().split()
-        joined_words   = " ".join(segs).split()
+        joined_words = " ".join(segs).split()
         # Exact sequence comparison — count alone would miss reorderings/duplicates
-        self.assertEqual(original_words, joined_words,
-                         "Word sequence changed after segmentation")
+        self.assertEqual(original_words, joined_words, "Word sequence changed after segmentation")
 
     def test_empty_text_gives_empty_list(self):
         segs = _split_text_into_segments("", max_chars=900)
@@ -318,17 +337,19 @@ class TestSegmentation(unittest.TestCase):
         # ~1100 chars — fits in one segment at 1500, splits at 900
         text = "word " * 220
         segs_1500 = _split_text_into_segments(text.strip(), max_chars=1500)
-        segs_900  = _split_text_into_segments(text.strip(), max_chars=900)
+        segs_900 = _split_text_into_segments(text.strip(), max_chars=900)
         self.assertEqual(len(segs_1500), 1, "Should fit in 1 segment at 1500 chars")
         self.assertGreaterEqual(len(segs_900), 2, "Should split into ≥2 at 900 chars")
         # The two counts must differ — otherwise max_chars has no observable effect
-        self.assertNotEqual(len(segs_1500), len(segs_900),
-                            "1500 and 900 char caps produced the same segment count")
+        self.assertNotEqual(
+            len(segs_1500), len(segs_900), "1500 and 900 char caps produced the same segment count"
+        )
 
 
 # ===========================================================================
 # Phase B + C + D — Streaming TTS endpoint (buffered TestClient)
 # ===========================================================================
+
 
 @unittest.skipUnless(_DEPS_OK, f"dependencies unavailable: {_MISSING}")
 @unittest.skipUnless(_ffmpeg_ok(), "ffmpeg not available")
@@ -348,8 +369,7 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
 
     def _post_stream(self, text: str, **kwargs) -> tuple[int, str, list[dict]]:
         """POST stream=True TTS; return (status, content_type, events)."""
-        body = {"text": text, "voice": "af_heart", "speed": 1.0,
-                "stream": True, **kwargs}
+        body = {"text": text, "voice": "af_heart", "speed": 1.0, "stream": True, **kwargs}
         with patch(
             "orivellum.api.routes.studio._synthesize_text_to_mp3",
             side_effect=_fast_synth,
@@ -385,9 +405,9 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         seg_events = [e for e in events if e["type"] == "segment"]
         self.assertGreater(len(seg_events), 0)
         for evt in seg_events:
-            self.assertIn("idx", evt,   f"segment event missing 'idx': {evt}")
+            self.assertIn("idx", evt, f"segment event missing 'idx': {evt}")
             self.assertIn("total", evt, f"segment event missing 'total': {evt}")
-            self.assertIn("path", evt,  f"segment event missing 'path': {evt}")
+            self.assertIn("path", evt, f"segment event missing 'path': {evt}")
             self.assertTrue(evt.get("ok"), f"segment event ok!=True: {evt}")
             self.assertIsInstance(evt["path"], str)
             self.assertGreater(len(evt["path"]), 0)
@@ -397,10 +417,10 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         done_events = [e for e in events if e["type"] == "done"]
         self.assertEqual(len(done_events), 1, "Exactly one done event expected")
         done = done_events[0]
-        self.assertIn("total",     done)
-        self.assertIn("ok_count",  done)
+        self.assertIn("total", done)
+        self.assertIn("ok_count", done)
         self.assertIn("error_count", done)
-        self.assertIsInstance(done["ok_count"],    int)
+        self.assertIsInstance(done["ok_count"], int)
         self.assertIsInstance(done["error_count"], int)
 
     def test_segment_indices_are_sequential(self):
@@ -422,10 +442,10 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
     def test_done_event_has_concat_path_when_segments_succeed(self):
         _, _, events = self._post_stream(_LONG_TEXT)
         done = next(e for e in events if e["type"] == "done")
-        self.assertGreater(done["ok_count"], 0,
-                           "Expected at least one successful segment")
+        self.assertGreater(done["ok_count"], 0, "Expected at least one successful segment")
         self.assertIn(
-            "concat_path", done,
+            "concat_path",
+            done,
             "done event missing concat_path — share button will have no file",
         )
         self.assertIsInstance(done["concat_path"], str)
@@ -445,8 +465,7 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         short = "Hello, this is a brief test of streaming TTS."
         _, _, events = self._post_stream(short)
         done = next(e for e in events if e["type"] == "done")
-        self.assertIn("concat_path", done,
-                      "Single-segment done event missing concat_path")
+        self.assertIn("concat_path", done, "Single-segment done event missing concat_path")
 
     # ── D: segment paths are serveable ───────────────────────────────────────
 
@@ -458,8 +477,7 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": _LONG_TEXT, "voice": "af_heart",
-                      "speed": 1.0, "stream": True},
+                json={"text": _LONG_TEXT, "voice": "af_heart", "speed": 1.0, "stream": True},
             )
         events = _parse_sse(resp.text)
         seg_events = [e for e in events if e["type"] == "segment"]
@@ -467,11 +485,10 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
 
         for evt in seg_events[:3]:  # check first three to keep the test fast
             path = evt["path"]
-            serve_resp = self._client.get(
-                f"/api/studio/outputs/serve?path={path}"
-            )
+            serve_resp = self._client.get(f"/api/studio/outputs/serve?path={path}")
             self.assertIn(
-                serve_resp.status_code, (200, 206),
+                serve_resp.status_code,
+                (200, 206),
                 f"Segment path not serveable (HTTP {serve_resp.status_code}): {path}",
             )
 
@@ -483,21 +500,18 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": _LONG_TEXT, "voice": "af_heart",
-                      "speed": 1.0, "stream": True},
+                json={"text": _LONG_TEXT, "voice": "af_heart", "speed": 1.0, "stream": True},
             )
         events = _parse_sse(resp.text)
         done = next((e for e in events if e["type"] == "done"), None)
         self.assertIsNotNone(done)
         self.assertIn("concat_path", done)
 
-        serve_resp = self._client.get(
-            f"/api/studio/outputs/serve?path={done['concat_path']}"
-        )
+        serve_resp = self._client.get(f"/api/studio/outputs/serve?path={done['concat_path']}")
         self.assertIn(
-            serve_resp.status_code, (200, 206),
-            f"concat_path not serveable (HTTP {serve_resp.status_code}): "
-            f"{done['concat_path']}",
+            serve_resp.status_code,
+            (200, 206),
+            f"concat_path not serveable (HTTP {serve_resp.status_code}): {done['concat_path']}",
         )
 
     def test_endpoint_segment_total_matches_900_char_cap(self):
@@ -510,8 +524,7 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         # ~1100 chars — 1 segment at max_chars=1500, ≥2 at max_chars=900
         text = ("word " * 220).strip()
         expected_n = len(_split_text_into_segments(text, max_chars=900))
-        self.assertGreaterEqual(expected_n, 2,
-                                "Test text must require ≥2 segments at 900 chars")
+        self.assertGreaterEqual(expected_n, 2, "Test text must require ≥2 segments at 900 chars")
 
         with patch(
             "orivellum.api.routes.studio._synthesize_text_to_mp3",
@@ -519,14 +532,14 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": text, "voice": "af_heart",
-                      "speed": 1.0, "stream": True},
+                json={"text": text, "voice": "af_heart", "speed": 1.0, "stream": True},
             )
         events = _parse_sse(resp.text)
         done = next((e for e in events if e["type"] == "done"), None)
         self.assertIsNotNone(done, "done event not found")
         self.assertEqual(
-            done["total"], expected_n,
+            done["total"],
+            expected_n,
             f"Endpoint reported {done['total']} segments; expected {expected_n} "
             f"(900-char cap). If total==1 the endpoint is using the 1500-char default.",
         )
@@ -537,13 +550,11 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         """A {"type":"concat",...} SSE event must arrive before the done event."""
         _, _, events = self._post_stream(_LONG_TEXT)
         types = [e["type"] for e in events]
-        self.assertIn("concat", types,
-                      "No concat event in stream — merged file not announced")
+        self.assertIn("concat", types, "No concat event in stream — merged file not announced")
         self.assertIn("done", types)
         concat_idx = types.index("concat")
-        done_idx   = len(types) - 1 - types[::-1].index("done")
-        self.assertLess(concat_idx, done_idx,
-                        "concat event must arrive before done event")
+        done_idx = len(types) - 1 - types[::-1].index("done")
+        self.assertLess(concat_idx, done_idx, "concat event must arrive before done event")
 
     def test_concat_event_has_required_fields(self):
         """concat event must carry path, uri, and ok=true."""
@@ -552,29 +563,33 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         self.assertEqual(len(concat_evts), 1, "Expected exactly one concat event")
         evt = concat_evts[0]
         self.assertIn("path", evt, "concat event missing 'path'")
-        self.assertIn("uri",  evt, "concat event missing 'uri'")
+        self.assertIn("uri", evt, "concat event missing 'uri'")
         self.assertTrue(evt.get("ok"), "concat event ok must be True")
         self.assertIsInstance(evt["path"], str)
-        self.assertIsInstance(evt["uri"],  str)
+        self.assertIsInstance(evt["uri"], str)
         self.assertGreater(len(evt["path"]), 0)
-        self.assertGreater(len(evt["uri"]),  0)
+        self.assertGreater(len(evt["uri"]), 0)
 
     def test_concat_event_uri_references_serve_endpoint(self):
         """concat.uri must point to the /api/studio/outputs/serve endpoint."""
         _, _, events = self._post_stream(_LONG_TEXT)
         evt = next(e for e in events if e["type"] == "concat")
-        self.assertIn("/api/studio/outputs/serve", evt["uri"],
-                      f"concat.uri doesn't reference serve endpoint: {evt['uri']}")
+        self.assertIn(
+            "/api/studio/outputs/serve",
+            evt["uri"],
+            f"concat.uri doesn't reference serve endpoint: {evt['uri']}",
+        )
 
     def test_concat_event_path_matches_done_concat_path(self):
         """concat.path and done.concat_path must agree (both point to the same file)."""
         _, _, events = self._post_stream(_LONG_TEXT)
         concat_evt = next((e for e in events if e["type"] == "concat"), None)
-        done_evt   = next((e for e in events if e["type"] == "done"),   None)
+        done_evt = next((e for e in events if e["type"] == "done"), None)
         self.assertIsNotNone(concat_evt)
         self.assertIsNotNone(done_evt)
         self.assertEqual(
-            concat_evt["path"], done_evt.get("concat_path"),
+            concat_evt["path"],
+            done_evt.get("concat_path"),
             "concat.path and done.concat_path disagree — "
             "server emitted inconsistent merge references",
         )
@@ -587,13 +602,13 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": _LONG_TEXT, "voice": "af_heart",
-                      "speed": 1.0, "stream": True},
+                json={"text": _LONG_TEXT, "voice": "af_heart", "speed": 1.0, "stream": True},
             )
         events = _parse_sse(resp.text)
         concat_evts = [e for e in events if e["type"] == "concat"]
-        self.assertEqual(len(concat_evts), 0,
-                         "concat event emitted even though synthesis fully failed")
+        self.assertEqual(
+            len(concat_evts), 0, "concat event emitted even though synthesis fully failed"
+        )
 
     def test_concat_event_path_is_serveable(self):
         """The file at concat.path must be served with HTTP 200/206."""
@@ -603,15 +618,17 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": _LONG_TEXT, "voice": "af_heart",
-                      "speed": 1.0, "stream": True},
+                json={"text": _LONG_TEXT, "voice": "af_heart", "speed": 1.0, "stream": True},
             )
         events = _parse_sse(resp.text)
         evt = next((e for e in events if e["type"] == "concat"), None)
         self.assertIsNotNone(evt, "No concat event in stream")
         serve = self._client.get(f"/api/studio/outputs/serve?path={evt['path']}")
-        self.assertIn(serve.status_code, (200, 206),
-                      f"concat.path not serveable (HTTP {serve.status_code}): {evt['path']}")
+        self.assertIn(
+            serve.status_code,
+            (200, 206),
+            f"concat.path not serveable (HTTP {serve.status_code}): {evt['path']}",
+        )
 
     def test_empty_text_returns_400(self):
         resp = self._client.post(
@@ -623,8 +640,7 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
     def test_text_over_10000_chars_returns_400(self):
         resp = self._client.post(
             "/api/studio/tts",
-            json={"text": "x" * 10_001, "voice": "af_heart",
-                  "speed": 1.0, "stream": True},
+            json={"text": "x" * 10_001, "voice": "af_heart", "speed": 1.0, "stream": True},
         )
         self.assertEqual(resp.status_code, 400)
 
@@ -632,6 +648,7 @@ class TestStreamingTTSEndpoint(unittest.TestCase):
 # ===========================================================================
 # Phase E — Non-streaming fallback (stream=False)
 # ===========================================================================
+
 
 @unittest.skipUnless(_DEPS_OK, f"dependencies unavailable: {_MISSING}")
 class TestNonStreamingFallback(unittest.TestCase):
@@ -650,12 +667,12 @@ class TestNonStreamingFallback(unittest.TestCase):
         clean 503 when none is (espeak fallback removed by policy)."""
         resp = self._client.post(
             "/api/studio/tts",
-            json={"text": "Hello.", "voice": "af_heart",
-                  "speed": 1.0, "stream": False},
+            json={"text": "Hello.", "voice": "af_heart", "speed": 1.0, "stream": False},
         )
         # Accept 200 (audio served) or 503 (no backend in CI) — never 5xx crash
         self.assertIn(
-            resp.status_code, (200, 503),
+            resp.status_code,
+            (200, 503),
             f"Unexpected status {resp.status_code}: {resp.text[:200]}",
         )
         if resp.status_code == 200:
@@ -668,63 +685,72 @@ class TestNonStreamingFallback(unittest.TestCase):
     def test_stream_false_all_backends_absent_returns_503(self):
         """When every backend is patched out, stream=False must return 503."""
         with (
-            patch("orivellum.api.routes.studio._call_premium_tts",
-                  new_callable=AsyncMock, return_value=None),
+            patch(
+                "orivellum.api.routes.studio._call_premium_tts",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("orivellum.api.routes.studio._get_kokoro", return_value=None),
-            patch("subprocess.run",
-                  return_value=subprocess.CompletedProcess([], 1,
-                                                           stdout=b"", stderr=b"")),
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess([], 1, stdout=b"", stderr=b""),
+            ),
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": "Hello world.",
-                      "voice": "af_heart", "speed": 1.0, "stream": False},
+                json={"text": "Hello world.", "voice": "af_heart", "speed": 1.0, "stream": False},
             )
-        self.assertEqual(resp.status_code, 503,
-                         f"Expected 503, got {resp.status_code}: {resp.text[:200]}")
+        self.assertEqual(
+            resp.status_code, 503, f"Expected 503, got {resp.status_code}: {resp.text[:200]}"
+        )
 
     def test_stream_false_503_body_is_json(self):
         """503 from non-streaming path must carry a JSON detail — not a blank body."""
         with (
-            patch("orivellum.api.routes.studio._call_premium_tts",
-                  new_callable=AsyncMock, return_value=None),
+            patch(
+                "orivellum.api.routes.studio._call_premium_tts",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("orivellum.api.routes.studio._get_kokoro", return_value=None),
-            patch("subprocess.run",
-                  return_value=subprocess.CompletedProcess([], 1,
-                                                           stdout=b"", stderr=b"")),
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess([], 1, stdout=b"", stderr=b""),
+            ),
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": "Hello world.",
-                      "voice": "af_heart", "speed": 1.0, "stream": False},
+                json={"text": "Hello world.", "voice": "af_heart", "speed": 1.0, "stream": False},
             )
         body = resp.json()
-        self.assertIn("detail", body,
-                      f"503 body should contain 'detail', got: {body}")
+        self.assertIn("detail", body, f"503 body should contain 'detail', got: {body}")
 
     def test_stream_false_never_returns_5xx_crash(self):
         """Non-streaming path must return a handled status code, not a raw 500."""
         with (
-            patch("orivellum.api.routes.studio._call_premium_tts",
-                  new_callable=AsyncMock, side_effect=RuntimeError("boom")),
+            patch(
+                "orivellum.api.routes.studio._call_premium_tts",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("boom"),
+            ),
             patch("orivellum.api.routes.studio._get_kokoro", return_value=None),
-            patch("subprocess.run",
-                  return_value=subprocess.CompletedProcess([], 1,
-                                                           stdout=b"", stderr=b"")),
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess([], 1, stdout=b"", stderr=b""),
+            ),
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": "Test.", "voice": "af_heart",
-                      "speed": 1.0, "stream": False},
+                json={"text": "Test.", "voice": "af_heart", "speed": 1.0, "stream": False},
             )
         # 503 = expected; 500 with raise_server_exceptions=False = unhandled crash
-        self.assertNotEqual(resp.status_code, 500,
-                            "Unhandled 500 crash in non-streaming TTS path")
+        self.assertNotEqual(resp.status_code, 500, "Unhandled 500 crash in non-streaming TTS path")
 
 
 # ===========================================================================
 # Phase F — All backends fail in streaming mode
 # ===========================================================================
+
 
 @unittest.skipUnless(_DEPS_OK, f"dependencies unavailable: {_MISSING}")
 class TestStreamingAllBackendsFail(unittest.TestCase):
@@ -747,28 +773,28 @@ class TestStreamingAllBackendsFail(unittest.TestCase):
         ):
             resp = self._client.post(
                 "/api/studio/tts",
-                json={"text": text, "voice": "af_heart",
-                      "speed": 1.0, "stream": True},
+                json={"text": text, "voice": "af_heart", "speed": 1.0, "stream": True},
             )
         return resp.status_code, _parse_sse(resp.text)
 
     def test_response_is_200_not_503(self):
         """Streaming path opens SSE regardless; errors live inside the stream."""
         status, _ = self._post_all_fail(_LONG_TEXT)
-        self.assertEqual(status, 200,
-                         "SSE streaming response should be 200 — errors are in-band")
+        self.assertEqual(status, 200, "SSE streaming response should be 200 — errors are in-band")
 
     def test_emits_segment_error_events(self):
         _, events = self._post_all_fail(_LONG_TEXT)
         error_events = [e for e in events if e["type"] == "segment_error"]
-        self.assertGreater(len(error_events), 0,
-                           "Expected segment_error events when all backends fail")
+        self.assertGreater(
+            len(error_events), 0, "Expected segment_error events when all backends fail"
+        )
 
     def test_no_segment_success_events(self):
         _, events = self._post_all_fail(_LONG_TEXT)
         success_events = [e for e in events if e["type"] == "segment"]
-        self.assertEqual(len(success_events), 0,
-                         "No segment-success events expected when backend always fails")
+        self.assertEqual(
+            len(success_events), 0, "No segment-success events expected when backend always fails"
+        )
 
     def test_done_event_has_zero_ok_count(self):
         _, events = self._post_all_fail(_LONG_TEXT)
@@ -776,7 +802,8 @@ class TestStreamingAllBackendsFail(unittest.TestCase):
         self.assertEqual(len(done_events), 1)
         done = done_events[0]
         self.assertEqual(
-            done.get("ok_count"), 0,
+            done.get("ok_count"),
+            0,
             f"Expected ok_count=0, got: {done}",
         )
 
@@ -784,7 +811,8 @@ class TestStreamingAllBackendsFail(unittest.TestCase):
         _, events = self._post_all_fail(_LONG_TEXT)
         done = next(e for e in events if e["type"] == "done")
         self.assertGreater(
-            done.get("error_count", 0), 0,
+            done.get("error_count", 0),
+            0,
             f"Expected error_count > 0, got: {done}",
         )
 
@@ -792,7 +820,8 @@ class TestStreamingAllBackendsFail(unittest.TestCase):
         _, events = self._post_all_fail(_LONG_TEXT)
         done = next(e for e in events if e["type"] == "done")
         self.assertNotIn(
-            "concat_path", done,
+            "concat_path",
+            done,
             "done event must not have concat_path when no segments succeeded",
         )
 
@@ -800,16 +829,16 @@ class TestStreamingAllBackendsFail(unittest.TestCase):
         _, events = self._post_all_fail(_LONG_TEXT)
         for evt in events:
             if evt["type"] == "segment_error":
-                self.assertIn("idx",     evt, f"segment_error missing idx: {evt}")
-                self.assertIn("total",   evt, f"segment_error missing total: {evt}")
+                self.assertIn("idx", evt, f"segment_error missing idx: {evt}")
+                self.assertIn("total", evt, f"segment_error missing total: {evt}")
                 self.assertIn("message", evt, f"segment_error missing message: {evt}")
-                self.assertFalse(evt.get("ok", True),
-                                 f"segment_error ok should be False: {evt}")
+                self.assertFalse(evt.get("ok", True), f"segment_error ok should be False: {evt}")
 
 
 # ===========================================================================
 # Phase G — Live Uvicorn: progressive delivery proof
 # ===========================================================================
+
 
 @unittest.skipUnless(_DEPS_OK, f"dependencies unavailable: {_MISSING}")
 @unittest.skipUnless(_ffmpeg_ok(), "ffmpeg not available")
@@ -839,9 +868,9 @@ class TestLiveSSEDelivery(unittest.TestCase):
         ``asyncio.to_thread(_rotate_outputs)`` call, meaning no event would
         arrive while the gate was still closed.  This test fails in that scenario.
         """
-        first_arrived   = threading.Event()
-        gate            = threading.Event()
-        call_count      = [0]        # mutable cell; safe — single asyncio loop
+        first_arrived = threading.Event()
+        gate = threading.Event()
+        call_count = [0]  # mutable cell; safe — single asyncio loop
 
         async def _gated_synth(text, voice, speed, out_dir, cfg, quality="final"):
             idx = call_count[0]
@@ -856,59 +885,62 @@ class TestLiveSSEDelivery(unittest.TestCase):
         def _consumer(base_url: str) -> None:
             headers = {**AUTH_HEADERS, "Content-Type": "application/json"}
             body_bytes = json.dumps(
-                {"text": _LONG_TEXT, "voice": "af_heart",
-                 "speed": 1.0, "stream": True}
+                {"text": _LONG_TEXT, "voice": "af_heart", "speed": 1.0, "stream": True}
             ).encode()
-            with httpx.Client(timeout=60.0) as client:
-                with client.stream(
-                    "POST", base_url + "/api/studio/tts",
-                    content=body_bytes, headers=headers,
-                ) as resp:
-                    for raw in resp.iter_lines():
-                        raw = raw.strip()
-                        if not raw.startswith("data: "):
-                            continue
-                        try:
-                            evt = json.loads(raw[6:])
-                        except json.JSONDecodeError:
-                            continue
-                        collected_events.append(evt)
-                        if evt.get("type") == "segment" and not first_arrived.is_set():
-                            first_arrived.set()   # signal: first segment received
+            with (
+                httpx.Client(timeout=60.0) as client,
+                client.stream(
+                    "POST",
+                    base_url + "/api/studio/tts",
+                    content=body_bytes,
+                    headers=headers,
+                ) as resp,
+            ):
+                for raw in resp.iter_lines():
+                    raw = raw.strip()
+                    if not raw.startswith("data: "):
+                        continue
+                    try:
+                        evt = json.loads(raw[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    collected_events.append(evt)
+                    if evt.get("type") == "segment" and not first_arrived.is_set():
+                        first_arrived.set()  # signal: first segment received
 
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir:
-            with patch(
+        with (
+            tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_dir,
+            patch(
                 "orivellum.api.routes.studio._synthesize_text_to_mp3",
                 side_effect=_gated_synth,
-            ):
-                app, _ = _make_app_and_dir(tmp_dir)
-                with _live_server(app, tmp_dir) as base_url:
-                    consumer = threading.Thread(
-                        target=_consumer, args=(base_url,), daemon=True
-                    )
-                    consumer.start()
+            ),
+        ):
+            app, _ = _make_app_and_dir(tmp_dir)
+            with _live_server(app, tmp_dir) as base_url:
+                consumer = threading.Thread(target=_consumer, args=(base_url,), daemon=True)
+                consumer.start()
 
-                    # Block until first segment arrives (or 30 s timeout)
-                    arrived = first_arrived.wait(timeout=30.0)
-                    self.assertTrue(
-                        arrived,
-                        "First segment event never arrived within 30 s — "
-                        "server may be buffering all events until done",
-                    )
+                # Block until first segment arrives (or 30 s timeout)
+                arrived = first_arrived.wait(timeout=30.0)
+                self.assertTrue(
+                    arrived,
+                    "First segment event never arrived within 30 s — "
+                    "server may be buffering all events until done",
+                )
 
-                    # ── Causal assertion ────────────────────────────────────────
-                    # The gate is still closed: the server has NOT finished
-                    # synthesising segment-1 yet.  If the client already has
-                    # segment-0, the server must have sent it progressively.
-                    self.assertFalse(
-                        gate.is_set(),
-                        "Gate was already open when first segment arrived — "
-                        "indicates server batched synthesis before streaming",
-                    )
+                # ── Causal assertion ────────────────────────────────────────
+                # The gate is still closed: the server has NOT finished
+                # synthesising segment-1 yet.  If the client already has
+                # segment-0, the server must have sent it progressively.
+                self.assertFalse(
+                    gate.is_set(),
+                    "Gate was already open when first segment arrived — "
+                    "indicates server batched synthesis before streaming",
+                )
 
-                    # Release the gate so remaining segments can complete
-                    gate.set()
-                    consumer.join(timeout=30.0)
+                # Release the gate so remaining segments can complete
+                gate.set()
+                consumer.join(timeout=30.0)
 
         types = [e["type"] for e in collected_events]
         self.assertIn("done", types, "done event never received after gate released")
@@ -917,61 +949,66 @@ class TestLiveSSEDelivery(unittest.TestCase):
 
     def test_live_stream_done_event_has_concat_path(self):
         """concat_path is present in a live-streamed done event."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with patch(
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            patch(
                 "orivellum.api.routes.studio._synthesize_text_to_mp3",
                 side_effect=_fast_synth,
-            ):
-                app, _ = _make_app_and_dir(tmp_dir)
-                with _live_server(app, tmp_dir) as base_url:
-                    events, _ = _stream_post_sse(
-                        base_url,
-                        "/api/studio/tts",
-                        {
-                            "text": _LONG_TEXT,
-                            "voice": "af_heart",
-                            "speed": 1.0,
-                            "stream": True,
-                        },
-                        timeout=60.0,
-                    )
+            ),
+        ):
+            app, _ = _make_app_and_dir(tmp_dir)
+            with _live_server(app, tmp_dir) as base_url:
+                events, _ = _stream_post_sse(
+                    base_url,
+                    "/api/studio/tts",
+                    {
+                        "text": _LONG_TEXT,
+                        "voice": "af_heart",
+                        "speed": 1.0,
+                        "stream": True,
+                    },
+                    timeout=60.0,
+                )
 
         done = next((e for e in events if e["type"] == "done"), None)
         self.assertIsNotNone(done, "No done event received in live stream")
         self.assertIn(
-            "concat_path", done,
+            "concat_path",
+            done,
             "done event missing concat_path in live stream",
         )
-        self.assertGreater(done["ok_count"], 0,
-                           "Expected ok_count > 0 in live stream done event")
+        self.assertGreater(done["ok_count"], 0, "Expected ok_count > 0 in live stream done event")
 
     def test_live_stream_segment_count_matches_segmentation(self):
         """Segment count in done.total matches _split_text_into_segments output."""
         expected_segs = len(_split_text_into_segments(_LONG_TEXT, max_chars=900))
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with patch(
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            patch(
                 "orivellum.api.routes.studio._synthesize_text_to_mp3",
                 side_effect=_fast_synth,
-            ):
-                app, _ = _make_app_and_dir(tmp_dir)
-                with _live_server(app, tmp_dir) as base_url:
-                    events, _ = _stream_post_sse(
-                        base_url,
-                        "/api/studio/tts",
-                        {
-                            "text": _LONG_TEXT,
-                            "voice": "af_heart",
-                            "speed": 1.0,
-                            "stream": True,
-                        },
-                        timeout=60.0,
-                    )
+            ),
+        ):
+            app, _ = _make_app_and_dir(tmp_dir)
+            with _live_server(app, tmp_dir) as base_url:
+                events, _ = _stream_post_sse(
+                    base_url,
+                    "/api/studio/tts",
+                    {
+                        "text": _LONG_TEXT,
+                        "voice": "af_heart",
+                        "speed": 1.0,
+                        "stream": True,
+                    },
+                    timeout=60.0,
+                )
 
         done = next((e for e in events if e["type"] == "done"), None)
         self.assertIsNotNone(done)
         self.assertEqual(
-            done["total"], expected_segs,
+            done["total"],
+            expected_segs,
             f"Server segmented into {done['total']} segments, "
             f"expected {expected_segs} from _split_text_into_segments",
         )

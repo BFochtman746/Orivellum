@@ -12,6 +12,7 @@ Exit codes:
     0 — enhanced audio written to <output_wav>
     1 — failure (message on stderr)
 """
+
 from __future__ import annotations
 
 import sys
@@ -26,8 +27,8 @@ def main() -> int:
         return 1
     in_path, out_path = Path(sys.argv[1]), Path(sys.argv[2])
 
-    import torch          # noqa: PLC0415
-    import torchaudio     # noqa: PLC0415
+    import torch  # noqa: PLC0415
+    import torchaudio  # noqa: PLC0415
     from df import enhance, init_df  # noqa: PLC0415
 
     # init_df() returns 3 values on 0.5.6 and 4 on 0.5.7+.

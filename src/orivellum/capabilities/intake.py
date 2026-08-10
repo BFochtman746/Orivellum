@@ -19,6 +19,7 @@ Usage
     profile = run_intake(doc_id, db=db, cfg=cfg)
     profile = run_intake(doc_id, db=db, cfg=cfg, research=True)
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,51 +38,55 @@ logger = logging.getLogger("orivellum.intake")
 
 # ── Data structures ────────────────────────────────────────────────────────────
 
+
 @dataclass
 class SuggestedAction:
     """One clickable action surfaced on the Intake Profile card."""
-    id: str          # stable machine key, e.g. "slot_book"
-    label: str       # button label shown to the user
-    description: str # tooltip / secondary text
-    kind: str        # slot_book | file_taxes | find_gaps | research | extract_actions | chat | link_work
+
+    id: str  # stable machine key, e.g. "slot_book"
+    label: str  # button label shown to the user
+    description: str  # tooltip / secondary text
+    kind: str  # slot_book | file_taxes | find_gaps | research | extract_actions | chat | link_work
 
 
 @dataclass
 class IntakeProfile:
     """Full intake profile returned by run_intake()."""
+
     doc_id: str
-    what_it_is: str            # "PDF research paper", "Manuscript chapter", etc.
-    kind: str                  # pdf, docx, image, …
-    tier: str                  # canon | source | artifact | system | conversation
-    filed_to: str | None    # Work title if the doc is already linked, else None
-    filed_to_id: str | None # Work ID if linked
-    confidence: float          # 0.0–1.0 from classifier
-    summary: str               # short extractive summary (<200 words)
+    what_it_is: str  # "PDF research paper", "Manuscript chapter", etc.
+    kind: str  # pdf, docx, image, …
+    tier: str  # canon | source | artifact | system | conversation
+    filed_to: str | None  # Work title if the doc is already linked, else None
+    filed_to_id: str | None  # Work ID if linked
+    confidence: float  # 0.0–1.0 from classifier
+    summary: str  # short extractive summary (<200 words)
     word_count: int
     headings: list[str]
-    text_snippet: str | None = None       # first ~500 chars of extracted text for chat grounding
+    text_snippet: str | None = None  # first ~500 chars of extracted text for chat grounding
     suggested_actions: list[SuggestedAction] = field(default_factory=list)
-    research_summary: str | None = None   # filled when stage 4 ran
+    research_summary: str | None = None  # filled when stage 4 ran
     research_sources: list[dict] = field(default_factory=list)
     error: str | None = None
 
 
 # ── Stage helpers ──────────────────────────────────────────────────────────────
 
+
 def _human_label(tier: str, kind: str, title: str) -> str:
     """Build a readable 'what it is' description from tier + kind + title."""
     kind_labels = {
-        "pdf":       "PDF document",
-        "docx":      "Word document",
-        "excel":     "spreadsheet",
-        "csv":       "CSV dataset",
-        "image":     "image",
-        "pptx":      "presentation",
-        "markdown":  "Markdown document",
-        "text":      "text document",
-        "html":      "web page",
-        "json":      "JSON data file",
-        "zip":       "ZIP archive",
+        "pdf": "PDF document",
+        "docx": "Word document",
+        "excel": "spreadsheet",
+        "csv": "CSV dataset",
+        "image": "image",
+        "pptx": "presentation",
+        "markdown": "Markdown document",
+        "text": "text document",
+        "html": "web page",
+        "json": "JSON data file",
+        "zip": "ZIP archive",
     }
     base = kind_labels.get(kind, f"{kind} file")
 
@@ -94,7 +99,7 @@ def _human_label(tier: str, kind: str, title: str) -> str:
         if any(w in lower for w in ("bible", "series")):
             return f"Series bible ({base})"
         return f"Canon document ({base})"
-    elif tier == Tier.SOURCE.value:
+    if tier == Tier.SOURCE.value:
         lower = title.lower()
         if kind == "image":
             if any(w in lower for w in ("receipt", "invoice", "bill")):
@@ -109,11 +114,11 @@ def _human_label(tier: str, kind: str, title: str) -> str:
         if any(w in lower for w in ("product", "spec", "specification")):
             return f"Product specification ({base})"
         return f"Research / source material ({base})"
-    elif tier == Tier.ARTIFACT.value:
+    if tier == Tier.ARTIFACT.value:
         return f"Build / migration artifact ({base})"
-    elif tier == Tier.SYSTEM.value:
+    if tier == Tier.SYSTEM.value:
         return f"System / configuration file ({base})"
-    elif tier == Tier.CONVERSATION.value:
+    if tier == Tier.CONVERSATION.value:
         return f"Conversation export ({base})"
     return base
 
@@ -148,26 +153,32 @@ def _suggest_actions(
 
     if tier == Tier.CANON.value:
         # Manuscript / chapter → slot into book pipeline
-        actions.append(SuggestedAction(
-            id="slot_book",
-            label="Slot into Book Pipeline",
-            description="Add this chapter to the 17-stage book pipeline for your Work.",
-            kind="slot_book",
-        ))
+        actions.append(
+            SuggestedAction(
+                id="slot_book",
+                label="Slot into Book Pipeline",
+                description="Add this chapter to the 17-stage book pipeline for your Work.",
+                kind="slot_book",
+            )
+        )
         # Only offer Link to Work if not already linked
         if not filed_to_id:
-            actions.append(SuggestedAction(
-                id="link_work",
-                label="Link to a Work",
-                description="Associate this document with one of your active Works.",
-                kind="link_work",
-            ))
-        actions.append(SuggestedAction(
-            id="find_gaps",
-            label="Find Research Gaps",
-            description="Analyse this manuscript for open questions and missing sources.",
-            kind="find_gaps",
-        ))
+            actions.append(
+                SuggestedAction(
+                    id="link_work",
+                    label="Link to a Work",
+                    description="Associate this document with one of your active Works.",
+                    kind="link_work",
+                )
+            )
+        actions.append(
+            SuggestedAction(
+                id="find_gaps",
+                label="Find Research Gaps",
+                description="Analyse this manuscript for open questions and missing sources.",
+                kind="find_gaps",
+            )
+        )
 
     elif tier == Tier.SOURCE.value:
         # Receipt / invoice
@@ -175,79 +186,104 @@ def _suggest_actions(
             w in lower_title or w in lower_text
             for w in ("receipt", "invoice", "expense", "bill", "total", "merchant")
         ):
-            actions.append(SuggestedAction(
-                id="file_taxes",
-                label="File for Expenses / Taxes",
-                description="Add this receipt to your Expenses Work and tag it for tax review.",
-                kind="file_taxes",
-            ))
+            actions.append(
+                SuggestedAction(
+                    id="file_taxes",
+                    label="File for Expenses / Taxes",
+                    description="Add this receipt to your Expenses Work and tag it for tax review.",
+                    kind="file_taxes",
+                )
+            )
         # Whiteboard / diagram → extract action items
         if kind == "image" and any(
             w in lower_title or w in lower_text
             for w in ("whiteboard", "board", "sketch", "action", "todo", "task", "diagram")
         ):
-            actions.append(SuggestedAction(
-                id="extract_actions",
-                label="Extract Action Items",
-                description="Identify and save the tasks and decisions visible in this image.",
-                kind="extract_actions",
-            ))
+            actions.append(
+                SuggestedAction(
+                    id="extract_actions",
+                    label="Extract Action Items",
+                    description="Identify and save the tasks and decisions visible in this image.",
+                    kind="extract_actions",
+                )
+            )
         # Product page / link → research
         if kind in ("image", "html", "pdf") and any(
             w in lower_title or w in lower_text
-            for w in ("product", "price", "compare", "review", "spec", "specification", "screenshot")
+            for w in (
+                "product",
+                "price",
+                "compare",
+                "review",
+                "spec",
+                "specification",
+                "screenshot",
+            )
         ):
-            actions.append(SuggestedAction(
-                id="research",
-                label="Research It Online",
-                description="Search the web for reviews, alternatives, and pricing. Requires confirmation.",
-                kind="research",
-            ))
+            actions.append(
+                SuggestedAction(
+                    id="research",
+                    label="Research It Online",
+                    description="Search the web for reviews, alternatives, and pricing. Requires confirmation.",
+                    kind="research",
+                )
+            )
         # Generic research material
         if not actions or (actions and not any(a.id == "research" for a in actions)):
-            actions.append(SuggestedAction(
-                id="find_gaps",
-                label="Find Related Gaps",
-                description="Find open questions in your Works that this document could help answer.",
-                kind="find_gaps",
-            ))
+            actions.append(
+                SuggestedAction(
+                    id="find_gaps",
+                    label="Find Related Gaps",
+                    description="Find open questions in your Works that this document could help answer.",
+                    kind="find_gaps",
+                )
+            )
         if not filed_to_id:
-            actions.append(SuggestedAction(
-                id="link_work",
-                label="Link to a Work",
-                description="Associate this document with one of your active Works.",
-                kind="link_work",
-            ))
+            actions.append(
+                SuggestedAction(
+                    id="link_work",
+                    label="Link to a Work",
+                    description="Associate this document with one of your active Works.",
+                    kind="link_work",
+                )
+            )
 
     elif tier in (Tier.ARTIFACT.value, Tier.SYSTEM.value):
         # Build / migration artifacts — never promote, only archive
-        actions.append(SuggestedAction(
-            id="archive",
-            label="Archive",
-            description="Mark this file as archived. It will not appear in research results.",
-            kind="archive",
-        ))
+        actions.append(
+            SuggestedAction(
+                id="archive",
+                label="Archive",
+                description="Mark this file as archived. It will not appear in research results.",
+                kind="archive",
+            )
+        )
 
     elif tier == Tier.CONVERSATION.value:
-        actions.append(SuggestedAction(
-            id="find_gaps",
-            label="Find Topics Discussed",
-            description="Extract key discussion points and add them to a Work's knowledge base.",
-            kind="find_gaps",
-        ))
+        actions.append(
+            SuggestedAction(
+                id="find_gaps",
+                label="Find Topics Discussed",
+                description="Extract key discussion points and add them to a Work's knowledge base.",
+                kind="find_gaps",
+            )
+        )
 
     # Always: chat about the document
-    actions.append(SuggestedAction(
-        id="chat",
-        label="Chat About This",
-        description="Open a new conversation with this document as context.",
-        kind="chat",
-    ))
+    actions.append(
+        SuggestedAction(
+            id="chat",
+            label="Chat About This",
+            description="Open a new conversation with this document as context.",
+            kind="chat",
+        )
+    )
 
     return actions
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
+
 
 def run_intake(
     doc_id: str,
@@ -286,9 +322,9 @@ def run_intake(
             error=f"Document {doc_id!r} not found in the library.",
         )
 
-    title     = doc.get("title") or ""
-    kind      = doc.get("kind") or "file"
-    source    = doc.get("source") or title
+    title = doc.get("title") or ""
+    kind = doc.get("kind") or "file"
+    source = doc.get("source") or title
     readiness = doc.get("readiness") or "imported"
     stored_tier = doc.get("tier") or "source"
 
@@ -309,12 +345,14 @@ def run_intake(
             ),
             word_count=0,
             headings=[],
-            suggested_actions=[SuggestedAction(
-                id="retry",
-                label="Check Again",
-                description="Re-run the intake pipeline to check if extraction has finished.",
-                kind="retry",  # handled by clients as intake refetch, NOT as chat
-            )],
+            suggested_actions=[
+                SuggestedAction(
+                    id="retry",
+                    label="Check Again",
+                    description="Re-run the intake pipeline to check if extraction has finished.",
+                    kind="retry",  # handled by clients as intake refetch, NOT as chat
+                )
+            ],
             error=None,
         )
 
@@ -334,12 +372,14 @@ def run_intake(
             ),
             word_count=0,
             headings=[],
-            suggested_actions=[SuggestedAction(
-                id="chat",
-                label="Chat About This",
-                description="Open a conversation even without extracted text.",
-                kind="chat",
-            )],
+            suggested_actions=[
+                SuggestedAction(
+                    id="chat",
+                    label="Chat About This",
+                    description="Open a conversation even without extracted text.",
+                    kind="chat",
+                )
+            ],
             error=f"Extraction readiness: {readiness}",
         )
 
@@ -356,9 +396,7 @@ def run_intake(
     try:
         if stored_tier != tier:
             with db._lock:
-                db._conn.execute(
-                    "UPDATE documents SET tier=? WHERE id=?", (tier, doc_id)
-                )
+                db._conn.execute("UPDATE documents SET tier=? WHERE id=?", (tier, doc_id))
                 db._conn.commit()
     except Exception as exc:
         logger.debug("Could not persist tier update: %s", exc)
@@ -377,7 +415,9 @@ def run_intake(
 
     # FALLBACK 1: sidecar .txt file next to the content file
     if not full_text.strip() and content_path:
-        text_file = lib_root / content_path if not Path(content_path).is_absolute() else Path(content_path)
+        text_file = (
+            lib_root / content_path if not Path(content_path).is_absolute() else Path(content_path)
+        )
         candidates = [
             text_file.with_suffix(".txt"),
             text_file.parent / (text_file.stem + "_text.txt"),
@@ -394,10 +434,13 @@ def run_intake(
 
     # FALLBACK 2: inline extraction from the original file (only if ready and no text yet)
     if not full_text.strip() and content_path:
-        actual_path = lib_root / content_path if not Path(content_path).is_absolute() else Path(content_path)
+        actual_path = (
+            lib_root / content_path if not Path(content_path).is_absolute() else Path(content_path)
+        )
         if actual_path.exists():
             try:
                 from orivellum.capabilities.extraction import extract as _extract
+
                 result = _extract(actual_path, kind)
                 full_text = result.full_text or ""
                 headings = result.headings or []
@@ -410,8 +453,7 @@ def run_intake(
         try:
             with db._lock:
                 rows = db._conn.execute(
-                    "SELECT text FROM chunks WHERE doc_id=? ORDER BY page LIMIT 20",
-                    (doc_id,)
+                    "SELECT text FROM chunks WHERE doc_id=? ORDER BY page LIMIT 20", (doc_id,)
                 ).fetchall()
             if rows:
                 full_text = "\n".join(r["text"] for r in rows if r["text"])
@@ -424,6 +466,7 @@ def run_intake(
     if not headings and full_text:
         # Infer headings from short all-caps or title-case lines
         import re
+
         for line in full_text.splitlines()[:100]:
             line = line.strip()
             if 10 < len(line) < 100 and (line.isupper() or re.match(r"^#{1,3}\s", line)):
@@ -435,6 +478,7 @@ def run_intake(
     try:
         if full_text.strip():
             from orivellum.capabilities.embeddings import embed_chunks_for_doc
+
             embed_chunks_for_doc(doc_id, db)
     except Exception as exc:
         logger.debug("Intake embed failed for %s (non-fatal): %s", doc_id, exc)
@@ -450,10 +494,12 @@ def run_intake(
         else:
             try:
                 from orivellum.capabilities.websearch import web_search_synthesize
+
                 getattr(cfg, "serving", None)
                 model_name = "gpt-3.5-turbo"
                 try:
                     from orivellum.api._deps import get_config as _get_cfg
+
                     _c = _get_cfg()
                     model_name = _c.llm.model if hasattr(_c, "llm") else model_name
                 except Exception:
@@ -469,6 +515,7 @@ def run_intake(
                 # own finite timeouts, so the worker will eventually clean up;
                 # we just don't wait for it here.
                 import concurrent.futures as _cf
+
                 _SYNTH_TIMEOUT_SEC = 60
                 _synth_ex = _cf.ThreadPoolExecutor(max_workers=1)
                 try:
@@ -482,7 +529,8 @@ def run_intake(
                     except _cf.TimeoutError:
                         logger.warning(
                             "Intake research synthesis timed out after %ss for doc %s",
-                            _SYNTH_TIMEOUT_SEC, doc_id,
+                            _SYNTH_TIMEOUT_SEC,
+                            doc_id,
                         )
                         _synth_fut.cancel()  # best-effort; no-op if already running
                         research_summary = None
@@ -524,6 +572,7 @@ def run_intake(
                 if research_summary:
                     try:
                         from orivellum.capabilities.persist import register_text_note
+
                         register_text_note(
                             text=note_text,
                             db=db,

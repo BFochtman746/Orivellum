@@ -1,4 +1,5 @@
 """Forge DESIGN phase — generate three visual design directions."""
+
 from __future__ import annotations
 
 import json
@@ -35,9 +36,13 @@ def create_visual_design(
     on_event: Callable | None = None,
 ) -> dict:
     """Generate 3 visual design concepts for the approved site plan."""
-    plan_summary = json.dumps({k: plan.get(k) for k in
-                               ("title", "description", "palette_hint", "tone", "target_audience")},
-                              ensure_ascii=False)
+    plan_summary = json.dumps(
+        {
+            k: plan.get(k)
+            for k in ("title", "description", "palette_hint", "tone", "target_audience")
+        },
+        ensure_ascii=False,
+    )
     user_msg = f"Site plan:\n{plan_summary}"
     if instruction:
         user_msg += f"\n\nAdditional direction:\n{instruction}"
@@ -48,7 +53,7 @@ def create_visual_design(
     result = llm_call(
         [
             {"role": "system", "content": DESIGN_SYSTEM},
-            {"role": "user",   "content": user_msg},
+            {"role": "user", "content": user_msg},
         ],
         cfg=cfg,
         db=db,
@@ -76,8 +81,10 @@ def create_visual_design(
 
     if on_event:
         names = ", ".join(c.get("name", c.get("id", "?")) for c in concepts)
-        on_event("design_ready",
-                 f"Three concepts ready: {names}. Select one and approve to begin building.",
-                 {"design": design})
+        on_event(
+            "design_ready",
+            f"Three concepts ready: {names}. Select one and approve to begin building.",
+            {"design": design},
+        )
 
     return design

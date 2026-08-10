@@ -12,6 +12,7 @@ Covers:
 - Version-suggestion duplicate suppression
 - Lifecycle filter on GET /api/library
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -22,14 +23,14 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import AUTH_HEADERS
 
-
 # ── Test-app factory ──────────────────────────────────────────────────────────
 
+
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -39,8 +40,8 @@ def _make_app(tmp: str):
 
 # ── DB-level lifecycle tests ──────────────────────────────────────────────────
 
-class TestDocumentLifecycleDefaults(unittest.TestCase):
 
+class TestDocumentLifecycleDefaults(unittest.TestCase):
     def test_new_document_defaults_to_draft(self):
         """create_document() must set lifecycle='draft', not 'active'."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -50,7 +51,8 @@ class TestDocumentLifecycleDefaults(unittest.TestCase):
             fetched = db.get_document(doc["id"])
             self.assertIsNotNone(fetched, "get_document must find the doc")
             self.assertEqual(
-                fetched.get("lifecycle"), "draft",
+                fetched.get("lifecycle"),
+                "draft",
                 f"Expected 'draft', got {fetched.get('lifecycle')!r}",
             )
             db.close()
@@ -69,7 +71,6 @@ class TestDocumentLifecycleDefaults(unittest.TestCase):
 
 
 class TestDocumentLifecycleTransitions(unittest.TestCase):
-
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._app, self._db = _make_app(self._tmpdir.name)
@@ -119,10 +120,8 @@ class TestDocumentLifecycleTransitions(unittest.TestCase):
         b = self._db.get_document(doc_b["id"])
         c = self._db.get_document(doc_c["id"])
         self.assertEqual(a["lifecycle"], "canonical")
-        self.assertEqual(b["lifecycle"], "draft",
-                         "doc_b must be demoted to draft")
-        self.assertEqual(c["lifecycle"], "draft",
-                         "doc_c must be demoted to draft")
+        self.assertEqual(b["lifecycle"], "draft", "doc_b must be demoted to draft")
+        self.assertEqual(c["lifecycle"], "draft", "doc_c must be demoted to draft")
 
     def test_canonical_does_not_touch_superseded_docs(self):
         """Docs already 'superseded' must stay 'superseded' when another is declared canonical."""
@@ -140,8 +139,11 @@ class TestDocumentLifecycleTransitions(unittest.TestCase):
         a = self._db.get_document(doc_a["id"])
         b = self._db.get_document(doc_b["id"])
         self.assertEqual(a["lifecycle"], "canonical")
-        self.assertEqual(b["lifecycle"], "superseded",
-                         "superseded docs must not be touched by canonical promotion")
+        self.assertEqual(
+            b["lifecycle"],
+            "superseded",
+            "superseded docs must not be touched by canonical promotion",
+        )
 
     def test_invalid_lifecycle_raises(self):
         _, doc_id = self._make_work_doc()
@@ -170,13 +172,12 @@ class TestDocumentLifecycleTransitions(unittest.TestCase):
 
 # ── API endpoint tests ────────────────────────────────────────────────────────
 
-class TestLifecycleEndpoint(unittest.TestCase):
 
+class TestLifecycleEndpoint(unittest.TestCase):
     def test_patch_lifecycle_happy_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True,
-                                headers=AUTH_HEADERS)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             doc = db.create_document(title="rep.pdf", kind="pdf")
             resp = client.patch(
                 f"/api/library/{doc['id']}/lifecycle",
@@ -193,8 +194,7 @@ class TestLifecycleEndpoint(unittest.TestCase):
     def test_patch_lifecycle_invalid_value(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True,
-                                headers=AUTH_HEADERS)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             doc = db.create_document(title="rep.pdf", kind="pdf")
             resp = client.patch(
                 f"/api/library/{doc['id']}/lifecycle",
@@ -206,8 +206,7 @@ class TestLifecycleEndpoint(unittest.TestCase):
     def test_patch_lifecycle_unknown_doc(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True,
-                                headers=AUTH_HEADERS)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             resp = client.patch(
                 "/api/library/no-such-id/lifecycle",
                 json={"lifecycle": "draft"},
@@ -219,8 +218,7 @@ class TestLifecycleEndpoint(unittest.TestCase):
         """GET /api/library?lifecycle=canonical must return only canonical docs."""
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True,
-                                headers=AUTH_HEADERS)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             doc_a = db.create_document(title="canon.pdf", kind="pdf")
             doc_b = db.create_document(title="draft.pdf", kind="pdf")
             db.update_document_lifecycle(doc_a["id"], "canonical")
@@ -235,8 +233,8 @@ class TestLifecycleEndpoint(unittest.TestCase):
 
 # ── Version-suggestion duplicate suppression ─────────────────────────────────
 
-class TestVersionSuggestionDedup(unittest.TestCase):
 
+class TestVersionSuggestionDedup(unittest.TestCase):
     def test_duplicate_version_suggestion_not_created(self):
         """Importing a doc similar to an existing one twice should create exactly one suggestion."""
         import base64
@@ -244,8 +242,7 @@ class TestVersionSuggestionDedup(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
-            client = TestClient(app, raise_server_exceptions=True,
-                                headers=AUTH_HEADERS)
+            client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             work = db.create_work(title="Dedup Work")
             wid = work["id"]
 
@@ -253,24 +250,33 @@ class TestVersionSuggestionDedup(unittest.TestCase):
 
             with patch("orivellum.api.routes.library.process_document"):
                 # First import — creates "report_v1.pdf"
-                client.post("/api/library/import", json={
-                    "filename": "report_v1.pdf",
-                    "content_b64": tiny_pdf,
-                    "work_id": wid,
-                })
+                client.post(
+                    "/api/library/import",
+                    json={
+                        "filename": "report_v1.pdf",
+                        "content_b64": tiny_pdf,
+                        "work_id": wid,
+                    },
+                )
                 # Second import — "report_v2.pdf" is similar to "report_v1.pdf"
-                client.post("/api/library/import", json={
-                    "filename": "report_v2.pdf",
-                    "content_b64": base64.b64encode(b"%PDF-1.4 other").decode(),
-                    "work_id": wid,
-                })
+                client.post(
+                    "/api/library/import",
+                    json={
+                        "filename": "report_v2.pdf",
+                        "content_b64": base64.b64encode(b"%PDF-1.4 other").decode(),
+                        "work_id": wid,
+                    },
+                )
                 # Third import — same pair again (different SHA but same stem pattern)
                 # Should not create a second suggestion for the same pair
-                client.post("/api/library/import", json={
-                    "filename": "report_v1.pdf",  # same name → duplicate SHA → not a new doc
-                    "content_b64": tiny_pdf,
-                    "work_id": wid,
-                })
+                client.post(
+                    "/api/library/import",
+                    json={
+                        "filename": "report_v1.pdf",  # same name → duplicate SHA → not a new doc
+                        "content_b64": tiny_pdf,
+                        "work_id": wid,
+                    },
+                )
 
             with db._lock:
                 count = db._conn.execute(
@@ -279,8 +285,7 @@ class TestVersionSuggestionDedup(unittest.TestCase):
                 ).fetchone()[0]
 
             # There should be exactly one version-relationship suggestion for this pair
-            self.assertEqual(count, 1,
-                             f"Expected 1 version suggestion, got {count}")
+            self.assertEqual(count, 1, f"Expected 1 version suggestion, got {count}")
             db.close()
 
 

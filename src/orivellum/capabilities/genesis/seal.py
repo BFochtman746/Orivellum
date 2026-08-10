@@ -1,13 +1,13 @@
 """
 GENESIS seal + ledger verification.
 """
+
 from __future__ import annotations
 
 from .gates import GENESIS_HASH, STAGE_CODES, canonical, now_iso, sha256_text
 
 
-def compute_seal(conn, book_id: str, title: str, length: int, acts: int,
-                 author: str) -> dict:
+def compute_seal(conn, book_id: str, title: str, length: int, acts: int, author: str) -> dict:
     """
     Build the manifest dict, verify all G0-G8 are PASSED,
     record the seal entry in the ledger, flip book state.
@@ -59,14 +59,25 @@ def compute_seal(conn, book_id: str, title: str, length: int, acts: int,
 
     # Append seal + handoff to ledger
     from .gates import ledger_append
-    ledger_append(conn, book_id, "seal", {
-        "author": author,
-        "package_sha256": package_hash,
-    })
-    ledger_append(conn, book_id, "handoff.b0", {
-        "target": "BPOS:B0",
-        "package_sha256": package_hash,
-    })
+
+    ledger_append(
+        conn,
+        book_id,
+        "seal",
+        {
+            "author": author,
+            "package_sha256": package_hash,
+        },
+    )
+    ledger_append(
+        conn,
+        book_id,
+        "handoff.b0",
+        {
+            "target": "BPOS:B0",
+            "package_sha256": package_hash,
+        },
+    )
 
     # Mark G9 passed
     conn.execute(
@@ -99,8 +110,16 @@ def verify_ledger(conn, book_id: str) -> tuple[bool, str]:
                 f"Chain break at seq={seq}: prev_hash mismatch "
                 f"(expected {prev[:12]}… got {stored_prev[:12]}…)"
             )
-        body = canonical({"seq": seq, "kind": kind, "payload": payload_str})
-        # Note: payload in DB is already canonical JSON string (not re-encoded)
+        # ledger_append hashed the payload as a DICT inside the body, so the
+        # stored canonical JSON string must be parsed back before re-hashing —
+        # hashing the string itself never matches (bug found by property test).
+        import json as _json
+
+        try:
+            payload_obj = _json.loads(payload_str)
+        except ValueError:
+            return False, f"Corrupt payload at seq={seq}: not valid JSON"
+        body = canonical({"seq": seq, "kind": kind, "payload": payload_obj})
         expected = sha256_text(prev + body)
         if expected != stored_hash:
             return False, (

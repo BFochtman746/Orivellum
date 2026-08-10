@@ -11,9 +11,9 @@ Design contract verified here:
 All of these are tested with real concurrency (threading), not just mocks,
 where the concurrency property is the point being verified.
 """
+
 from __future__ import annotations
 
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -22,10 +22,10 @@ import pytest
 
 from orivellum.database.db import OrivellumDB
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _fresh_db(tmp_path: Path) -> OrivellumDB:
     return OrivellumDB(str(tmp_path / "test.db"))
@@ -35,8 +35,8 @@ def _fresh_db(tmp_path: Path) -> OrivellumDB:
 # 1. Freelist ratio gate
 # ---------------------------------------------------------------------------
 
-class TestFreelistRatioGate:
 
+class TestFreelistRatioGate:
     def test_vacuum_skipped_on_fresh_db(self, tmp_path):
         """Routine run on a fresh DB skips VACUUM (low freelist)."""
         from orivellum.capabilities.nightshift import _pass_db_optimise
@@ -60,8 +60,9 @@ class TestFreelistRatioGate:
         _pass_db_optimise(db, report)
         db.close()
 
-        optimise_lines = [l for l in report
-                          if "checkpoint" in l or "VACUUM" in l or "optimised" in l]
+        optimise_lines = [
+            l for l in report if "checkpoint" in l or "VACUUM" in l or "optimised" in l
+        ]
         assert optimise_lines, f"No optimise line in report: {report}"
         assert "%" in optimise_lines[0], (
             f"Freelist percentage missing from report: {optimise_lines[0]}"
@@ -80,20 +81,16 @@ class TestFreelistRatioGate:
         db = _fresh_db(tmp_path)
 
         # Simulate 40 % freelist ratio
-        monkeypatch.setattr(ns_mod, "_get_freelist_ratio",
-                            lambda conn: (0.40, 400, 1000))
+        monkeypatch.setattr(ns_mod, "_get_freelist_ratio", lambda conn: (0.40, 400, 1000))
 
         vacuum_called: list[bool] = []
-        monkeypatch.setattr(ns_mod, "_run_vacuum",
-                            lambda conn: vacuum_called.append(True))
+        monkeypatch.setattr(ns_mod, "_run_vacuum", lambda conn: vacuum_called.append(True))
 
         report: list[str] = []
         _pass_db_optimise(db, report)
         db.close()
 
-        assert vacuum_called, (
-            f"_run_vacuum must be called when ratio > 30 %.\nReport: {report}"
-        )
+        assert vacuum_called, f"_run_vacuum must be called when ratio > 30 %.\nReport: {report}"
         assert not any("VACUUM skipped" in l for l in report), (
             f"Report should not say 'VACUUM skipped' at 40 % freelist.\nReport: {report}"
         )
@@ -104,12 +101,10 @@ class TestFreelistRatioGate:
         from orivellum.capabilities.nightshift import _pass_db_optimise
 
         db = _fresh_db(tmp_path)
-        monkeypatch.setattr(ns_mod, "_get_freelist_ratio",
-                            lambda conn: (0.20, 200, 1000))
+        monkeypatch.setattr(ns_mod, "_get_freelist_ratio", lambda conn: (0.20, 200, 1000))
 
         vacuum_called: list[bool] = []
-        monkeypatch.setattr(ns_mod, "_run_vacuum",
-                            lambda conn: vacuum_called.append(True))
+        monkeypatch.setattr(ns_mod, "_run_vacuum", lambda conn: vacuum_called.append(True))
 
         report: list[str] = []
         _pass_db_optimise(db, report)
@@ -130,10 +125,11 @@ class TestFreelistRatioGate:
 #     complete after VACUUM releases the lock — no SQLITE_BUSY, no data loss
 # ---------------------------------------------------------------------------
 
-class TestConcurrencyContract:
 
-    def _slow_vacuum_fixture(self, monkeypatch, started: threading.Event,
-                             may_finish: threading.Event) -> None:
+class TestConcurrencyContract:
+    def _slow_vacuum_fixture(
+        self, monkeypatch, started: threading.Event, may_finish: threading.Event
+    ) -> None:
         """Monkeypatch _run_vacuum to signal start and wait before returning."""
         import orivellum.capabilities.nightshift as ns_mod
 
@@ -143,8 +139,7 @@ class TestConcurrencyContract:
             # Don't actually vacuum — test DB is tiny and we just need the lock
 
         monkeypatch.setattr(ns_mod, "_run_vacuum", slow_run_vacuum)
-        monkeypatch.setattr(ns_mod, "_get_freelist_ratio",
-                            lambda conn: (0.40, 400, 1000))
+        monkeypatch.setattr(ns_mod, "_get_freelist_ratio", lambda conn: (0.40, 400, 1000))
 
     def test_reads_unblocked_while_vacuum_holds_db_lock(self, tmp_path, monkeypatch):
         """db.get_setting() completes immediately while VACUUM holds db._lock.
@@ -170,7 +165,7 @@ class TestConcurrencyContract:
             _pass_db_optimise(db, [])
 
         def reader_worker() -> None:
-            started.wait(timeout=5.0)   # wait until VACUUM has db._lock
+            started.wait(timeout=5.0)  # wait until VACUUM has db._lock
             t0 = time.monotonic()
             try:
                 val = db.get_setting("probe")
@@ -180,19 +175,17 @@ class TestConcurrencyContract:
                 errors.append(str(exc))
 
         t_opt = threading.Thread(target=optimise_worker, name="nightshift", daemon=True)
-        t_rd  = threading.Thread(target=reader_worker,  name="reader",     daemon=True)
+        t_rd = threading.Thread(target=reader_worker, name="reader", daemon=True)
 
         t_opt.start()
         t_rd.start()
-        t_rd.join(timeout=5.0)    # reader must finish LONG before VACUUM is done
+        t_rd.join(timeout=5.0)  # reader must finish LONG before VACUUM is done
         may_finish.set()
         t_opt.join(timeout=10.0)
         db.close()
 
         assert not errors, f"Read raised an error during VACUUM: {errors}"
-        assert read_value == ["ready"], (
-            f"Read returned wrong value: {read_value}"
-        )
+        assert read_value == ["ready"], f"Read returned wrong value: {read_value}"
         assert read_latency and read_latency[0] < 1.0, (
             f"Read took {read_latency[0]:.3f}s — it appears to have blocked on "
             f"db._lock instead of using read_conn()."
@@ -221,7 +214,7 @@ class TestConcurrencyContract:
             _pass_db_optimise(db, [])
 
         def writer_worker() -> None:
-            started.wait(timeout=5.0)    # VACUUM now holds db._lock
+            started.wait(timeout=5.0)  # VACUUM now holds db._lock
             write_queued.set()
             try:
                 # This will block at db._lock (Python mutex) until VACUUM finishes
@@ -231,15 +224,15 @@ class TestConcurrencyContract:
                 errors.append(str(exc))
 
         t_opt = threading.Thread(target=optimise_worker, name="nightshift", daemon=True)
-        t_wr  = threading.Thread(target=writer_worker,  name="writer",     daemon=True)
+        t_wr = threading.Thread(target=writer_worker, name="writer", daemon=True)
 
         t_opt.start()
         t_wr.start()
 
         # Give writer a moment to queue behind db._lock, then release VACUUM
         write_queued.wait(timeout=5.0)
-        time.sleep(0.05)    # let writer block on the mutex
-        may_finish.set()    # release VACUUM → writer gets the lock
+        time.sleep(0.05)  # let writer block on the mutex
+        may_finish.set()  # release VACUUM → writer gets the lock
 
         t_wr.join(timeout=10.0)
         t_opt.join(timeout=10.0)
@@ -274,7 +267,7 @@ class TestConcurrencyContract:
 
         def write_worker() -> None:
             try:
-                time.sleep(0.005)    # slight delay so optimise gets the lock first
+                time.sleep(0.005)  # slight delay so optimise gets the lock first
                 db.set_setting("concurrent_key", "concurrent_val")
             except Exception as exc:
                 errors.append(f"write: {exc}")
@@ -282,12 +275,12 @@ class TestConcurrencyContract:
                 completed_write.set()
 
         t_opt = threading.Thread(target=optimise_worker, daemon=True)
-        t_wr  = threading.Thread(target=write_worker,   daemon=True)
+        t_wr = threading.Thread(target=write_worker, daemon=True)
         t_opt.start()
         t_wr.start()
 
         assert completed_optimise.wait(timeout=15.0), "optimise timed out — possible deadlock"
-        assert completed_write.wait(timeout=5.0),     "write timed out — possible deadlock"
+        assert completed_write.wait(timeout=5.0), "write timed out — possible deadlock"
         db.close()
 
         assert not errors, f"Errors during concurrency test: {errors}"
@@ -297,8 +290,8 @@ class TestConcurrencyContract:
 # 3. read_conn(): per-thread identity, read-only enforcement, data visibility
 # ---------------------------------------------------------------------------
 
-class TestReadConnPool:
 
+class TestReadConnPool:
     def test_same_thread_returns_same_connection(self, tmp_path):
         db = _fresh_db(tmp_path)
         assert db.read_conn() is db.read_conn()
@@ -313,7 +306,8 @@ class TestReadConnPool:
             results["rc"] = db.read_conn()
 
         t = threading.Thread(target=worker)
-        t.start(); t.join()
+        t.start()
+        t.join()
 
         assert results["rc"] is not main_rc
         db.close()
@@ -343,7 +337,7 @@ class TestReadConnPool:
         db = _fresh_db(tmp_path)
         db.set_setting("concurrent", "value")
 
-        lock_held  = threading.Event()
+        lock_held = threading.Event()
         lock_release = threading.Event()
         setting_value: list[str] = []
 
@@ -358,8 +352,9 @@ class TestReadConnPool:
             setting_value.append(db.get_setting("concurrent", ""))
 
         lh = threading.Thread(target=lock_holder, daemon=True)
-        rd = threading.Thread(target=reader,      daemon=True)
-        lh.start(); rd.start()
+        rd = threading.Thread(target=reader, daemon=True)
+        lh.start()
+        rd.start()
         rd.join(timeout=3.0)
         lock_release.set()
         lh.join(timeout=2.0)
@@ -373,7 +368,7 @@ class TestReadConnPool:
     def test_close_does_not_raise(self, tmp_path):
         db = _fresh_db(tmp_path)
         _ = db.read_conn()
-        db.close()   # must not raise
+        db.close()  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -383,8 +378,8 @@ class TestReadConnPool:
 #    empty DB that has no schema and will raise OperationalError.
 # ---------------------------------------------------------------------------
 
-class TestInMemoryDB:
 
+class TestInMemoryDB:
     def _inmem_db(self) -> OrivellumDB:
         return OrivellumDB(":memory:")
 

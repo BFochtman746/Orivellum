@@ -3,6 +3,7 @@
 Routes are grouped under /api/finishing/press/* and /api/finishing/atelier/*.
 Both subsystems use their own SQLite stores in config.data_dir.
 """
+
 from __future__ import annotations
 
 import logging
@@ -13,7 +14,9 @@ from pydantic import BaseModel
 from orivellum.api._deps import get_config, require_auth
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/finishing", tags=["finishing"], dependencies=[Depends(require_auth)])
+router = APIRouter(
+    prefix="/api/finishing", tags=["finishing"], dependencies=[Depends(require_auth)]
+)
 # ── lazy init helpers ─────────────────────────────────────────────────────────
 
 _initialized = False
@@ -24,6 +27,7 @@ def _ensure_init() -> None:
     if _initialized:
         return
     from orivellum.capabilities.finishing import configure
+
     cfg = get_config()
     configure(cfg.data_dir)
     _initialized = True
@@ -32,12 +36,14 @@ def _ensure_init() -> None:
 def _press():
     _ensure_init()
     from orivellum.capabilities.finishing import press
+
     return press
 
 
 def _atelier():
     _ensure_init()
     from orivellum.capabilities.finishing import atelier
+
     return atelier
 
 
@@ -52,6 +58,7 @@ def _http(exc: Exception) -> HTTPException:
 # ═══════════════════════════════════════════════════════════════════════════════
 # PRESS models
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class PressBookCreate(BaseModel):
     title: str
@@ -98,8 +105,8 @@ class MatterSet(BaseModel):
 
 
 class PackageRequest(BaseModel):
-    pkg_type: str = "publisher"   # publisher | test-reader
-    target: str = "production"    # production | submission (publisher only)
+    pkg_type: str = "publisher"  # publisher | test-reader
+    target: str = "production"  # production | submission (publisher only)
 
 
 class SealRequest(BaseModel):
@@ -113,6 +120,7 @@ class SealRequest(BaseModel):
 # PRESS routes
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @router.get("/press/books")
 def press_list_books(work_id: str | None = None):
     try:
@@ -124,10 +132,14 @@ def press_list_books(work_id: str | None = None):
 @router.post("/press/books", status_code=201)
 def press_create_book(body: PressBookCreate):
     try:
-        return {"book": _press().create_book(
-            title=body.title, author_name=body.author_name,
-            series=body.series, work_id=body.work_id,
-        )}
+        return {
+            "book": _press().create_book(
+                title=body.title,
+                author_name=body.author_name,
+                series=body.series,
+                work_id=body.work_id,
+            )
+        }
     except Exception as e:
         raise _http(e)
 
@@ -166,9 +178,15 @@ def press_lock_style(slug: str, body: StyleLock):
 @router.post("/press/books/{slug}/chapters", status_code=201)
 def press_add_chapter(slug: str, body: ChapterAdd):
     try:
-        return {"chapter": _press().add_chapter(
-            slug, body.number, body.title, body.words, body.has_epigraph,
-        )}
+        return {
+            "chapter": _press().add_chapter(
+                slug,
+                body.number,
+                body.title,
+                body.words,
+                body.has_epigraph,
+            )
+        }
     except Exception as e:
         raise _http(e)
 
@@ -177,8 +195,12 @@ def press_add_chapter(slug: str, body: ChapterAdd):
 def press_draft_epigraph(slug: str, number: int, body: EpigraphDraft):
     try:
         result = _press().draft_epigraph(
-            slug, number, soul=body.soul, in_world=body.in_world,
-            gateway_name=body.gateway, want_quote=body.want_quote,
+            slug,
+            number,
+            soul=body.soul,
+            in_world=body.in_world,
+            gateway_name=body.gateway,
+            want_quote=body.want_quote,
         )
         return result
     except Exception as e:
@@ -223,7 +245,11 @@ def press_package(slug: str, body: PackageRequest):
 def press_seal(slug: str, body: SealRequest):
     try:
         manifest = _press().seal_package(
-            slug, body.pkg_type, body.target, body.author, body.recipient,
+            slug,
+            body.pkg_type,
+            body.target,
+            body.author,
+            body.recipient,
         )
         return {"manifest": manifest}
     except Exception as e:
@@ -249,6 +275,7 @@ def press_ledger(slug: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ATELIER models
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class SeriesCreate(BaseModel):
     name: str
@@ -292,6 +319,7 @@ class SealDesign(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ATELIER routes
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @router.get("/atelier/series")
 def atelier_list_series():
@@ -359,9 +387,16 @@ def atelier_list_books():
 @router.post("/atelier/series/{series_slug}/books", status_code=201)
 def atelier_create_book(series_slug: str, body: AtelierBookCreate):
     try:
-        return {"book": _atelier().create_book(
-            series_slug, body.title, body.number, body.pages, body.paper, body.trim,
-        )}
+        return {
+            "book": _atelier().create_book(
+                series_slug,
+                body.title,
+                body.number,
+                body.pages,
+                body.paper,
+                body.trim,
+            )
+        }
     except Exception as e:
         raise _http(e)
 

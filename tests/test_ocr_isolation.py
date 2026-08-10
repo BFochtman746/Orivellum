@@ -9,6 +9,7 @@ Verifies three things:
 Run with:
     uv run --with pytest pytest tests/test_ocr_isolation.py -v
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -28,12 +29,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PROJECT_ROOT / "artifacts" / "api-server" / "src"))
 
 try:
-    from fastapi.testclient import TestClient
     import httpx
-    from orivellum.api.app import create_app
+    from fastapi.testclient import TestClient
+
     from orivellum.api import _deps
+    from orivellum.api.app import create_app
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
     from orivellum.database.db import OrivellumDB
+
     _DEPS_AVAILABLE = True
     _MISSING = ""
 except Exception as _e:
@@ -68,10 +71,13 @@ def _make_app(tmp_path: Path):
 
 def _tiny_png_b64() -> str:
     """Return base64 of a 1×1 white PNG (smallest valid image)."""
-    import struct, zlib
+    import struct
+    import zlib
+
     def _chunk(tag, data):
         c = struct.pack(">I", len(data)) + tag + data
         return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
     raw = (
         b"\x89PNG\r\n\x1a\n"
         + _chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
@@ -82,6 +88,7 @@ def _tiny_png_b64() -> str:
 
 
 # ── Phase A — happy path ──────────────────────────────────────────────────────
+
 
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestOCRHappyPath(unittest.TestCase):
@@ -107,9 +114,11 @@ class TestOCRHappyPath(unittest.TestCase):
     def test_ocr_returns_text_when_deps_mocked(self):
         """Mocked pytesseract should return 200 with the mocked text."""
         fake_img = MagicMock()
-        with patch("PIL.Image.open", return_value=fake_img), \
-             patch("pytesseract.image_to_string", return_value="Hello OCR"), \
-             patch("orivellum.api.routes.studio._probe_tesseract_cmd"):
+        with (
+            patch("PIL.Image.open", return_value=fake_img),
+            patch("pytesseract.image_to_string", return_value="Hello OCR"),
+            patch("orivellum.api.routes.studio._probe_tesseract_cmd"),
+        ):
             status, body = self._ocr(_tiny_png_b64())
         self.assertEqual(status, 200, body)
         self.assertTrue(body.get("ok"))
@@ -123,6 +132,7 @@ class TestOCRHappyPath(unittest.TestCase):
     def test_ocr_missing_deps_returns_503(self):
         """When PIL is not importable, route returns 503 with a clear message."""
         import builtins
+
         real_import = builtins.__import__
 
         def _blocked(name, *args, **kwargs):
@@ -136,6 +146,7 @@ class TestOCRHappyPath(unittest.TestCase):
 
 
 # ── Phase B — timeout enforcement ────────────────────────────────────────────
+
 
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestOCRTimeout(unittest.TestCase):
@@ -158,12 +169,14 @@ class TestOCRTimeout(unittest.TestCase):
 
         fake_img = MagicMock()
         orig_timeout = _studio._OCR_TIMEOUT
-        _studio._OCR_TIMEOUT = 0.05   # 50 ms — far shorter than the 5 s sleep
+        _studio._OCR_TIMEOUT = 0.05  # 50 ms — far shorter than the 5 s sleep
 
         try:
-            with patch("PIL.Image.open", return_value=fake_img), \
-                 patch("pytesseract.image_to_string", side_effect=_slow_ocr), \
-                 patch("orivellum.api.routes.studio._probe_tesseract_cmd"):
+            with (
+                patch("PIL.Image.open", return_value=fake_img),
+                patch("pytesseract.image_to_string", side_effect=_slow_ocr),
+                patch("orivellum.api.routes.studio._probe_tesseract_cmd"),
+            ):
                 resp = self.client.post(
                     "/api/studio/ocr",
                     json={"content_b64": _tiny_png_b64()},
@@ -173,8 +186,7 @@ class TestOCRTimeout(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 504, resp.text)
         detail = resp.json().get("detail", "")
-        self.assertIn("timed out", detail.lower(),
-                      f"504 detail should mention timeout: {detail!r}")
+        self.assertIn("timed out", detail.lower(), f"504 detail should mention timeout: {detail!r}")
 
     def test_ocr_exception_returns_500_not_504(self):
         """A non-timeout exception inside pytesseract must yield 500, not 504."""
@@ -183,9 +195,11 @@ class TestOCRTimeout(unittest.TestCase):
         def _boom(_img):
             raise RuntimeError("tesseract process crashed")
 
-        with patch("PIL.Image.open", return_value=fake_img), \
-             patch("pytesseract.image_to_string", side_effect=_boom), \
-             patch("orivellum.api.routes.studio._probe_tesseract_cmd"):
+        with (
+            patch("PIL.Image.open", return_value=fake_img),
+            patch("pytesseract.image_to_string", side_effect=_boom),
+            patch("orivellum.api.routes.studio._probe_tesseract_cmd"),
+        ):
             resp = self.client.post(
                 "/api/studio/ocr",
                 json={"content_b64": _tiny_png_b64()},
@@ -194,6 +208,7 @@ class TestOCRTimeout(unittest.TestCase):
 
 
 # ── Phase C — concurrency: slow OCR does not block fast requests ──────────────
+
 
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestOCRConcurrency(unittest.TestCase):
@@ -246,13 +261,15 @@ class TestOCRConcurrency(unittest.TestCase):
                 async def _slow_ocr_call():
                     def _blocking(_img):
                         ocr_started.set()
-                        time.sleep(ocr_duration)    # simulate slow OCR
+                        time.sleep(ocr_duration)  # simulate slow OCR
                         return "scanned text"
 
                     fake_img = MagicMock()
-                    with patch("PIL.Image.open", return_value=fake_img), \
-                         patch("pytesseract.image_to_string", side_effect=_blocking), \
-                         patch("orivellum.api.routes.studio._probe_tesseract_cmd"):
+                    with (
+                        patch("PIL.Image.open", return_value=fake_img),
+                        patch("pytesseract.image_to_string", side_effect=_blocking),
+                        patch("orivellum.api.routes.studio._probe_tesseract_cmd"),
+                    ):
                         await client.post(
                             "/api/studio/ocr",
                             json={"content_b64": _tiny_png_b64()},
@@ -273,11 +290,12 @@ class TestOCRConcurrency(unittest.TestCase):
         self._run(_run_both())
 
         self.assertEqual(len(fast_finish_time), 1, "Fast request never completed")
-        self.assertEqual(len(ocr_finish_time),  1, "OCR request never completed")
+        self.assertEqual(len(ocr_finish_time), 1, "OCR request never completed")
 
         # Fast request must have finished BEFORE the slow OCR completed.
         self.assertLess(
-            fast_finish_time[0], ocr_finish_time[0],
+            fast_finish_time[0],
+            ocr_finish_time[0],
             "Fast request was blocked by slow OCR — asyncio.to_thread isolation broken. "
             f"fast={fast_finish_time[0]:.3f}s, ocr={ocr_finish_time[0]:.3f}s",
         )
@@ -291,6 +309,7 @@ class TestOCRConcurrency(unittest.TestCase):
         vs sequential (~2x) distinction.
         """
         import os
+
         ocr_duration = 1.0 if os.environ.get("CI") else 0.5
         budget = 1.7 if os.environ.get("CI") else 0.85
         results: list[float] = []
@@ -320,9 +339,11 @@ class TestOCRConcurrency(unittest.TestCase):
                 # target restores in the wrong order and permanently leaks the
                 # MagicMock into PIL.Image.open, breaking every later PIL user
                 # in the test session (this happened — see test_thumbnail).
-                with patch("PIL.Image.open", return_value=fake_img), \
-                     patch("pytesseract.image_to_string", side_effect=_slow), \
-                     patch("orivellum.api.routes.studio._probe_tesseract_cmd"):
+                with (
+                    patch("PIL.Image.open", return_value=fake_img),
+                    patch("pytesseract.image_to_string", side_effect=_slow),
+                    patch("orivellum.api.routes.studio._probe_tesseract_cmd"),
+                ):
                     t0 = time.monotonic()
                     await asyncio.gather(_one(), _one())
                     results.append(time.monotonic() - t0)
@@ -333,9 +354,10 @@ class TestOCRConcurrency(unittest.TestCase):
         # Sequential would take >= 2 x ocr_duration; the budget sits well
         # below that while leaving generous headroom for slow shared runners.
         self.assertLess(
-            elapsed, budget,
+            elapsed,
+            budget,
             f"Two {ocr_duration:.1f} s OCR calls took {elapsed:.2f}s — expected parallel "
-            f"execution (~{ocr_duration:.1f} s), not sequential (~{2*ocr_duration:.1f} s). "
+            f"execution (~{ocr_duration:.1f} s), not sequential (~{2 * ocr_duration:.1f} s). "
             "asyncio.to_thread isolation may be broken.",
         )
 

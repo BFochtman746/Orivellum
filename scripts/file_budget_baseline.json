@@ -1,0 +1,20 @@
+{
+ "artifacts/orivellum-ui/src/pages/chat/index.tsx": 3378,
+ "artifacts/orivellum-ui/src/pages/learning/learn-tab.tsx": 1720,
+ "artifacts/orivellum-ui/src/pages/library/detail.tsx": 2238,
+ "artifacts/orivellum-ui/src/pages/library/index.tsx": 1928,
+ "artifacts/orivellum-ui/src/pages/studio/VoiceStudio.tsx": 2585,
+ "artifacts/orivellum-ui/src/pages/studio/index.tsx": 2739,
+ "artifacts/orivellum-ui/src/pages/system/index.tsx": 4659,
+ "artifacts/orivellum-ui/src/pages/works/trailer-tab.tsx": 1669,
+ "src/orivellum/api/routes/conversations.py": 4703,
+ "src/orivellum/api/routes/library.py": 1852,
+ "src/orivellum/api/routes/studio.py": 6582,
+ "src/orivellum/api/routes/system.py": 2868,
+ "src/orivellum/api/routes/works.py": 1975,
+ "src/orivellum/capabilities/extraction.py": 1714,
+ "src/orivellum/capabilities/mcos.py": 1903,
+ "src/orivellum/capabilities/nightshift.py": 2523,
+ "src/orivellum/database/db.py": 7564,
+ "src/orivellum/database/schema.py": 2642
+}

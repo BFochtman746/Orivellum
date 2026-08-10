@@ -10,6 +10,7 @@ All functions are synchronous and safe to call from async code via
 `asyncio.to_thread()`.  Each function degrades gracefully — if the
 gate or council calls fail, we fall through to a direct single call.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,28 +37,30 @@ Never include code fences or explanation outside the JSON.
 """
 
 
-def classify(user_text: str, history: list[dict], base_url: str, model: str,
-             db: Any = None) -> str:
+def classify(user_text: str, history: list[dict], base_url: str, model: str, db: Any = None) -> str:
     """Classify the request. Returns 'direct', 'clarify', or 'complex'.
 
     Falls back to 'direct' on any error so the chat never blocks.
     """
     context = "\n".join(
-        f"{m['role'].upper()}: {m['content'][:200]}"
-        for m in history[-_GATE_HISTORY:]
+        f"{m['role'].upper()}: {m['content'][:200]}" for m in history[-_GATE_HISTORY:]
     )
     prompt = (
-        f"{_GATE_PROMPT}\n\n"
-        f"Conversation context:\n{context}\n\n"
-        f"User message: {user_text[:400]}"
+        f"{_GATE_PROMPT}\n\nConversation context:\n{context}\n\nUser message: {user_text[:400]}"
     )
-    result = _call_sync([{"role": "user", "content": prompt}], base_url, model,
-                        timeout=10, purpose="cognition.gate", db=db)
+    result = _call_sync(
+        [{"role": "user", "content": prompt}],
+        base_url,
+        model,
+        timeout=10,
+        purpose="cognition.gate",
+        db=db,
+    )
     if not result:
         return "direct"
     try:
         parsed = json.loads(result.strip())
-        route  = parsed.get("route", "direct")
+        route = parsed.get("route", "direct")
         if route not in ("direct", "clarify", "complex"):
             return "direct"
         logger.debug("Cognition gate: %s — %s", route, parsed.get("reason", ""))
@@ -66,16 +69,21 @@ def classify(user_text: str, history: list[dict], base_url: str, model: str,
         return "direct"
 
 
-def get_clarifying_question(user_text: str, base_url: str, model: str,
-                            db: Any = None) -> str:
+def get_clarifying_question(user_text: str, base_url: str, model: str, db: Any = None) -> str:
     """Ask the AI to generate ONE concise clarifying question."""
     prompt = (
         "The following user request needs clarification before you can answer well. "
         "Ask ONE short, targeted clarifying question. Be direct and concise — no preamble.\n\n"
         f"User request: {user_text}"
     )
-    result = _call_sync([{"role": "user", "content": prompt}], base_url, model,
-                        timeout=15, purpose="cognition.clarify", db=db)
+    result = _call_sync(
+        [{"role": "user", "content": prompt}],
+        base_url,
+        model,
+        timeout=15,
+        purpose="cognition.clarify",
+        db=db,
+    )
     return result or "Could you clarify what you mean?"
 
 
@@ -100,8 +108,7 @@ _SYNTHESIZER_PROMPT = (
 )
 
 
-def deliberate(messages: list[dict], base_url: str, model: str,
-               db: Any = None) -> str | None:
+def deliberate(messages: list[dict], base_url: str, model: str, db: Any = None) -> str | None:
     """Run the Author→Critic→Synthesizer council.
 
     Returns the synthesized response, or None if all three calls fail
@@ -109,17 +116,20 @@ def deliberate(messages: list[dict], base_url: str, model: str,
     """
     # Author pass
     author_msgs = messages + [{"role": "system", "content": _AUTHOR_PROMPT}]
-    draft = _call_sync(author_msgs, base_url, model, timeout=60,
-                       purpose="cognition.author", db=db)
+    draft = _call_sync(author_msgs, base_url, model, timeout=60, purpose="cognition.author", db=db)
     if not draft:
         logger.warning("Council: author call failed — falling through to direct")
         return None
 
     # Critic pass
     critic_prompt = _CRITIC_PROMPT.format(draft=draft[:3000])
-    critique      = _call_sync(
+    critique = _call_sync(
         messages + [{"role": "user", "content": critic_prompt}],
-        base_url, model, timeout=30, purpose="cognition.critic", db=db,
+        base_url,
+        model,
+        timeout=30,
+        purpose="cognition.critic",
+        db=db,
     )
     if not critique:
         logger.debug("Council: critic call failed — returning draft")
@@ -127,14 +137,19 @@ def deliberate(messages: list[dict], base_url: str, model: str,
 
     # Synthesizer pass
     synth_prompt = _SYNTHESIZER_PROMPT.format(draft=draft[:3000], critique=critique[:1500])
-    final        = _call_sync(
+    final = _call_sync(
         messages + [{"role": "user", "content": synth_prompt}],
-        base_url, model, timeout=60, purpose="cognition.synth", db=db,
+        base_url,
+        model,
+        timeout=60,
+        purpose="cognition.synth",
+        db=db,
     )
     return final or draft
 
 
 # ─── Low-level sync call ───────────────────────────────────────────────────────
+
 
 def _call_sync(
     messages: list[dict],
@@ -150,14 +165,20 @@ def _call_sync(
     any failure (the gateway never raises).
     """
     from orivellum.capabilities.llm import llm_call
+
     result = llm_call(
-        messages, base_url=base_url, model=model,
-        timeout=timeout, purpose=purpose, db=db,
+        messages,
+        base_url=base_url,
+        model=model,
+        timeout=timeout,
+        purpose=purpose,
+        db=db,
     )
     return result.text
 
 
 # ─── Compass store (per-Work persistent state) ─────────────────────────────────
+
 
 def read_compass(db: Any, work_id: str) -> dict:
     try:
@@ -171,10 +192,13 @@ def read_compass(db: Any, work_id: str) -> dict:
         return {}
 
 
-def update_compass(db: Any, work_id: str,
-                   focus: str | None = None,
-                   reasoning: str | None = None,
-                   next_step: str | None = None) -> None:
+def update_compass(
+    db: Any,
+    work_id: str,
+    focus: str | None = None,
+    reasoning: str | None = None,
+    next_step: str | None = None,
+) -> None:
     """Merge-update the Project Compass for *work_id*.
 
     Only fields supplied with a non-None value are written; existing values
@@ -182,6 +206,7 @@ def update_compass(db: Any, work_id: str,
     doesn't infer a next_step from accidentally clearing one the user set.
     """
     from datetime import datetime
+
     now = datetime.now(UTC).isoformat()
     try:
         with db._lock:
@@ -210,9 +235,14 @@ def update_compass(db: Any, work_id: str,
             )
             db._conn.commit()
         try:
-            db.audit("compass.updated", object_id=work_id, object_type="work",
-                     actor="system",
-                     detail=",".join(p.split(" = ")[0] for p in parts if p != "updated_at = ?") or "tick")
+            db.audit(
+                "compass.updated",
+                object_id=work_id,
+                object_type="work",
+                actor="system",
+                detail=",".join(p.split(" = ")[0] for p in parts if p != "updated_at = ?")
+                or "tick",
+            )
         except Exception:
             pass
     except Exception as exc:

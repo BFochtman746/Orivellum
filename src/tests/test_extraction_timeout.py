@@ -10,6 +10,7 @@ Verified behaviours:
      block for N * extraction_timeout_sec.
   5. The warning log line is emitted with the expected message on timeout.
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,6 +23,7 @@ import httpx
 # ---------------------------------------------------------------------------
 # Helpers / stubs
 # ---------------------------------------------------------------------------
+
 
 def _make_page(text: str):
     """Return a minimal page/segment stub."""
@@ -65,6 +67,7 @@ _GOOD_LLM_RESPONSE = (
 # _call_llm_sync
 # ---------------------------------------------------------------------------
 
+
 def test_call_llm_sync_returns_none_on_timeout(caplog):
     """A ConnectTimeout from httpx must make _call_llm_sync return None."""
     from orivellum.capabilities.knowledge_harvest import _call_llm_sync
@@ -81,8 +84,7 @@ def test_call_llm_sync_returns_none_on_timeout(caplog):
 
     assert result is None
     assert any(
-        "LLM call failed during knowledge extraction" in r.message
-        for r in caplog.records
+        "LLM call failed during knowledge extraction" in r.message for r in caplog.records
     ), "Expected a WARNING about LLM failure, but none was found."
 
 
@@ -101,10 +103,7 @@ def test_call_llm_sync_returns_none_on_read_timeout(caplog):
             result = _call_llm_sync("prompt", "http://localhost:9999", "model", timeout=5)
 
     assert result is None
-    assert any(
-        "LLM call failed during knowledge extraction" in r.message
-        for r in caplog.records
-    )
+    assert any("LLM call failed during knowledge extraction" in r.message for r in caplog.records)
 
 
 def test_call_llm_sync_forwards_timeout_to_httpx():
@@ -129,6 +128,7 @@ def test_call_llm_sync_forwards_timeout_to_httpx():
 # llm_harvest — timeout resilience
 # ---------------------------------------------------------------------------
 
+
 def test_llm_harvest_continues_after_chunk_timeout():
     """
     When the first chunk times out (returns None), llm_harvest must still
@@ -142,21 +142,20 @@ def test_llm_harvest_continues_after_chunk_timeout():
     # First call → None (timeout), second call → valid JSON
     call_returns = [None, _GOOD_LLM_RESPONSE]
 
-    with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync",
-               side_effect=call_returns), \
-         patch("orivellum.api._deps.get_config", return_value=_make_cfg()):
+    with (
+        patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=call_returns),
+        patch("orivellum.api._deps.get_config", return_value=_make_cfg()),
+    ):
         count = llm_harvest(
-                result=result,
-                doc_id="doc-1",
-                work_id="work-1",
-                doc_title="Test Document",
-                db=db,
-            )
+            result=result,
+            doc_id="doc-1",
+            work_id="work-1",
+            doc_title="Test Document",
+            db=db,
+        )
 
     # At least the items from the second chunk must have been created
-    assert count > 0, (
-        "llm_harvest returned 0 items — it likely aborted after the first timeout"
-    )
+    assert count > 0, "llm_harvest returned 0 items — it likely aborted after the first timeout"
     assert len(db.items) > 0
 
 
@@ -169,9 +168,10 @@ def test_llm_harvest_all_chunks_timeout_returns_zero():
     db = _FakeDB()
     result = _make_result(["chunk one", "chunk two", "chunk three"])
 
-    with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync",
-               return_value=None), \
-         patch("orivellum.api._deps.get_config", return_value=_make_cfg()):
+    with (
+        patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", return_value=None),
+        patch("orivellum.api._deps.get_config", return_value=_make_cfg()),
+    ):
         count = llm_harvest(
             result=result,
             doc_id="doc-2",
@@ -199,10 +199,12 @@ def _make_hanging_server():
 
     class _HangingHandler(BaseHTTPRequestHandler):
         """Accepts the connection, then blocks until the client gives up."""
+
         def do_POST(self):  # noqa: N802
             # Sleep well past any reasonable test timeout; the client will
             # hit its per-call timeout and disconnect first.
             time.sleep(60)
+
         def log_message(self, *args):
             pass  # suppress access-log noise in test output
 
@@ -229,7 +231,9 @@ def test_call_llm_sync_respects_timeout_with_real_server():
     try:
         start = time.monotonic()
         result = _call_llm_sync(
-            "prompt", f"http://127.0.0.1:{port}", "model",
+            "prompt",
+            f"http://127.0.0.1:{port}",
+            "model",
             timeout=per_call_timeout,
         )
         elapsed = time.monotonic() - start
@@ -299,14 +303,14 @@ def test_llm_harvest_per_chunk_timeout_bounds_total_time():
     )
     # Lower bound: at least one real timeout must have fired
     assert elapsed >= per_chunk_timeout * 0.5, (
-        f"llm_harvest returned in {elapsed:.2f}s — too fast, "
-        "the timeout may have been bypassed."
+        f"llm_harvest returned in {elapsed:.2f}s — too fast, the timeout may have been bypassed."
     )
 
 
 # ---------------------------------------------------------------------------
 # Warning log emission
 # ---------------------------------------------------------------------------
+
 
 def test_warning_emitted_on_timeout(caplog):
     """
@@ -326,11 +330,11 @@ def test_warning_emitted_on_timeout(caplog):
         instance.post.side_effect = httpx.ConnectTimeout("timed out")
         return instance
 
-    with patch("httpx.Client", side_effect=_hanging_client), \
-         patch("orivellum.api._deps.get_config", return_value=_make_cfg()):
-
-        with caplog.at_level(logging.WARNING,
-                             logger="orivellum.capabilities.knowledge_harvest"):
+    with (
+        patch("httpx.Client", side_effect=_hanging_client),
+        patch("orivellum.api._deps.get_config", return_value=_make_cfg()),
+    ):
+        with caplog.at_level(logging.WARNING, logger="orivellum.capabilities.knowledge_harvest"):
             llm_harvest(
                 result=result,
                 doc_id="doc-4",
@@ -340,10 +344,7 @@ def test_warning_emitted_on_timeout(caplog):
             )
 
     warning_messages = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any(
-        "LLM call failed during knowledge extraction" in m
-        for m in warning_messages
-    ), (
+    assert any("LLM call failed during knowledge extraction" in m for m in warning_messages), (
         f"Expected a WARNING about LLM failure. Warnings found: {warning_messages}"
     )
 
@@ -361,8 +362,7 @@ def test_timeout_warning_includes_exception_detail(caplog):
         instance.post.side_effect = httpx.ConnectTimeout(exc_message)
         mock_client_cls.return_value = instance
 
-        with caplog.at_level(logging.WARNING,
-                             logger="orivellum.capabilities.knowledge_harvest"):
+        with caplog.at_level(logging.WARNING, logger="orivellum.capabilities.knowledge_harvest"):
             _call_llm_sync("prompt", "http://localhost:9999", "model", timeout=5)
 
     # The formatted log record should mention the exception

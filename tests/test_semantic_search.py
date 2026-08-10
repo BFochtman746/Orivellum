@@ -8,6 +8,7 @@ Covers:
 
 The embeddings endpoint is always mocked — no network calls.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -21,10 +22,10 @@ from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -35,13 +36,13 @@ def _make_app(tmp: str):
 def _seed_doc(db, title: str, text: str) -> str:
     doc = db.create_document(title=title, kind="text", work_id=None)
     db.add_chunk(doc_id=doc["id"], text=text, page=0)
-    db.update_document_extracted(doc["id"], text, len(text.split()),
-                                 readiness="ready")
+    db.update_document_extracted(doc["id"], text, len(text.split()), readiness="ready")
     return doc["id"]
 
 
 def _fake_embedder(mapping: dict[str, list[float]], default: list[float]):
     """Return an embed_texts stand-in keyed on substring matches."""
+
     def _embed(texts, timeout=None):
         out = []
         for t in texts:
@@ -52,6 +53,7 @@ def _fake_embedder(mapping: dict[str, list[float]], default: list[float]):
                     break
             out.append(vec)
         return out
+
     return _embed
 
 
@@ -68,20 +70,19 @@ class SemanticSearchTests(unittest.TestCase):
 
     def test_embed_chunks_for_doc_stores_vectors(self):
         from orivellum.capabilities import embeddings as emb
-        doc_id = _seed_doc(self.db, "cats.txt",
-                           "Felines are graceful nocturnal hunters " * 5)
-        with patch.object(emb, "embed_texts",
-                          side_effect=lambda ts: [[1.0, 0.0, 0.0]] * len(ts)):
+
+        doc_id = _seed_doc(self.db, "cats.txt", "Felines are graceful nocturnal hunters " * 5)
+        with patch.object(emb, "embed_texts", side_effect=lambda ts: [[1.0, 0.0, 0.0]] * len(ts)):
             n = emb.embed_chunks_for_doc(doc_id, self.db)
         self.assertEqual(n, 1)
         self.assertEqual(self.db.count_vectors("chunk"), 1)
         # Re-running embeds nothing new (idempotent)
-        with patch.object(emb, "embed_texts",
-                          side_effect=lambda ts: [[1.0, 0.0, 0.0]] * len(ts)):
+        with patch.object(emb, "embed_texts", side_effect=lambda ts: [[1.0, 0.0, 0.0]] * len(ts)):
             self.assertEqual(emb.embed_chunks_for_doc(doc_id, self.db), 0)
 
     def test_embed_chunks_for_doc_endpoint_down(self):
         from orivellum.capabilities import embeddings as emb
+
         doc_id = _seed_doc(self.db, "dogs.txt", "Canines are loyal companions " * 5)
         with patch.object(emb, "embed_texts", return_value=None):
             self.assertEqual(emb.embed_chunks_for_doc(doc_id, self.db), 0)
@@ -93,10 +94,9 @@ class SemanticSearchTests(unittest.TestCase):
         """Doc A matches 'quantum' by keyword; doc B is about the same concept
         but shares no keywords ('subatomic physics')."""
         from orivellum.capabilities import embeddings as emb
-        a = _seed_doc(self.db, "a.txt",
-                      "quantum mechanics explains particle behaviour " * 10)
-        b = _seed_doc(self.db, "b.txt",
-                      "subatomic physics describes tiny matter waves " * 10)
+
+        a = _seed_doc(self.db, "a.txt", "quantum mechanics explains particle behaviour " * 10)
+        b = _seed_doc(self.db, "b.txt", "subatomic physics describes tiny matter waves " * 10)
         embedder = _fake_embedder(
             {"quantum": [1.0, 0.1, 0.0], "subatomic": [0.9, 0.2, 0.0]},
             default=[0.0, 0.0, 1.0],
@@ -108,12 +108,13 @@ class SemanticSearchTests(unittest.TestCase):
 
     def test_hybrid_finds_conceptual_match_without_keywords(self):
         from orivellum.capabilities import embeddings as emb
+
         a, b, embedder = self._seed_two_docs_with_vectors()
         with patch.object(emb, "embed_texts", side_effect=embedder):
             hits = emb.hybrid_search_chunks("quantum", self.db, limit=10)
         doc_ids = [h.get("doc_id") for h in hits]
-        self.assertIn(a, doc_ids)   # keyword match
-        self.assertIn(b, doc_ids)   # semantic-only match
+        self.assertIn(a, doc_ids)  # keyword match
+        self.assertIn(b, doc_ids)  # semantic-only match
         for h in hits:
             self.assertIn("rrf_score", h)
             self.assertIn(h["match_type"], ("keyword", "semantic", "both"))
@@ -124,6 +125,7 @@ class SemanticSearchTests(unittest.TestCase):
 
     def test_hybrid_falls_back_to_keyword_when_embeddings_down(self):
         from orivellum.capabilities import embeddings as emb
+
         a, b, _ = self._seed_two_docs_with_vectors()
         with patch.object(emb, "embed_texts", return_value=None):
             hits = emb.hybrid_search_chunks("quantum", self.db, limit=10)
@@ -133,6 +135,7 @@ class SemanticSearchTests(unittest.TestCase):
 
     def test_hybrid_semantic_only_when_fts_finds_nothing(self):
         from orivellum.capabilities import embeddings as emb
+
         a, b, embedder = self._seed_two_docs_with_vectors()
         # Query shares zero keywords with either doc but embeds near them
         q_embedder = _fake_embedder({}, default=[1.0, 0.15, 0.0])
@@ -145,8 +148,7 @@ class SemanticSearchTests(unittest.TestCase):
 
     def test_search_api_keyword_mode(self):
         self._seed_two_docs_with_vectors()
-        r = self.client.get("/api/library/search",
-                            params={"q": "quantum", "mode": "keyword"})
+        r = self.client.get("/api/library/search", params={"q": "quantum", "mode": "keyword"})
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertEqual(body["mode"], "keyword")
@@ -154,10 +156,12 @@ class SemanticSearchTests(unittest.TestCase):
 
     def test_search_api_semantic_mode(self):
         from orivellum.capabilities import embeddings as emb
+
         a, b, embedder = self._seed_two_docs_with_vectors()
         with patch.object(emb, "embed_texts", side_effect=embedder):
-            r = self.client.get("/api/library/search",
-                                params={"q": "quantum theory", "mode": "semantic"})
+            r = self.client.get(
+                "/api/library/search", params={"q": "quantum theory", "mode": "semantic"}
+            )
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertEqual(body["mode"], "semantic")
@@ -168,6 +172,7 @@ class SemanticSearchTests(unittest.TestCase):
 
     def test_search_api_hybrid_default_and_degraded(self):
         from orivellum.capabilities import embeddings as emb
+
         a, b, embedder = self._seed_two_docs_with_vectors()
         # Default mode is hybrid
         with patch.object(emb, "embed_texts", side_effect=embedder):
@@ -182,8 +187,7 @@ class SemanticSearchTests(unittest.TestCase):
         self.assertEqual(len(r.json()["results"]), 1)
 
     def test_search_api_invalid_mode(self):
-        r = self.client.get("/api/library/search",
-                            params={"q": "x", "mode": "bogus"})
+        r = self.client.get("/api/library/search", params={"q": "x", "mode": "bogus"})
         self.assertEqual(r.status_code, 400)
 
     # ── availability regression guards ───────────────────────────────────
@@ -192,7 +196,9 @@ class SemanticSearchTests(unittest.TestCase):
         """A failed embeddings call must open a cooldown so subsequent
         searches skip the network entirely (BM25-level latency)."""
         import urllib.request
+
         from orivellum.capabilities import embeddings as emb
+
         emb._reset_circuit_breaker()
         self._seed_two_docs_with_vectors()
         calls = {"n": 0}
@@ -212,8 +218,9 @@ class SemanticSearchTests(unittest.TestCase):
                 # Cooldown active → no further network attempts
                 r = self.client.get("/api/library/search", params={"q": "quantum"})
                 self.assertEqual(r.status_code, 200)
-                r = self.client.get("/api/library/search",
-                                    params={"q": "quantum", "mode": "semantic"})
+                r = self.client.get(
+                    "/api/library/search", params={"q": "quantum", "mode": "semantic"}
+                )
                 self.assertEqual(r.status_code, 200)
                 self.assertEqual(len(r.json()["results"]), 1)  # semantic → keyword fallback
                 self.assertEqual(calls["n"], first)
@@ -222,10 +229,10 @@ class SemanticSearchTests(unittest.TestCase):
 
     def test_semantic_mode_falls_back_to_keyword(self):
         from orivellum.capabilities import embeddings as emb
+
         self._seed_two_docs_with_vectors()
         with patch.object(emb, "embed_texts", return_value=None):
-            r = self.client.get("/api/library/search",
-                                params={"q": "quantum", "mode": "semantic"})
+            r = self.client.get("/api/library/search", params={"q": "quantum", "mode": "semantic"})
         self.assertEqual(r.status_code, 200)
         results = r.json()["results"]
         self.assertEqual(len(results), 1)
@@ -234,8 +241,9 @@ class SemanticSearchTests(unittest.TestCase):
     # ── chat context ─────────────────────────────────────────────────────
 
     def test_chat_context_builder_survives_embeddings_down(self):
-        from orivellum.capabilities import embeddings as emb
         from orivellum.api.routes.conversations import _build_system_prompt
+        from orivellum.capabilities import embeddings as emb
+
         _seed_two_docs_with_vectors = self._seed_two_docs_with_vectors()
         conv = {"id": "c1", "work_id": None}
         with patch.object(emb, "embed_texts", return_value=None):

@@ -5,6 +5,7 @@ so everything except actual synthesis is testable. Synthesis of a consented
 clone must fail with 503 (engine unavailable) — never 403 — proving the
 consent gate and the engine availability check are independent.
 """
+
 from __future__ import annotations
 
 import io
@@ -16,13 +17,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sidecars.premium_tts.voices import (  # noqa: E402
-    MIN_REF_BYTES, VoiceStore,
+    MIN_REF_BYTES,
+    VoiceStore,
 )
 
 FAKE_CLIP = b"RIFF" + b"\x00" * (MIN_REF_BYTES + 1024)
 
 
 # ── VoiceStore unit tests ─────────────────────────────────────────────────────
+
 
 def test_store_create_records_sha_and_consent(tmp_path):
     store = VoiceStore(tmp_path)
@@ -65,10 +68,13 @@ def test_store_delete_removes_clip(tmp_path):
 
 # ── HTTP contract tests ───────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
+
     from sidecars.premium_tts import server
+
     monkeypatch.setattr(server, "store", VoiceStore(tmp_path))
     return TestClient(server.app)
 
@@ -116,8 +122,10 @@ def test_tts_rejects_empty_text(client):
 
 # ── Main API breaker unit tests ───────────────────────────────────────────────
 
+
 def test_premium_breaker_open_close(monkeypatch):
     from orivellum.api.routes import studio
+
     studio._premium_note_success()
     assert not studio._premium_breaker_open()
     studio._premium_note_failure()
@@ -135,25 +143,28 @@ def test_breaker_blocks_premium_call(monkeypatch):
     from orivellum.api.routes import studio
 
     class _Serving:
-        tts_premium_url = "http://127.0.0.1:9"   # nothing listens here
+        tts_premium_url = "http://127.0.0.1:9"  # nothing listens here
         tts_premium_ack_license = True
 
     class _Cfg:
         serving = _Serving()
 
     import httpx
+
     def _boom(*a, **k):
         raise AssertionError("network attempted while breaker open")
-    studio._premium_note_failure()               # open the breaker
+
+    studio._premium_note_failure()  # open the breaker
     monkeypatch.setattr(httpx, "post", _boom)
     try:
         assert studio._call_premium_tts_sync("t", "v", 1.0, _Cfg()) is None
     finally:
-        studio._premium_note_success()           # leave global state clean
+        studio._premium_note_success()  # leave global state clean
 
 
 def test_tts_request_quality_defaults_final():
     from orivellum.api.routes.studio import TTSRequest
+
     assert TTSRequest(text="x").quality == "final"
     assert TTSRequest(text="x", quality="draft").quality == "draft"
 
@@ -162,6 +173,7 @@ def test_breaker_single_flight_until_healthy():
     """Until the sidecar has proven healthy once, only ONE caller may probe;
     concurrent callers must be refused instantly (no 60 s pile-up)."""
     from orivellum.api.routes import studio
+
     # Reset to cold state: closed breaker, never-healthy, nothing inflight.
     studio._premium_note_failure()
     with studio._premium_breaker_lock:
@@ -169,10 +181,10 @@ def test_breaker_single_flight_until_healthy():
         studio._premium_healthy = False
         studio._premium_inflight = False
     try:
-        assert studio._premium_try_acquire() is True      # first prober
-        assert studio._premium_try_acquire() is False     # concurrent → refused
-        studio._premium_note_success()                    # probe succeeded
-        assert studio._premium_try_acquire() is True      # healthy → concurrent OK
+        assert studio._premium_try_acquire() is True  # first prober
+        assert studio._premium_try_acquire() is False  # concurrent → refused
+        studio._premium_note_success()  # probe succeeded
+        assert studio._premium_try_acquire() is True  # healthy → concurrent OK
         assert studio._premium_try_acquire() is True
     finally:
         studio._premium_note_success()
@@ -180,6 +192,7 @@ def test_breaker_single_flight_until_healthy():
 
 def test_clone_voice_detection():
     from orivellum.api.routes.studio import _is_clone_voice
+
     assert _is_clone_voice("clone:abc123")
     assert not _is_clone_voice("af_heart")
     assert not _is_clone_voice("")
@@ -191,14 +204,16 @@ def test_clone_voice_detection():
 # fails clearly when the premium engine dies mid-run.
 
 import os  # noqa: E402
+
 os.environ.setdefault("SESSION_SECRET", "test-orivellum-api-key-1234567890abcdef")
 
 
 @pytest.fixture()
 def work_client(tmp_path):
     from fastapi.testclient import TestClient
-    from orivellum.api.app import create_app
+
     from orivellum.api import _deps
+    from orivellum.api.app import create_app
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
     from orivellum.database.db import OrivellumDB
     from tests.conftest import AUTH_HEADERS
@@ -225,16 +240,14 @@ def work_client(tmp_path):
 
 def test_work_sync_rejects_clone_without_premium(work_client):
     client, _cfg, wid = work_client
-    r = client.post("/api/studio/tts/work",
-                    json={"work_id": wid, "voice": "clone:abc"})
+    r = client.post("/api/studio/tts/work", json={"work_id": wid, "voice": "clone:abc"})
     assert r.status_code == 503
     assert "premium" in r.json()["detail"].lower()
 
 
 def test_work_async_rejects_clone_without_premium(work_client):
     client, _cfg, wid = work_client
-    r = client.post("/api/studio/tts/work/start",
-                    json={"work_id": wid, "voice": "clone:abc"})
+    r = client.post("/api/studio/tts/work/start", json={"work_id": wid, "voice": "clone:abc"})
     assert r.status_code == 503
     assert "premium" in r.json()["detail"].lower()
 
@@ -243,14 +256,21 @@ def test_work_sync_clone_fails_closed_when_premium_dies(work_client, monkeypatch
     """Premium enabled but the engine returns nothing mid-render: the render
     must FAIL, never fall back to Kokoro/espeak in an unrelated voice."""
     from orivellum.api.routes import studio
+
     client, cfg, wid = work_client
     cfg.serving.tts_premium_url = "http://127.0.0.1:9"
     cfg.serving.tts_premium_ack_license = True
     monkeypatch.setattr(studio, "_call_premium_tts_sync", lambda *a, **k: None)
     try:
-        r = client.post("/api/studio/tts/work",
-                        json={"work_id": wid, "voice": "clone:abc",
-                              "include_credits": False, "acx_mastering": False})
+        r = client.post(
+            "/api/studio/tts/work",
+            json={
+                "work_id": wid,
+                "voice": "clone:abc",
+                "include_credits": False,
+                "acx_mastering": False,
+            },
+        )
         assert r.status_code == 500
         assert "fallback" in r.json()["detail"].lower()
     finally:
@@ -275,10 +295,17 @@ def test_work_sync_catalog_voice_renders_via_kokoro(work_client, monkeypatch):
 
     monkeypatch.setattr(studio, "_get_kokoro", lambda: _FakeKokoro())
     client, _cfg, wid = work_client
-    r = client.post("/api/studio/tts/work",
-                    json={"work_id": wid, "voice": "af_heart", "speed": 1.0,
-                          "include_credits": False, "acx_mastering": False,
-                          "return_url": True})
+    r = client.post(
+        "/api/studio/tts/work",
+        json={
+            "work_id": wid,
+            "voice": "af_heart",
+            "speed": 1.0,
+            "include_credits": False,
+            "acx_mastering": False,
+            "return_url": True,
+        },
+    )
     assert r.status_code == 200, r.text[:300]
     assert r.json()["ok"] is True
 
@@ -290,10 +317,17 @@ def test_work_sync_fails_clearly_without_neural_engine(work_client, monkeypatch)
 
     monkeypatch.setattr(studio, "_get_kokoro", lambda: None)
     client, _cfg, wid = work_client
-    r = client.post("/api/studio/tts/work",
-                    json={"work_id": wid, "voice": "af_heart", "speed": 1.0,
-                          "include_credits": False, "acx_mastering": False,
-                          "return_url": True})
+    r = client.post(
+        "/api/studio/tts/work",
+        json={
+            "work_id": wid,
+            "voice": "af_heart",
+            "speed": 1.0,
+            "include_credits": False,
+            "acx_mastering": False,
+            "return_url": True,
+        },
+    )
     assert r.status_code >= 500, r.text[:300]
     detail = str(r.json().get("detail", "")).lower()
     assert "neural" in detail or "engine" in detail

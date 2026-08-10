@@ -4,6 +4,7 @@ Read Aloud listening positions are stored server-side per document so a spot
 saved on one device (phone) is visible on another (desktop). These cover the
 GET/PUT/DELETE endpoints and the underlying DB upsert.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -16,10 +17,10 @@ from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -47,7 +48,9 @@ class ReadPositionApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json()["ok"])
 
-        pos = self.client.get("/api/library/doc1/read-position", headers=AUTH_HEADERS).json()["position"]
+        pos = self.client.get("/api/library/doc1/read-position", headers=AUTH_HEADERS).json()[
+            "position"
+        ]
         self.assertEqual(pos["part"], 3)
         self.assertEqual(pos["time"], 42.5)
         self.assertEqual(pos["part_count"], 12)
@@ -58,20 +61,27 @@ class ReadPositionApiTest(unittest.TestCase):
         second = {"part": 4, "time": 9.0, "part_count": 8, "saved_at": 2}
         self.client.put("/api/library/doc2/read-position", json=first, headers=AUTH_HEADERS)
         self.client.put("/api/library/doc2/read-position", json=second, headers=AUTH_HEADERS)
-        pos = self.client.get("/api/library/doc2/read-position", headers=AUTH_HEADERS).json()["position"]
+        pos = self.client.get("/api/library/doc2/read-position", headers=AUTH_HEADERS).json()[
+            "position"
+        ]
         self.assertEqual(pos["part"], 4)
         self.assertEqual(pos["saved_at"], 2)
         # Exactly one row for the document.
-        self.assertEqual(self.db.read_conn().execute(
-            "SELECT COUNT(*) AS c FROM read_positions WHERE doc_id='doc2'"
-        ).fetchone()["c"], 1)
+        self.assertEqual(
+            self.db.read_conn()
+            .execute("SELECT COUNT(*) AS c FROM read_positions WHERE doc_id='doc2'")
+            .fetchone()["c"],
+            1,
+        )
 
     def test_delete_clears(self):
         body = {"part": 2, "time": 1.0, "part_count": 5, "saved_at": 1}
         self.client.put("/api/library/doc3/read-position", json=body, headers=AUTH_HEADERS)
         r = self.client.delete("/api/library/doc3/read-position", headers=AUTH_HEADERS)
         self.assertEqual(r.status_code, 200)
-        pos = self.client.get("/api/library/doc3/read-position", headers=AUTH_HEADERS).json()["position"]
+        pos = self.client.get("/api/library/doc3/read-position", headers=AUTH_HEADERS).json()[
+            "position"
+        ]
         self.assertIsNone(pos)
 
     def test_rejects_invalid_values(self):
@@ -94,7 +104,9 @@ class ReadPositionApiTest(unittest.TestCase):
         older = {"part": 1, "time": 2.0, "part_count": 20, "saved_at": 100}
         self.client.put("/api/library/doc5/read-position", json=newer, headers=AUTH_HEADERS)
         self.client.put("/api/library/doc5/read-position", json=older, headers=AUTH_HEADERS)
-        pos = self.client.get("/api/library/doc5/read-position", headers=AUTH_HEADERS).json()["position"]
+        pos = self.client.get("/api/library/doc5/read-position", headers=AUTH_HEADERS).json()[
+            "position"
+        ]
         self.assertEqual(pos["part"], 5)
         self.assertEqual(pos["saved_at"], 200)
 
@@ -104,7 +116,9 @@ class ReadPositionApiTest(unittest.TestCase):
         self.client.put("/api/library/doc6/read-position", json=base, headers=AUTH_HEADERS)
         # Equal saved_at still applies (idempotent same-tick update is harmless).
         self.client.put("/api/library/doc6/read-position", json=same_ts, headers=AUTH_HEADERS)
-        pos = self.client.get("/api/library/doc6/read-position", headers=AUTH_HEADERS).json()["position"]
+        pos = self.client.get("/api/library/doc6/read-position", headers=AUTH_HEADERS).json()[
+            "position"
+        ]
         self.assertEqual(pos["part"], 7)
 
 

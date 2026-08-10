@@ -13,6 +13,7 @@ Nudge triggers
 Idempotent: re-running within the same day does not duplicate nudges.
 Old resolved nudges are pruned after PRUNE_DAYS days.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,11 +27,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("orivellum.custodian")
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
-STALL_DAYS    = 14   # days of silence → "stalled" nudge
-NEWBORN_DAYS  = 7    # days after creation with no docs → "no_docs" nudge
-STUCK_DAYS    = 10   # days at same pipeline stage → "pipeline_stuck" nudge
-PRUNE_DAYS    = 30   # days before resolved nudges are pruned
-SUPPRESS_DAYS = 30   # days to honour an explicit user dismissal before re-nudging
+STALL_DAYS = 14  # days of silence → "stalled" nudge
+NEWBORN_DAYS = 7  # days after creation with no docs → "no_docs" nudge
+STUCK_DAYS = 10  # days at same pipeline stage → "pipeline_stuck" nudge
+PRUNE_DAYS = 30  # days before resolved nudges are pruned
+SUPPRESS_DAYS = 30  # days to honour an explicit user dismissal before re-nudging
 
 
 def _now_utc() -> datetime:
@@ -55,6 +56,7 @@ def _days_since(iso: str | None) -> int | None:
 
 
 # ── Last-activity query ────────────────────────────────────────────────────────
+
 
 def _get_work_last_activity(db: OrivellumDB, work_id: str) -> str | None:
     """Return the ISO timestamp of the most recent activity for a Work.
@@ -243,11 +245,11 @@ def _check_one_work(db: OrivellumDB, work: dict) -> tuple[int, int]:
     created = 0
     skipped = 0
 
-    title           = work.get("title") or "Untitled Work"
-    work_id         = work["id"]
-    doc_count       = work.get("doc_count") or 0
+    title = work.get("title") or "Untitled Work"
+    work_id = work["id"]
+    doc_count = work.get("doc_count") or 0
     knowledge_count = work.get("knowledge_count") or 0
-    work_created    = work.get("obj_created") or work.get("created_at")
+    work_created = work.get("obj_created") or work.get("created_at")
 
     # ── Signal 1: No documents after N days ────────────────────────────────
     if doc_count == 0:
@@ -290,7 +292,12 @@ def _check_one_work(db: OrivellumDB, work: dict) -> tuple[int, int]:
         except Exception:
             pass
         _, was_created = _upsert_nudge(
-            db, work_id, "stalled", msg, stage_label, stall_days,
+            db,
+            work_id,
+            "stalled",
+            msg,
+            stage_label,
+            stall_days,
             priority=3 if stall_days >= STALL_DAYS * 2 else 2,
         )
         if was_created:
@@ -317,7 +324,7 @@ def _check_one_work(db: OrivellumDB, work: dict) -> tuple[int, int]:
             if stuck_days is not None and stuck_days >= STUCK_DAYS:
                 msg = (
                     f'"{title}" book pipeline has been at stage {stage} '
-                    f'for {stuck_days} day{"s" if stuck_days != 1 else ""}. '
+                    f"for {stuck_days} day{'s' if stuck_days != 1 else ''}. "
                     f"Open the Work to advance it."
                 )
                 _, was_created = _upsert_nudge(
@@ -340,6 +347,7 @@ def _check_one_work(db: OrivellumDB, work: dict) -> tuple[int, int]:
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
+
 
 def run_custodian(db: OrivellumDB) -> dict:
     """Check all Works for staleness signals; write new nudges.
@@ -373,7 +381,9 @@ def run_custodian(db: OrivellumDB) -> dict:
 
     logger.info(
         "Custodian complete: %d new, %d skipped, %d pruned",
-        nudges_written, nudges_skipped, pruned,
+        nudges_written,
+        nudges_skipped,
+        pruned,
     )
     return {
         "status": "ok",

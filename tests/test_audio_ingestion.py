@@ -9,13 +9,12 @@ Covers:
 6. Extraction result with a successful Whisper mock → transcription stored
 7. Document detail GET /library/{doc_id}/download returns 200 for audio docs
 """
+
 from __future__ import annotations
 
 import io
 import os
 import sys
-import tempfile
-import struct
 import wave
 
 import pytest
@@ -25,23 +24,28 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 # ── 1. _KIND_MAP coverage ──────────────────────────────────────────────────────
 
+
 class TestKindMap:
     def test_all_audio_extensions_mapped(self):
         from orivellum.api.routes.library import _KIND_MAP
+
         for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac"):
             assert _KIND_MAP.get(ext) == "audio", f"{ext} should map to 'audio'"
 
     def test_audio_extensions_not_mapped_to_other_kinds(self):
         from orivellum.api.routes.library import _KIND_MAP
+
         for ext in (".mp3", ".wav", ".m4a", ".ogg", ".flac"):
             assert _KIND_MAP[ext] == "audio"
 
 
 # ── 2. MIME signature coverage ─────────────────────────────────────────────────
 
+
 class TestMimeSignatures:
     def test_all_audio_extensions_have_signatures(self):
         from orivellum.api.routes.library import _MIME_SIGNATURES
+
         covered = set()
         for exts, _sig, _offset in _MIME_SIGNATURES:
             covered.update(exts)
@@ -50,6 +54,7 @@ class TestMimeSignatures:
 
     def test_flac_signature_is_fLaC(self):
         from orivellum.api.routes.library import _MIME_SIGNATURES
+
         for exts, sig, _offset in _MIME_SIGNATURES:
             if ".flac" in exts:
                 assert sig == b"fLaC"
@@ -59,6 +64,7 @@ class TestMimeSignatures:
     def test_wav_magic_validated(self, tmp_path):
         """A file starting with RIFF passes .wav MIME validation."""
         from orivellum.api.routes.library import _validate_mime_signature
+
         f = tmp_path / "test.wav"
         f.write_bytes(b"RIFF" + b"\x00" * 28)  # minimal WAV header
         _validate_mime_signature(f, "test.wav")  # must not raise
@@ -66,6 +72,7 @@ class TestMimeSignatures:
     def test_flac_magic_validated(self, tmp_path):
         """A file starting with fLaC passes .flac MIME validation."""
         from orivellum.api.routes.library import _validate_mime_signature
+
         f = tmp_path / "test.flac"
         f.write_bytes(b"fLaC" + b"\x00" * 28)
         _validate_mime_signature(f, "test.flac")  # must not raise
@@ -73,7 +80,9 @@ class TestMimeSignatures:
     def test_wrong_magic_rejected(self, tmp_path):
         """A file with wrong magic bytes raises 415."""
         from fastapi import HTTPException
+
         from orivellum.api.routes.library import _validate_mime_signature
+
         f = tmp_path / "test.flac"
         f.write_bytes(b"%PDF-1.4" + b"\x00" * 24)  # PDF magic, claimed as FLAC
         with pytest.raises(HTTPException) as exc_info:
@@ -83,11 +92,13 @@ class TestMimeSignatures:
 
 # ── 3. Pipeline transcribing status ───────────────────────────────────────────
 
+
 class TestTranscribingStatus:
     """Verifies pipeline.py sets readiness='transcribing' before extraction."""
 
     def _make_db(self, tmp_path):
         from orivellum.database.db import OrivellumDB
+
         db = OrivellumDB(str(tmp_path / "test.db"))
         return db
 
@@ -127,6 +138,7 @@ class TestTranscribingStatus:
             statuses_seen.append(row.get("readiness", "unknown"))
             # Return a valid ExtractionResult (no AI server needed)
             from orivellum.capabilities.extraction import ExtractionResult
+
             return ExtractionResult(
                 kind="audio",
                 full_text="[Audio transcript: lecture.wav]\n\nHello world.",
@@ -136,6 +148,7 @@ class TestTranscribingStatus:
             )
 
         import orivellum.capabilities.pipeline as _pipeline
+
         original = _pipeline.extract
         _pipeline.extract = _capture_status
         try:
@@ -172,12 +185,14 @@ class TestTranscribingStatus:
         statuses_seen: list[str] = []
 
         import orivellum.capabilities.pipeline as _pipeline
+
         original = _pipeline.extract
 
         def _capture_pdf(path, kind, db=None):
             row = db.get_document(doc_id)
             statuses_seen.append(row.get("readiness", "unknown"))
             from orivellum.capabilities.extraction import ExtractionResult
+
             return ExtractionResult(kind="pdf", full_text="Report text.", word_count=2, pages=[])
 
         _pipeline.extract = _capture_pdf
@@ -200,15 +215,19 @@ class TestTranscribingStatus:
 
 # ── 4. Extraction: no AI server → metadata-only result ────────────────────────
 
+
 class TestAudioExtraction:
     def test_extract_audio_returns_ok_result_when_no_server(self, tmp_path):
         """_extract_audio must return a non-error ExtractionResult even without an AI server."""
         from orivellum.capabilities.extraction import ExtractionResult, extract
+
         wav_path = tmp_path / "silence.wav"
         # Create a valid minimal WAV
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(8000)
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
             wf.writeframes(b"\x00" * 16000)
         wav_path.write_bytes(buf.getvalue())
 
@@ -222,13 +241,16 @@ class TestAudioExtraction:
     def test_extract_audio_marks_no_server_gracefully(self, tmp_path):
         """When base_url is empty/unavailable, result still returns a valid ExtractionResult."""
         from orivellum.capabilities.extraction import ExtractionResult, extract
+
         # extraction.py imports orivellum.config inside a try/except; if the module
         # doesn't exist the base_url stays "" and it returns _metadata_only().
         # Just verify the result contract without needing to override config.
         wav_path = tmp_path / "test.wav"
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(8000)
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
             wf.writeframes(b"\x00" * 8000)
         wav_path.write_bytes(buf.getvalue())
         result = extract(wav_path, "audio")
@@ -243,24 +265,32 @@ class TestAudioExtraction:
         Uses the real configuration path (orivellum.api._deps.get_config) that
         _extract_audio() actually calls in production.
         """
-        import urllib.request
         import json as _json
-        from orivellum.capabilities.extraction import ExtractionResult
+        import urllib.request
+
         import orivellum.capabilities.extraction as _ext
-        from orivellum.configuration.config import OrivellumConfig, ServingConfig
         from orivellum.api import _deps
+        from orivellum.capabilities.extraction import ExtractionResult
+        from orivellum.configuration.config import OrivellumConfig, ServingConfig
 
         wav_path = tmp_path / "interview.wav"
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(8000)
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
             wf.writeframes(b"\x00" * 8000)
         wav_path.write_bytes(buf.getvalue())
 
         class _MockResponse:
-            def read(self): return _json.dumps({"text": "This is a mock transcript."}).encode()
-            def __enter__(self): return self
-            def __exit__(self, *_): pass
+            def read(self):
+                return _json.dumps({"text": "This is a mock transcript."}).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
 
         original_urlopen = urllib.request.urlopen
         orig_get_cfg = _deps.get_config
@@ -288,14 +318,16 @@ class TestAudioExtraction:
 
 # ── 5. Document download endpoint ─────────────────────────────────────────────
 
+
 class TestDownloadEndpoint:
     def test_audio_doc_download_returns_200(self, tmp_path):
         """GET /api/library/{doc_id}/download returns 200 with correct MIME type."""
         from fastapi.testclient import TestClient
-        from orivellum.database.db import OrivellumDB
-        from orivellum.configuration.config import OrivellumConfig
+
         from orivellum.api import _deps
         from orivellum.api.app import app
+        from orivellum.configuration.config import OrivellumConfig
+        from orivellum.database.db import OrivellumDB
         from tests.conftest import AUTH_HEADERS
 
         data_dir = str(tmp_path)
@@ -305,7 +337,9 @@ class TestDownloadEndpoint:
         wav_path = lib_dir / "lecture.wav"
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(8000)
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
             wf.writeframes(b"\x00" * 8000)
         wav_path.write_bytes(buf.getvalue())
 

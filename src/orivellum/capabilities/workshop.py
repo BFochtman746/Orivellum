@@ -7,6 +7,7 @@ Pipeline:
 
 Supports: xlsx, docx, pdf, pptx
 """
+
 from __future__ import annotations
 
 import json
@@ -34,13 +35,13 @@ ALLOWED_FORMATS = {"xlsx", "docx", "pdf", "pptx"}
 _FORMAT_LABELS = {
     "xlsx": "Excel Workbook",
     "docx": "Word Document",
-    "pdf":  "PDF Report",
+    "pdf": "PDF Report",
     "pptx": "PowerPoint Presentation",
 }
 _FORMAT_PACKAGES = {
     "xlsx": "openpyxl",
     "docx": "python-docx (import as `from docx import Document`)",
-    "pdf":  "reportlab (from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table; from reportlab.lib import colors; from reportlab.lib.styles import getSampleStyleSheet)",
+    "pdf": "reportlab (from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table; from reportlab.lib import colors; from reportlab.lib.styles import getSampleStyleSheet)",
     "pptx": "python-pptx (from pptx import Presentation; from pptx.util import Inches, Pt; from pptx.dml.color import RGBColor)",
 }
 
@@ -139,6 +140,7 @@ Return JSON only:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+
 def plan_document(
     request: str,
     format_hint: str | None,
@@ -157,7 +159,7 @@ def plan_document(
     if work_id:
         work = db.get_work(work_id)
         if work:
-            work_ctx = f"\nWork context: \"{work.get('title', '')}\" — {(work.get('description') or '')[:200]}"
+            work_ctx = f'\nWork context: "{work.get("title", "")}" — {(work.get("description") or "")[:200]}'
 
     user_msg = f"Request: {request.strip()}"
     if format_hint and format_hint in ALLOWED_FORMATS:
@@ -168,10 +170,14 @@ def plan_document(
     result = llm_call(
         [
             {"role": "system", "content": _PLAN_SYSTEM},
-            {"role": "user",   "content": user_msg},
+            {"role": "user", "content": user_msg},
         ],
-        cfg=cfg, db=db, purpose="workshop.plan",
-        temperature=0.3, max_tokens=1200, timeout=45,
+        cfg=cfg,
+        db=db,
+        purpose="workshop.plan",
+        temperature=0.3,
+        max_tokens=1200,
+        timeout=45,
     )
 
     plan: dict[str, Any] = {}
@@ -197,16 +203,32 @@ def plan_document(
             "detected_format": format_hint or "docx",
             "detected_intent": request[:120],
             "questions": [
-                {"id": "q1", "question": "What is the primary audience for this document?",
-                 "type": "text", "hint": "e.g. executives, students, general public"},
-                {"id": "q2", "question": "What tone should the writing take?",
-                 "type": "choice", "options": ["Formal / Academic", "Professional / Business", "Conversational"],
-                 "hint": "Affects word choice and paragraph density"},
-                {"id": "q3", "question": "What sections or topics must be included?",
-                 "type": "text", "hint": "List them, one per line"},
-                {"id": "q4", "question": "Should charts or tables be included?",
-                 "type": "choice", "options": ["Yes — as many as useful", "Only if essential", "Text only"],
-                 "hint": "Visual elements add richness but require more data"},
+                {
+                    "id": "q1",
+                    "question": "What is the primary audience for this document?",
+                    "type": "text",
+                    "hint": "e.g. executives, students, general public",
+                },
+                {
+                    "id": "q2",
+                    "question": "What tone should the writing take?",
+                    "type": "choice",
+                    "options": ["Formal / Academic", "Professional / Business", "Conversational"],
+                    "hint": "Affects word choice and paragraph density",
+                },
+                {
+                    "id": "q3",
+                    "question": "What sections or topics must be included?",
+                    "type": "text",
+                    "hint": "List them, one per line",
+                },
+                {
+                    "id": "q4",
+                    "question": "Should charts or tables be included?",
+                    "type": "choice",
+                    "options": ["Yes — as many as useful", "Only if essential", "Text only"],
+                    "hint": "Visual elements add richness but require more data",
+                },
             ],
         }
 
@@ -227,8 +249,12 @@ def plan_document(
         "created_at": datetime.now(UTC).isoformat(),
     }
     _SESSIONS[session_id] = session
-    logger.info("Workshop plan created: session=%s format=%s q=%d",
-                session_id, detected, len(session["questions"]))
+    logger.info(
+        "Workshop plan created: session=%s format=%s q=%d",
+        session_id,
+        detected,
+        len(session["questions"]),
+    )
     return session
 
 
@@ -271,8 +297,7 @@ def execute_workshop(
             items = db.list_knowledge(work_id=work_id, limit=20)
             if items:
                 knowledge_ctx = "\n\nAvailable knowledge from the Work:\n" + "\n".join(
-                    f"- [{i.get('kind','fact')}] {(i.get('text') or '')[:200]}"
-                    for i in items[:20]
+                    f"- [{i.get('kind', 'fact')}] {(i.get('text') or '')[:200]}" for i in items[:20]
                 )
 
     # Build answers narrative
@@ -308,10 +333,14 @@ def execute_workshop(
     script_result = llm_call(
         [
             {"role": "system", "content": _CODEGEN_SYSTEM},
-            {"role": "user",   "content": codegen_user},
+            {"role": "user", "content": codegen_user},
         ],
-        cfg=cfg, db=db, purpose="workshop.codegen",
-        temperature=0.2, max_tokens=4000, timeout=90,
+        cfg=cfg,
+        db=db,
+        purpose="workshop.codegen",
+        temperature=0.2,
+        max_tokens=4000,
+        timeout=90,
     )
 
     if not script_result.ok or not script_result.text:
@@ -324,8 +353,9 @@ def execute_workshop(
     script = _clean_script(script_result.text)
 
     # ── Step 2: Execute with retry loop ───────────────────────────────────────
-    exec_result = _run_script_safely(script, output_path, max_retries=2,
-                                     cfg=cfg, db=db, request=codegen_user)
+    exec_result = _run_script_safely(
+        script, output_path, max_retries=2, cfg=cfg, db=db, request=codegen_user
+    )
     if not exec_result["ok"]:
         return {
             "ok": False,
@@ -353,14 +383,21 @@ def execute_workshop(
         answers_text=answers_text,
         script=script,
         exec_output=exec_result.get("stdout", ""),
-        cfg=cfg, db=db,
+        cfg=cfg,
+        db=db,
     )
 
     # ── Step 4: Register as library document ──────────────────────────────────
     from orivellum.capabilities.generate import _register_output
+
     title_out = f"Workshop — {request[:60]}"
     doc_id = _register_output(
-        final_path, work_id, db, cfg, f"workshop/{fmt}", title_out,
+        final_path,
+        work_id,
+        db,
+        cfg,
+        f"workshop/{fmt}",
+        title_out,
         text_content=f"Generated from: {request}\n{answers_text}",
     )
 
@@ -385,6 +422,7 @@ def execute_workshop(
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _clean_script(raw: str) -> str:
     """Strip markdown fences and leading/trailing whitespace from LLM output."""
@@ -441,7 +479,10 @@ def _sandbox_env(tmp: str) -> dict:
     """Minimal environment for the sandboxed script — never the parent's
     os.environ (which carries API keys and session secrets)."""
     env = {
-        "HOME": tmp, "TMPDIR": tmp, "TEMP": tmp, "TMP": tmp,
+        "HOME": tmp,
+        "TMPDIR": tmp,
+        "TEMP": tmp,
+        "TMP": tmp,
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
@@ -454,6 +495,7 @@ def _sandbox_env(tmp: str) -> dict:
 def _sandbox_preexec():
     """POSIX-only resource caps applied in the child before exec."""
     import resource
+
     resource.setrlimit(resource.RLIMIT_CPU, (60, 60))
     resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024,) * 2)
     resource.setrlimit(resource.RLIMIT_FSIZE, (100 * 1024 * 1024,) * 2)
@@ -486,7 +528,8 @@ def _run_script_safely(
             try:
                 result = subprocess.run(
                     [sys.executable, "-I", runner_path, script_path],
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                     timeout=60,
                     cwd=tmp,
                     env=_sandbox_env(tmp),
@@ -496,33 +539,48 @@ def _run_script_safely(
                 stderr = result.stderr[:3000]
 
                 if result.returncode == 0:
-                    return {"ok": True, "stdout": stdout, "stderr": stderr,
-                            "script": current_script}
+                    return {
+                        "ok": True,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "script": current_script,
+                    }
 
                 # ── Failure → LLM correction ───────────────────────────────
                 if attempt >= max_retries:
                     return {
                         "ok": False,
                         "error": f"Script failed after {attempt + 1} attempt(s):\n{stderr[-1000:]}",
-                        "stdout": stdout, "stderr": stderr,
+                        "stdout": stdout,
+                        "stderr": stderr,
                     }
 
                 logger.warning("Workshop script attempt %d failed: %s", attempt + 1, stderr[:400])
                 fix_result = llm_call(
                     [
-                        {"role": "system", "content": (
-                            "You are a Python debugging expert. A document-generation script failed. "
-                            "Fix ONLY the errors shown. Do not add new features. "
-                            "Return ONLY the corrected raw Python script."
-                        )},
-                        {"role": "user", "content": (
-                            f"Original request:\n{request[:500]}\n\n"
-                            f"Script that failed:\n```python\n{current_script}\n```\n\n"
-                            f"Error:\n{stderr[-2000:]}"
-                        )},
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a Python debugging expert. A document-generation script failed. "
+                                "Fix ONLY the errors shown. Do not add new features. "
+                                "Return ONLY the corrected raw Python script."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Original request:\n{request[:500]}\n\n"
+                                f"Script that failed:\n```python\n{current_script}\n```\n\n"
+                                f"Error:\n{stderr[-2000:]}"
+                            ),
+                        },
                     ],
-                    cfg=cfg, db=db, purpose="workshop.fix",
-                    temperature=0.1, max_tokens=4000, timeout=60,
+                    cfg=cfg,
+                    db=db,
+                    purpose="workshop.fix",
+                    temperature=0.1,
+                    max_tokens=4000,
+                    timeout=60,
                 )
                 if fix_result.ok and fix_result.text:
                     current_script = _clean_script(fix_result.text)
@@ -567,10 +625,14 @@ def _critique_output(
     result = llm_call(
         [
             {"role": "system", "content": critic_system},
-            {"role": "user",   "content": user_msg},
+            {"role": "user", "content": user_msg},
         ],
-        cfg=cfg, db=db, purpose="workshop.critique",
-        temperature=0.3, max_tokens=800, timeout=45,
+        cfg=cfg,
+        db=db,
+        purpose="workshop.critique",
+        temperature=0.3,
+        max_tokens=800,
+        timeout=45,
     )
 
     if not result.ok or not result.text:

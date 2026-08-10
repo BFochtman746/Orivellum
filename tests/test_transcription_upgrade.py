@@ -8,6 +8,7 @@ Covers:
 5. AI-server path requests verbose_json, parses timestamps, retries plain.
 6. GET/PATCH /system/settings/asr endpoints validate sizes.
 """
+
 from __future__ import annotations
 
 import io
@@ -25,22 +26,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 def _reset_fw_singleton():
     """Each test starts with a clean faster-whisper singleton."""
     import orivellum.capabilities.extraction as _ext
-    orig = (_ext._fw_instance, _ext._fw_loaded_size,
-            _ext._fw_requested_size, _ext._fw_fallback_reason)
+
+    orig = (
+        _ext._fw_instance,
+        _ext._fw_loaded_size,
+        _ext._fw_requested_size,
+        _ext._fw_fallback_reason,
+    )
     _ext._fw_instance = None
     _ext._fw_loaded_size = ""
     _ext._fw_requested_size = ""
     _ext._fw_fallback_reason = None
     yield
-    (_ext._fw_instance, _ext._fw_loaded_size,
-     _ext._fw_requested_size, _ext._fw_fallback_reason) = orig
+    (_ext._fw_instance, _ext._fw_loaded_size, _ext._fw_requested_size, _ext._fw_fallback_reason) = (
+        orig
+    )
 
 
 def _make_wav(tmp_path, name="test.wav"):
     p = tmp_path / name
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(8000)
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(8000)
         wf.writeframes(b"\x00" * 8000)
     p.write_bytes(buf.getvalue())
     return p
@@ -48,51 +57,61 @@ def _make_wav(tmp_path, name="test.wav"):
 
 # ── 1. Defaults + DB override precedence ──────────────────────────────────────
 
+
 class TestModelSizeResolution:
     def test_config_default_is_large_v3_turbo(self):
         from orivellum.configuration.config import ServingConfig
+
         assert ServingConfig().asr_local_model == "large-v3-turbo"
 
     def test_db_setting_overrides_config(self, tmp_path):
-        from orivellum.database.db import OrivellumDB
         from orivellum.capabilities.extraction import _resolve_asr_local_model
+        from orivellum.database.db import OrivellumDB
+
         db = OrivellumDB(str(tmp_path / "t.db"))
         assert _resolve_asr_local_model(db, "large-v3-turbo") == "large-v3-turbo"
         db.set_setting("asr_local_model", "small", actor="test")
         assert _resolve_asr_local_model(db, "large-v3-turbo") == "small"
 
     def test_invalid_db_setting_ignored(self, tmp_path):
-        from orivellum.database.db import OrivellumDB
         from orivellum.capabilities.extraction import _resolve_asr_local_model
+        from orivellum.database.db import OrivellumDB
+
         db = OrivellumDB(str(tmp_path / "t.db"))
         db.set_setting("asr_local_model", "gigantic-v9", actor="test")
         assert _resolve_asr_local_model(db, "base") == "base"
 
     def test_no_db_falls_back_to_config(self):
         from orivellum.capabilities.extraction import _resolve_asr_local_model
+
         assert _resolve_asr_local_model(None, "medium") == "medium"
 
 
 # ── 2. Low-memory guard ────────────────────────────────────────────────────────
 
+
 class TestLowMemoryFallback:
     def test_heavy_model_falls_back_when_ram_low(self, monkeypatch):
-        import orivellum.capabilities.extraction as _ext
         import psutil
+
+        import orivellum.capabilities.extraction as _ext
 
         class _VM:  # 2 GB available — below the 6 GB threshold
             available = 2 * 1024**3
+
         monkeypatch.setattr(psutil, "virtual_memory", lambda: _VM())
         size, reason = _ext._fw_effective_size("large-v3-turbo")
         assert size == "base"
         assert reason and "large-v3-turbo" in reason
 
     def test_heavy_model_kept_when_ram_plenty(self, monkeypatch):
-        import orivellum.capabilities.extraction as _ext
         import psutil
+
+        import orivellum.capabilities.extraction as _ext
 
         class _VM:
             available = 64 * 1024**3
+
         monkeypatch.setattr(psutil, "virtual_memory", lambda: _VM())
         assert _ext._fw_effective_size("large-v3-turbo") == ("large-v3-turbo", None)
 
@@ -101,12 +120,15 @@ class TestLowMemoryFallback:
 
         def _boom():  # psutil must not even be consulted for light models
             raise AssertionError("virtual_memory should not be called")
+
         import psutil
+
         monkeypatch.setattr(psutil, "virtual_memory", _boom)
         assert _ext._fw_effective_size("base") == ("base", None)
 
 
 # ── 3. Load-failure fallback + reload on size change ─────────────────────────
+
 
 class _FakeModel:
     def __init__(self, size):
@@ -115,8 +137,9 @@ class _FakeModel:
 
 class TestLoaderFallback:
     def test_heavy_load_failure_retries_base(self, monkeypatch):
-        import orivellum.capabilities.extraction as _ext
         import faster_whisper
+
+        import orivellum.capabilities.extraction as _ext
 
         calls = []
 
@@ -132,6 +155,7 @@ class TestLoaderFallback:
 
         class _VM:
             available = 64 * 1024**3
+
         monkeypatch.setattr(psutil, "virtual_memory", lambda: _VM())
 
         model, loaded, reason = _ext._get_faster_whisper_snapshot("large-v3-turbo")
@@ -154,8 +178,9 @@ class TestLoaderFallback:
         assert calls == ["large-v3-turbo", "base"]
 
     def test_reload_when_size_changes(self, monkeypatch):
-        import orivellum.capabilities.extraction as _ext
         import faster_whisper
+
+        import orivellum.capabilities.extraction as _ext
 
         calls = []
 
@@ -165,7 +190,7 @@ class TestLoaderFallback:
 
         monkeypatch.setattr(faster_whisper, "WhisperModel", _wm)
         m1 = _ext._get_faster_whisper("base")
-        m2 = _ext._get_faster_whisper("base")   # cached — no reload
+        m2 = _ext._get_faster_whisper("base")  # cached — no reload
         assert m1 is m2 and calls == ["base"]
         m3 = _ext._get_faster_whisper("small")  # size change — reload
         assert m3.size == "small"
@@ -186,16 +211,15 @@ class TestLoaderFallback:
                 _ext._fw_fallback_reason = "someone else's reason"
                 return iter(segs), _FakeInfo()
 
-        monkeypatch.setattr(
-            _ext, "_get_faster_whisper_snapshot",
-            lambda size: (_M(), "base", None))
+        monkeypatch.setattr(_ext, "_get_faster_whisper_snapshot", lambda size: (_M(), "base", None))
         res = _ext._transcribe_faster_whisper(_make_wav(tmp_path), "base")
         assert res.meta["model_size"] == "base"
         assert "model_fallback_reason" not in res.meta
 
     def test_total_failure_returns_none_and_does_not_thrash(self, monkeypatch):
-        import orivellum.capabilities.extraction as _ext
         import faster_whisper
+
+        import orivellum.capabilities.extraction as _ext
 
         calls = []
 
@@ -214,6 +238,7 @@ class TestLoaderFallback:
 
 
 # ── 4. Timestamps stored in meta (local path) ─────────────────────────────────
+
 
 class _FakeWord:
     def __init__(self, start, end, word):
@@ -235,10 +260,18 @@ class TestLocalTimestamps:
         import orivellum.capabilities.extraction as _ext
 
         segs = [
-            _FakeSeg(0.0, 1.6, " Hello there.",
-                     [_FakeWord(0.0, 0.8, " Hello"), _FakeWord(0.9, 1.6, " there.")]),
-            _FakeSeg(1.7, 3.5, " General Kenobi.",
-                     [_FakeWord(1.7, 2.6, " General"), _FakeWord(2.7, 3.5, " Kenobi.")]),
+            _FakeSeg(
+                0.0,
+                1.6,
+                " Hello there.",
+                [_FakeWord(0.0, 0.8, " Hello"), _FakeWord(0.9, 1.6, " there.")],
+            ),
+            _FakeSeg(
+                1.7,
+                3.5,
+                " General Kenobi.",
+                [_FakeWord(1.7, 2.6, " General"), _FakeWord(2.7, 3.5, " Kenobi.")],
+            ),
         ]
 
         class _M:
@@ -246,8 +279,9 @@ class TestLocalTimestamps:
                 assert word_timestamps is True
                 return iter(segs), _FakeInfo()
 
-        monkeypatch.setattr(_ext, "_get_faster_whisper_snapshot",
-                            lambda size: (_M(), "large-v3-turbo", None))
+        monkeypatch.setattr(
+            _ext, "_get_faster_whisper_snapshot", lambda size: (_M(), "large-v3-turbo", None)
+        )
         wav = _make_wav(tmp_path)
         res = _ext._transcribe_faster_whisper(wav, "large-v3-turbo")
         assert res is not None
@@ -264,17 +298,16 @@ class TestLocalTimestamps:
 
     def test_word_cap_sets_truncated_flag(self, tmp_path, monkeypatch):
         import orivellum.capabilities.extraction as _ext
+
         monkeypatch.setattr(_ext, "_FW_MAX_WORDS_META", 3)
 
-        segs = [_FakeSeg(0, 5, " a b c d e",
-                         [_FakeWord(i, i + 1, f" w{i}") for i in range(5)])]
+        segs = [_FakeSeg(0, 5, " a b c d e", [_FakeWord(i, i + 1, f" w{i}") for i in range(5)])]
 
         class _M:
             def transcribe(self, path, word_timestamps=False):
                 return iter(segs), _FakeInfo()
 
-        monkeypatch.setattr(_ext, "_get_faster_whisper_snapshot",
-                            lambda size: (_M(), "base", None))
+        monkeypatch.setattr(_ext, "_get_faster_whisper_snapshot", lambda size: (_M(), "base", None))
         res = _ext._transcribe_faster_whisper(_make_wav(tmp_path), "base")
         assert res is not None
         assert len(res.meta["words"]) == 3
@@ -283,13 +316,15 @@ class TestLocalTimestamps:
 
 # ── 5. AI-server path: verbose_json + fallback ────────────────────────────────
 
+
 class TestAiServerTimestamps:
     def _run_extract(self, tmp_path, responses):
         """responses: list of callables(req) -> dict or raising."""
         import urllib.request
+
         import orivellum.capabilities.extraction as _ext
-        from orivellum.configuration.config import OrivellumConfig, ServingConfig
         from orivellum.api import _deps
+        from orivellum.configuration.config import OrivellumConfig, ServingConfig
 
         wav = _make_wav(tmp_path, "note.wav")
         calls = []
@@ -297,10 +332,13 @@ class TestAiServerTimestamps:
         class _Resp:
             def __init__(self, payload):
                 self._payload = payload
+
             def read(self):
                 return _json.dumps(self._payload).encode()
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *_):
                 pass
 
@@ -353,8 +391,7 @@ class TestAiServerTimestamps:
         def _reject(req):
             raise RuntimeError("400 unknown field response_format")
 
-        res, calls = self._run_extract(
-            tmp_path, [_reject, lambda req: {"text": "Plain works."}])
+        res, calls = self._run_extract(tmp_path, [_reject, lambda req: {"text": "Plain works."}])
         assert res.meta["transcription"] == "ai_server"
         assert "Plain works." in res.full_text
         assert len(calls) == 2
@@ -363,14 +400,16 @@ class TestAiServerTimestamps:
 
 # ── 6. Settings endpoints ─────────────────────────────────────────────────────
 
+
 class TestAsrSettingsEndpoints:
     @pytest.fixture()
     def client(self, tmp_path):
         from fastapi.testclient import TestClient
-        from orivellum.database.db import OrivellumDB
-        from orivellum.configuration.config import OrivellumConfig
+
         from orivellum.api import _deps
         from orivellum.api.app import app
+        from orivellum.configuration.config import OrivellumConfig
+        from orivellum.database.db import OrivellumDB
         from tests.conftest import AUTH_HEADERS
 
         db = OrivellumDB(str(tmp_path / "t.db"))

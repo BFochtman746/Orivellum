@@ -13,6 +13,7 @@ topics that already have a profile are skipped unless ``force=True``.
 
 Gate: requires ``ai_extraction_enabled=true``.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,13 +28,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("orivellum.topic_profile")
 
-_MAX_TOPICS_PER_RUN = 20      # cap so a single pass is bounded
-_EXCERPT_CHUNKS     = 10      # chunks to sample per topic
-_EXCERPT_CHARS      = 300     # max chars per chunk excerpt in the prompt
-_LLM_TIMEOUT        = 45      # seconds per LLM call
+_MAX_TOPICS_PER_RUN = 20  # cap so a single pass is bounded
+_EXCERPT_CHUNKS = 10  # chunks to sample per topic
+_EXCERPT_CHARS = 300  # max chars per chunk excerpt in the prompt
+_LLM_TIMEOUT = 45  # seconds per LLM call
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
+
 
 def _topics_needing_profiles(db: OrivellumDB, limit: int, force: bool) -> list[dict]:
     """Return topics that have no profile row (or all topics if force=True)."""
@@ -94,8 +96,7 @@ def _upsert_profile(
                    connected    = excluded.connected,
                    gaps         = excluded.gaps,
                    generated_at = excluded.generated_at""",
-            (topic_id, what_it_is, purpose,
-             json.dumps(connected), json.dumps(gaps), now),
+            (topic_id, what_it_is, purpose, json.dumps(connected), json.dumps(gaps), now),
         )
         db._conn.commit()
 
@@ -116,7 +117,7 @@ def _parse_llm_json(text: str) -> dict:
             pass
     # Try bare JSON anywhere in the text
     start = text.find("{")
-    end   = text.rfind("}") + 1
+    end = text.rfind("}") + 1
     if start != -1 and end > start:
         try:
             return json.loads(text[start:end])
@@ -127,8 +128,7 @@ def _parse_llm_json(text: str) -> dict:
 
 def _build_prompt(topic_name: str, excerpts: list[str]) -> list[dict]:
     excerpt_block = "\n\n".join(
-        f"[Excerpt {i + 1}]\n{e[:_EXCERPT_CHARS]}"
-        for i, e in enumerate(excerpts)
+        f"[Excerpt {i + 1}]\n{e[:_EXCERPT_CHARS]}" for i, e in enumerate(excerpts)
     )
     system = (
         "You are a librarian helping users understand clusters of related documents. "
@@ -150,6 +150,7 @@ def _build_prompt(topic_name: str, excerpts: list[str]) -> list[dict]:
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
+
 
 def generate_topic_profiles(
     db: OrivellumDB,
@@ -187,7 +188,7 @@ def generate_topic_profiles(
         return {"generated": 0, "skipped": 0, "errors": 0}
 
     for topic in topics:
-        topic_id   = topic["id"]
+        topic_id = topic["id"]
         topic_name = topic["name"]
 
         excerpts = _sample_chunks(db, topic_id, _EXCERPT_CHUNKS)
@@ -197,7 +198,7 @@ def generate_topic_profiles(
             continue
 
         messages = _build_prompt(topic_name, excerpts)
-        result   = llm_call(
+        result = llm_call(
             messages,
             cfg=cfg,
             db=db,
@@ -210,21 +211,23 @@ def generate_topic_profiles(
         if not result.ok or not result.text:
             logger.warning(
                 "topic_profile: LLM call failed for topic %s: %s",
-                topic_id[:8], result.error,
+                topic_id[:8],
+                result.error,
             )
             errors += 1
             continue
 
         parsed = _parse_llm_json(result.text)
         what_it_is = str(parsed.get("what_it_is") or "").strip()[:400]
-        purpose    = str(parsed.get("purpose")    or "").strip()[:400]
-        connected  = [str(x)[:100] for x in (parsed.get("connected") or []) if x][:3]
-        gaps       = [str(x)[:100] for x in (parsed.get("gaps")      or []) if x][:3]
+        purpose = str(parsed.get("purpose") or "").strip()[:400]
+        connected = [str(x)[:100] for x in (parsed.get("connected") or []) if x][:3]
+        gaps = [str(x)[:100] for x in (parsed.get("gaps") or []) if x][:3]
 
         if not what_it_is:
             logger.warning(
                 "topic_profile: empty what_it_is from LLM for topic %s — raw: %r",
-                topic_id[:8], result.text[:200],
+                topic_id[:8],
+                result.text[:200],
             )
             errors += 1
             continue
@@ -234,7 +237,8 @@ def generate_topic_profiles(
             generated += 1
             logger.info(
                 "topic_profile: generated profile for '%s': %s",
-                topic_name[:40], what_it_is[:60],
+                topic_name[:40],
+                what_it_is[:60],
             )
         except Exception as exc:
             logger.warning("topic_profile: DB write failed for %s: %s", topic_id[:8], exc)
@@ -242,6 +246,8 @@ def generate_topic_profiles(
 
     logger.info(
         "topic_profile complete: generated=%d skipped=%d errors=%d",
-        generated, skipped, errors,
+        generated,
+        skipped,
+        errors,
     )
     return {"generated": generated, "skipped": skipped, "errors": errors}

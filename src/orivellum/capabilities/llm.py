@@ -12,6 +12,7 @@ The streaming chat path in the conversations route keeps its own request
 loop (it must forward SSE chunks) but records telemetry via
 ``record_llm_call()`` when the stream ends.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,6 +26,7 @@ logger = logging.getLogger("orivellum.llm")
 @dataclass
 class LLMResult:
     """Outcome of a gateway call.  ``text is None`` iff the call failed."""
+
     text: str | None
     ok: bool
     model: str
@@ -76,11 +78,18 @@ def record_llm_call(
                 "INSERT INTO llm_calls (purpose, model, latency_ms, prompt_tokens,"
                 " completion_tokens, ok, error, ttft_ms, tok_per_s, streamed)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (purpose, model, latency_ms, prompt_tokens, completion_tokens,
-                 1 if ok else 0, (error or None),
-                 round(ttft_ms, 1) if ttft_ms is not None else None,
-                 round(tok_per_s, 2) if tok_per_s is not None else None,
-                 1 if streamed else 0),
+                (
+                    purpose,
+                    model,
+                    latency_ms,
+                    prompt_tokens,
+                    completion_tokens,
+                    1 if ok else 0,
+                    (error or None),
+                    round(ttft_ms, 1) if ttft_ms is not None else None,
+                    round(tok_per_s, 2) if tok_per_s is not None else None,
+                    1 if streamed else 0,
+                ),
             )
             db._conn.commit()
     except Exception as exc:  # pragma: no cover — telemetry must never break callers
@@ -111,8 +120,14 @@ def llm_call(
     if not base_url or not model:
         err = "missing base_url/model"
         record_llm_call(
-            db, purpose=purpose, model=model or "", latency_ms=0,
-            prompt_tokens=None, completion_tokens=None, ok=False, error=err,
+            db,
+            purpose=purpose,
+            model=model or "",
+            latency_ms=0,
+            prompt_tokens=None,
+            completion_tokens=None,
+            ok=False,
+            error=err,
         )
         return LLMResult(None, False, model or "", 0, error=err)
 
@@ -131,6 +146,7 @@ def llm_call(
     err: str | None = None
     try:
         import httpx
+
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(f"{base_url}/chat/completions", json=payload)
             resp.raise_for_status()
@@ -150,14 +166,25 @@ def llm_call(
     # Non-streaming decode rate: completion tokens over total wall clock.
     # This under-reports the true decode rate (prompt processing is included)
     # but is directionally useful; streaming calls record the precise rate.
-    _tps = (
-        c_tok / (latency_ms / 1000.0)
-        if ok and c_tok and latency_ms > 0 else None
-    )
+    _tps = c_tok / (latency_ms / 1000.0) if ok and c_tok and latency_ms > 0 else None
     record_llm_call(
-        db, purpose=purpose, model=model, latency_ms=latency_ms,
-        prompt_tokens=p_tok, completion_tokens=c_tok, ok=ok, error=err,
+        db,
+        purpose=purpose,
+        model=model,
+        latency_ms=latency_ms,
+        prompt_tokens=p_tok,
+        completion_tokens=c_tok,
+        ok=ok,
+        error=err,
         tok_per_s=_tps,
     )
-    return LLMResult(text, ok, model, latency_ms, p_tok, c_tok, err,
-                     finish_reason=finish_reason if err is None else None)
+    return LLMResult(
+        text,
+        ok,
+        model,
+        latency_ms,
+        p_tok,
+        c_tok,
+        err,
+        finish_reason=finish_reason if err is None else None,
+    )

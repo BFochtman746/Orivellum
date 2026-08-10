@@ -12,6 +12,7 @@ Generation runs as a background job (sidecar renders can take minutes on
 GPU); finished audio lands in the Studio outputs directory and is
 registered as a searchable library document, exactly like TTS clips.
 """
+
 from __future__ import annotations
 
 import logging
@@ -101,6 +102,7 @@ def _music_gen_url(cfg) -> str:
 
 # ── Status ────────────────────────────────────────────────────────────────────
 
+
 @router.get("/studio/music/status")
 def music_status():
     """Sidecar reachability + per-model availability and license state.
@@ -118,6 +120,7 @@ def music_status():
     if url:
         try:
             import httpx
+
             resp = httpx.get(f"{url}/health", timeout=3)
             resp.raise_for_status()
             data = resp.json()
@@ -130,13 +133,15 @@ def music_status():
     models = []
     for mid, spec in MUSIC_MODELS.items():
         side = sidecar_models.get(mid, {}) if isinstance(sidecar_models, dict) else {}
-        models.append({
-            **spec,
-            "license_acked": _license_acked(db, mid),
-            "installed": bool(side.get("installed", False)),
-            "loaded": bool(side.get("loaded", False)),
-            "load_error": side.get("load_error"),
-        })
+        models.append(
+            {
+                **spec,
+                "license_acked": _license_acked(db, mid),
+                "installed": bool(side.get("installed", False)),
+                "loaded": bool(side.get("loaded", False)),
+                "load_error": side.get("load_error"),
+            }
+        )
 
     return {
         "configured": bool(url),
@@ -148,6 +153,7 @@ def music_status():
 
 # ── License acknowledgement ───────────────────────────────────────────────────
 
+
 class LicenseAckBody(BaseModel):
     accepted: bool
 
@@ -158,25 +164,26 @@ def acknowledge_music_license(model_id: str, body: LicenseAckBody):
     if model_id not in MUSIC_MODELS:
         raise HTTPException(404, f"Unknown music model {model_id!r}")
     db = get_db()
-    db.set_setting(_ACK_KEY_PREFIX + model_id,
-                   "true" if body.accepted else "false", actor="user")
+    db.set_setting(_ACK_KEY_PREFIX + model_id, "true" if body.accepted else "false", actor="user")
     return {"model": model_id, "license_acked": body.accepted}
 
 
 # ── Generation ────────────────────────────────────────────────────────────────
 
+
 class GenerateBody(BaseModel):
     prompt: str
     model: str = "stable_audio_open"
-    kind: str = "music"          # "music" | "sfx"
+    kind: str = "music"  # "music" | "sfx"
     duration_s: float = 30.0
     negative_prompt: str = ""
-    title: str = ""              # optional label for the library registration
-    work_id: str | None = None   # link the output to a Work
+    title: str = ""  # optional label for the library registration
+    work_id: str | None = None  # link the output to a Work
 
 
 def _run_music_job(job_id: str, body: GenerateBody, url: str, cfg) -> None:
     """Background worker: call the sidecar, store + register the audio."""
+
     def _fail(msg: str) -> None:
         with _jobs_lock:
             job = _jobs.get(job_id)
@@ -185,6 +192,7 @@ def _run_music_job(job_id: str, body: GenerateBody, url: str, cfg) -> None:
 
     try:
         import httpx
+
         resp = httpx.post(
             f"{url}/v1/music",
             json={
@@ -220,9 +228,9 @@ def _run_music_job(job_id: str, body: GenerateBody, url: str, cfg) -> None:
 
         # Register into the library BEFORE rotation (same order as TTS clips).
         from orivellum.api.routes.studio import _link_output_sync, _rotate_outputs
+
         title = body.title.strip() or (
-            ("Sound effect — " if body.kind == "sfx" else "Trailer music — ")
-            + body.prompt[:80]
+            ("Sound effect — " if body.kind == "sfx" else "Trailer music — ") + body.prompt[:80]
         )
         prelinked = _link_output_sync(out_path)
         _rotate_outputs(out_dir)
@@ -234,6 +242,7 @@ def _run_music_job(job_id: str, body: GenerateBody, url: str, cfg) -> None:
         warning: str | None = None
         try:
             from orivellum.capabilities.persist import register_and_index
+
             register_and_index(
                 doc_path=out_path,
                 text_content=body.prompt,
@@ -309,7 +318,8 @@ def generate_music(body: GenerateBody):
         cap = min(cap, _SFX_MAX_DURATION_S)
     if not (0.5 <= float(body.duration_s) <= cap):
         raise HTTPException(
-            422, f"duration_s must be between 0.5 and {cap:g} seconds for this request",
+            422,
+            f"duration_s must be between 0.5 and {cap:g} seconds for this request",
         )
 
     if not _license_acked(db, body.model):
@@ -335,8 +345,10 @@ def generate_music(body: GenerateBody):
         _prune_jobs_locked()
 
     from orivellum.api.executor import submit_bg
-    submit_bg(_run_music_job, job_id, body, url, cfg,
-              kind="studio", label=f"music_gen:{job_id[:8]}")
+
+    submit_bg(
+        _run_music_job, job_id, body, url, cfg, kind="studio", label=f"music_gen:{job_id[:8]}"
+    )
     return {"job_id": job_id, "state": "running"}
 
 

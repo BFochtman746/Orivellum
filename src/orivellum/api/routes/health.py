@@ -1,4 +1,5 @@
 """Health, version, and diagnostics endpoints."""
+
 from __future__ import annotations
 
 import platform
@@ -62,6 +63,7 @@ def diagnostics():
     cfg = get_config()
     mem = psutil.virtual_memory()
     import sys as _sys
+
     _disk_path = "C:\\" if _sys.platform == "win32" else "/"
     disk = psutil.disk_usage(_disk_path)
     return {

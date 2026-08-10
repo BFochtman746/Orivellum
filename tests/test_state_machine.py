@@ -12,30 +12,36 @@ Also covers:
   - backward (return) transitions that bypass blocker check
   - apply_transition is atomic (no partial writes on failure)
 """
+
 from __future__ import annotations
 
-import os
-import sqlite3
-import tempfile
 import uuid
 
 import pytest
 
 from orivellum.capabilities.enums import (
-    BookState, DocumentLifecycle, DocumentReadiness,
-    FindingSeverity, FindingState, JobState, MessageState,
+    BookState,
+    DocumentLifecycle,
+    DocumentReadiness,
+    FindingState,
+    JobState,
+    MessageState,
 )
 from orivellum.capabilities.state_machine import (
-    BOOK_SM, JOB_SM, MESSAGE_SM,
-    BlockedTransitionError, InvalidTransitionError,
-    StateMachine, apply_transition,
+    BOOK_SM,
+    JOB_SM,
+    MESSAGE_SM,
+    BlockedTransitionError,
+    InvalidTransitionError,
+    StateMachine,
+    apply_transition,
 )
 from orivellum.database.db import OrivellumDB
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def db(tmp_path):
@@ -82,9 +88,7 @@ def _make_job(db: OrivellumDB, state: str = "queued") -> str:
 
 def _get_state(db: OrivellumDB, table: str, col: str, obj_id: str) -> str:
     with db._lock:
-        row = db._conn.execute(
-            f"SELECT {col} FROM {table} WHERE id=?", (obj_id,)
-        ).fetchone()
+        row = db._conn.execute(f"SELECT {col} FROM {table} WHERE id=?", (obj_id,)).fetchone()
     assert row is not None, f"{table} row {obj_id!r} not found"
     return row[0]
 
@@ -92,6 +96,7 @@ def _get_state(db: OrivellumDB, table: str, col: str, obj_id: str) -> str:
 # ---------------------------------------------------------------------------
 # 1 — Enum completeness
 # ---------------------------------------------------------------------------
+
 
 class TestEnums:
     def test_message_states_complete(self):
@@ -131,13 +136,16 @@ class TestEnums:
 # 2 — StateMachine graph validation (pure, no DB)
 # ---------------------------------------------------------------------------
 
+
 class TestStateMachineGraph:
     def _sm(self):
-        return StateMachine({
-            "a": {"b", "c"},
-            "b": {"d"},
-            # c and d are terminal
-        })
+        return StateMachine(
+            {
+                "a": {"b", "c"},
+                "b": {"d"},
+                # c and d are terminal
+            }
+        )
 
     def test_can_transition_true(self):
         sm = self._sm()
@@ -153,7 +161,7 @@ class TestStateMachineGraph:
     def test_allowed_from_returns_correct_set(self):
         sm = self._sm()
         assert sm.allowed_from("a") == frozenset({"b", "c"})
-        assert sm.allowed_from("d") == frozenset()      # terminal
+        assert sm.allowed_from("d") == frozenset()  # terminal
 
     # ── AC-1: undeclared transition is refused ───────────────────────────────
 
@@ -201,16 +209,17 @@ class TestStateMachineGraph:
 # 3 — Pre-built state machines
 # ---------------------------------------------------------------------------
 
+
 class TestBuiltInMachines:
     def test_message_sm_happy_path(self):
         sm = MESSAGE_SM
-        sm.assert_transition("queued",    "running")
-        sm.assert_transition("running",   "streaming")
+        sm.assert_transition("queued", "running")
+        sm.assert_transition("running", "streaming")
         sm.assert_transition("streaming", "done")
 
     def test_message_sm_failure_paths(self):
         sm = MESSAGE_SM
-        sm.assert_transition("running",   "failed")
+        sm.assert_transition("running", "failed")
         sm.assert_transition("streaming", "failed")
 
     def test_message_sm_refuses_skip(self):
@@ -219,11 +228,11 @@ class TestBuiltInMachines:
             MESSAGE_SM.assert_transition("queued", "done")
 
     def test_job_sm_happy_path(self):
-        JOB_SM.assert_transition("queued",  "running")
+        JOB_SM.assert_transition("queued", "running")
         JOB_SM.assert_transition("running", "done")
 
     def test_job_sm_cancellation(self):
-        JOB_SM.assert_transition("queued",  "cancelled")
+        JOB_SM.assert_transition("queued", "cancelled")
         JOB_SM.assert_transition("running", "cancelled")
 
     def test_job_sm_terminal_states_have_no_transitions(self):
@@ -248,6 +257,7 @@ class TestBuiltInMachines:
 # 4 — Findings CRUD
 # ---------------------------------------------------------------------------
 
+
 class TestFindingsCRUD:
     def test_create_and_get_finding(self, db):
         fid = db.create_finding(
@@ -266,22 +276,25 @@ class TestFindingsCRUD:
 
     def test_list_findings_by_object_id(self, db):
         obj = "obj-list-test"
-        db.create_finding(object_id=obj, object_type="document",
-                          description="A", severity="high")
-        db.create_finding(object_id=obj, object_type="document",
-                          description="B", severity="warning")
-        db.create_finding(object_id="other", object_type="document",
-                          description="C", severity="critical")
+        db.create_finding(object_id=obj, object_type="document", description="A", severity="high")
+        db.create_finding(
+            object_id=obj, object_type="document", description="B", severity="warning"
+        )
+        db.create_finding(
+            object_id="other", object_type="document", description="C", severity="critical"
+        )
         results = db.list_findings(object_id=obj)
         assert len(results) == 2
         assert all(f["object_id"] == obj for f in results)
 
     def test_list_findings_by_state(self, db):
         obj = "obj-state-test"
-        f1 = db.create_finding(object_id=obj, object_type="document",
-                               description="open one", severity="high")
-        f2 = db.create_finding(object_id=obj, object_type="document",
-                               description="open two", severity="critical")
+        f1 = db.create_finding(
+            object_id=obj, object_type="document", description="open one", severity="high"
+        )
+        f2 = db.create_finding(
+            object_id=obj, object_type="document", description="open two", severity="critical"
+        )
         db.resolve_finding(f1)
         open_findings = db.list_findings(object_id=obj, state="open")
         resolved_findings = db.list_findings(object_id=obj, state="resolved")
@@ -292,17 +305,19 @@ class TestFindingsCRUD:
 
     def test_list_findings_by_min_severity(self, db):
         obj = "obj-sev-test"
-        db.create_finding(object_id=obj, object_type="document",
-                          description="info", severity="info")
-        db.create_finding(object_id=obj, object_type="document",
-                          description="warning", severity="warning")
-        db.create_finding(object_id=obj, object_type="document",
-                          description="high", severity="high")
-        db.create_finding(object_id=obj, object_type="document",
-                          description="critical", severity="critical")
-        blocking = db.list_findings(
-            object_id=obj, state="open", min_severity=("high", "critical")
+        db.create_finding(
+            object_id=obj, object_type="document", description="info", severity="info"
         )
+        db.create_finding(
+            object_id=obj, object_type="document", description="warning", severity="warning"
+        )
+        db.create_finding(
+            object_id=obj, object_type="document", description="high", severity="high"
+        )
+        db.create_finding(
+            object_id=obj, object_type="document", description="critical", severity="critical"
+        )
+        blocking = db.list_findings(object_id=obj, state="open", min_severity=("high", "critical"))
         assert len(blocking) == 2
         severities = {f["severity"] for f in blocking}
         assert severities == {"high", "critical"}
@@ -335,6 +350,7 @@ class TestFindingsCRUD:
 # 5 — apply_transition (DB-integrated)
 # ---------------------------------------------------------------------------
 
+
 class TestApplyTransition:
     """These tests require a real DB because apply_transition calls governed_write."""
 
@@ -343,7 +359,8 @@ class TestApplyTransition:
         # Insert a message with 'queued' state
         mid = _make_message(db, state="queued")
         apply_transition(
-            db, MESSAGE_SM,
+            db,
+            MESSAGE_SM,
             object_id=mid,
             object_type="message",
             table="messages",
@@ -359,10 +376,14 @@ class TestApplyTransition:
         with db._lock:
             before = db._conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
         apply_transition(
-            db, MESSAGE_SM,
-            object_id=mid, object_type="message",
-            table="messages", state_col="state",
-            from_state="queued", to_state="running",
+            db,
+            MESSAGE_SM,
+            object_id=mid,
+            object_type="message",
+            table="messages",
+            state_col="state",
+            from_state="queued",
+            to_state="running",
         )
         with db._lock:
             after = db._conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
@@ -376,10 +397,14 @@ class TestApplyTransition:
                 "SELECT COUNT(*) FROM outbox WHERE dispatched_at IS NULL"
             ).fetchone()[0]
         apply_transition(
-            db, MESSAGE_SM,
-            object_id=mid, object_type="message",
-            table="messages", state_col="state",
-            from_state="queued", to_state="running",
+            db,
+            MESSAGE_SM,
+            object_id=mid,
+            object_type="message",
+            table="messages",
+            state_col="state",
+            from_state="queued",
+            to_state="running",
         )
         with db._lock:
             after = db._conn.execute(
@@ -394,10 +419,14 @@ class TestApplyTransition:
         mid = _make_message(db, state="queued")
         with pytest.raises(InvalidTransitionError):
             apply_transition(
-                db, MESSAGE_SM,
-                object_id=mid, object_type="message",
-                table="messages", state_col="state",
-                from_state="queued", to_state="done",   # not allowed
+                db,
+                MESSAGE_SM,
+                object_id=mid,
+                object_type="message",
+                table="messages",
+                state_col="state",
+                from_state="queued",
+                to_state="done",  # not allowed
             )
         # State must still be 'queued' — no partial write.
         assert _get_state(db, "messages", "state", mid) == "queued"
@@ -417,10 +446,14 @@ class TestApplyTransition:
         )
         with pytest.raises(BlockedTransitionError) as exc_info:
             apply_transition(
-                db, MESSAGE_SM,
-                object_id=mid, object_type="message",
-                table="messages", state_col="state",
-                from_state="queued", to_state="running",
+                db,
+                MESSAGE_SM,
+                object_id=mid,
+                object_type="message",
+                table="messages",
+                state_col="state",
+                from_state="queued",
+                to_state="running",
             )
         err = exc_info.value
         assert err.from_state == "queued"
@@ -434,15 +467,21 @@ class TestApplyTransition:
         """AC-2 — State is unchanged when a blocker refuses the transition."""
         mid = _make_message(db, state="queued")
         db.create_finding(
-            object_id=mid, object_type="message",
-            description="Blocker", severity="high",
+            object_id=mid,
+            object_type="message",
+            description="Blocker",
+            severity="high",
         )
         with pytest.raises(BlockedTransitionError):
             apply_transition(
-                db, MESSAGE_SM,
-                object_id=mid, object_type="message",
-                table="messages", state_col="state",
-                from_state="queued", to_state="running",
+                db,
+                MESSAGE_SM,
+                object_id=mid,
+                object_type="message",
+                table="messages",
+                state_col="state",
+                from_state="queued",
+                to_state="running",
             )
         assert _get_state(db, "messages", "state", mid) == "queued"
 
@@ -450,25 +489,35 @@ class TestApplyTransition:
         """Resolving the blocking finding unblocks the transition."""
         mid = _make_message(db, state="queued")
         fid = db.create_finding(
-            object_id=mid, object_type="message",
-            description="Blocker", severity="high",
+            object_id=mid,
+            object_type="message",
+            description="Blocker",
+            severity="high",
         )
         # Still blocked.
         with pytest.raises(BlockedTransitionError):
             apply_transition(
-                db, MESSAGE_SM,
-                object_id=mid, object_type="message",
-                table="messages", state_col="state",
-                from_state="queued", to_state="running",
+                db,
+                MESSAGE_SM,
+                object_id=mid,
+                object_type="message",
+                table="messages",
+                state_col="state",
+                from_state="queued",
+                to_state="running",
             )
         # Resolve the finding.
         db.resolve_finding(fid)
         # Now it should succeed.
         apply_transition(
-            db, MESSAGE_SM,
-            object_id=mid, object_type="message",
-            table="messages", state_col="state",
-            from_state="queued", to_state="running",
+            db,
+            MESSAGE_SM,
+            object_id=mid,
+            object_type="message",
+            table="messages",
+            state_col="state",
+            from_state="queued",
+            to_state="running",
         )
         assert _get_state(db, "messages", "state", mid) == "running"
 
@@ -476,29 +525,41 @@ class TestApplyTransition:
         """Warning-severity findings are advisory and do NOT block transitions."""
         mid = _make_message(db, state="queued")
         db.create_finding(
-            object_id=mid, object_type="message",
-            description="Advisory only", severity="warning",
+            object_id=mid,
+            object_type="message",
+            description="Advisory only",
+            severity="warning",
         )
         # Should succeed — only high/critical block.
         apply_transition(
-            db, MESSAGE_SM,
-            object_id=mid, object_type="message",
-            table="messages", state_col="state",
-            from_state="queued", to_state="running",
+            db,
+            MESSAGE_SM,
+            object_id=mid,
+            object_type="message",
+            table="messages",
+            state_col="state",
+            from_state="queued",
+            to_state="running",
         )
         assert _get_state(db, "messages", "state", mid) == "running"
 
     def test_info_finding_does_not_block(self, db):
         mid = _make_message(db, state="queued")
         db.create_finding(
-            object_id=mid, object_type="message",
-            description="Info only", severity="info",
+            object_id=mid,
+            object_type="message",
+            description="Info only",
+            severity="info",
         )
         apply_transition(
-            db, MESSAGE_SM,
-            object_id=mid, object_type="message",
-            table="messages", state_col="state",
-            from_state="queued", to_state="running",
+            db,
+            MESSAGE_SM,
+            object_id=mid,
+            object_type="message",
+            table="messages",
+            state_col="state",
+            from_state="queued",
+            to_state="running",
         )
         assert _get_state(db, "messages", "state", mid) == "running"
 
@@ -516,10 +577,14 @@ class TestApplyTransition:
         with pytest.raises(InvalidTransitionError):
             # A client-invented state that doesn't exist.
             apply_transition(
-                db, MESSAGE_SM,
-                object_id=mid, object_type="message",
-                table="messages", state_col="state",
-                from_state="queued", to_state="FORCE_DONE",
+                db,
+                MESSAGE_SM,
+                object_id=mid,
+                object_type="message",
+                table="messages",
+                state_col="state",
+                from_state="queued",
+                to_state="FORCE_DONE",
             )
         assert _get_state(db, "messages", "state", mid) == "queued"
 
@@ -528,21 +593,29 @@ class TestApplyTransition:
         allowed regardless of open findings — this is the upstream-failure path."""
         mid = _make_message(db, state="running")
         db.create_finding(
-            object_id=mid, object_type="message",
-            description="Upstream failure found", severity="critical",
+            object_id=mid,
+            object_type="message",
+            description="Upstream failure found",
+            severity="critical",
         )
         # A "backward" return (running → failed is forward, so use a custom SM
         # that has a genuine backward arc).
-        sm = StateMachine({
-            "running": {"queued", "done"},
-        })
+        sm = StateMachine(
+            {
+                "running": {"queued", "done"},
+            }
+        )
         # With check_blockers=True (default), the critical finding would block it.
         # With check_blockers=False (backward return), it is always allowed.
         apply_transition(
-            db, sm,
-            object_id=mid, object_type="message",
-            table="messages", state_col="state",
-            from_state="running", to_state="queued",
+            db,
+            sm,
+            object_id=mid,
+            object_type="message",
+            table="messages",
+            state_col="state",
+            from_state="running",
+            to_state="queued",
             check_blockers=False,
         )
         assert _get_state(db, "messages", "state", mid) == "queued"
@@ -550,16 +623,24 @@ class TestApplyTransition:
     def test_job_transition_queued_to_done_via_running(self, db):
         jid = _make_job(db, state="queued")
         apply_transition(
-            db, JOB_SM,
-            object_id=jid, object_type="job",
-            table="jobs", state_col="state",
-            from_state="queued", to_state="running",
+            db,
+            JOB_SM,
+            object_id=jid,
+            object_type="job",
+            table="jobs",
+            state_col="state",
+            from_state="queued",
+            to_state="running",
         )
         apply_transition(
-            db, JOB_SM,
-            object_id=jid, object_type="job",
-            table="jobs", state_col="state",
-            from_state="running", to_state="done",
+            db,
+            JOB_SM,
+            object_id=jid,
+            object_type="job",
+            table="jobs",
+            state_col="state",
+            from_state="running",
+            to_state="done",
         )
         assert _get_state(db, "jobs", "state", jid) == "done"
 
@@ -568,32 +649,43 @@ class TestApplyTransition:
 # FA-04 — compare-and-set: forged/stale from_state must not authorize an edge
 # ---------------------------------------------------------------------------
 
+
 class TestTransitionCompareAndSet:
     def test_forged_from_state_is_rejected(self, db):
         from orivellum.capabilities.state_machine import TransitionConflictError
+
         # Row is already 'running'; caller forges from_state='queued' to
         # authorize queued→running again. CAS must refuse and leave the row.
         mid = _make_message(db, state="running")
         with pytest.raises(TransitionConflictError):
             apply_transition(
-                db, MESSAGE_SM,
-                object_id=mid, object_type="message",
-                table="messages", state_col="state",
-                from_state="queued", to_state="running",
+                db,
+                MESSAGE_SM,
+                object_id=mid,
+                object_type="message",
+                table="messages",
+                state_col="state",
+                from_state="queued",
+                to_state="running",
                 check_blockers=False,
             )
         assert _get_state(db, "messages", "state", mid) == "running"
 
     def test_conflict_rolls_back_audit(self, db):
         from orivellum.capabilities.state_machine import TransitionConflictError
+
         mid = _make_message(db, state="running")
         before = db._conn.execute("SELECT COUNT(*) c FROM audit_log").fetchone()["c"]
         with pytest.raises(TransitionConflictError):
             apply_transition(
-                db, MESSAGE_SM,
-                object_id=mid, object_type="message",
-                table="messages", state_col="state",
-                from_state="queued", to_state="running",
+                db,
+                MESSAGE_SM,
+                object_id=mid,
+                object_type="message",
+                table="messages",
+                state_col="state",
+                from_state="queued",
+                to_state="running",
                 check_blockers=False,
             )
         after = db._conn.execute("SELECT COUNT(*) c FROM audit_log").fetchone()["c"]
@@ -602,10 +694,14 @@ class TestTransitionCompareAndSet:
     def test_valid_cas_still_applies(self, db):
         mid = _make_message(db, state="queued")
         apply_transition(
-            db, MESSAGE_SM,
-            object_id=mid, object_type="message",
-            table="messages", state_col="state",
-            from_state="queued", to_state="running",
+            db,
+            MESSAGE_SM,
+            object_id=mid,
+            object_type="message",
+            table="messages",
+            state_col="state",
+            from_state="queued",
+            to_state="running",
             check_blockers=False,
         )
         assert _get_state(db, "messages", "state", mid) == "running"
@@ -626,8 +722,6 @@ class TestFinalizeMessageGuards:
         mid = _make_message(db, state="streaming")
         db.finalize_message(mid, "first", "done")
         db.finalize_message(mid, "second overwrite attempt", "failed")
-        row = db._conn.execute(
-            "SELECT text, state FROM messages WHERE id=?", (mid,)
-        ).fetchone()
+        row = db._conn.execute("SELECT text, state FROM messages WHERE id=?", (mid,)).fetchone()
         assert row["state"] == "done"
         assert row["text"] == "first"

@@ -20,6 +20,7 @@ Architecture
    approximated by bigram dissimilarity from the work knowledge corpus.
    When the LLM is unavailable the session is stored with status='failed'.
 """
+
 from __future__ import annotations
 
 import json
@@ -58,29 +59,31 @@ DOMAINS: list[str] = [
 ]
 
 CONTEXT_DESCRIPTIONS: dict[str, str] = {
-    "narrative_structure":    "structuring the narrative arc and story progression",
+    "narrative_structure": "structuring the narrative arc and story progression",
     "knowledge_organization": "organizing and connecting knowledge domains",
-    "chapter_architecture":   "sequencing chapters and their structural relationships",
-    "research_planning":      "prioritizing research directions and framing open questions",
-    "general":                "generating new approaches and structural perspectives",
+    "chapter_architecture": "sequencing chapters and their structural relationships",
+    "research_planning": "prioritizing research directions and framing open questions",
+    "general": "generating new approaches and structural perspectives",
 }
 
 # ── Idea representation ────────────────────────────────────────────────────────
 
+
 def _new_idea(domain: str, text: str) -> dict:
     return {
-        "id":               _short_id(),
-        "domain":           domain,
-        "text":             text.strip(),
-        "originality":      0.5,   # overwritten after scoring
-        "usefulness":       3,     # overwritten after judge
-        "on_pareto_front":  False,
+        "id": _short_id(),
+        "domain": domain,
+        "text": text.strip(),
+        "originality": 0.5,  # overwritten after scoring
+        "usefulness": 3,  # overwritten after judge
+        "on_pareto_front": False,
         "knowledge_item_id": None,
     }
 
 
 def _short_id() -> str:
     import uuid
+
     return str(uuid.uuid4())[:8]
 
 
@@ -126,20 +129,28 @@ def _domain_worker(
     kn_ctx = ""
     if work_knowledge:
         sample = work_knowledge[:5]
-        kn_ctx = "Existing knowledge to be DISTINCT from:\n" + "\n".join(
-            f"  • {k}" for k in sample
-        ) + "\n"
-    neg_ctx = f"\nNEGATIVE CONSTRAINT — do not suggest anything involving: {negative_constraint}\n" \
-              if negative_constraint else ""
+        kn_ctx = (
+            "Existing knowledge to be DISTINCT from:\n"
+            + "\n".join(f"  • {k}" for k in sample)
+            + "\n"
+        )
+    neg_ctx = (
+        f"\nNEGATIVE CONSTRAINT — do not suggest anything involving: {negative_constraint}\n"
+        if negative_constraint
+        else ""
+    )
 
     messages = [
         {"role": "system", "content": _WORKER_SYSTEM.format(domain=domain)},
-        {"role": "user",   "content": _WORKER_USER.format(
-            seed=seed,
-            context_desc=context_desc,
-            knowledge_context=kn_ctx,
-            negative_constraint=neg_ctx,
-        )},
+        {
+            "role": "user",
+            "content": _WORKER_USER.format(
+                seed=seed,
+                context_desc=context_desc,
+                knowledge_context=kn_ctx,
+                negative_constraint=neg_ctx,
+            ),
+        },
     ]
     result = llm_call(
         messages,
@@ -160,9 +171,10 @@ def _domain_worker(
 
 # ── Originality scoring ────────────────────────────────────────────────────────
 
+
 def _bigrams(text: str) -> set[str]:
     words = re.findall(r"\w+", text.lower())
-    return {f"{words[i]}{words[i+1]}" for i in range(len(words) - 1)}
+    return {f"{words[i]}{words[i + 1]}" for i in range(len(words) - 1)}
 
 
 def _bigram_dissimilarity(idea_text: str, corpus_texts: list[str]) -> float:
@@ -266,7 +278,7 @@ def _score_usefulness(
     if not idea_texts:
         return []
 
-    ideas_block = "\n".join(f"{i+1}. {t}" for i, t in enumerate(idea_texts))
+    ideas_block = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(idea_texts))
     context_desc = CONTEXT_DESCRIPTIONS.get(context_type, CONTEXT_DESCRIPTIONS["general"])
     prompt = _JUDGE_PROMPT.format(
         seed=seed,
@@ -290,7 +302,11 @@ def _score_usefulness(
         text = result.text.strip()
         # Strip markdown fences if model added them
         if "```" in text:
-            text = re.search(r"\[.*?\]", text, re.DOTALL).group(0) if re.search(r"\[.*?\]", text, re.DOTALL) else "[]"
+            text = (
+                re.search(r"\[.*?\]", text, re.DOTALL).group(0)
+                if re.search(r"\[.*?\]", text, re.DOTALL)
+                else "[]"
+            )
         arr = json.loads(text)
         if isinstance(arr, list) and len(arr) == len(idea_texts):
             return [max(1, min(5, int(x))) for x in arr]
@@ -301,6 +317,7 @@ def _score_usefulness(
 
 
 # ── Deduplication ─────────────────────────────────────────────────────────────
+
 
 def _deduplicate(ideas: list[dict], threshold: float = 0.55) -> list[dict]:
     """Remove near-duplicate ideas by bigram Jaccard overlap.
@@ -332,6 +349,7 @@ def _deduplicate(ideas: list[dict], threshold: float = 0.55) -> list[dict]:
 
 # ── Pareto front ──────────────────────────────────────────────────────────────
 
+
 def _pareto_front(ideas: list[dict]) -> list[dict]:
     """Return ideas on the Pareto front of (originality × usefulness).
 
@@ -342,9 +360,13 @@ def _pareto_front(ideas: list[dict]) -> list[dict]:
     front = []
     for i, a in enumerate(ideas):
         dominated = any(
-            (b["originality"] >= a["originality"] and b["usefulness"] >= a["usefulness"]
-             and (b["originality"] > a["originality"] or b["usefulness"] > a["usefulness"]))
-            for j, b in enumerate(ideas) if i != j
+            (
+                b["originality"] >= a["originality"]
+                and b["usefulness"] >= a["usefulness"]
+                and (b["originality"] > a["originality"] or b["usefulness"] > a["usefulness"])
+            )
+            for j, b in enumerate(ideas)
+            if i != j
         )
         if not dominated:
             front.append(a)
@@ -353,11 +375,31 @@ def _pareto_front(ideas: list[dict]) -> list[dict]:
 
 # ── Negative constraint detection ────────────────────────────────────────────
 
+
 def _extract_common_theme(idea_texts: list[str]) -> str:
     """Extract the most frequent content word across a cluster (poor man's topic)."""
     from collections import Counter
-    stopwords = {"the", "a", "an", "and", "or", "of", "in", "to", "for",
-                 "that", "this", "with", "as", "by", "is", "are", "be", "it"}
+
+    stopwords = {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "in",
+        "to",
+        "for",
+        "that",
+        "this",
+        "with",
+        "as",
+        "by",
+        "is",
+        "are",
+        "be",
+        "it",
+    }
     words = []
     for t in idea_texts:
         words.extend(w for w in re.findall(r"\b[a-z]{4,}\b", t.lower()) if w not in stopwords)
@@ -368,6 +410,7 @@ def _extract_common_theme(idea_texts: list[str]) -> str:
 
 
 # ── Main session runner ───────────────────────────────────────────────────────
+
 
 def run_brainstorm_session(
     session_id: str,
@@ -404,8 +447,13 @@ def run_brainstorm_session(
     with ThreadPoolExecutor(max_workers=n_domains) as pool:
         futures = {
             pool.submit(
-                _domain_worker, domain, seed_prompt, context_type,
-                work_knowledge, db, cfg,
+                _domain_worker,
+                domain,
+                seed_prompt,
+                context_type,
+                work_knowledge,
+                db,
+                cfg,
             ): domain
             for domain in selected_domains
         }
@@ -434,8 +482,14 @@ def run_brainstorm_session(
         with ThreadPoolExecutor(max_workers=extras_needed) as pool2:
             extra_futures = {
                 pool2.submit(
-                    _domain_worker, domain, seed_prompt, context_type,
-                    work_knowledge, db, cfg, neg_theme,
+                    _domain_worker,
+                    domain,
+                    seed_prompt,
+                    context_type,
+                    work_knowledge,
+                    db,
+                    cfg,
+                    neg_theme,
                 ): domain
                 for domain in extra_domains[:extras_needed]
             }
@@ -475,8 +529,12 @@ def run_brainstorm_session(
         idea["on_pareto_front"] = idea in front
 
     # Sort: Pareto front first (by sum score desc), then alternates
-    filtered.sort(key=lambda i: (0 if i["on_pareto_front"] else 1,
-                                  -(i["originality"] + i["usefulness"] * 0.4)))
+    filtered.sort(
+        key=lambda i: (
+            0 if i["on_pareto_front"] else 1,
+            -(i["originality"] + i["usefulness"] * 0.4),
+        )
+    )
 
     # Cap at 8 ideas total
     return filtered[:8]

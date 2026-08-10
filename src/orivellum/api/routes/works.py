@@ -1,4 +1,5 @@
 """Works domain routes — /api/works/*"""
+
 from __future__ import annotations
 
 import logging
@@ -83,10 +84,13 @@ def books_list():
                ORDER BY oo.updated_at DESC"""
         ).fetchall()
     from orivellum.capabilities.state_machine import BOOK_STAGE_LABELS
+
     books = []
     for r in rows:
         d = dict(r)
-        d["stage_label"] = BOOK_STAGE_LABELS.get(d["pipeline_status"] or "", d.get("pipeline_status") or "")
+        d["stage_label"] = BOOK_STAGE_LABELS.get(
+            d["pipeline_status"] or "", d.get("pipeline_status") or ""
+        )
         books.append(d)
     return {"books": books}
 
@@ -125,6 +129,7 @@ def learn_health():
     """
     db = get_db()
     from orivellum.capabilities.learning import get_learn_health
+
     return get_learn_health(db)
 
 
@@ -158,8 +163,14 @@ def works_get(work_id: str):
 @router.patch("/works/{work_id}")
 def works_update(work_id: str, body: WorkUpdate):
     db = get_db()
-    work = db.update_work(work_id, title=body.title, description=body.description,
-                          status=body.status, work_type=body.work_type, meta=body.meta)
+    work = db.update_work(
+        work_id,
+        title=body.title,
+        description=body.description,
+        status=body.status,
+        work_type=body.work_type,
+        meta=body.meta,
+    )
     if not work:
         raise HTTPException(404, f"Work {work_id!r} not found")
     return {"work": work}
@@ -212,16 +223,19 @@ async def generate_quiz(work_id: str, count: int = 5):
     """
     import json
     import logging
+
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
 
     items = db.list_knowledge(work_id=work_id, limit=20)
     if not items:
-        raise HTTPException(422, "This Work has no knowledge items yet — import and process some documents first.")
+        raise HTTPException(
+            422, "This Work has no knowledge items yet — import and process some documents first."
+        )
 
     knowledge_text = "\n".join(
-        f"- {it.get('kind','fact').upper()}: {it.get('text','')}" for it in items[:20]
+        f"- {it.get('kind', 'fact').upper()}: {it.get('text', '')}" for it in items[:20]
     )
     work = db.get_work(work_id)
     title = (work.get("title") or "this topic") if work else "this topic"
@@ -232,6 +246,7 @@ async def generate_quiz(work_id: str, count: int = 5):
     # tokens and risk silent truncation on smaller models.
     _CONCEPT_CAP = 20
     from orivellum.capabilities.learning import list_concepts
+
     concepts = list_concepts(db, work_id)
     if len(concepts) > _CONCEPT_CAP:
         concepts = sorted(
@@ -243,37 +258,37 @@ async def generate_quiz(work_id: str, count: int = 5):
 
     if has_concepts:
         concept_list = "\n".join(
-            f'  {{"id":"{c["id"]}","subject":"{c["subject"]}"}}'
-            for c in concepts
+            f'  {{"id":"{c["id"]}","subject":"{c["subject"]}"}}' for c in concepts
         )
         concept_instruction = (
-            f'\n\nAvailable concepts (pick the best matching concept_id for each question):\n'
-            f'[{concept_list}]\n\n'
+            f"\n\nAvailable concepts (pick the best matching concept_id for each question):\n"
+            f"[{concept_list}]\n\n"
             'Add a "concept_id" field to each question with the id of the concept it tests. '
-            'Format:\n'
+            "Format:\n"
             '{"questions":[{"q":"Question?","options":["A","B","C","D"],'
             '"answer":0,"explanation":"...","concept_id":"<id from list above>"}]}'
         )
     else:
         concept_instruction = (
-            '\n\nReturn ONLY valid JSON with no markdown, no commentary, no code fences. '
-            'Format:\n'
+            "\n\nReturn ONLY valid JSON with no markdown, no commentary, no code fences. "
+            "Format:\n"
             '{"questions":[{"q":"Question?","options":["A text","B text","C text","D text"],"answer":0,"explanation":"..."}]}'
         )
 
     prompt = (
         f'You are an expert quiz generator. Based on the following knowledge items about "{title}", '
-        f'generate exactly {count} multiple-choice questions that test real understanding. '
-        'Each question must have exactly 4 options (A–D), one correct answer index (0-based), '
-        'and a short explanation of why the correct answer is right.'
+        f"generate exactly {count} multiple-choice questions that test real understanding. "
+        "Each question must have exactly 4 options (A–D), one correct answer index (0-based), "
+        "and a short explanation of why the correct answer is right."
         + concept_instruction
-        + f'\n\nKnowledge items:\n{knowledge_text}'
+        + f"\n\nKnowledge items:\n{knowledge_text}"
     )
 
     from starlette.concurrency import run_in_threadpool
 
     from orivellum.capabilities.llm import llm_call
     from orivellum.config import get_config
+
     cfg = get_config()
     # Build a valid concept_id set for post-parse validation
     valid_concept_ids = {c["id"] for c in concepts}
@@ -281,11 +296,16 @@ async def generate_quiz(work_id: str, count: int = 5):
         result = await run_in_threadpool(
             llm_call,
             [{"role": "user", "content": prompt}],
-            base_url=cfg.serving.base_url, model=cfg.serving.workhorse_model,
-            timeout=60, purpose="works", db=db,
+            base_url=cfg.serving.base_url,
+            model=cfg.serving.workhorse_model,
+            timeout=60,
+            purpose="works",
+            db=db,
         )
         if not result.ok or result.text is None:
-            raise HTTPException(503, "AI is unavailable. Start Lemonade or Ollama to generate quizzes.")
+            raise HTTPException(
+                503, "AI is unavailable. Start Lemonade or Ollama to generate quizzes."
+            )
         content = result.text
         # Strip markdown fences if the model added them
         content = content.strip()
@@ -324,16 +344,16 @@ def knowledge_ask(
         return {"knowledge": [], "chunks": [], "query": q}
     try:
         knowledge = db.search_knowledge(q, work_id=work_id, doc_id=doc_id, limit=limit)
-        chunks    = db.search_chunks(q,    work_id=work_id, limit=limit)
+        chunks = db.search_chunks(q, work_id=work_id, limit=limit)
     except Exception as exc:
         raise internal_error(logger, exc, "cross-work search") from exc
     return {
         "knowledge": [dict(r) for r in knowledge],
-        "chunks":    [dict(r) for r in chunks],
-        "query":     q,
-        "total":     len(knowledge) + len(chunks),
-        "work_id":   work_id,
-        "doc_id":    doc_id,
+        "chunks": [dict(r) for r in chunks],
+        "query": q,
+        "total": len(knowledge) + len(chunks),
+        "work_id": work_id,
+        "doc_id": doc_id,
     }
 
 
@@ -450,29 +470,25 @@ def works_stats(work_id: str):
         raise HTTPException(404, f"Work {work_id!r} not found")
     with db._lock:
         doc_by_kind = db._conn.execute(
-            "SELECT kind, COUNT(*) as n FROM documents WHERE work_id=? GROUP BY kind",
-            (work_id,)
+            "SELECT kind, COUNT(*) as n FROM documents WHERE work_id=? GROUP BY kind", (work_id,)
         ).fetchall()
         knowledge_by_kind = db._conn.execute(
-            "SELECT kind, COUNT(*) as n FROM knowledge WHERE work_id=? GROUP BY kind",
-            (work_id,)
+            "SELECT kind, COUNT(*) as n FROM knowledge WHERE work_id=? GROUP BY kind", (work_id,)
         ).fetchall()
         task_by_status = db._conn.execute(
-            "SELECT status, COUNT(*) as n FROM tasks WHERE work_id=? GROUP BY status",
-            (work_id,)
+            "SELECT status, COUNT(*) as n FROM tasks WHERE work_id=? GROUP BY status", (work_id,)
         ).fetchall()
         conv_count = db._conn.execute(
-            "SELECT COUNT(*) as n FROM conversations WHERE work_id=?",
-            (work_id,)
+            "SELECT COUNT(*) as n FROM conversations WHERE work_id=?", (work_id,)
         ).fetchone()["n"]
         doc_by_readiness = db._conn.execute(
             "SELECT readiness, COUNT(*) as n FROM documents WHERE work_id=? GROUP BY readiness",
-            (work_id,)
+            (work_id,),
         ).fetchall()
         try:
             mastery_row = db._conn.execute(
                 "SELECT AVG(mastery) as avg_m, COUNT(*) as cnt FROM learning_concepts WHERE work_id=?",
-                (work_id,)
+                (work_id,),
             ).fetchone()
             avg_mastery = mastery_row["avg_m"] or 0.0
             concept_count = mastery_row["cnt"] or 0
@@ -484,7 +500,9 @@ def works_stats(work_id: str):
         "documents_by_readiness": {r["readiness"] or "unknown": r["n"] for r in doc_by_readiness},
         "knowledge_by_kind": {r["kind"]: r["n"] for r in knowledge_by_kind},
         "tasks_by_status": {r["status"]: r["n"] for r in task_by_status},
-        "pending_task_count": sum(r["n"] for r in task_by_status if r["status"] not in ("completed", "done", "complete")),
+        "pending_task_count": sum(
+            r["n"] for r in task_by_status if r["status"] not in ("completed", "done", "complete")
+        ),
         "conversation_count": conv_count,
         "avg_mastery_pct": round(avg_mastery * 100),
         "concept_count": concept_count,
@@ -505,6 +523,7 @@ def works_book_intelligence(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.book_intelligence import build_book_intelligence
+
     try:
         return build_book_intelligence(work_id, db)
     except ValueError as exc:
@@ -524,6 +543,7 @@ def works_chapters(work_id: str):
         raise HTTPException(404, f"Work {work_id!r} not found")
 
     import json as _json
+
     with db._lock:
         rows = db._conn.execute(
             """SELECT bc.id, bc.seq, COALESCE(bc.level, 1) as level, bc.title,
@@ -543,7 +563,11 @@ def works_chapters(work_id: str):
     for r in rows:
         doc_id = r["source_doc_id"]
         if doc_id not in by_doc:
-            by_doc[doc_id] = {"doc_id": doc_id, "doc_title": r["doc_title"] or "Untitled", "chapters": []}
+            by_doc[doc_id] = {
+                "doc_id": doc_id,
+                "doc_title": r["doc_title"] or "Untitled",
+                "chapters": [],
+            }
         ch = dict(r)
         ch.pop("doc_title", None)
         # Parse scene_count from meta JSON stored during extraction
@@ -591,6 +615,7 @@ def works_chapter_knowledge(work_id: str, chapter_id: str, limit: int = 50):
         raise HTTPException(404, f"Chapter {chapter_id!r} not found in work {work_id!r}")
 
     import json as _json
+
     with db._lock:
         rows = db._conn.execute(
             """SELECT id, kind, text, subject, predicate, object as obj,
@@ -624,6 +649,7 @@ def works_chapter_knowledge(work_id: str, chapter_id: str, limit: int = 50):
 
 # ─── Project Compass ───────────────────────────────────────────────────────────
 
+
 class CompassUpdate(BaseModel):
     focus: str | None = None
     last_reasoning: str | None = None
@@ -637,6 +663,7 @@ def get_compass(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.cognition import read_compass
+
     compass = read_compass(db, work_id)
     return {"work_id": work_id, "compass": compass}
 
@@ -654,12 +681,11 @@ def get_entity(entity_id: str):
     """Return a single entity with its document mention list."""
     db = get_db()
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM entities WHERE id=?", (entity_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM entities WHERE id=?", (entity_id,)).fetchone()
     if not row:
         raise HTTPException(404, f"Entity {entity_id!r} not found")
     import json as _json
+
     entity = dict(row)
     try:
         entity["meta"] = _json.loads(entity.get("meta") or "{}")
@@ -761,11 +787,16 @@ def workspace_top_gaps(limit: int = 3, refresh: bool = False):
             cached_work_ids.add(wid)
             title = work_by_id[wid].get("title", "")
             for g in cached["gaps"]:
-                all_gaps.append({
-                    "work_id":    wid,
-                    "work_title": title,
-                    **{k: g.get(k, "") for k in ("kind", "title", "description", "severity", "metadata")},
-                })
+                all_gaps.append(
+                    {
+                        "work_id": wid,
+                        "work_title": title,
+                        **{
+                            k: g.get(k, "")
+                            for k in ("kind", "title", "description", "severity", "metadata")
+                        },
+                    }
+                )
 
     # ── 2. Detect for uncached / stale Works (cap at 10 to stay fast) ─────────
     stale_works = [w for w in works if refresh or w["id"] not in cached_work_ids]
@@ -774,13 +805,20 @@ def workspace_top_gaps(limit: int = 3, refresh: bool = False):
             report = detect_gaps(work["id"], db)
             gap_dicts = [
                 {
-                    "kind": g.kind, "title": g.title, "description": g.description,
-                    "severity": g.severity, "metadata": g.metadata,
+                    "kind": g.kind,
+                    "title": g.title,
+                    "description": g.description,
+                    "severity": g.severity,
+                    "metadata": g.metadata,
                 }
                 for g in report.gaps
             ]
-            db.cache_work_gaps(work["id"], gap_dicts, report.coverage_pct,
-                               suggested_queries=report.suggested_queries)
+            db.cache_work_gaps(
+                work["id"],
+                gap_dicts,
+                report.coverage_pct,
+                suggested_queries=report.suggested_queries,
+            )
             for g in gap_dicts:
                 all_gaps.append({"work_id": work["id"], "work_title": work.get("title", ""), **g})
         except Exception as exc:
@@ -789,7 +827,7 @@ def workspace_top_gaps(limit: int = 3, refresh: bool = False):
     all_gaps.sort(key=lambda x: sev_order.get(x.get("severity", ""), 3))
 
     return {
-        "gaps": all_gaps[:max(1, limit)],
+        "gaps": all_gaps[: max(1, limit)],
         "total_works_analyzed": len(works),
         "cache_hits": len(cached_work_ids),
     }
@@ -813,39 +851,43 @@ def works_gaps(work_id: str, refresh: bool = False):
         cached = db.get_cached_gaps(work_id, max_age_seconds=3600)
         if cached is not None:
             return {
-                "work_id":           work_id,
-                "coverage_pct":      cached["coverage_pct"],
-                "total_chapters":    None,
+                "work_id": work_id,
+                "coverage_pct": cached["coverage_pct"],
+                "total_chapters": None,
                 "suggested_queries": cached["suggested_queries"],
-                "evaluated_at":      cached["evaluated_at"],
-                "gaps":              cached["gaps"],
-                "from_cache":        True,
+                "evaluated_at": cached["evaluated_at"],
+                "gaps": cached["gaps"],
+                "from_cache": True,
             }
 
     report = detect_gaps(work_id, db)
     gap_dicts = [
         {
-            "kind": g.kind, "title": g.title, "description": g.description,
-            "severity": g.severity, "metadata": g.metadata,
+            "kind": g.kind,
+            "title": g.title,
+            "description": g.description,
+            "severity": g.severity,
+            "metadata": g.metadata,
         }
         for g in report.gaps
     ]
     # Write back to cache — persist suggested_queries so future cached
     # responses return them without re-running detection.
     try:
-        db.cache_work_gaps(work_id, gap_dicts, report.coverage_pct,
-                           suggested_queries=report.suggested_queries)
+        db.cache_work_gaps(
+            work_id, gap_dicts, report.coverage_pct, suggested_queries=report.suggested_queries
+        )
     except Exception as exc:
         logger.debug("Gap cache write failed: %s", exc)
 
     return {
-        "work_id":           report.work_id,
-        "coverage_pct":      report.coverage_pct,
-        "total_chapters":    report.total_chapters,
+        "work_id": report.work_id,
+        "coverage_pct": report.coverage_pct,
+        "total_chapters": report.total_chapters,
         "suggested_queries": report.suggested_queries,
-        "evaluated_at":      report.evaluated_at,
-        "gaps":              gap_dicts,
-        "from_cache":        False,
+        "evaluated_at": report.evaluated_at,
+        "gaps": gap_dicts,
+        "from_cache": False,
     }
 
 
@@ -856,6 +898,7 @@ def works_completeness(work_id: str):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.completeness import calculate_work_completeness
+
     report = calculate_work_completeness(work_id, db)
     return {
         "work_id": report.work_id,
@@ -891,9 +934,11 @@ def patch_compass(work_id: str, body: CompassUpdate):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.cognition import read_compass, update_compass
+
     # Pass keyword args so only non-None fields are set
     update_compass(
-        db, work_id,
+        db,
+        work_id,
         focus=body.focus,
         reasoning=body.last_reasoning,
         next_step=body.next_step,
@@ -903,12 +948,15 @@ def patch_compass(work_id: str, body: CompassUpdate):
 
 # ─── Book Pipeline ──────────────────────────────────────────────────────────────
 
+
 class PipelineCreateRequest(BaseModel):
     title: str | None = None
 
 
 @router.post("/works/{work_id}/pipeline")
-def create_pipeline(work_id: str, body: PipelineCreateRequest = Body(default=PipelineCreateRequest())):
+def create_pipeline(
+    work_id: str, body: PipelineCreateRequest = Body(default=PipelineCreateRequest())
+):
     """Create (or return existing) book pipeline for a Work, initialised at B0.
 
     Idempotent — calling multiple times returns the same pipeline.
@@ -938,6 +986,7 @@ def get_pipeline(work_id: str):
     pipeline = db.get_book_pipeline_for_work(work_id)
     if pipeline:
         from orivellum.capabilities.state_machine import BOOK_SM, BOOK_STAGE_LABELS
+
         status = pipeline.get("status", "")
         pipeline["stage_label"] = BOOK_STAGE_LABELS.get(status, status)
         allowed = BOOK_SM.allowed_from(status)
@@ -1026,6 +1075,7 @@ def _check_stage_gate(
                 status_desc = (artifact or {}).get("status", "not started")
                 try:
                     from orivellum.capabilities.pipeline_workers import _STAGE_CFG
+
                     _, _, stage_label = _STAGE_CFG.get(current, ("", "", current))
                 except Exception:
                     stage_label = current
@@ -1037,13 +1087,15 @@ def _check_stage_gate(
                     "detail": (
                         f"{current}→{next_state} requires the {stage_label} AI work "
                         f"to be completed first (current status: {status_desc}). "
-                        f"Click \"{stage_label}\" to generate it."
+                        f'Click "{stage_label}" to generate it.'
                     ),
                 }
         except Exception as exc:
             logger.warning(
                 "Artifact gate check failed for pipeline %s stage %s: %s",
-                pipeline_id[:8] if pipeline_id else "?", current, exc,
+                pipeline_id[:8] if pipeline_id else "?",
+                current,
+                exc,
             )
             # Fail-open: skip the artifact gate if the check itself errors
 
@@ -1072,13 +1124,13 @@ def _check_stage_gate(
     # ── Completeness-based gates ───────────────────────────────────────────────
     # threshold is a percentage (0-100); op is ">" or ">="
     _COMPLETENESS_GATES: dict[tuple, tuple] = {
-        ("B1", "B2"):  ("structural_pct",  ">",  0,  "at least 1 chapter extracted"),
-        ("B2", "B3"):  ("research_pct",   ">=", 40, "40% research coverage"),
-        ("B3", "B4"):  ("research_pct",   ">=", 60, "60% research coverage"),
-        ("B4", "B5"):  ("structural_pct", ">=", 80, "80% chapter extraction"),
-        ("B6", "B7"):  ("content_pct",    ">=", 50, "50% content coverage"),
-        ("B7", "B8"):  ("editorial_pct",  ">=", 30, "30% editorial review"),
-        ("B16","B17"): ("editorial_pct",  ">=", 80, "80% editorial review"),
+        ("B1", "B2"): ("structural_pct", ">", 0, "at least 1 chapter extracted"),
+        ("B2", "B3"): ("research_pct", ">=", 40, "40% research coverage"),
+        ("B3", "B4"): ("research_pct", ">=", 60, "60% research coverage"),
+        ("B4", "B5"): ("structural_pct", ">=", 80, "80% chapter extraction"),
+        ("B6", "B7"): ("content_pct", ">=", 50, "50% content coverage"),
+        ("B7", "B8"): ("editorial_pct", ">=", 30, "30% editorial review"),
+        ("B16", "B17"): ("editorial_pct", ">=", 80, "80% editorial review"),
     }
 
     if gate_key not in _COMPLETENESS_GATES:
@@ -1090,6 +1142,7 @@ def _check_stage_gate(
     actual: float = 0.0
     try:
         from orivellum.capabilities.book_intelligence import build_book_intelligence
+
         intel = build_book_intelligence(work_id, db)
         actual = float(intel.get("completeness", {}).get(metric, 0))
     except Exception:
@@ -1104,8 +1157,7 @@ def _check_stage_gate(
             "threshold": threshold,
             "actual": round(actual, 1),
             "detail": (
-                f"{current}→{next_state} requires {label} — "
-                f"currently at {round(actual, 1)}%."
+                f"{current}→{next_state} requires {label} — currently at {round(actual, 1)}%."
             ),
         }
 
@@ -1126,14 +1178,22 @@ def _check_stage_gate(
                 # No cache or stale — run detection now so the gate is authoritative.
                 report = detect_gaps(work_id, db)
                 gaps = [
-                    {"kind": g.kind, "severity": g.severity,
-                     "title": g.title, "description": g.description}
+                    {
+                        "kind": g.kind,
+                        "severity": g.severity,
+                        "title": g.title,
+                        "description": g.description,
+                    }
                     for g in report.gaps
                 ]
                 # Write result back to cache for subsequent requests.
                 try:
-                    db.cache_work_gaps(work_id, gaps, report.coverage_pct,
-                                       suggested_queries=report.suggested_queries)
+                    db.cache_work_gaps(
+                        work_id,
+                        gaps,
+                        report.coverage_pct,
+                        suggested_queries=report.suggested_queries,
+                    )
                 except Exception:
                     pass
                 evaluated = True
@@ -1142,7 +1202,10 @@ def _check_stage_gate(
             # This must not be used as a bypass: log so it is visible.
             logger.warning(
                 "Gap detection failed for work %s during gate check %s→%s: %s",
-                work_id[:8], current, next_state, exc,
+                work_id[:8],
+                current,
+                next_state,
+                exc,
             )
 
         if evaluated:
@@ -1191,7 +1254,9 @@ def advance_pipeline(work_id: str):
     current = pipeline["status"]
     allowed = BOOK_SM.allowed_from(current)
     if not allowed:
-        raise HTTPException(422, f"Pipeline is at terminal state {current!r} — no further transitions")
+        raise HTTPException(
+            422, f"Pipeline is at terminal state {current!r} — no further transitions"
+        )
 
     # BOOK_SM is strictly sequential; exactly one next state
     next_state = next(iter(allowed))
@@ -1232,6 +1297,7 @@ def advance_pipeline(work_id: str):
 
 
 # ─── Pipeline stage worker ────────────────────────────────────────────────────
+
 
 @router.post("/works/{work_id}/pipeline/run-stage")
 async def run_pipeline_stage(work_id: str):
@@ -1274,8 +1340,7 @@ async def run_pipeline_stage(work_id: str):
     if stage not in _STAGE_CFG:
         raise HTTPException(
             409,
-            f"No AI worker defined for stage {stage!r}. "
-            "Workers are available for B0–B5.",
+            f"No AI worker defined for stage {stage!r}. Workers are available for B0–B5.",
         )
 
     cfg = get_config()
@@ -1302,8 +1367,10 @@ async def run_pipeline_stage(work_id: str):
 
 # ─── Divergent Thinking (Brainstorm) ─────────────────────────────────────────
 
+
 class BrainstormRequest(BaseModel):
     """FA-09: typed request body for a brainstorm session."""
+
     model_config = ConfigDict(extra="forbid")
     seed_prompt: str = Field(default="", max_length=4000)
     context_type: str = Field(default="general", max_length=100)
@@ -1341,14 +1408,14 @@ async def run_brainstorm(
     from orivellum.api._deps import get_config
     from orivellum.capabilities.brainstorm import run_brainstorm_session
 
-    seed_prompt  = (payload.seed_prompt or "").strip()
+    seed_prompt = (payload.seed_prompt or "").strip()
     context_type = payload.context_type or "general"
-    n_domains    = int(payload.n_domains or 5)
+    n_domains = int(payload.n_domains or 5)
 
     if not seed_prompt:
         raise HTTPException(422, "seed_prompt is required")
 
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
 
     if not db.get_work(work_id):
@@ -1366,7 +1433,13 @@ async def run_brainstorm(
     try:
         ideas = await run_in_threadpool(
             run_brainstorm_session,
-            session_id, work_id, seed_prompt, context_type, db, cfg, n_domains,
+            session_id,
+            work_id,
+            seed_prompt,
+            context_type,
+            db,
+            cfg,
+            n_domains,
         )
         db.update_brainstorm_session(
             session_id,
@@ -1410,7 +1483,7 @@ async def approve_brainstorm_idea(work_id: str, session_id: str, idea_id: str):
 
     # Find the idea
     ideas = session["ideas"]
-    idea  = next((i for i in ideas if i["id"] == idea_id), None)
+    idea = next((i for i in ideas if i["id"] == idea_id), None)
     if not idea:
         raise HTTPException(404, f"Idea {idea_id!r} not found in session")
 
@@ -1424,22 +1497,21 @@ async def approve_brainstorm_idea(work_id: str, session_id: str, idea_id: str):
         text=idea["text"],
         kind="insight",
         review_status="approved",
-        confidence=round(min(1.0, (idea.get("originality", 0.5) + idea.get("usefulness", 3) / 5) / 2 + 0.25), 2),
+        confidence=round(
+            min(1.0, (idea.get("originality", 0.5) + idea.get("usefulness", 3) / 5) / 2 + 0.25), 2
+        ),
         meta={
-            "source":                "brainstorm",
+            "source": "brainstorm",
             "brainstorm_session_id": session_id,
-            "brainstorm_idea_id":    idea_id,
-            "domain":                idea.get("domain", ""),
-            "originality":           idea.get("originality", 0.5),
-            "usefulness":            idea.get("usefulness", 3),
+            "brainstorm_idea_id": idea_id,
+            "domain": idea.get("domain", ""),
+            "originality": idea.get("originality", 0.5),
+            "usefulness": idea.get("usefulness", 3),
         },
     )
 
     # Update the ideas list in the session with the new knowledge_item_id
-    updated_ideas = [
-        {**i, "knowledge_item_id": ki_id} if i["id"] == idea_id else i
-        for i in ideas
-    ]
+    updated_ideas = [{**i, "knowledge_item_id": ki_id} if i["id"] == idea_id else i for i in ideas]
     db.update_brainstorm_session(
         session_id,
         status=session["status"],
@@ -1451,6 +1523,7 @@ async def approve_brainstorm_idea(work_id: str, session_id: str, idea_id: str):
 
 
 # ─── Evidence rescore ─────────────────────────────────────────────────────────
+
 
 @router.post("/works/{work_id}/evidence/rescore")
 async def evidence_rescore(work_id: str):
@@ -1473,11 +1546,13 @@ async def evidence_rescore(work_id: str):
 
     t0 = time.monotonic()
     from orivellum.capabilities.evidence import detect_contradictions, rescore_work
+
     rescored = await run_in_threadpool(rescore_work, work_id, db)
     conflict_count = await run_in_threadpool(detect_contradictions, work_id, db)
 
     # Stamp the rescore time so the nightshift pass can skip recently-rescored works
     from datetime import datetime
+
     db.set_setting(f"evidence_rescore:{work_id}", datetime.now(UTC).isoformat())
 
     elapsed_ms = round((time.monotonic() - t0) * 1000)
@@ -1490,6 +1565,7 @@ async def evidence_rescore(work_id: str):
 
 
 # ─── Trailer Architect ────────────────────────────────────────────────────────
+
 
 @router.post("/works/{work_id}/trailer")
 async def create_trailer(
@@ -1558,12 +1634,15 @@ async def create_trailer(
     async def _run_bg() -> None:
         try:
             from orivellum.capabilities.trailer import run_trailer_pipeline
+
             await run_in_threadpool(run_trailer_pipeline, db, work_id, trailer_id, fmt)
         except Exception:
             import traceback
+
             logger.error("Trailer background task crashed:\n%s", traceback.format_exc())
 
     import asyncio
+
     asyncio.create_task(_run_bg())
 
     return {
@@ -1711,6 +1790,7 @@ def export_trailer(work_id: str, trailer_id: str):
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
-        headers={"Content-Disposition":
-                 f'attachment; filename="trailer-{trailer_id[:8]}-package.zip"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="trailer-{trailer_id[:8]}-package.zip"'
+        },
     )

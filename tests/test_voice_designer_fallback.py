@@ -16,6 +16,7 @@ C  Keyword scoring correctness  → relevant descriptions rank relevant voices.
 D  Response shape  → every field the mobile UI reads is present and non-empty.
 E  Input validation  → 400 errors still surface without an LLM.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,25 +36,27 @@ _AUTH_HEADERS = {"X-Api-Key": os.environ["SESSION_SECRET"]}
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PROJECT_ROOT / "artifacts" / "api-server" / "src"))
 
-from fastapi.testclient import TestClient          # noqa: E402
-from orivellum.api.app import create_app           # noqa: E402
-from orivellum.api import _deps                    # noqa: E402
-from orivellum.configuration.config import (       # noqa: E402
-    OrivellumConfig, ServingConfig,
-)
-from orivellum.database.db import OrivellumDB      # noqa: E402
-from orivellum.capabilities.llm import LLMResult   # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
+from orivellum.api import _deps  # noqa: E402
+from orivellum.api.app import create_app  # noqa: E402
+from orivellum.capabilities.llm import LLMResult  # noqa: E402
+from orivellum.configuration.config import (  # noqa: E402
+    OrivellumConfig,
+    ServingConfig,
+)
+from orivellum.database.db import OrivellumDB  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_client(tmp_path: Path) -> TestClient:
     """Wire a throwaway DB + unreachable-AI config, return a TestClient."""
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    db  = OrivellumDB(str(data_dir / "test.db"))
+    db = OrivellumDB(str(data_dir / "test.db"))
     cfg = OrivellumConfig(
         data_dir=str(data_dir),
         # Port 99999 is never reachable → forces the keyword-fallback path.
@@ -78,38 +81,44 @@ def _llm_empty_text() -> LLMResult:
 
 def _llm_unknown_ids() -> LLMResult:
     """LLM returns parseable JSON but every voice_id is not in the catalog."""
-    payload = json.dumps({
-        "target_dimensions": {"warmth": 7, "authority": 5, "gravitas": 8,
-                               "pace": 5, "brightness": 4, "age": 7},
-        "interpretation": "Rich, authoritative narrator",
-        "matches": [
-            {"voice_id": "nonexistent_voice_xyz", "match_score": 91,
-             "why": "Deep gravitas"},
-            {"voice_id": "also_not_real_abc", "match_score": 88,
-             "why": "Strong authority"},
-            {"voice_id": "still_fake_123", "match_score": 82,
-             "why": "Mature tone"},
-        ],
-    })
+    payload = json.dumps(
+        {
+            "target_dimensions": {
+                "warmth": 7,
+                "authority": 5,
+                "gravitas": 8,
+                "pace": 5,
+                "brightness": 4,
+                "age": 7,
+            },
+            "interpretation": "Rich, authoritative narrator",
+            "matches": [
+                {"voice_id": "nonexistent_voice_xyz", "match_score": 91, "why": "Deep gravitas"},
+                {"voice_id": "also_not_real_abc", "match_score": 88, "why": "Strong authority"},
+                {"voice_id": "still_fake_123", "match_score": 82, "why": "Mature tone"},
+            ],
+        }
+    )
     return LLMResult(payload, True, "workhorse", 200)
 
 
 # ── shared assertion helpers ─────────────────────────────────────────────────
+
 
 def _assert_fallback_contract(test: unittest.TestCase, data: dict) -> None:
     """Assert the three-card keyword-fallback contract that the mobile UI requires."""
     from orivellum.api.routes.studio import _VOICE_BY_ID
 
     matches = data.get("matches", [])
-    test.assertEqual(len(matches), 3,
-                     f"Keyword fallback must return exactly 3 cards, got {len(matches)}")
+    test.assertEqual(
+        len(matches), 3, f"Keyword fallback must return exactly 3 cards, got {len(matches)}"
+    )
 
     test.assertIsInstance(data.get("target_dimensions"), dict)
-    test.assertEqual(data["target_dimensions"], {},
-                     "Keyword fallback sets target_dimensions={}")
+    test.assertEqual(data["target_dimensions"], {}, "Keyword fallback sets target_dimensions={}")
 
     interp = data.get("interpretation", "")
-    lower  = interp.lower()
+    lower = interp.lower()
     test.assertTrue(
         "keyword" in lower or "unavailable" in lower,
         f"Fallback interpretation should mention keyword/unavailable: {interp!r}",
@@ -119,22 +128,18 @@ def _assert_fallback_contract(test: unittest.TestCase, data: dict) -> None:
     test.assertEqual(len(ids), len(set(ids)), f"Duplicate voice IDs: {ids}")
 
     for i, m in enumerate(matches):
-        test.assertIn(m["voice_id"], _VOICE_BY_ID,
-                      f"match[{i}].voice_id not in catalog")
-        test.assertEqual(m["match_score"], 75,
-                         f"match[{i}].match_score expected 75")
-        test.assertGreater(len(m.get("why", "")), 0,
-                           f"match[{i}].why is empty")
+        test.assertIn(m["voice_id"], _VOICE_BY_ID, f"match[{i}].voice_id not in catalog")
+        test.assertEqual(m["match_score"], 75, f"match[{i}].match_score expected 75")
+        test.assertGreater(len(m.get("why", "")), 0, f"match[{i}].why is empty")
         voice = m.get("voice", {})
-        test.assertGreater(len(voice.get("name", "")), 0,
-                           f"match[{i}].voice.name empty")
-        test.assertEqual(voice.get("id"), m["voice_id"],
-                         f"match[{i}] voice.id != voice_id")
+        test.assertGreater(len(voice.get("name", "")), 0, f"match[{i}].voice.name empty")
+        test.assertEqual(voice.get("id"), m["voice_id"], f"match[{i}] voice.id != voice_id")
 
 
 # ---------------------------------------------------------------------------
 # Phase A — LLM offline → keyword fallback
 # ---------------------------------------------------------------------------
+
 
 class TestKeywordFallbackOfflineLLM(unittest.TestCase):
     """Keyword fallback fires correctly when LLM returns ok=False."""
@@ -172,8 +177,7 @@ class TestKeywordFallbackOfflineLLM(unittest.TestCase):
     def test_interpretation_mentions_keyword_or_unavailable(self):
         data = self._design()
         interp = data.get("interpretation", "")
-        self.assertGreater(len(interp.strip()), 0,
-                           "interpretation must not be empty")
+        self.assertGreater(len(interp.strip()), 0, "interpretation must not be empty")
         lower = interp.lower()
         self.assertTrue(
             "keyword" in lower or "unavailable" in lower,
@@ -192,11 +196,11 @@ class TestKeywordFallbackOfflineLLM(unittest.TestCase):
     def test_why_equals_voice_catalog_description(self):
         """In fallback, 'why' is the voice's catalog description, not an LLM rationale."""
         from orivellum.api.routes.studio import _VOICE_BY_ID
+
         data = self._design()
         for i, m in enumerate(data["matches"]):
             expected = _VOICE_BY_ID[m["voice_id"]]["description"]
-            self.assertEqual(m["why"], expected,
-                             f"match[{i}].why should equal catalog description")
+            self.assertEqual(m["why"], expected, f"match[{i}].why should equal catalog description")
 
     def test_first_match_is_best_match_candidate(self):
         """BEST MATCH badge renders on index 0 — first match must always exist."""
@@ -217,33 +221,36 @@ class TestKeywordFallbackOfflineLLM(unittest.TestCase):
         data = self._design()
         for i, m in enumerate(data["matches"]):
             name = m.get("voice", {}).get("name", "")
-            self.assertGreater(len(name), 0,
-                               f"match[{i}].voice.name empty — Use button shows 'Use '")
+            self.assertGreater(
+                len(name), 0, f"match[{i}].voice.name empty — Use button shows 'Use '"
+            )
 
     def test_score_in_amber_band_not_grey(self):
         """score >= 85 → green, >= 70 → amber, else grey.
         Fallback score of 75 must be in the amber (≥70) band."""
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertGreaterEqual(m.get("match_score", 0), 70,
-                                    f"match[{i}] score in grey band — UI shows muted colour")
+            self.assertGreaterEqual(
+                m.get("match_score", 0),
+                70,
+                f"match[{i}] score in grey band — UI shows muted colour",
+            )
 
     def test_gender_field_present_for_gender_symbol(self):
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertIn("gender", m.get("voice", {}),
-                          f"match[{i}].voice missing 'gender'")
+            self.assertIn("gender", m.get("voice", {}), f"match[{i}].voice missing 'gender'")
 
     def test_accent_field_present_in_voice_object(self):
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertIn("accent", m.get("voice", {}),
-                          f"match[{i}].voice missing 'accent' key")
+            self.assertIn("accent", m.get("voice", {}), f"match[{i}].voice missing 'accent' key")
 
 
 # ---------------------------------------------------------------------------
 # Phase B — LLM returns bad output → falls through to keyword fallback
 # ---------------------------------------------------------------------------
+
 
 class TestKeywordFallbackBadLLMOutput(unittest.TestCase):
     """Keyword fallback fires when the LLM returns ok=True but unusable output."""
@@ -255,8 +262,9 @@ class TestKeywordFallbackBadLLMOutput(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _design(self, llm_result: LLMResult,
-                description: str = "warm intimate British female") -> dict:
+    def _design(
+        self, llm_result: LLMResult, description: str = "warm intimate British female"
+    ) -> dict:
         with patch("orivellum.capabilities.llm.llm_call", return_value=llm_result):
             resp = self.client.post(
                 "/api/studio/voices/design",
@@ -287,28 +295,34 @@ class TestKeywordFallbackBadLLMOutput(unittest.TestCase):
     def test_unknown_ids_fallback_uses_keyword_scores(self):
         """When unknown-ID fallback fires, scores are 75 and why is catalog description."""
         from orivellum.api.routes.studio import _VOICE_BY_ID
+
         data = self._design(_llm_unknown_ids(), description="deep gravitas male ancient")
         for i, m in enumerate(data["matches"]):
-            self.assertEqual(m["match_score"], 75,
-                             f"match[{i}].match_score should be 75 (keyword fallback)")
+            self.assertEqual(
+                m["match_score"], 75, f"match[{i}].match_score should be 75 (keyword fallback)"
+            )
             expected_why = _VOICE_BY_ID[m["voice_id"]]["description"]
-            self.assertEqual(m["why"], expected_why,
-                             f"match[{i}].why should be catalog description in fallback")
+            self.assertEqual(
+                m["why"], expected_why, f"match[{i}].why should be catalog description in fallback"
+            )
 
     def test_partial_unknown_ids_returns_valid_subset(self):
         """LLM returns 3 matches; 2 unknown, 1 valid → valid ones used, rest keyword-filled."""
         from orivellum.api.routes.studio import _VOICE_BY_ID
+
         # Pick a real voice ID from the catalog
         real_id = next(iter(_VOICE_BY_ID))
-        payload = json.dumps({
-            "target_dimensions": {"warmth": 6},
-            "interpretation": "Suitable narrator",
-            "matches": [
-                {"voice_id": "fake_aaa", "match_score": 95, "why": "Best pick"},
-                {"voice_id": real_id,    "match_score": 88, "why": "Good fit"},
-                {"voice_id": "fake_bbb", "match_score": 80, "why": "Also good"},
-            ],
-        })
+        payload = json.dumps(
+            {
+                "target_dimensions": {"warmth": 6},
+                "interpretation": "Suitable narrator",
+                "matches": [
+                    {"voice_id": "fake_aaa", "match_score": 95, "why": "Best pick"},
+                    {"voice_id": real_id, "match_score": 88, "why": "Good fit"},
+                    {"voice_id": "fake_bbb", "match_score": 80, "why": "Also good"},
+                ],
+            }
+        )
         llm_result = LLMResult(payload, True, "workhorse", 150)
         with patch("orivellum.capabilities.llm.llm_call", return_value=llm_result):
             resp = self.client.post(
@@ -320,8 +334,7 @@ class TestKeywordFallbackBadLLMOutput(unittest.TestCase):
         ids = [m["voice_id"] for m in data.get("matches", [])]
         # Every returned ID must be in the catalog
         for vid in ids:
-            self.assertIn(vid, _VOICE_BY_ID,
-                          f"{vid!r} returned but not in catalog")
+            self.assertIn(vid, _VOICE_BY_ID, f"{vid!r} returned but not in catalog")
         # At least one match should exist (the real_id from LLM succeeded)
         self.assertGreater(len(ids), 0)
 
@@ -330,8 +343,8 @@ class TestKeywordFallbackBadLLMOutput(unittest.TestCase):
 # Phase C — Keyword scoring correctness
 # ---------------------------------------------------------------------------
 
-class TestKeywordScoringRelevance(unittest.TestCase):
 
+class TestKeywordScoringRelevance(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.client = _make_client(Path(self._tmp.name))
@@ -350,27 +363,30 @@ class TestKeywordScoringRelevance(unittest.TestCase):
 
     def test_masculine_keyword_surfaces_masculine_voices(self):
         from orivellum.api.routes.studio import _VOICE_BY_ID
+
         data = self._fallback("deep commanding male authoritative voice")
-        genders = [_VOICE_BY_ID.get(m["voice_id"], {}).get("gender", "")
-                   for m in data["matches"]]
-        self.assertGreaterEqual(genders.count("masculine"), 1,
-                                f"Expected ≥1 masculine voice, got {genders}")
+        genders = [_VOICE_BY_ID.get(m["voice_id"], {}).get("gender", "") for m in data["matches"]]
+        self.assertGreaterEqual(
+            genders.count("masculine"), 1, f"Expected ≥1 masculine voice, got {genders}"
+        )
 
     def test_feminine_keyword_surfaces_feminine_voices(self):
         from orivellum.api.routes.studio import _VOICE_BY_ID
+
         data = self._fallback("intimate warm feminine woman narrator")
-        genders = [_VOICE_BY_ID.get(m["voice_id"], {}).get("gender", "")
-                   for m in data["matches"]]
-        self.assertGreaterEqual(genders.count("feminine"), 1,
-                                f"Expected ≥1 feminine voice, got {genders}")
+        genders = [_VOICE_BY_ID.get(m["voice_id"], {}).get("gender", "") for m in data["matches"]]
+        self.assertGreaterEqual(
+            genders.count("feminine"), 1, f"Expected ≥1 feminine voice, got {genders}"
+        )
 
     def test_british_keyword_surfaces_british_accent(self):
         from orivellum.api.routes.studio import _VOICE_BY_ID
+
         data = self._fallback("british BBC documentary narrator classic english")
-        accents = [_VOICE_BY_ID.get(m["voice_id"], {}).get("accent", "")
-                   for m in data["matches"]]
-        self.assertGreaterEqual(accents.count("british"), 1,
-                                f"Expected ≥1 british voice, got {accents}")
+        accents = [_VOICE_BY_ID.get(m["voice_id"], {}).get("accent", "") for m in data["matches"]]
+        self.assertGreaterEqual(
+            accents.count("british"), 1, f"Expected ≥1 british voice, got {accents}"
+        )
 
     def test_all_descriptions_return_three_matches(self):
         for desc in [
@@ -381,8 +397,7 @@ class TestKeywordScoringRelevance(unittest.TestCase):
             "authoritative powerful strong",
         ]:
             data = self._fallback(desc)
-            self.assertEqual(len(data["matches"]), 3,
-                             f"Expected 3 matches for {desc!r}")
+            self.assertEqual(len(data["matches"]), 3, f"Expected 3 matches for {desc!r}")
 
     def test_no_duplicate_voice_ids(self):
         data = self._fallback("deep gravitas male ancient wise prophet")
@@ -394,8 +409,8 @@ class TestKeywordScoringRelevance(unittest.TestCase):
 # Phase D — Mobile UI field compatibility
 # ---------------------------------------------------------------------------
 
-class TestMobileUIFieldCompatibility(unittest.TestCase):
 
+class TestMobileUIFieldCompatibility(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.client = _make_client(Path(self._tmp.name))
@@ -412,13 +427,13 @@ class TestMobileUIFieldCompatibility(unittest.TestCase):
 
     def test_match_score_is_numeric(self):
         for i, m in enumerate(self._fallback_data()["matches"]):
-            self.assertIsInstance(m.get("match_score"), (int, float),
-                                  f"match[{i}].match_score must be numeric")
+            self.assertIsInstance(
+                m.get("match_score"), (int, float), f"match[{i}].match_score must be numeric"
+            )
 
     def test_voice_id_matches_voice_object_id(self):
         for i, m in enumerate(self._fallback_data()["matches"]):
-            self.assertEqual(m["voice_id"], m["voice"]["id"],
-                             f"match[{i}]: voice_id != voice.id")
+            self.assertEqual(m["voice_id"], m["voice"]["id"], f"match[{i}]: voice_id != voice.id")
 
     def test_interpretation_is_string(self):
         interp = self._fallback_data().get("interpretation")
@@ -430,16 +445,17 @@ class TestMobileUIFieldCompatibility(unittest.TestCase):
 
     def test_why_rendered_when_truthy(self):
         for i, m in enumerate(self._fallback_data()["matches"]):
-            self.assertTrue(bool(m.get("why", "")),
-                            f"match[{i}].why falsy — rationale row won't render")
+            self.assertTrue(
+                bool(m.get("why", "")), f"match[{i}].why falsy — rationale row won't render"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Phase E — Input validation (fires before LLM is consulted)
 # ---------------------------------------------------------------------------
 
-class TestInputValidationWithoutLLM(unittest.TestCase):
 
+class TestInputValidationWithoutLLM(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.client = _make_client(Path(self._tmp.name))
@@ -452,19 +468,16 @@ class TestInputValidationWithoutLLM(unittest.TestCase):
         self.assertEqual(resp.status_code, 400, resp.text)
 
     def test_whitespace_only_returns_400(self):
-        resp = self.client.post("/api/studio/voices/design",
-                                json={"description": "   \t\n"})
+        resp = self.client.post("/api/studio/voices/design", json={"description": "   \t\n"})
         self.assertEqual(resp.status_code, 400, resp.text)
 
     def test_too_long_returns_400(self):
-        resp = self.client.post("/api/studio/voices/design",
-                                json={"description": "x" * 501})
+        resp = self.client.post("/api/studio/voices/design", json={"description": "x" * 501})
         self.assertEqual(resp.status_code, 400, resp.text)
 
     def test_exactly_500_chars_accepted(self):
         with patch("orivellum.capabilities.llm.llm_call", return_value=_llm_offline()):
-            resp = self.client.post("/api/studio/voices/design",
-                                    json={"description": "a" * 500})
+            resp = self.client.post("/api/studio/voices/design", json={"description": "a" * 500})
         self.assertEqual(resp.status_code, 200, resp.text)
 
     def test_missing_description_field_returns_422(self):
@@ -476,9 +489,11 @@ class TestInputValidationWithoutLLM(unittest.TestCase):
 # Phase F — LLM online → success path
 # ---------------------------------------------------------------------------
 
+
 def _real_voice_ids(n: int = 3) -> list[str]:
     """Return the first *n* voice IDs from the catalog (always real, always ordered)."""
     from orivellum.api.routes.studio import _VOICE_BY_ID
+
     return list(_VOICE_BY_ID.keys())[:n]
 
 
@@ -488,32 +503,38 @@ def _llm_success(voice_ids: list[str]) -> LLMResult:
     Scores, rationales, and interpretation are all deliberately distinct from
     the keyword-fallback values so tests can tell the two paths apart.
     """
-    payload = json.dumps({
-        "target_dimensions": {
-            "warmth": 8, "authority": 6, "gravitas": 9,
-            "pace": 4, "brightness": 3, "age": 8,
-        },
-        "interpretation": (
-            "A rich, sonorous voice with deep gravitas suited to epic historical narration."
-        ),
-        "matches": [
-            {
-                "voice_id": voice_ids[0],
-                "match_score": 94,
-                "why": "Exceptional warmth and gravitas alignment with the requested tone.",
+    payload = json.dumps(
+        {
+            "target_dimensions": {
+                "warmth": 8,
+                "authority": 6,
+                "gravitas": 9,
+                "pace": 4,
+                "brightness": 3,
+                "age": 8,
             },
-            {
-                "voice_id": voice_ids[1],
-                "match_score": 87,
-                "why": "Strong authority dimensions complement the historical register.",
-            },
-            {
-                "voice_id": voice_ids[2],
-                "match_score": 81,
-                "why": "Measured pace and elevated age score match the elder narrator profile.",
-            },
-        ],
-    })
+            "interpretation": (
+                "A rich, sonorous voice with deep gravitas suited to epic historical narration."
+            ),
+            "matches": [
+                {
+                    "voice_id": voice_ids[0],
+                    "match_score": 94,
+                    "why": "Exceptional warmth and gravitas alignment with the requested tone.",
+                },
+                {
+                    "voice_id": voice_ids[1],
+                    "match_score": 87,
+                    "why": "Strong authority dimensions complement the historical register.",
+                },
+                {
+                    "voice_id": voice_ids[2],
+                    "match_score": 81,
+                    "why": "Measured pace and elevated age score match the elder narrator profile.",
+                },
+            ],
+        }
+    )
     return LLMResult(payload, True, "workhorse", 300)
 
 
@@ -558,8 +579,11 @@ class TestLLMSuccessPath(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _design(self, description: str = "deep gravitas historical ancient male",
-                llm_result: LLMResult | None = None) -> dict:
+    def _design(
+        self,
+        description: str = "deep gravitas historical ancient male",
+        llm_result: LLMResult | None = None,
+    ) -> dict:
         result = llm_result if llm_result is not None else _llm_success(self._ids)
         with patch("orivellum.capabilities.llm.llm_call", return_value=result):
             resp = self.client.post(
@@ -578,11 +602,13 @@ class TestLLMSuccessPath(unittest.TestCase):
         expected = [94, 87, 81]
         for i, m in enumerate(data["matches"]):
             self.assertGreater(
-                m["match_score"], 75,
+                m["match_score"],
+                75,
                 f"match[{i}].match_score={m['match_score']} ≤ 75 — keyword fallback fired unexpectedly",
             )
             self.assertEqual(
-                m["match_score"], expected[i],
+                m["match_score"],
+                expected[i],
                 f"match[{i}].match_score should be {expected[i]} (LLM value)",
             )
 
@@ -590,23 +616,29 @@ class TestLLMSuccessPath(unittest.TestCase):
         """Scores ≥85 → green badge; all three LLM scores (94, 87, 81) should clear 80."""
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertGreaterEqual(m["match_score"], 80,
-                f"match[{i}].match_score={m['match_score']} below expected LLM range")
+            self.assertGreaterEqual(
+                m["match_score"],
+                80,
+                f"match[{i}].match_score={m['match_score']} below expected LLM range",
+            )
 
     # ── Criterion 2: why is LLM rationale, not catalog description ───────────
 
     def test_why_is_llm_rationale_not_catalog_description(self):
         """LLM-path 'why' must be the model's rationale string, not the catalog entry."""
         from orivellum.api.routes.studio import _VOICE_BY_ID
+
         data = self._design()
         for i, m in enumerate(data["matches"]):
             catalog_desc = _VOICE_BY_ID[m["voice_id"]]["description"]
             self.assertNotEqual(
-                m["why"], catalog_desc,
+                m["why"],
+                catalog_desc,
                 f"match[{i}].why equals catalog description — fallback 'why' was used instead of LLM",
             )
             self.assertEqual(
-                m["why"], _LLM_WHYS[i],
+                m["why"],
+                _LLM_WHYS[i],
                 f"match[{i}].why does not match LLM rationale.\n"
                 f"  expected: {_LLM_WHYS[i]!r}\n"
                 f"  got:      {m['why']!r}",
@@ -615,8 +647,10 @@ class TestLLMSuccessPath(unittest.TestCase):
     def test_why_fields_are_non_empty(self):
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertTrue(bool(m.get("why", "").strip()),
-                f"match[{i}].why is empty — rationale row won't render on mobile")
+            self.assertTrue(
+                bool(m.get("why", "").strip()),
+                f"match[{i}].why is empty — rationale row won't render on mobile",
+            )
 
     # ── Criterion 3: voice objects enriched ──────────────────────────────────
 
@@ -624,35 +658,42 @@ class TestLLMSuccessPath(unittest.TestCase):
         """'Use {v.name}' action button requires voice.name to be non-empty."""
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertGreater(len(m.get("voice", {}).get("name", "")), 0,
-                f"match[{i}].voice.name empty — Use button shows 'Use '")
+            self.assertGreater(
+                len(m.get("voice", {}).get("name", "")),
+                0,
+                f"match[{i}].voice.name empty — Use button shows 'Use '",
+            )
 
     def test_voice_objects_have_gender(self):
         """Gender symbol (♀ / ♂) requires voice.gender to be present."""
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertIn("gender", m.get("voice", {}),
-                f"match[{i}].voice missing 'gender'")
+            self.assertIn("gender", m.get("voice", {}), f"match[{i}].voice missing 'gender'")
 
     def test_voice_objects_have_accent(self):
         """Accent badge colour requires voice.accent to be present."""
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertIn("accent", m.get("voice", {}),
-                f"match[{i}].voice missing 'accent'")
+            self.assertIn("accent", m.get("voice", {}), f"match[{i}].voice missing 'accent'")
 
     def test_voice_id_matches_voice_object_id(self):
         """Mobile card uses both m.voice_id and m.voice.id — they must agree."""
         data = self._design()
         for i, m in enumerate(data["matches"]):
-            self.assertEqual(m["voice_id"], m["voice"]["id"],
-                f"match[{i}]: voice_id={m['voice_id']!r} != voice.id={m['voice']['id']!r}")
+            self.assertEqual(
+                m["voice_id"],
+                m["voice"]["id"],
+                f"match[{i}]: voice_id={m['voice_id']!r} != voice.id={m['voice']['id']!r}",
+            )
 
     def test_three_enriched_matches_returned(self):
         """LLM provided 3 valid IDs → 3 enriched matches, not fewer."""
         data = self._design()
-        self.assertEqual(len(data["matches"]), 3,
-            f"Expected 3 matches from LLM success path, got {len(data['matches'])}")
+        self.assertEqual(
+            len(data["matches"]),
+            3,
+            f"Expected 3 matches from LLM success path, got {len(data['matches'])}",
+        )
 
     # ── Criterion 4: target_dimensions is numeric, not {} ────────────────────
 
@@ -660,8 +701,9 @@ class TestLLMSuccessPath(unittest.TestCase):
         """Keyword fallback returns {}; LLM path must return the model's scores."""
         data = self._design()
         dims = data.get("target_dimensions", {})
-        self.assertNotEqual(dims, {},
-            "target_dimensions is {} — LLM path returned fallback empty dict")
+        self.assertNotEqual(
+            dims, {}, "target_dimensions is {} — LLM path returned fallback empty dict"
+        )
 
     def test_target_dimensions_all_six_keys(self):
         data = self._design()
@@ -673,23 +715,28 @@ class TestLLMSuccessPath(unittest.TestCase):
         data = self._design()
         dims = data.get("target_dimensions", {})
         for key, val in dims.items():
-            self.assertIsInstance(val, (int, float),
-                f"target_dimensions['{key}']={val!r} is not numeric")
+            self.assertIsInstance(
+                val, (int, float), f"target_dimensions['{key}']={val!r} is not numeric"
+            )
 
     def test_target_dimensions_match_llm_values(self):
         """Exact LLM dimension values must survive the parse path unchanged."""
         data = self._design()
         dims = data.get("target_dimensions", {})
         for key, expected in _LLM_DIMS.items():
-            self.assertEqual(dims.get(key), expected,
-                f"target_dimensions['{key}'] expected {expected}, got {dims.get(key)!r}")
+            self.assertEqual(
+                dims.get(key),
+                expected,
+                f"target_dimensions['{key}'] expected {expected}, got {dims.get(key)!r}",
+            )
 
     # ── Criterion 5: interpretation echoes the LLM field ─────────────────────
 
     def test_interpretation_echoes_llm_field(self):
         data = self._design()
         self.assertEqual(
-            data.get("interpretation"), _LLM_INTERPRETATION,
+            data.get("interpretation"),
+            _LLM_INTERPRETATION,
             f"interpretation does not match LLM value.\n"
             f"  expected: {_LLM_INTERPRETATION!r}\n"
             f"  got:      {data.get('interpretation')!r}",
@@ -703,18 +750,25 @@ class TestLLMSuccessPath(unittest.TestCase):
         """Fallback sets interpretation to a 'keyword scoring' message; LLM path must not."""
         data = self._design()
         interp = data.get("interpretation", "").lower()
-        self.assertNotIn("keyword", interp,
-            "interpretation contains 'keyword' — keyword fallback fired instead of LLM path")
-        self.assertNotIn("unavailable", interp,
-            "interpretation contains 'unavailable' — keyword fallback fired instead of LLM path")
+        self.assertNotIn(
+            "keyword",
+            interp,
+            "interpretation contains 'keyword' — keyword fallback fired instead of LLM path",
+        )
+        self.assertNotIn(
+            "unavailable",
+            interp,
+            "interpretation contains 'unavailable' — keyword fallback fired instead of LLM path",
+        )
 
     # ── Other top-level contract fields ──────────────────────────────────────
 
     def test_description_is_echoed(self):
         desc = "deep gravitas historical ancient male"
         data = self._design(desc)
-        self.assertEqual(data.get("description"), desc,
-            "description field must echo the input unchanged")
+        self.assertEqual(
+            data.get("description"), desc, "description field must echo the input unchanged"
+        )
 
     def test_all_top_level_fields_present(self):
         data = self._design()
@@ -727,12 +781,21 @@ class TestLLMSuccessPath(unittest.TestCase):
         """LLMs sometimes wrap JSON in ```json … ``` fences — the endpoint must strip these."""
         data = self._design(llm_result=_llm_success_fenced(self._ids))
         # Fenced response must still take the LLM path, not fall through to keyword
-        self.assertNotEqual(data.get("target_dimensions"), {},
-            "Fenced-JSON response fell through to keyword fallback (target_dimensions={})")
-        self.assertGreater(data["matches"][0]["match_score"], 75,
-            "Fenced-JSON response gave fallback match_score — fence stripping may have failed")
-        self.assertEqual(data.get("interpretation"), _LLM_INTERPRETATION,
-            "interpretation does not match after fence stripping")
+        self.assertNotEqual(
+            data.get("target_dimensions"),
+            {},
+            "Fenced-JSON response fell through to keyword fallback (target_dimensions={})",
+        )
+        self.assertGreater(
+            data["matches"][0]["match_score"],
+            75,
+            "Fenced-JSON response gave fallback match_score — fence stripping may have failed",
+        )
+        self.assertEqual(
+            data.get("interpretation"),
+            _LLM_INTERPRETATION,
+            "interpretation does not match after fence stripping",
+        )
 
 
 if __name__ == "__main__":

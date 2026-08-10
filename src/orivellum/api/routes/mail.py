@@ -8,6 +8,7 @@ Send and delete routes are present but gated by feature flags:
   mail_steward.send_enabled   = true   (requires Mail.Send scope in token)
   mail_steward.delete_enabled = true   (always disabled in v1)
 """
+
 from __future__ import annotations
 
 import json
@@ -27,36 +28,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mail", dependencies=[Depends(require_auth)])
 # ── Request bodies ─────────────────────────────────────────────────────────────
 
+
 class ConnectPollBody(BaseModel):
-    handle: str          # opaque handle from /connect/start (contains device_code)
+    handle: str  # opaque handle from /connect/start (contains device_code)
+
 
 class DisconnectBody(BaseModel):
-    confirm: str         # must equal "disconnect"
+    confirm: str  # must equal "disconnect"
+
 
 class DraftBody(BaseModel):
     nonce: str
+
 
 class DraftUpdateBody(BaseModel):
     body_text: str | None = None
     to_recipients: list[str] | None = None
     subject: str | None = None
 
+
 class SendBody(BaseModel):
     action_request_id: str
     nonce: str
 
+
 class MoveBody(BaseModel):
-    destination: str     # "review" | "junk" | "inbox"
+    destination: str  # "review" | "junk" | "inbox"
     nonce: str
+
 
 class UndoBody(BaseModel):
     nonce: str
+
 
 class SyncBody(BaseModel):
     folders: list[str] | None = None
 
 
 # ── Helper: read encrypted handle stored in DB ─────────────────────────────────
+
 
 def _get_pending_device_code(db: Any, handle: str) -> str | None:
     """Retrieve a stored device_code by handle (short-lived; deleted after use)."""
@@ -74,6 +84,7 @@ def _clear_pending_device_code(db: Any, handle: str) -> None:
 
 # ── Connection ─────────────────────────────────────────────────────────────────
 
+
 @router.get("/summary")
 def mail_summary():
     """Counts, connection state, and feed freshness."""
@@ -81,6 +92,7 @@ def mail_summary():
     connected = db.get_setting("mail_steward.connected", "false") == "true"
     from orivellum.capabilities.mail.threat_intel import feed_status
     from orivellum.database.mail_store import MailStore
+
     store = MailStore(db)
     counts = store.summary() if connected else {}
     return {
@@ -100,6 +112,7 @@ def connect_start():
     """
     db = get_db()
     from orivellum.capabilities.mail import oauth
+
     include_send = db.get_setting("mail_steward.send_enabled", "false") == "true"
     try:
         data = oauth.request_device_code(include_send=include_send)
@@ -156,10 +169,10 @@ def connect_poll(body: ConnectPollBody):
         client = GraphClient(token_data["access_token"])
         me = client.get_me()
         display_name = me.get("displayName", "")
-        mail_addr    = me.get("mail") or me.get("userPrincipalName", "")
+        mail_addr = me.get("mail") or me.get("userPrincipalName", "")
     except Exception:
         display_name = ""
-        mail_addr    = ""
+        mail_addr = ""
 
     db._set_setting("mail_steward.connected", "true")
     db._set_setting("mail_steward.account_display", f"{display_name} <{mail_addr}>")
@@ -177,6 +190,7 @@ def disconnect(body: DisconnectBody):
         raise HTTPException(400, "Confirm must equal 'disconnect'")
     db = get_db()
     from orivellum.capabilities.mail.token_vault import delete_token
+
     delete_token(db)
     db._set_setting("mail_steward.connected", "false")
     db._set_setting("mail_steward.account_display", "")
@@ -185,6 +199,7 @@ def disconnect(body: DisconnectBody):
 
 
 # ── Sync ───────────────────────────────────────────────────────────────────────
+
 
 @router.post("/sync")
 def trigger_sync(body: SyncBody | None = None, background_tasks: BackgroundTasks = None):
@@ -195,6 +210,7 @@ def trigger_sync(body: SyncBody | None = None, background_tasks: BackgroundTasks
 
     def _run():
         from orivellum.capabilities.mail.steward import sync_mail
+
         cfg = get_config()
         try:
             result = sync_mail(db, cfg)
@@ -208,6 +224,7 @@ def trigger_sync(body: SyncBody | None = None, background_tasks: BackgroundTasks
 
 # ── Attention / decision queue ─────────────────────────────────────────────────
 
+
 @router.get("/attention")
 def list_attention(
     limit: int = Query(50, ge=1, le=200),
@@ -217,6 +234,7 @@ def list_attention(
     """Decision queue — high-attention messages first."""
     db = get_db()
     from orivellum.database.mail_store import MailStore
+
     store = MailStore(db)
     records = store.list_mail_records(attention_level=attention_level, limit=limit, offset=offset)
     # Never return encrypted Graph IDs
@@ -229,6 +247,7 @@ def get_decision(record_id: str):
     """Full decision detail — assessment, evidence, current action choices."""
     db = get_db()
     from orivellum.database.mail_store import MailStore
+
     store = MailStore(db)
     record = store.get_mail_record(record_id)
     if not record:
@@ -251,12 +270,14 @@ def get_decision(record_id: str):
         ar = store.get_action_request(action_request_id)
         if ar and ar.get("action_type") == "MOVE" and ar.get("status") == "APPLIED":
             undo_nonce = store.issue_nonce(record_id, "UNDO_MOVE")
-            actions.append({
-                "type": "UNDO_MOVE",
-                "nonce": undo_nonce,
-                "action_request_id": action_request_id,
-                "label": "Undo move",
-            })
+            actions.append(
+                {
+                    "type": "UNDO_MOVE",
+                    "nonce": undo_nonce,
+                    "action_request_id": action_request_id,
+                    "label": "Undo move",
+                }
+            )
 
     return {
         "record": _safe_record(record),
@@ -268,6 +289,7 @@ def get_decision(record_id: str):
 
 # ── Draft compose + send ───────────────────────────────────────────────────────
 
+
 @router.post("/decisions/{record_id}/draft")
 def create_draft(record_id: str, body: DraftBody):
     """Create an Outlook reply draft and return the composed text for review.
@@ -277,6 +299,7 @@ def create_draft(record_id: str, body: DraftBody):
     """
     db = get_db()
     from orivellum.capabilities.mail.steward import create_draft as _create_draft
+
     try:
         result = _create_draft(db, record_id, body.nonce)
     except MailStewardError as exc:
@@ -292,7 +315,7 @@ def update_draft(action_request_id: str, body: DraftUpdateBody):
     from orivellum.capabilities.mail.token_vault import decrypt_str
     from orivellum.database.mail_store import MailStore
 
-    store  = MailStore(db)
+    store = MailStore(db)
     action = store.get_action_request(action_request_id)
     if not action:
         raise HTTPException(404, "Draft action not found")
@@ -332,9 +355,13 @@ def send_mail(record_id: str, body: SendBody):
     db = get_db()
     send_enabled = db.get_setting("mail_steward.send_enabled", "false") == "true"
     if not send_enabled:
-        raise HTTPException(403, "FEATURE_DISABLED: send_enabled is false. Add Mail.Send scope and enable in settings.")
+        raise HTTPException(
+            403,
+            "FEATURE_DISABLED: send_enabled is false. Add Mail.Send scope and enable in settings.",
+        )
 
     from orivellum.capabilities.mail.steward import send_draft as _send
+
     try:
         result = _send(db, body.action_request_id, body.nonce)
     except MailStewardError as exc:
@@ -343,6 +370,7 @@ def send_mail(record_id: str, body: SendBody):
 
 
 # ── Move / undo ────────────────────────────────────────────────────────────────
+
 
 @router.post("/decisions/{record_id}/move")
 def move_message(record_id: str, body: MoveBody):
@@ -372,6 +400,7 @@ def move_message(record_id: str, body: MoveBody):
         raise HTTPException(502, f"Could not resolve folder: {body.destination}")
 
     from orivellum.capabilities.mail.steward import move_message as _move
+
     try:
         result = _move(db, record_id, encrypt_str(folder_id), body.nonce)
     except MailStewardError as exc:
@@ -384,6 +413,7 @@ def undo_action(action_id: str, body: UndoBody):
     """Undo a reversible move."""
     db = get_db()
     from orivellum.capabilities.mail.steward import undo_move as _undo
+
     try:
         result = _undo(db, action_id, body.nonce)
     except MailStewardError as exc:
@@ -393,6 +423,7 @@ def undo_action(action_id: str, body: UndoBody):
 
 # ── Disabled in v1 ─────────────────────────────────────────────────────────────
 
+
 @router.post("/decisions/{record_id}/delete")
 def delete_message_disabled(record_id: str):
     """Permanent delete — disabled in v1.0."""
@@ -400,6 +431,7 @@ def delete_message_disabled(record_id: str):
 
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
+
 
 @router.get("/audit")
 def list_audit(
@@ -409,12 +441,14 @@ def list_audit(
 ):
     db = get_db()
     from orivellum.database.mail_store import MailStore
+
     store = MailStore(db)
     events = store.list_audit_events(record_id, limit=limit, offset=offset)
     return {"events": [_safe_audit(e) for e in events], "total": len(events)}
 
 
 # ── Settings ───────────────────────────────────────────────────────────────────
+
 
 @router.get("/settings")
 def get_mail_settings():
@@ -424,13 +458,15 @@ def get_mail_settings():
     except (ValueError, TypeError):
         context_days = 30
     return {
-        "send_enabled":        db.get_setting("mail_steward.send_enabled", "false") == "true",
-        "lemonade_url":        db.get_setting("mail_steward.lemonade_url", "http://127.0.0.1:13305/api/v1"),
-        "lemonade_model":      db.get_setting("mail_steward.lemonade_model", ""),
-        "sync_folders":        json.loads(db.get_setting("mail_steward.sync_folders", '["inbox"]')),
-        "account_display":     db.get_setting("mail_steward.account_display", ""),
+        "send_enabled": db.get_setting("mail_steward.send_enabled", "false") == "true",
+        "lemonade_url": db.get_setting(
+            "mail_steward.lemonade_url", "http://127.0.0.1:13305/api/v1"
+        ),
+        "lemonade_model": db.get_setting("mail_steward.lemonade_model", ""),
+        "sync_folders": json.loads(db.get_setting("mail_steward.sync_folders", '["inbox"]')),
+        "account_display": db.get_setting("mail_steward.account_display", ""),
         "threat_feeds_enabled": db.get_setting("mail_steward.threat_feeds", "true") == "true",
-        "context_days":        context_days,
+        "context_days": context_days,
     }
 
 
@@ -440,7 +476,7 @@ class MailSettingsBody(BaseModel):
     lemonade_model: str | None = None
     sync_folders: list[str] | None = None
     threat_feeds_enabled: bool | None = None
-    context_days: int | None = None   # recency cap for chat context injection (0 = disabled)
+    context_days: int | None = None  # recency cap for chat context injection (0 = disabled)
 
 
 @router.patch("/settings")
@@ -464,18 +500,21 @@ def update_mail_settings(body: MailSettingsBody):
         folders = body.sync_folders if body.sync_folders else ["inbox"]
         db._set_setting("mail_steward.sync_folders", json.dumps(folders))
     if body.threat_feeds_enabled is not None:
-        db._set_setting("mail_steward.threat_feeds", "true" if body.threat_feeds_enabled else "false")
+        db._set_setting(
+            "mail_steward.threat_feeds", "true" if body.threat_feeds_enabled else "false"
+        )
     if body.context_days is not None:
-        days = max(0, int(body.context_days))   # clamp: 0 = no cap
+        days = max(0, int(body.context_days))  # clamp: 0 = no cap
         db._set_setting("mail_steward.context_days", str(days))
     return {"updated": True}
 
 
 # ── Add to knowledge ──────────────────────────────────────────────────────────
 
+
 class AddToKnowledgeBody(BaseModel):
-    work_id: str | None = None      # optional — save under a specific Work
-    research: bool = False          # fetch live web context about the sender/topic
+    work_id: str | None = None  # optional — save under a specific Work
+    research: bool = False  # fetch live web context about the sender/topic
 
 
 @router.post("/decisions/{record_id}/add-to-knowledge")
@@ -504,20 +543,20 @@ def add_to_knowledge(record_id: str, body: AddToKnowledgeBody, background_tasks:
 
     assessment = store.get_latest_assessment(record_id)
 
-    subject       = (record.get("subject") or "(no subject)")[:200]
-    sender_name   = record.get("sender_name") or ""
+    subject = (record.get("subject") or "(no subject)")[:200]
+    sender_name = record.get("sender_name") or ""
     sender_domain = record.get("sender_domain") or "unknown"
-    received_at   = (record.get("received_at") or "")[:10]
-    attention     = (assessment or {}).get("attention_level", "medium")
-    rationale     = (assessment or {}).get("rationale") or ""
-    needs_reply   = bool((assessment or {}).get("needs_reply"))
+    received_at = (record.get("received_at") or "")[:10]
+    attention = (assessment or {}).get("attention_level", "medium")
+    rationale = (assessment or {}).get("rationale") or ""
+    needs_reply = bool((assessment or {}).get("needs_reply"))
 
     # Build the core knowledge text
     lines = [
         f"Email from @{sender_domain}" + (f" ({sender_name})" if sender_name else ""),
         f"Subject: {subject}",
-        f"Received: {received_at}  |  Attention: {attention.upper()}" +
-        ("  |  Needs reply" if needs_reply else ""),
+        f"Received: {received_at}  |  Attention: {attention.upper()}"
+        + ("  |  Needs reply" if needs_reply else ""),
     ]
     if rationale:
         lines.append(f"\nAI Assessment: {rationale}")
@@ -528,12 +567,13 @@ def add_to_knowledge(record_id: str, body: AddToKnowledgeBody, background_tasks:
     if body.research:
         try:
             from orivellum.capabilities.websearch import fetch_web_context
+
             query = f"{subject} {sender_domain}"
             results = fetch_web_context(query, max_results=3, timeout=8)
             if results:
                 parts = []
                 for r in results[:3]:
-                    title   = r.get("title") or r.get("url", "")
+                    title = r.get("title") or r.get("url", "")
                     snippet = r.get("content") or r.get("snippet") or ""
                     if snippet:
                         parts.append(f"• {title}: {snippet[:300]}")
@@ -575,6 +615,7 @@ def add_to_knowledge(record_id: str, body: AddToKnowledgeBody, background_tasks:
 
 # ── Assess on demand ──────────────────────────────────────────────────────────
 
+
 @router.post("/decisions/{record_id}/assess")
 def assess_decision(record_id: str, background_tasks: BackgroundTasks):
     """Trigger (re)assessment of a mail record."""
@@ -582,6 +623,7 @@ def assess_decision(record_id: str, background_tasks: BackgroundTasks):
 
     def _run():
         from orivellum.capabilities.mail.steward import assess_message
+
         cfg = get_config()
         try:
             assess_message(db, cfg, record_id)
@@ -594,6 +636,7 @@ def assess_decision(record_id: str, background_tasks: BackgroundTasks):
 
 # ── Send-nonce issuance ────────────────────────────────────────────────────────
 
+
 @router.post("/decisions/{record_id}/send-nonce")
 def issue_send_nonce(record_id: str):
     """Issue a single-use send nonce for an existing draft action."""
@@ -602,6 +645,7 @@ def issue_send_nonce(record_id: str):
     if not send_enabled:
         raise HTTPException(403, "FEATURE_DISABLED")
     from orivellum.database.mail_store import MailStore
+
     store = MailStore(db)
     nonce = store.issue_nonce(record_id, "SEND")
     return {"nonce": nonce}
@@ -609,54 +653,55 @@ def issue_send_nonce(record_id: str):
 
 # ── Serialisation helpers (no Graph IDs in responses) ─────────────────────────
 
+
 def _safe_record(r: dict) -> dict:
     """Return only display-safe fields — never encrypted Graph IDs."""
     return {
-        "id":              r.get("id"),
-        "subject":         r.get("subject"),
-        "sender_name":     r.get("sender_name"),
-        "sender_domain":   r.get("sender_domain"),
-        "received_at":     r.get("received_at"),
+        "id": r.get("id"),
+        "subject": r.get("subject"),
+        "sender_name": r.get("sender_name"),
+        "sender_domain": r.get("sender_domain"),
+        "received_at": r.get("received_at"),
         "has_attachments": bool(r.get("has_attachments")),
-        "importance":      r.get("importance"),
-        "is_read":         bool(r.get("is_read")),
+        "importance": r.get("importance"),
+        "is_read": bool(r.get("is_read")),
         "lifecycle_state": r.get("lifecycle_state"),
-        "assessment_id":   r.get("assessment_id"),
+        "assessment_id": r.get("assessment_id"),
         "action_request_id": r.get("action_request_id"),
         # Denormed from assessment join (may be None)
         "attention_level": r.get("attention_level"),
-        "needs_reply":     bool(r.get("needs_reply")) if r.get("needs_reply") is not None else None,
+        "needs_reply": bool(r.get("needs_reply")) if r.get("needs_reply") is not None else None,
         "recommended_action": r.get("recommended_action"),
-        "confidence":      r.get("confidence"),
-        "is_high_risk":    bool(r.get("is_high_risk")) if r.get("is_high_risk") is not None else None,
+        "confidence": r.get("confidence"),
+        "is_high_risk": bool(r.get("is_high_risk")) if r.get("is_high_risk") is not None else None,
     }
 
 
 def _safe_assessment(a: dict) -> dict:
     return {
-        "id":               a.get("id"),
-        "attention_level":  a.get("attention_level"),
-        "needs_reply":      bool(a.get("needs_reply")),
-        "rationale":        a.get("rationale"),
-        "suggested_reply":  a.get("suggested_reply"),
+        "id": a.get("id"),
+        "attention_level": a.get("attention_level"),
+        "needs_reply": bool(a.get("needs_reply")),
+        "rationale": a.get("rationale"),
+        "suggested_reply": a.get("suggested_reply"),
         "recommended_action": a.get("recommended_action"),
-        "confidence":       a.get("confidence"),
-        "is_high_risk":     bool(a.get("is_high_risk")),
+        "confidence": a.get("confidence"),
+        "is_high_risk": bool(a.get("is_high_risk")),
         "injection_flagged": bool(a.get("injection_flagged")),
-        "model_id":         a.get("model_id"),
-        "signals":          json.loads(a.get("signals_json") or "[]"),
-        "created_at":       a.get("created_at"),
+        "model_id": a.get("model_id"),
+        "signals": json.loads(a.get("signals_json") or "[]"),
+        "created_at": a.get("created_at"),
     }
 
 
 def _safe_audit(e: dict) -> dict:
     return {
-        "id":               e.get("id"),
-        "at":               e.get("at"),
-        "actor":            e.get("actor"),
-        "event_type":       e.get("event_type"),
-        "policy_version":   e.get("policy_version"),
-        "model_id":         e.get("model_id"),
-        "signals":          json.loads(e.get("signals_json") or "[]"),
-        "result":           e.get("result"),
+        "id": e.get("id"),
+        "at": e.get("at"),
+        "actor": e.get("actor"),
+        "event_type": e.get("event_type"),
+        "policy_version": e.get("policy_version"),
+        "model_id": e.get("model_id"),
+        "signals": json.loads(e.get("signals_json") or "[]"),
+        "result": e.get("result"),
     }

@@ -8,6 +8,7 @@ Features:
 - Thread-safe with RLock
 - Helpers for common query patterns
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,6 +29,7 @@ from .schema import MIGRATIONS
 # Governed-core exceptions (Sovereign Platform M0.1)
 # ---------------------------------------------------------------------------
 
+
 class _CASConflict(Exception):
     """Internal sentinel: compare-and-set check failed inside governed_write.
 
@@ -47,15 +49,12 @@ class VersionConflictError(Exception):
                 row no longer exists).
     """
 
-    def __init__(self, object_id: str, expected: int | None,
-                 actual: int | None) -> None:
-        super().__init__(
-            f"Version conflict on {object_id!r}: "
-            f"expected {expected}, got {actual}"
-        )
+    def __init__(self, object_id: str, expected: int | None, actual: int | None) -> None:
+        super().__init__(f"Version conflict on {object_id!r}: expected {expected}, got {actual}")
         self.object_id = object_id
         self.expected = expected
         self.actual = actual
+
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +86,7 @@ class OrivellumDB:
     def __init__(self, path: str) -> None:
         self._path = path
         self._lock = threading.RLock()
-        self._local = threading.local()   # per-thread read connections
+        self._local = threading.local()  # per-thread read connections
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -233,9 +232,11 @@ class OrivellumDB:
         # Hot path — uses the per-thread read connection so concurrent callers
         # don't queue on self._lock.  PRAGMA query_only=ON on read_conn()
         # ensures this path can never accidentally write.
-        row = self.read_conn().execute(
-            "SELECT value FROM settings WHERE scope='global' AND key=?", (key,)
-        ).fetchone()
+        row = (
+            self.read_conn()
+            .execute("SELECT value FROM settings WHERE scope='global' AND key=?", (key,))
+            .fetchone()
+        )
         return row["value"] if row and row["value"] is not None else default
 
     # Keys whose values must never appear in audit detail (secrets/tokens)
@@ -264,10 +265,14 @@ class OrivellumDB:
         Uses the per-thread read connection (no write-lock contention).
         """
         try:
-            row = self.read_conn().execute(
-                "SELECT content FROM prompts WHERE slot=? AND active=1 LIMIT 1",
-                (slot,),
-            ).fetchone()
+            row = (
+                self.read_conn()
+                .execute(
+                    "SELECT content FROM prompts WHERE slot=? AND active=1 LIMIT 1",
+                    (slot,),
+                )
+                .fetchone()
+            )
             return row["content"] if row and row["content"] else None
         except Exception:
             return None
@@ -379,9 +384,7 @@ class OrivellumDB:
         set_clause = ", ".join(f"{c}=?" for c, _ in cols)
         vals = [v for _, v in cols] + [template_id]
         with self._lock:
-            self._conn.execute(
-                f"UPDATE extraction_templates SET {set_clause} WHERE id=?", vals
-            )
+            self._conn.execute(f"UPDATE extraction_templates SET {set_clause} WHERE id=?", vals)
             self._conn.commit()
         return self.get_extraction_template(template_id)
 
@@ -393,9 +396,7 @@ class OrivellumDB:
             ).fetchone()
             if not row:
                 return False
-            self._conn.execute(
-                "DELETE FROM extraction_templates WHERE id=?", (template_id,)
-            )
+            self._conn.execute("DELETE FROM extraction_templates WHERE id=?", (template_id,))
             self._conn.commit()
         return True
 
@@ -453,6 +454,7 @@ class OrivellumDB:
     @staticmethod
     def _et_dict(row: Any) -> dict:
         import json as _j
+
         d = dict(row)
         raw = d.get("field_hints")
         try:
@@ -501,17 +503,27 @@ class OrivellumDB:
             "ORDER BY timestamp DESC, id DESC LIMIT 1"
         ).fetchone()
         prev_hash = prev_row["row_hash"] if prev_row else "0" * 64
-        chain_data = "|".join([
-            prev_hash, operation, object_id or "", detail or "", now, entry_id
-        ])
+        chain_data = "|".join([prev_hash, operation, object_id or "", detail or "", now, entry_id])
         row_hash = hashlib.sha256(chain_data.encode()).hexdigest()
         self._conn.execute(
             """INSERT INTO audit_log(id, timestamp, actor, operation,
                object_id, object_type, before_hash, after_hash,
                result, detail, app_version, prev_hash, row_hash)
                VALUES(?,?,?,?,?,?,?,?,?,?,'0.1.0',?,?)""",
-            (entry_id, now, actor, operation, object_id, object_type,
-             before_hash, after_hash, result, detail, prev_hash, row_hash),
+            (
+                entry_id,
+                now,
+                actor,
+                operation,
+                object_id,
+                object_type,
+                before_hash,
+                after_hash,
+                result,
+                detail,
+                prev_hash,
+                row_hash,
+            ),
         )
         return row_hash
 
@@ -530,8 +542,7 @@ class OrivellumDB:
             """INSERT INTO outbox(id, event_type, object_id, object_type,
                payload, created_at)
                VALUES(?,?,?,?,?,?)""",
-            (_uuid(), event_type, object_id, object_type,
-             json.dumps(payload or {}), _now()),
+            (_uuid(), event_type, object_id, object_type, json.dumps(payload or {}), _now()),
         )
 
     @contextmanager
@@ -648,7 +659,7 @@ class OrivellumDB:
                     return False
                 # Strip block comments (/* ... */) — non-greedy, dotall
                 cleaned = _re.sub(r"/\*.*?\*/", " ", sql, flags=_re.DOTALL)
-                # Strip line comments (-- ...) 
+                # Strip line comments (-- ...)
                 cleaned = _re.sub(r"--[^\n]*", " ", cleaned)
                 first = cleaned.strip().upper().split()
                 if not first:
@@ -674,6 +685,7 @@ class OrivellumDB:
                 ``self`` rather than the underlying raw cursor so that the `.connection`
                 property always resolves to the proxy, never the real connection.
                 """
+
                 __slots__ = ("_cur",)
 
                 def __init__(self, real_cur: Any) -> None:
@@ -775,10 +787,8 @@ class OrivellumDB:
                         "'with governed_write(...)' block."
                     )
                 if audit_level == "full":
-                    self._audit_tx(operation, object_id, object_type,
-                                   actor=actor, detail=detail)
-                    self._emit_outbox_tx(event_type, object_id, object_type,
-                                         payload or {})
+                    self._audit_tx(operation, object_id, object_type, actor=actor, detail=detail)
+                    self._emit_outbox_tx(event_type, object_id, object_type, payload or {})
                 _real_conn.commit()
             except Exception:
                 self._conn = _real_conn  # always restore
@@ -819,10 +829,16 @@ class OrivellumDB:
                     f"expected={expected_prev[:12]}…",
                 )
             # Verify row_hash was computed correctly.
-            chain_data = "|".join([
-                stored_prev, r["operation"], r["object_id"] or "",
-                r["detail"] or "", r["timestamp"], r["id"],
-            ])
+            chain_data = "|".join(
+                [
+                    stored_prev,
+                    r["operation"],
+                    r["object_id"] or "",
+                    r["detail"] or "",
+                    r["timestamp"],
+                    r["id"],
+                ]
+            )
             expected_hash = hashlib.sha256(chain_data.encode()).hexdigest()
             if r["row_hash"] != expected_hash:
                 return (
@@ -861,8 +877,7 @@ class OrivellumDB:
         now = _now()
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE outbox SET dispatched_at=? "
-                "WHERE id=? AND dispatched_at IS NULL",
+                "UPDATE outbox SET dispatched_at=? WHERE id=? AND dispatched_at IS NULL",
                 (now, event_id),
             )
             self._conn.commit()
@@ -895,9 +910,14 @@ class OrivellumDB:
         try:
             with self._lock:
                 self._audit_tx(
-                    operation, object_id, object_type,
-                    actor=actor, result=result, detail=detail,
-                    before_hash=before_hash, after_hash=after_hash,
+                    operation,
+                    object_id,
+                    object_type,
+                    actor=actor,
+                    result=result,
+                    detail=detail,
+                    before_hash=before_hash,
+                    after_hash=after_hash,
                 )
                 self._conn.commit()
         except Exception as exc:
@@ -943,8 +963,9 @@ class OrivellumDB:
     # Near-duplicate tracking (referenced by capabilities/dedup.py)
     # -------------------------------------------------------------------------
 
-    def list_near_duplicates(self, resolved: bool = False,
-                             work_id: str | None = None) -> list[dict]:
+    def list_near_duplicates(
+        self, resolved: bool = False, work_id: str | None = None
+    ) -> list[dict]:
         """Return doc_dupes rows with document titles joined in.
 
         By default returns only unresolved pairs (resolved=False).
@@ -967,9 +988,9 @@ class OrivellumDB:
             rows = self._conn.execute(q, args).fetchall()
         return [dict(r) for r in rows]
 
-    def resolve_near_duplicate(self, dupe_id: str, action: str,
-                               canonical_doc_id: str | None = None,
-                               actor: str = "user") -> dict | None:
+    def resolve_near_duplicate(
+        self, dupe_id: str, action: str, canonical_doc_id: str | None = None, actor: str = "user"
+    ) -> dict | None:
         """Mark a near-duplicate pair as resolved.
 
         action options:
@@ -991,9 +1012,7 @@ class OrivellumDB:
 
         # Pre-read (outside the write transaction)
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM doc_dupes WHERE id=?", (dupe_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM doc_dupes WHERE id=?", (dupe_id,)).fetchone()
         if not row:
             return None
         dupe = dict(row)
@@ -1063,8 +1082,9 @@ class OrivellumDB:
     # Object creation helper
     # -------------------------------------------------------------------------
 
-    def _create_object(self, obj_type: str, extra: dict | None = None,
-                       lifecycle: str = "active") -> str:
+    def _create_object(
+        self, obj_type: str, extra: dict | None = None, lifecycle: str = "active"
+    ) -> str:
         oid = _uuid()
         now = _now()
         with self._lock:
@@ -1080,8 +1100,9 @@ class OrivellumDB:
     # Works
     # -------------------------------------------------------------------------
 
-    def list_works(self, status: str | None = None, work_type: str | None = None,
-                   limit: int = 200) -> list[dict]:
+    def list_works(
+        self, status: str | None = None, work_type: str | None = None, limit: int = 200
+    ) -> list[dict]:
         q = """SELECT w.*, o.created_at as obj_created, o.lifecycle,
                       (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id) as doc_count,
                       (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id AND d.readiness='ready') as ready_doc_count,
@@ -1120,8 +1141,13 @@ class OrivellumDB:
             ).fetchone()
         return self._work_dict(row) if row else None
 
-    def create_work(self, title: str, work_type: str = "research",
-                    description: str | None = None, meta: dict | None = None) -> dict:
+    def create_work(
+        self,
+        title: str,
+        work_type: str = "research",
+        description: str | None = None,
+        meta: dict | None = None,
+    ) -> dict:
         oid = _uuid()
         now = _now()
         with self.governed_write(
@@ -1143,9 +1169,9 @@ class OrivellumDB:
             )
         return self.get_work(oid)  # type: ignore[return-value]
 
-    def update_work(self, work_id: str,
-                    expected_version: int | None = None,
-                    **kwargs: Any) -> dict | None:
+    def update_work(
+        self, work_id: str, expected_version: int | None = None, **kwargs: Any
+    ) -> dict | None:
         """Update mutable fields on a work.
 
         Args:
@@ -1229,8 +1255,9 @@ class OrivellumDB:
     # Conversations
     # -------------------------------------------------------------------------
 
-    def list_conversations(self, work_id: str | None = None, archived: bool = False,
-                           limit: int = 100) -> list[dict]:
+    def list_conversations(
+        self, work_id: str | None = None, archived: bool = False, limit: int = 100
+    ) -> list[dict]:
         q = """SELECT c.*,
                       (SELECT text FROM messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1) as last_message,
                       (SELECT COUNT(*) FROM messages WHERE conversation_id=c.id) as message_count,
@@ -1302,12 +1329,10 @@ class OrivellumDB:
             d = dict(r)
             d["meta"] = _jload(d.get("meta"), {})
             result.append(d)
-        result.reverse()   # restore chronological (ascending) order
+        result.reverse()  # restore chronological (ascending) order
         return result
 
-    def get_messages_range(
-        self, conv_id: str, offset: int, limit: int
-    ) -> list[dict]:
+    def get_messages_range(self, conv_id: str, offset: int, limit: int) -> list[dict]:
         """Fetch a slice of a conversation's messages by position (0-based offset).
 
         Returns up to *limit* messages starting at *offset* in the canonical
@@ -1421,16 +1446,24 @@ class OrivellumDB:
             if idx >= 0:
                 start = max(0, idx - 80)
                 end = min(len(text), idx + len(q) + 120)
-                snippet = ("…" if start > 0 else "") + text[start:end] + ("…" if end < len(text) else "")
+                snippet = (
+                    ("…" if start > 0 else "") + text[start:end] + ("…" if end < len(text) else "")
+                )
             else:
                 snippet = text[:200]
             d["snippet"] = snippet
             result.append(d)
         return result
 
-    def log_access(self, method: str, path: str, status: int,
-                   latency_ms: int, ip: str | None = None,
-                   user_agent: str = "") -> None:
+    def log_access(
+        self,
+        method: str,
+        path: str,
+        status: int,
+        latency_ms: int,
+        ip: str | None = None,
+        user_agent: str = "",
+    ) -> None:
         """Append one row to the access_log table (best-effort; non-fatal on error)."""
         try:
             now = _now()
@@ -1521,9 +1554,13 @@ class OrivellumDB:
         except Exception:
             return []
 
-    def create_conversation(self, title: str | None = None, work_id: str | None = None,
-                            model: str | None = None,
-                            persona_id: str | None = None) -> dict:
+    def create_conversation(
+        self,
+        title: str | None = None,
+        work_id: str | None = None,
+        model: str | None = None,
+        persona_id: str | None = None,
+    ) -> dict:
         cid = _uuid()
         now = _now()
         pid = persona_id or "default"
@@ -1543,10 +1580,15 @@ class OrivellumDB:
             )
         return self.get_conversation(cid)  # type: ignore[return-value]
 
-    def add_message(self, conv_id: str, role: str, text: str,
-                    meta: dict | None = None,
-                    state: str = "done",
-                    client_msg_id: str | None = None) -> dict:
+    def add_message(
+        self,
+        conv_id: str,
+        role: str,
+        text: str,
+        meta: dict | None = None,
+        state: str = "done",
+        client_msg_id: str | None = None,
+    ) -> dict:
         """Insert a message and bump the conversation's updated_at.
 
         Args:
@@ -1568,8 +1610,7 @@ class OrivellumDB:
             event_type="message.created",
             object_id=mid,
             object_type="message",
-            payload={"conversation_id": conv_id, "role": role,
-                     "word_count": _wc, "state": state},
+            payload={"conversation_id": conv_id, "role": role, "word_count": _wc, "state": state},
             actor="user" if role == "user" else "system",
             detail=f"{role} {state} {_wc}w",
         ):
@@ -1613,16 +1654,12 @@ class OrivellumDB:
                        VALUES(?,?,?,?,?,?,?,?)""",
                     (mid, conv_id, role, text, _jdump(meta or {}), now, state, None),
                 )
-            self._conn.execute(
-                "UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id)
-            )
+            self._conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
             # Keep FTS index in sync.
             # Always DELETE first so the subsequent INSERT never creates a
             # duplicate entry (FTS5 has no unique constraint on msg_id).
             try:
-                self._conn.execute(
-                    "DELETE FROM messages_fts WHERE msg_id=?", (mid,)
-                )
+                self._conn.execute("DELETE FROM messages_fts WHERE msg_id=?", (mid,))
                 self._conn.execute(
                     "INSERT INTO messages_fts(text, role, msg_id, conversation_id)"
                     " VALUES (?, ?, ?, ?)",
@@ -1630,8 +1667,16 @@ class OrivellumDB:
                 )
             except Exception:
                 pass
-        return {"id": mid, "conversation_id": conv_id, "role": role, "text": text,
-                "state": state, "meta": meta or {}, "created_at": now, "_is_duplicate": False}
+        return {
+            "id": mid,
+            "conversation_id": conv_id,
+            "role": role,
+            "text": text,
+            "state": state,
+            "meta": meta or {},
+            "created_at": now,
+            "_is_duplicate": False,
+        }
 
     def transition_message(self, msg_id: str, to_state: str) -> None:
         """Apply a MESSAGE_SM state transition to an existing message.
@@ -1644,17 +1689,19 @@ class OrivellumDB:
             BlockedTransitionError: if open high/critical findings block it.
         """
         from orivellum.capabilities.state_machine import (
-            MESSAGE_SM, TransitionConflictError, apply_transition,
+            MESSAGE_SM,
+            TransitionConflictError,
+            apply_transition,
         )
+
         with self._lock:
-            row = self._conn.execute(
-                "SELECT state FROM messages WHERE id=?", (msg_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT state FROM messages WHERE id=?", (msg_id,)).fetchone()
         if not row:
             return  # message not found — caller already logged it
         try:
             apply_transition(
-                self, MESSAGE_SM,
+                self,
+                MESSAGE_SM,
                 object_id=msg_id,
                 object_type="message",
                 table="messages",
@@ -1670,7 +1717,9 @@ class OrivellumDB:
             # The streaming pipeline must not die over this — log and continue.
             logger.warning(
                 "Message %s state moved concurrently (wanted %s→%s) — skipping",
-                msg_id, row["state"], to_state,
+                msg_id,
+                row["state"],
+                to_state,
             )
 
     def finalize_message(self, msg_id: str, text: str, state: str) -> None:
@@ -1687,9 +1736,7 @@ class OrivellumDB:
         If the message is not found, the call is a no-op.
         """
         if state not in ("done", "failed"):
-            raise ValueError(
-                f"finalize_message only writes terminal states, got {state!r}"
-            )
+            raise ValueError(f"finalize_message only writes terminal states, got {state!r}")
         _wc = len(text.split()) if text else 0
         with self.governed_write(
             operation="message.finalized",
@@ -1701,22 +1748,20 @@ class OrivellumDB:
             detail=f"{state} {_wc}w",
         ):
             cur = self._conn.execute(
-                "UPDATE messages SET text=?, state=? WHERE id=? "
-                "AND state NOT IN ('done','failed')",
+                "UPDATE messages SET text=?, state=? WHERE id=? AND state NOT IN ('done','failed')",
                 (text, state, msg_id),
             )
             if cur.rowcount == 0:
                 logger.warning(
-                    "finalize_message(%s → %s): message missing or already "
-                    "terminal — no-op", msg_id, state,
+                    "finalize_message(%s → %s): message missing or already terminal — no-op",
+                    msg_id,
+                    state,
                 )
                 return
             # Keep FTS index in sync — delete then insert (no OR IGNORE needed
             # after delete; avoids phantom duplicate FTS rows).
             try:
-                self._conn.execute(
-                    "DELETE FROM messages_fts WHERE msg_id=?", (msg_id,)
-                )
+                self._conn.execute("DELETE FROM messages_fts WHERE msg_id=?", (msg_id,))
                 row = self._conn.execute(
                     "SELECT conversation_id, role FROM messages WHERE id=?", (msg_id,)
                 ).fetchone()
@@ -1742,9 +1787,7 @@ class OrivellumDB:
         """
         try:
             with self._lock:
-                self._conn.execute(
-                    "DELETE FROM messages_fts WHERE msg_id=?", (msg_id,)
-                )
+                self._conn.execute("DELETE FROM messages_fts WHERE msg_id=?", (msg_id,))
                 self._conn.execute(
                     "INSERT INTO messages_fts(text, role, msg_id, conversation_id)"
                     " VALUES (?, ?, ?, ?)",
@@ -1833,8 +1876,12 @@ class OrivellumDB:
                 )
                 self._conn.commit()
                 user_msg = {
-                    "id": mid, "conversation_id": conv_id, "role": "user",
-                    "text": text, "meta": meta or {}, "created_at": now,
+                    "id": mid,
+                    "conversation_id": conv_id,
+                    "role": "user",
+                    "text": text,
+                    "meta": meta or {},
+                    "created_at": now,
                     "state": "done",
                 }
                 return ("generate", None, user_msg)
@@ -1848,7 +1895,8 @@ class OrivellumDB:
             ).fetchone()
             user_dict = {
                 "id": existing_user[0] if existing_user else mid,
-                "conversation_id": conv_id, "role": "user",
+                "conversation_id": conv_id,
+                "role": "user",
                 "text": existing_user[1] if existing_user else text,
                 "meta": _jload(existing_user[2] if existing_user else None, {}),
                 "created_at": existing_user[3] if existing_user else now,
@@ -1921,10 +1969,14 @@ class OrivellumDB:
             )
             self._conn.commit()
 
-    def update_conversation(self, conv_id: str, title: str | None = None,
-                            archived: bool | None = None,
-                            model: str | None = None,
-                            expected_version: int | None = None) -> dict | None:
+    def update_conversation(
+        self,
+        conv_id: str,
+        title: str | None = None,
+        archived: bool | None = None,
+        model: str | None = None,
+        expected_version: int | None = None,
+    ) -> dict | None:
         """Update mutable fields on a conversation.
 
         Args:
@@ -1959,8 +2011,7 @@ class OrivellumDB:
             return self.get_conversation(conv_id)
         updates["version"] = None  # placeholder; actual bump done via SQL below
         set_clause = ", ".join(
-            (f"{k}=?" if k != "version" else "version=version+1")
-            for k in updates
+            (f"{k}=?" if k != "version" else "version=version+1") for k in updates
         )
         vals = [v for k, v in updates.items() if k != "version"] + [conv_id]
         with self.governed_write(
@@ -1978,9 +2029,7 @@ class OrivellumDB:
                 actual = row["version"] if row else None
                 if actual != expected_version:
                     raise VersionConflictError(conv_id, expected_version, actual)
-            self._conn.execute(
-                f"UPDATE conversations SET {set_clause} WHERE id=?", vals
-            )
+            self._conn.execute(f"UPDATE conversations SET {set_clause} WHERE id=?", vals)
         return self.get_conversation(conv_id)
 
     def update_conversation_summary(
@@ -2084,9 +2133,7 @@ class OrivellumDB:
             # is deleted, so by that point message IDs are no longer queryable.
             # A missing messages_fts table (pre-v72 DB) is silently ignored.
             try:
-                self._conn.execute(
-                    "DELETE FROM messages_fts WHERE conversation_id=?", (conv_id,)
-                )
+                self._conn.execute("DELETE FROM messages_fts WHERE conversation_id=?", (conv_id,))
             except Exception:
                 pass
             cur = self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
@@ -2102,9 +2149,14 @@ class OrivellumDB:
         {"draft", "canonical", "superseded", "reference", "active"}
     )
 
-    def list_documents(self, work_id: str | None = None, kind: str | None = None,
-                       readiness: str | None = None, lifecycle: str | None = None,
-                       limit: int = 200) -> list[dict]:
+    def list_documents(
+        self,
+        work_id: str | None = None,
+        kind: str | None = None,
+        readiness: str | None = None,
+        lifecycle: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
         q = """SELECT d.*, COALESCE(o.lifecycle, 'draft') AS lifecycle
                FROM documents d LEFT JOIN objects o ON o.id = d.id
                WHERE 1=1"""
@@ -2144,11 +2196,15 @@ class OrivellumDB:
 
         Read-path only (per-thread read connection); safe under concurrency.
         """
-        row = self.read_conn().execute(
-            "SELECT doc_id, part, time, part_count, saved_at, updated_at "
-            "FROM read_positions WHERE doc_id=?",
-            (doc_id,),
-        ).fetchone()
+        row = (
+            self.read_conn()
+            .execute(
+                "SELECT doc_id, part, time, part_count, saved_at, updated_at "
+                "FROM read_positions WHERE doc_id=?",
+                (doc_id,),
+            )
+            .fetchone()
+        )
         return dict(row) if row else None
 
     def set_read_position(
@@ -2195,8 +2251,9 @@ class OrivellumDB:
         moved to 'draft' unless they are already 'superseded' or 'deleted'.
         """
         if lifecycle not in self._DOC_LIFECYCLES:
-            raise ValueError(f"Invalid lifecycle: {lifecycle!r}. "
-                             f"Valid values: {sorted(self._DOC_LIFECYCLES)}")
+            raise ValueError(
+                f"Invalid lifecycle: {lifecycle!r}. Valid values: {sorted(self._DOC_LIFECYCLES)}"
+            )
         now = _now()
         # Read the work/kind before the write transaction (read-only, no lock held).
         with self._lock:
@@ -2232,10 +2289,17 @@ class OrivellumDB:
                 )
         return _changed
 
-    def create_document(self, title: str, source: str | None = None, sha256: str | None = None,
-                        kind: str | None = None, work_id: str | None = None,
-                        content_path: str | None = None, meta: dict | None = None,
-                        tier: str = "source") -> dict:
+    def create_document(
+        self,
+        title: str,
+        source: str | None = None,
+        sha256: str | None = None,
+        kind: str | None = None,
+        work_id: str | None = None,
+        content_path: str | None = None,
+        meta: dict | None = None,
+        tier: str = "source",
+    ) -> dict:
         oid = _uuid()
         now = _now()
         with self.governed_write(
@@ -2255,16 +2319,25 @@ class OrivellumDB:
             self._conn.execute(
                 """INSERT INTO documents(id,work_id,title,source,sha256,kind,readiness,
                    content_path,meta,tier,created_at) VALUES(?,?,?,?,?,?,'imported',?,?,?,?)""",
-                (oid, work_id, title, source, sha256, kind, content_path, _jdump(meta or {}), tier, now),
+                (
+                    oid,
+                    work_id,
+                    title,
+                    source,
+                    sha256,
+                    kind,
+                    content_path,
+                    _jdump(meta or {}),
+                    tier,
+                    now,
+                ),
             )
         return self.get_document(oid)  # type: ignore[return-value]
 
     def update_document_work(self, doc_id: str, work_id: str | None) -> bool:
         """Re-assign (or unlink) a document from a work."""
         with self._lock:
-            exists = self._conn.execute(
-                "SELECT 1 FROM documents WHERE id=?", (doc_id,)
-            ).fetchone()
+            exists = self._conn.execute("SELECT 1 FROM documents WHERE id=?", (doc_id,)).fetchone()
         if not exists:
             return False
         op = "document.work_assigned" if work_id else "document.work_unlinked"
@@ -2277,9 +2350,7 @@ class OrivellumDB:
             actor="user",
             detail=work_id,
         ):
-            cur = self._conn.execute(
-                "UPDATE documents SET work_id=? WHERE id=?", (work_id, doc_id)
-            )
+            cur = self._conn.execute("UPDATE documents SET work_id=? WHERE id=?", (work_id, doc_id))
             _updated = cur.rowcount > 0
         if _updated:
             # Cached chunk entries carry work_id from the JOIN on documents.
@@ -2287,6 +2358,7 @@ class OrivellumDB:
             # semantic queries would return chunks in the wrong scope until bumped.
             try:
                 from orivellum.capabilities.embeddings import bump_vector_cache_version
+
                 bump_vector_cache_version(self._path, "chunk")
             except Exception:  # pragma: no cover
                 pass
@@ -2337,6 +2409,7 @@ class OrivellumDB:
             # results that no longer exist.
             try:
                 from orivellum.capabilities.embeddings import bump_vector_cache_version
+
                 bump_vector_cache_version(self._path, "chunk")
                 bump_vector_cache_version(self._path, "knowledge")
             except Exception:  # pragma: no cover
@@ -2345,6 +2418,7 @@ class OrivellumDB:
             # stale candidate in future near-duplicate comparisons.
             try:
                 from orivellum.capabilities.dedup import evict_from_lsh_index
+
                 evict_from_lsh_index(doc_id)
             except Exception:  # pragma: no cover
                 pass
@@ -2356,8 +2430,7 @@ class OrivellumDB:
         d["meta"] = _jload(d.get("meta"), {})
         return d
 
-    def search_chunks(self, query: str, work_id: str | None = None,
-                      limit: int = 10) -> list[dict]:
+    def search_chunks(self, query: str, work_id: str | None = None, limit: int = 10) -> list[dict]:
         """BM25-ranked full-text search over document chunks.
 
         Returns results ordered by relevance (bm25_score, lower = better).
@@ -2412,8 +2485,7 @@ class OrivellumDB:
     # Entity graph
     # -------------------------------------------------------------------------
 
-    def upsert_entity(self, name: str, kind: str,
-                      meta: dict | None = None) -> str:
+    def upsert_entity(self, name: str, kind: str, meta: dict | None = None) -> str:
         """Find or create an entity by normalised name + kind.
 
         Returns the entity ID. Thread-safe; deduplicates on (name, kind).
@@ -2564,12 +2636,14 @@ class OrivellumDB:
             nid = r["id"]
             if nid not in seen:
                 seen.add(nid)
-                nodes.append({
-                    "id": nid,
-                    "label": r["title"] or "Untitled",
-                    "type": "document",
-                    "kind": r["kind"] or "file",
-                })
+                nodes.append(
+                    {
+                        "id": nid,
+                        "label": r["title"] or "Untitled",
+                        "type": "document",
+                        "kind": r["kind"] or "file",
+                    }
+                )
 
         # Reserve slots for supplementary doc nodes (entities outside the initial
         # DOC_CAP window may mention docs not yet in `seen`; we need room to add them).
@@ -2605,12 +2679,14 @@ class OrivellumDB:
             nid = r["id"]
             if nid not in seen:
                 seen.add(nid)
-                nodes.append({
-                    "id": nid,
-                    "label": r["name"],
-                    "type": "entity",
-                    "kind": r["kind"],
-                })
+                nodes.append(
+                    {
+                        "id": nid,
+                        "label": r["name"],
+                        "type": "entity",
+                        "kind": r["kind"],
+                    }
+                )
             entity_ids.append(nid)
 
         if not entity_ids:
@@ -2629,23 +2705,31 @@ class OrivellumDB:
                     key = r["id"]
                     if key not in seen:
                         seen.add(key)
-                        nodes.append({"id": key, "label": r["text"],
-                                      "type": "entity", "kind": "concept"})
+                        nodes.append(
+                            {"id": key, "label": r["text"], "type": "entity", "kind": "concept"}
+                        )
                 elif r["kind"] == "relationship" and r["subject"] and r["object"]:
                     for label in (r["subject"], r["object"]):
                         nk = f"kn-{label.lower()[:32]}"
                         if nk not in seen:
                             seen.add(nk)
-                            nodes.append({"id": nk, "label": label,
-                                          "type": "entity", "kind": "concept"})
-                    edges.append({
-                        "source": f"kn-{r['subject'].lower()[:32]}",
-                        "target": f"kn-{r['object'].lower()[:32]}",
-                        "label": r["predicate"] or "relates to",
-                        "type": "RELATES",
-                    })
-            return {"nodes": nodes[:limit], "edges": edges[:limit],
-                    "node_count": len(nodes), "edge_count": len(edges)}
+                            nodes.append(
+                                {"id": nk, "label": label, "type": "entity", "kind": "concept"}
+                            )
+                    edges.append(
+                        {
+                            "source": f"kn-{r['subject'].lower()[:32]}",
+                            "target": f"kn-{r['object'].lower()[:32]}",
+                            "label": r["predicate"] or "relates to",
+                            "type": "RELATES",
+                        }
+                    )
+            return {
+                "nodes": nodes[:limit],
+                "edges": edges[:limit],
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+            }
 
         # Supplement doc nodes: for each entity that mentions a doc not yet in
         # `seen`, add that doc so the entity always has at least one visible edge.
@@ -2671,12 +2755,14 @@ class OrivellumDB:
                     nid = r["id"]
                     if nid not in seen:
                         seen.add(nid)
-                        nodes.append({
-                            "id": nid,
-                            "label": r["title"] or "Untitled",
-                            "type": "document",
-                            "kind": r["kind"] or "file",
-                        })
+                        nodes.append(
+                            {
+                                "id": nid,
+                                "label": r["title"] or "Untitled",
+                                "type": "document",
+                                "kind": r["kind"] or "file",
+                            }
+                        )
                         added += 1
 
         # MENTIONS edges: query against all the work's docs so entities found
@@ -2691,12 +2777,14 @@ class OrivellumDB:
         for r in mention_rows:
             # Both endpoints must be in the returned node set
             if r["source_id"] in seen and r["target_id"] in seen:
-                edges.append({
-                    "source": r["source_id"],
-                    "target": r["target_id"],
-                    "label": "mentions",
-                    "type": "MENTIONS",
-                })
+                edges.append(
+                    {
+                        "source": r["source_id"],
+                        "target": r["target_id"],
+                        "label": "mentions",
+                        "type": "MENTIONS",
+                    }
+                )
 
         # Entity-entity edges from the edges table
         if entity_ids:
@@ -2710,12 +2798,14 @@ class OrivellumDB:
                 ).fetchall()
             for r in edge_rows:
                 if r["source_id"] in seen and r["target_id"] in seen:
-                    edges.append({
-                        "source": r["source_id"],
-                        "target": r["target_id"],
-                        "label": r["relation"],
-                        "type": r["relation"],
-                    })
+                    edges.append(
+                        {
+                            "source": r["source_id"],
+                            "target": r["target_id"],
+                            "label": r["relation"],
+                            "type": r["relation"],
+                        }
+                    )
 
         return {
             "nodes": nodes[:limit],
@@ -2746,11 +2836,15 @@ class OrivellumDB:
             if entity_kinds:
                 allowed = set(entity_kinds)
                 allowed.add("document")  # always keep document nodes
-                filtered_nodes = [n for n in graph["nodes"]
-                                  if n["type"] == "document" or n.get("kind") in allowed]
+                filtered_nodes = [
+                    n for n in graph["nodes"] if n["type"] == "document" or n.get("kind") in allowed
+                ]
                 filtered_ids = {n["id"] for n in filtered_nodes}
-                filtered_edges = [e for e in graph["edges"]
-                                  if e["source"] in filtered_ids and e["target"] in filtered_ids]
+                filtered_edges = [
+                    e
+                    for e in graph["edges"]
+                    if e["source"] in filtered_ids and e["target"] in filtered_ids
+                ]
                 graph["nodes"] = filtered_nodes
                 graph["edges"] = filtered_edges
                 graph["node_count"] = len(filtered_nodes)
@@ -2789,12 +2883,14 @@ class OrivellumDB:
             nid = r["id"]
             if nid not in seen:
                 seen.add(nid)
-                nodes.append({
-                    "id": nid,
-                    "label": r["name"],
-                    "type": "entity",
-                    "kind": r["kind"],
-                })
+                nodes.append(
+                    {
+                        "id": nid,
+                        "label": r["name"],
+                        "type": "entity",
+                        "kind": r["kind"],
+                    }
+                )
             entity_ids.append(nid)
 
         if not entity_ids:
@@ -2820,32 +2916,37 @@ class OrivellumDB:
                         key = r["id"]
                         if key not in seen:
                             seen.add(key)
-                            nodes.append({"id": key, "label": r["text"],
-                                          "type": "entity", "kind": "concept"})
+                            nodes.append(
+                                {"id": key, "label": r["text"], "type": "entity", "kind": "concept"}
+                            )
                     elif r["kind"] == "relationship" and r["subject"] and r["object"]:
                         for label in (r["subject"], r["object"]):
                             nk = f"kn-{label.lower()[:32]}"
                             if nk not in seen:
                                 seen.add(nk)
-                                nodes.append({"id": nk, "label": label,
-                                              "type": "entity", "kind": "concept"})
-                        candidate_edges.append({
-                            "source": f"kn-{r['subject'].lower()[:32]}",
-                            "target": f"kn-{r['object'].lower()[:32]}",
-                            "label": r.get("predicate") or "relates to",
-                            "type": "RELATES",
-                        })
+                                nodes.append(
+                                    {"id": nk, "label": label, "type": "entity", "kind": "concept"}
+                                )
+                        candidate_edges.append(
+                            {
+                                "source": f"kn-{r['subject'].lower()[:32]}",
+                                "target": f"kn-{r['object'].lower()[:32]}",
+                                "label": r.get("predicate") or "relates to",
+                                "type": "RELATES",
+                            }
+                        )
 
             # Truncate nodes first, then build the edge set so no dangling edges
             bounded_nodes = nodes[:limit]
-            bounded_ids   = {n["id"] for n in bounded_nodes}
+            bounded_ids = {n["id"] for n in bounded_nodes}
             bounded_edges = [
-                e for e in candidate_edges
+                e
+                for e in candidate_edges
                 if e["source"] in bounded_ids and e["target"] in bounded_ids
             ]
             return {
-                "nodes":      bounded_nodes,
-                "edges":      bounded_edges,
+                "nodes": bounded_nodes,
+                "edges": bounded_edges,
                 "node_count": len(bounded_nodes),
                 "edge_count": len(bounded_edges),
             }
@@ -2869,14 +2970,16 @@ class OrivellumDB:
             nid = r["id"]
             if nid not in seen:
                 seen.add(nid)
-                nodes.append({
-                    "id": nid,
-                    "label": r["title"] or "Untitled",
-                    "type": "document",
-                    "kind": r["kind"] or "file",
-                    "work_id": r["work_id"],
-                    "work_title": r["work_title"],
-                })
+                nodes.append(
+                    {
+                        "id": nid,
+                        "label": r["title"] or "Untitled",
+                        "type": "document",
+                        "kind": r["kind"] or "file",
+                        "work_id": r["work_id"],
+                        "work_title": r["work_title"],
+                    }
+                )
             doc_ids.append(nid)
 
         # MENTIONS edges
@@ -2891,12 +2994,14 @@ class OrivellumDB:
                 ).fetchall()
             for r in mention_rows:
                 if r["source_id"] in seen and r["target_id"] in seen:
-                    edges.append({
-                        "source": r["source_id"],
-                        "target": r["target_id"],
-                        "label": "mentions",
-                        "type": "MENTIONS",
-                    })
+                    edges.append(
+                        {
+                            "source": r["source_id"],
+                            "target": r["target_id"],
+                            "label": "mentions",
+                            "type": "MENTIONS",
+                        }
+                    )
 
         # Entity-entity edges
         with self._lock:
@@ -2908,23 +3013,24 @@ class OrivellumDB:
             ).fetchall()
         for r in edge_rows:
             if r["source_id"] in seen and r["target_id"] in seen:
-                edges.append({
-                    "source": r["source_id"],
-                    "target": r["target_id"],
-                    "label": r["relation"],
-                    "type": r["relation"],
-                })
+                edges.append(
+                    {
+                        "source": r["source_id"],
+                        "target": r["target_id"],
+                        "label": r["relation"],
+                        "type": r["relation"],
+                    }
+                )
 
         # Truncate nodes first so edges can never reference a missing node
         bounded_nodes = nodes[:limit]
-        bounded_ids   = {n["id"] for n in bounded_nodes}
+        bounded_ids = {n["id"] for n in bounded_nodes}
         bounded_edges = [
-            e for e in edges
-            if e["source"] in bounded_ids and e["target"] in bounded_ids
+            e for e in edges if e["source"] in bounded_ids and e["target"] in bounded_ids
         ]
         return {
-            "nodes":      bounded_nodes,
-            "edges":      bounded_edges,
+            "nodes": bounded_nodes,
+            "edges": bounded_edges,
             "node_count": len(bounded_nodes),
             "edge_count": len(bounded_edges),
         }
@@ -2959,8 +3065,9 @@ class OrivellumDB:
     # Knowledge
     # -------------------------------------------------------------------------
 
-    def list_knowledge(self, work_id: str | None = None, kind: str | None = None,
-                       limit: int = 200) -> list[dict]:
+    def list_knowledge(
+        self, work_id: str | None = None, kind: str | None = None, limit: int = 200
+    ) -> list[dict]:
         q = "SELECT * FROM knowledge WHERE 1=1"
         args: list = []
         if work_id:
@@ -2975,9 +3082,9 @@ class OrivellumDB:
             rows = self._conn.execute(q, args).fetchall()
         return [self._k_dict(r) for r in rows]
 
-    def search_knowledge(self, query: str, work_id: str | None = None,
-                         doc_id: str | None = None,
-                         limit: int = 20) -> list[dict]:
+    def search_knowledge(
+        self, query: str, work_id: str | None = None, doc_id: str | None = None, limit: int = 20
+    ) -> list[dict]:
         q = """SELECT k.* FROM knowledge_fts f
                JOIN knowledge k ON k.id = f.knowledge_id
                LEFT JOIN documents sd ON sd.id = k.source_doc_id
@@ -3171,8 +3278,9 @@ class OrivellumDB:
     # Tasks
     # -------------------------------------------------------------------------
 
-    def list_tasks(self, work_id: str | None = None, status: str | None = None,
-                   limit: int = 100) -> list[dict]:
+    def list_tasks(
+        self, work_id: str | None = None, status: str | None = None, limit: int = 100
+    ) -> list[dict]:
         q = "SELECT * FROM tasks WHERE 1=1"
         args: list = []
         if work_id:
@@ -3212,8 +3320,13 @@ class OrivellumDB:
             row = self._conn.execute("SELECT * FROM tasks WHERE id=?", (oid,)).fetchone()
         return dict(row) if row else {}
 
-    def update_task(self, task_id: str, status: str | None = None,
-                    text: str | None = None, priority: int | None = None) -> dict | None:
+    def update_task(
+        self,
+        task_id: str,
+        status: str | None = None,
+        text: str | None = None,
+        priority: int | None = None,
+    ) -> dict | None:
         updates: dict[str, Any] = {}
         if status is not None:
             updates["status"] = status
@@ -3354,6 +3467,7 @@ class OrivellumDB:
         # the next semantic search doesn't return deleted chunks.
         try:
             from orivellum.capabilities.embeddings import bump_vector_cache_version
+
             bump_vector_cache_version(self._path, "chunk")
         except Exception:  # pragma: no cover
             pass
@@ -3385,12 +3499,9 @@ class OrivellumDB:
             actor="system",
             detail=f"{_count} warnings",
         ):
-            self._conn.execute(
-                "DELETE FROM extraction_warnings WHERE doc_id=?", (doc_id,)
-            )
+            self._conn.execute("DELETE FROM extraction_warnings WHERE doc_id=?", (doc_id,))
 
-    def add_extraction_warning(self, doc_id: str, kind: str,
-                               detail: str | None = None) -> str:
+    def add_extraction_warning(self, doc_id: str, kind: str, detail: str | None = None) -> str:
         """Persist a single extraction warning. Returns the warning id."""
         wid = _uuid()
         now = _now()
@@ -3409,11 +3520,20 @@ class OrivellumDB:
             )
         return wid
 
-    def update_document_extracted(self, doc_id: str, extracted_text: str,
-                                  word_count: int, readiness: str = "ready",
-                                  error_message: str | None = None) -> None:
+    def update_document_extracted(
+        self,
+        doc_id: str,
+        extracted_text: str,
+        word_count: int,
+        readiness: str = "ready",
+        error_message: str | None = None,
+    ) -> None:
         """Persist extraction results back on the document row."""
-        _op = "document.extraction_failed" if readiness in ("error", "no_text") else "document.extracted"
+        _op = (
+            "document.extraction_failed"
+            if readiness in ("error", "no_text")
+            else "document.extracted"
+        )
         with self.governed_write(
             operation=_op,
             event_type=_op,
@@ -3428,9 +3548,9 @@ class OrivellumDB:
                 (extracted_text, word_count, readiness, error_message, doc_id),
             )
 
-    def set_document_quarantine(self, doc_id: str, state: int,
-                                findings: list | None = None,
-                                released: bool = False) -> None:
+    def set_document_quarantine(
+        self, doc_id: str, state: int, findings: list | None = None, released: bool = False
+    ) -> None:
         """Set the ingestion-shield quarantine state on a document.
 
         state: 0 clean/released, 1 pending review, 2 reviewed & kept isolated.
@@ -3439,6 +3559,7 @@ class OrivellumDB:
         does not re-quarantine the same document.
         """
         import json as _json
+
         with self.governed_write(
             operation="document.quarantine",
             event_type="document.quarantine",
@@ -3447,12 +3568,10 @@ class OrivellumDB:
             payload={"state": state, "released": released},
             actor="system" if not released else "user",
             detail=f"quarantine state={state}"
-                   + (f" findings={len(findings)}" if findings else "")
-                   + (" released" if released else ""),
+            + (f" findings={len(findings)}" if findings else "")
+            + (" released" if released else ""),
         ):
-            row = self._conn.execute(
-                "SELECT meta FROM documents WHERE id=?", (doc_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT meta FROM documents WHERE id=?", (doc_id,)).fetchone()
             try:
                 meta = _json.loads(row["meta"] or "{}") if row else {}
             except Exception:
@@ -3477,13 +3596,10 @@ class OrivellumDB:
     # completion; the nightshift recovery pass treats a stale marker (>10 min)
     # as a stuck document and re-drives reprocessing.
 
-    def set_reset_marker(self, doc_id: str, *, started_at: str,
-                         kind: str = "reprocess") -> None:
+    def set_reset_marker(self, doc_id: str, *, started_at: str, kind: str = "reprocess") -> None:
         """Record meta['reset_in_progress'] = {started_at, kind} (best-effort)."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT meta FROM documents WHERE id=?", (doc_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT meta FROM documents WHERE id=?", (doc_id,)).fetchone()
             if row is None:
                 return
             meta = _jload(row["meta"], {}) or {}
@@ -3497,9 +3613,7 @@ class OrivellumDB:
     def clear_reset_marker(self, doc_id: str) -> None:
         """Remove meta['reset_in_progress'] once the sequence completes."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT meta FROM documents WHERE id=?", (doc_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT meta FROM documents WHERE id=?", (doc_id,)).fetchone()
             if row is None:
                 return
             meta = _jload(row["meta"], {}) or {}
@@ -3511,8 +3625,7 @@ class OrivellumDB:
                 )
                 self._conn.commit()
 
-    def upsert_book_chapters(self, doc_id: str, work_id: str | None,
-                             chapters: list[dict]) -> int:
+    def upsert_book_chapters(self, doc_id: str, work_id: str | None, chapters: list[dict]) -> int:
         """Replace all book_chapters rows for a document with new extractions.
 
         Each chapter dict must contain: seq, level, title, text.
@@ -3536,9 +3649,7 @@ class OrivellumDB:
             ).fetchall()
             for row in existing:
                 self._conn.execute("DELETE FROM objects WHERE id=?", (row["id"],))
-            self._conn.execute(
-                "DELETE FROM book_chapters WHERE source_doc_id=?", (doc_id,)
-            )
+            self._conn.execute("DELETE FROM book_chapters WHERE source_doc_id=?", (doc_id,))
             # Link new chapters to the Work's existing pipeline (if any) so a
             # reprocess doesn't orphan them — create_book_pipeline() only links
             # orphans when the pipeline is first created, so without this the
@@ -3567,8 +3678,19 @@ class OrivellumDB:
                        text,source_doc_id,citations,status,meta,created_at,updated_at,
                        citation_count,extraction_method)
                        VALUES(?,?,?,?,?,?,?,?,'[]','extracted',?,?,?,0,'heading_parser')""",
-                    (cid, pipeline_id, work_id, ch["seq"], ch.get("level", 1), ch["title"],
-                     ch.get("text", ""), doc_id, _ch_meta_json, now, now),
+                    (
+                        cid,
+                        pipeline_id,
+                        work_id,
+                        ch["seq"],
+                        ch.get("level", 1),
+                        ch["title"],
+                        ch.get("text", ""),
+                        doc_id,
+                        _ch_meta_json,
+                        now,
+                        now,
+                    ),
                 )
         return n
 
@@ -3593,8 +3715,7 @@ class OrivellumDB:
     # Book pipelines
     # -------------------------------------------------------------------------
 
-    def create_book_pipeline(self, work_id: str, title: str,
-                              config: dict | None = None) -> dict:
+    def create_book_pipeline(self, work_id: str, title: str, config: dict | None = None) -> dict:
         """Create a book pipeline for a Work at state B0.
 
         Idempotent: if a non-deleted pipeline already exists for the Work,
@@ -3603,6 +3724,7 @@ class OrivellumDB:
         pipeline so they appear in the chapter count immediately.
         """
         import json as _json
+
         existing = self.get_book_pipeline_for_work(work_id)
         if existing:
             return existing
@@ -3683,9 +3805,7 @@ class OrivellumDB:
     def get_trailer(self, trailer_id: str) -> dict | None:
         """Return a single trailer row, or None if not found."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM trailers WHERE id=?", (trailer_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM trailers WHERE id=?", (trailer_id,)).fetchone()
         if not row:
             return None
         return dict(row)
@@ -3745,9 +3865,10 @@ class OrivellumDB:
         fresh and is left alone.
         """
         import datetime as _dt
-        cutoff = (
-            _dt.datetime.now(_dt.UTC) - _dt.timedelta(minutes=min_idle_minutes)
-        ).strftime("%Y-%m-%dT%H:%M:%S")
+
+        cutoff = (_dt.datetime.now(_dt.UTC) - _dt.timedelta(minutes=min_idle_minutes)).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
         now = _now()
         with self._lock:
             cur = self._conn.execute(
@@ -3773,26 +3894,25 @@ class OrivellumDB:
                 (bid, day, text, source, now, now),
             )
             self._conn.commit()
-            row = self._conn.execute(
-                "SELECT * FROM note_blocks WHERE id=?", (bid,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM note_blocks WHERE id=?", (bid,)).fetchone()
         return dict(row)
 
     def get_note_block(self, block_id: str) -> dict | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM note_blocks WHERE id=?", (block_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM note_blocks WHERE id=?", (block_id,)).fetchone()
         return dict(row) if row else None
 
-    def list_note_blocks(self, day: str | None = None, status: str | None = None,
-                         limit: int = 200) -> list[dict]:
+    def list_note_blocks(
+        self, day: str | None = None, status: str | None = None, limit: int = 200
+    ) -> list[dict]:
         q = "SELECT * FROM note_blocks"
         conds, params = [], []
         if day:
-            conds.append("day=?"); params.append(day)
+            conds.append("day=?")
+            params.append(day)
         if status:
-            conds.append("status=?"); params.append(status)
+            conds.append("status=?")
+            params.append(status)
         if conds:
             q += " WHERE " + " AND ".join(conds)
         q += " ORDER BY created_at ASC LIMIT ?"
@@ -3820,8 +3940,7 @@ class OrivellumDB:
             )
             self._conn.commit()
 
-    def claim_note_block(self, block_id: str, new_status: str,
-                         expected: str = "proposed") -> bool:
+    def claim_note_block(self, block_id: str, new_status: str, expected: str = "proposed") -> bool:
         """Atomically move a block out of ``expected`` status. Only the
         winning claimant (rowcount==1) may apply side effects."""
         with self._lock:
@@ -3864,9 +3983,7 @@ class OrivellumDB:
 
     def get_note_report(self, day: str) -> dict | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM note_reports WHERE day=?", (day,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM note_reports WHERE day=?", (day,)).fetchone()
         return dict(row) if row else None
 
     # -------------------------------------------------------------------------
@@ -3902,6 +4019,7 @@ class OrivellumDB:
     ) -> None:
         """Persist brainstorm results (status='done' or 'failed')."""
         import json as _json
+
         now = _now()
         ca = completed_at or now
         with self._lock:
@@ -3922,6 +4040,7 @@ class OrivellumDB:
         if not row:
             return None
         import json as _json
+
         d = dict(row)
         d["ideas"] = _json.loads(d.get("ideas") or "[]")
         return d
@@ -3932,6 +4051,7 @@ class OrivellumDB:
         limit: int = 20,
     ) -> list[dict]:
         import json as _json
+
         with self._lock:
             rows = self._conn.execute(
                 """SELECT * FROM brainstorm_sessions
@@ -3995,8 +4115,17 @@ class OrivellumDB:
                        status=excluded.status,
                        error=excluded.error,
                        updated_at=excluded.updated_at""",
-                (artifact_id, pipeline_id, stage, artifact_type,
-                 _jdump(content), status, error, now, now),
+                (
+                    artifact_id,
+                    pipeline_id,
+                    stage,
+                    artifact_type,
+                    _jdump(content),
+                    status,
+                    error,
+                    now,
+                    now,
+                ),
             )
             self._conn.commit()
         return artifact_id
@@ -4005,14 +4134,21 @@ class OrivellumDB:
     # Knowledge items
     # -------------------------------------------------------------------------
 
-    def create_knowledge_item(self, work_id: str | None, kind: str, text: str,
-                              subject: str | None = None, predicate: str | None = None,
-                              obj: str | None = None, confidence: float = 0.7,
-                              source_doc_id: str | None = None,
-                              source_chunk_id: str | None = None,
-                              review_status: str = "auto",
-                              meta: dict | None = None,
-                              chapter_id: str | None = None) -> str:
+    def create_knowledge_item(
+        self,
+        work_id: str | None,
+        kind: str,
+        text: str,
+        subject: str | None = None,
+        predicate: str | None = None,
+        obj: str | None = None,
+        confidence: float = 0.7,
+        source_doc_id: str | None = None,
+        source_chunk_id: str | None = None,
+        review_status: str = "auto",
+        meta: dict | None = None,
+        chapter_id: str | None = None,
+    ) -> str:
         """Insert a knowledge item and update FTS. Returns item id.
 
         review_status:
@@ -4059,9 +4195,23 @@ class OrivellumDB:
                    confidence,source_doc_id,source_chunk_id,review_status,meta,
                    created_at,text_hash,chapter_id)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (kid, work_id, kind, text, subject, predicate, obj, confidence,
-                 source_doc_id, source_chunk_id, review_status, meta_json, now,
-                 text_hash, chapter_id),
+                (
+                    kid,
+                    work_id,
+                    kind,
+                    text,
+                    subject,
+                    predicate,
+                    obj,
+                    confidence,
+                    source_doc_id,
+                    source_chunk_id,
+                    review_status,
+                    meta_json,
+                    now,
+                    text_hash,
+                    chapter_id,
+                ),
             )
             self._conn.execute(
                 "INSERT INTO knowledge_fts(knowledge_id,work_id,text,subject,object) VALUES(?,?,?,?,?)",
@@ -4069,8 +4219,9 @@ class OrivellumDB:
             )
         return kid
 
-    def update_knowledge_review_status(self, item_id: str, status: str,
-                                       expected_status: tuple[str, ...] | None = None) -> str:
+    def update_knowledge_review_status(
+        self, item_id: str, status: str, expected_status: tuple[str, ...] | None = None
+    ) -> str:
         """Set review_status on a knowledge item.
 
         When ``expected_status`` is given, the write is a compare-and-set: it
@@ -4094,12 +4245,8 @@ class OrivellumDB:
         _before_status: str = _row["review_status"]
         if expected_status is not None and _before_status not in expected_status:
             return "conflict"
-        _bh = hashlib.sha256(
-            json.dumps({"review_status": _before_status}).encode()
-        ).hexdigest()
-        _ah = hashlib.sha256(
-            json.dumps({"review_status": status}).encode()
-        ).hexdigest()
+        _bh = hashlib.sha256(json.dumps({"review_status": _before_status}).encode()).hexdigest()
+        _ah = hashlib.sha256(json.dumps({"review_status": status}).encode()).hexdigest()
         _changed = False
         try:
             with self.governed_write(
@@ -4131,18 +4278,19 @@ class OrivellumDB:
             # so semantic_search reflects the new review_status filter immediately.
             try:
                 from orivellum.capabilities.embeddings import bump_vector_cache_version
+
                 bump_vector_cache_version(self._path, "knowledge")
             except Exception:  # pragma: no cover
                 pass
         return "updated" if _changed else "not_found"
 
-    def update_knowledge_confidence(self, item_id: str, confidence: float,
-                                    evidence: dict | None = None) -> bool:
+    def update_knowledge_confidence(
+        self, item_id: str, confidence: float, evidence: dict | None = None
+    ) -> bool:
         """Set confidence (and optional meta.evidence components) on a knowledge item."""
         confidence = max(0.0, min(1.0, float(confidence)))
         with self._lock:
-            row = self._conn.execute(
-                "SELECT meta FROM knowledge WHERE id=?", (item_id,)).fetchone()
+            row = self._conn.execute("SELECT meta FROM knowledge WHERE id=?", (item_id,)).fetchone()
         if not row:
             return False
         with self.governed_write(
@@ -4161,19 +4309,19 @@ class OrivellumDB:
                 meta["evidence"] = evidence
                 self._conn.execute(
                     "UPDATE knowledge SET confidence=?, meta=? WHERE id=?",
-                    (confidence, json.dumps(meta), item_id))
+                    (confidence, json.dumps(meta), item_id),
+                )
             else:
                 self._conn.execute(
-                    "UPDATE knowledge SET confidence=? WHERE id=?",
-                    (confidence, item_id))
+                    "UPDATE knowledge SET confidence=? WHERE id=?", (confidence, item_id)
+                )
         return True
 
     # -------------------------------------------------------------------------
     # Conflicts (contradiction detection)
     # -------------------------------------------------------------------------
 
-    def create_conflict(self, claim_a_id: str, claim_b_id: str,
-                        conflict_type: str) -> str | None:
+    def create_conflict(self, claim_a_id: str, claim_b_id: str, conflict_type: str) -> str | None:
         """Record a conflict between two knowledge items.
 
         Returns the new conflict id, or None when this pair (either order)
@@ -4221,7 +4369,8 @@ class OrivellumDB:
                     """SELECT 1 FROM conflicts
                        WHERE (claim_a_id=? AND claim_b_id=?)
                           OR (claim_a_id=? AND claim_b_id=?)""",
-                    (a_id, b_id, b_id, a_id)).fetchone()
+                    (a_id, b_id, b_id, a_id),
+                ).fetchone()
                 if not exists:
                     new_pairs.append((a_id, b_id, ctype))
         inserted = len(new_pairs)
@@ -4240,7 +4389,8 @@ class OrivellumDB:
                     """INSERT INTO conflicts(id, claim_a_id, claim_b_id,
                        conflict_type, resolution, created_at)
                        VALUES(?,?,?,?,NULL,?)""",
-                    (str(uuid.uuid4()), a_id, b_id, ctype, _now()))
+                    (str(uuid.uuid4()), a_id, b_id, ctype, _now()),
+                )
         return inserted
 
     def list_conflicts(self, resolved: bool = False, limit: int = 100) -> list[dict]:
@@ -4264,8 +4414,9 @@ class OrivellumDB:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def resolve_conflict(self, conflict_id: str, resolution: str,
-                         keep_id: str | None = None) -> bool:
+    def resolve_conflict(
+        self, conflict_id: str, resolution: str, keep_id: str | None = None
+    ) -> bool:
         """Resolve a conflict: 'keep_a' | 'keep_b' | 'keep_both'.
 
         The losing claim (if any) is marked review_status='rejected'.
@@ -4273,7 +4424,8 @@ class OrivellumDB:
         with self._lock:
             row = self._conn.execute(
                 "SELECT claim_a_id, claim_b_id FROM conflicts WHERE id=? AND resolution IS NULL",
-                (conflict_id,)).fetchone()
+                (conflict_id,),
+            ).fetchone()
         if not row:
             return False
         with self.governed_write(
@@ -4285,8 +4437,8 @@ class OrivellumDB:
             detail=resolution,
         ):
             self._conn.execute(
-                "UPDATE conflicts SET resolution=? WHERE id=?",
-                (resolution, conflict_id))
+                "UPDATE conflicts SET resolution=? WHERE id=?", (resolution, conflict_id)
+            )
         # Side effect: reject the losing claim (update_knowledge_review_status is
         # already a governed write internally)
         loser = None
@@ -4298,8 +4450,9 @@ class OrivellumDB:
             self.update_knowledge_review_status(loser, "rejected")
         return True
 
-    def delete_document_knowledge(self, doc_id: str,
-                                  preserve_statuses: tuple[str, ...] = ("approved",)) -> int:
+    def delete_document_knowledge(
+        self, doc_id: str, preserve_statuses: tuple[str, ...] = ("approved",)
+    ) -> int:
         """Delete auto-derived knowledge sourced from *doc_id* plus its FTS
         rows and vectors. Human-approved items are preserved by default.
 
@@ -4309,31 +4462,39 @@ class OrivellumDB:
         alive. Returns the number of items removed.
         """
         with self._lock:
-            ids = [r["id"] for r in self._conn.execute(
-                "SELECT id FROM knowledge WHERE source_doc_id=? "
-                f"AND review_status NOT IN ({','.join('?' for _ in preserve_statuses)})",
-                (doc_id, *preserve_statuses)).fetchall()]
+            ids = [
+                r["id"]
+                for r in self._conn.execute(
+                    "SELECT id FROM knowledge WHERE source_doc_id=? "
+                    f"AND review_status NOT IN ({','.join('?' for _ in preserve_statuses)})",
+                    (doc_id, *preserve_statuses),
+                ).fetchall()
+            ]
             if not ids:
                 return 0
             # Batch to stay under SQLite's bound-variable limit.
             for i in range(0, len(ids), 500):
-                batch = ids[i:i + 500]
+                batch = ids[i : i + 500]
                 ph = ",".join("?" for _ in batch)
+                self._conn.execute(f"DELETE FROM knowledge WHERE id IN ({ph})", batch)
+                self._conn.execute(f"DELETE FROM knowledge_fts WHERE knowledge_id IN ({ph})", batch)
                 self._conn.execute(
-                    f"DELETE FROM knowledge WHERE id IN ({ph})", batch)
-                self._conn.execute(
-                    f"DELETE FROM knowledge_fts WHERE knowledge_id IN ({ph})", batch)
-                self._conn.execute(
-                    f"DELETE FROM vectors WHERE object_type='knowledge' "
-                    f"AND object_id IN ({ph})", batch)
+                    f"DELETE FROM vectors WHERE object_type='knowledge' AND object_id IN ({ph})",
+                    batch,
+                )
             self._conn.commit()
-        self.audit("knowledge.pruned_for_reprocess", object_id=doc_id,
-                   object_type="document", actor="system",
-                   detail=f"{len(ids)} stale items removed before re-extraction")
+        self.audit(
+            "knowledge.pruned_for_reprocess",
+            object_id=doc_id,
+            object_type="document",
+            actor="system",
+            detail=f"{len(ids)} stale items removed before re-extraction",
+        )
         # Direct SQL bypasses governed writes — bump the vector cache so
         # semantic search stops serving the deleted embeddings.
         try:
             from orivellum.capabilities.embeddings import bump_vector_cache_version
+
             bump_vector_cache_version(self._path, "knowledge")
         except Exception:
             pass
@@ -4343,8 +4504,7 @@ class OrivellumDB:
     # Vectors (semantic embeddings)
     # -------------------------------------------------------------------------
 
-    def store_vector(self, object_id: str, object_type: str,
-                     embedding: bytes, dim: int) -> None:
+    def store_vector(self, object_id: str, object_type: str, embedding: bytes, dim: int) -> None:
         """Insert or replace the embedding for an object."""
         with self.governed_write(
             operation="vector.stored",
@@ -4356,18 +4516,20 @@ class OrivellumDB:
             audit_level="trace",
         ):
             self._conn.execute(
-                "DELETE FROM vectors WHERE object_id=? AND object_type=?",
-                (object_id, object_type))
+                "DELETE FROM vectors WHERE object_id=? AND object_type=?", (object_id, object_type)
+            )
             self._conn.execute(
                 """INSERT INTO vectors(id, object_id, object_type, embedding, dim, created_at)
                    VALUES(?,?,?,?,?,?)""",
-                (str(uuid.uuid4()), object_id, object_type, embedding, dim, _now()))
+                (str(uuid.uuid4()), object_id, object_type, embedding, dim, _now()),
+            )
         # Invalidate the in-process vector cache so semantic_search picks up
         # this write (including replacements, which leave the row count unchanged).
         # Lazy import avoids a load-time circular-dependency edge; Python caches
         # the module after the first call so subsequent calls are O(1).
         try:
             from orivellum.capabilities.embeddings import bump_vector_cache_version
+
             bump_vector_cache_version(self._path, object_type)
         except Exception:  # pragma: no cover
             pass
@@ -4376,8 +4538,8 @@ class OrivellumDB:
         with self._lock:
             if object_type:
                 row = self._conn.execute(
-                    "SELECT COUNT(*) AS n FROM vectors WHERE object_type=?",
-                    (object_type,)).fetchone()
+                    "SELECT COUNT(*) AS n FROM vectors WHERE object_type=?", (object_type,)
+                ).fetchone()
             else:
                 row = self._conn.execute("SELECT COUNT(*) AS n FROM vectors").fetchone()
         return row["n"] if row else 0
@@ -4387,9 +4549,7 @@ class OrivellumDB:
     # -------------------------------------------------------------------------
 
     #: Valid memory-type labels (v98+).
-    _MEMORY_TYPES = frozenset(
-        {"episodic", "semantic", "procedural", "working", "zettelkasten"}
-    )
+    _MEMORY_TYPES = frozenset({"episodic", "semantic", "procedural", "working", "zettelkasten"})
 
     # -------------------------------------------------------------------------
     # Source evidence (v99) — Evidence Before Belief
@@ -4419,8 +4579,13 @@ class OrivellumDB:
                         conversation_id, message_id, created_at)
                    VALUES (?,?,?,?,?,?,?)""",
                 (
-                    eid, raw_text[:2000], source_type, source_id,
-                    conversation_id, message_id, now,
+                    eid,
+                    raw_text[:2000],
+                    source_type,
+                    source_id,
+                    conversation_id,
+                    message_id,
+                    now,
                 ),
             )
             self._conn.commit()
@@ -4443,9 +4608,7 @@ class OrivellumDB:
         if a row was deleted, False if the ID was not found.
         """
         with self._lock:
-            cur = self._conn.execute(
-                "DELETE FROM memory_evidence WHERE id=?", (evidence_id,)
-            )
+            cur = self._conn.execute("DELETE FROM memory_evidence WHERE id=?", (evidence_id,))
             self._conn.commit()
         return cur.rowcount > 0
 
@@ -4471,8 +4634,7 @@ class OrivellumDB:
             ).fetchone()
             if row:
                 self._conn.execute(
-                    "INSERT INTO user_memory_fts(rowid, key, value, memory_id)"
-                    " VALUES (?,?,?,?)",
+                    "INSERT INTO user_memory_fts(rowid, key, value, memory_id) VALUES (?,?,?,?)",
                     (row["rowid"], key, value, memory_id),
                 )
         except Exception as exc:
@@ -4498,7 +4660,7 @@ class OrivellumDB:
 
         Returns True if a change was written, False if the value is unchanged.
         """
-        key   = str(key).strip()[:80]
+        key = str(key).strip()[:80]
         value = str(value).strip()[:500]
         if memory_type not in self._MEMORY_TYPES:
             memory_type = "semantic"
@@ -4526,8 +4688,15 @@ class OrivellumDB:
                         txn_time, source_conv_id, source_evidence_id, created_at)
                    VALUES (?,?,?,?,?,NULL,?,?,?,?)""",
                 (
-                    new_id, key, value, memory_type, now, now,
-                    source_conv_id, source_evidence_id, now,
+                    new_id,
+                    key,
+                    value,
+                    memory_type,
+                    now,
+                    now,
+                    source_conv_id,
+                    source_evidence_id,
+                    now,
                 ),
             )
             # Sync FTS index (v101+) — best-effort, non-fatal
@@ -4562,12 +4731,8 @@ class OrivellumDB:
             ).fetchone()
             if not row:
                 return False
-            key   = row["key"]
-            mtype = (
-                row["memory_type"]
-                if row["memory_type"] in self._MEMORY_TYPES
-                else "semantic"
-            )
+            key = row["key"]
+            mtype = row["memory_type"] if row["memory_type"] in self._MEMORY_TYPES else "semantic"
             # Soft-delete the CURRENT row for this key (preserves historical rows)
             self._conn.execute(
                 "UPDATE user_memory SET valid_to=? WHERE key=? AND valid_to IS NULL",
@@ -4691,9 +4856,7 @@ class OrivellumDB:
         words = [w.strip() for w in query.split() if len(w.strip()) >= 2][:10]
         if not words:
             return []
-        match_expr = " OR ".join(
-            '"{}*"'.format(w.replace('"', '""')) for w in words
-        )
+        match_expr = " OR ".join('"{}*"'.format(w.replace('"', '""')) for w in words)
 
         full_row_sql = """
             SELECT um.id, um.key, um.value, um.memory_type,
@@ -4724,9 +4887,7 @@ class OrivellumDB:
                 # FTS table not yet built (pre-v101) — plain LIKE fallback
                 like_pat = f"%{query.strip()[:50]}%"
                 try:
-                    rows = self._conn.execute(
-                        fallback_sql, (like_pat, like_pat, limit)
-                    ).fetchall()
+                    rows = self._conn.execute(fallback_sql, (like_pat, like_pat, limit)).fetchall()
                 except Exception:
                     return []
         return [dict(r) for r in rows]
@@ -4751,17 +4912,58 @@ class OrivellumDB:
         Returns [] when no entities can be derived from the query or when
         the entity graph tables are not present.
         """
-        _STOPWORDS = frozenset({
-            "the", "is", "in", "on", "at", "to", "a", "an", "and", "or",
-            "for", "of", "with", "by", "from", "about", "what", "how",
-            "when", "where", "who", "do", "does", "did", "my", "me", "i",
-            "you", "it", "this", "that", "was", "are", "be", "been", "has",
-            "have", "had", "not", "but", "so", "if", "can", "get", "got",
-        })
-        terms = [
-            w.lower() for w in query.split()
-            if len(w) >= 3 and w.lower() not in _STOPWORDS
-        ][:8]
+        _STOPWORDS = frozenset(
+            {
+                "the",
+                "is",
+                "in",
+                "on",
+                "at",
+                "to",
+                "a",
+                "an",
+                "and",
+                "or",
+                "for",
+                "of",
+                "with",
+                "by",
+                "from",
+                "about",
+                "what",
+                "how",
+                "when",
+                "where",
+                "who",
+                "do",
+                "does",
+                "did",
+                "my",
+                "me",
+                "i",
+                "you",
+                "it",
+                "this",
+                "that",
+                "was",
+                "are",
+                "be",
+                "been",
+                "has",
+                "have",
+                "had",
+                "not",
+                "but",
+                "so",
+                "if",
+                "can",
+                "get",
+                "got",
+            }
+        )
+        terms = [w.lower() for w in query.split() if len(w) >= 3 and w.lower() not in _STOPWORDS][
+            :8
+        ]
         if not terms:
             return []
 
@@ -4832,7 +5034,7 @@ class OrivellumDB:
         except Exception:
             ttl = ttl_minutes if ttl_minutes is not None else default_ttl
         now_dt = datetime.now(UTC)
-        cutoff  = (now_dt - timedelta(minutes=ttl)).isoformat()
+        cutoff = (now_dt - timedelta(minutes=ttl)).isoformat()
         now_str = now_dt.isoformat()
         with self._lock:
             try:
@@ -5078,9 +5280,7 @@ class OrivellumDB:
             self._conn.commit()
         return chunk_id
 
-    def search_conversation_chunks(
-        self, query: str, limit: int = 5
-    ) -> list[dict]:
+    def search_conversation_chunks(self, query: str, limit: int = 5) -> list[dict]:
         """Keyword search over conversation chunks (FTS/LIKE fallback).
 
         Returns hits with conv_id, conv_title, text, created_at.
@@ -5115,9 +5315,13 @@ class OrivellumDB:
     # -------------------------------------------------------------------------
 
     def create_document_version(
-        self, doc_id: str, sha256: str | None = None,
-        word_count: int = 0, notes: str | None = None,
-        is_canonical: bool = False, created_by: str = "user",
+        self,
+        doc_id: str,
+        sha256: str | None = None,
+        word_count: int = 0,
+        notes: str | None = None,
+        is_canonical: bool = False,
+        created_by: str = "user",
     ) -> dict:
         """Snapshot the current state of a document as a new version row.
 
@@ -5155,12 +5359,28 @@ class OrivellumDB:
                 """INSERT INTO doc_versions(id, doc_id, version_num, sha256,
                    word_count, notes, is_canonical, created_at, created_by)
                    VALUES(?,?,?,?,?,?,?,?,?)""",
-                (vid, doc_id, version_num, sha256, word_count,
-                 notes, 1 if is_canonical else 0, now, created_by),
+                (
+                    vid,
+                    doc_id,
+                    version_num,
+                    sha256,
+                    word_count,
+                    notes,
+                    1 if is_canonical else 0,
+                    now,
+                    created_by,
+                ),
             )
-        return {"id": vid, "doc_id": doc_id, "version_num": version_num,
-                "sha256": sha256, "word_count": word_count, "notes": notes,
-                "is_canonical": is_canonical, "created_at": now}
+        return {
+            "id": vid,
+            "doc_id": doc_id,
+            "version_num": version_num,
+            "sha256": sha256,
+            "word_count": word_count,
+            "notes": notes,
+            "is_canonical": is_canonical,
+            "created_at": now,
+        }
 
     def list_document_versions(self, doc_id: str) -> list[dict]:
         with self._lock:
@@ -5215,7 +5435,9 @@ class OrivellumDB:
             doc_ready = self._conn.execute(
                 "SELECT COUNT(*) FROM documents WHERE readiness='ready'"
             ).fetchone()[0]
-            knowledge_count = self._conn.execute("SELECT COUNT(*) FROM knowledge WHERE review_status != 'rejected'").fetchone()[0]
+            knowledge_count = self._conn.execute(
+                "SELECT COUNT(*) FROM knowledge WHERE review_status != 'rejected'"
+            ).fetchone()[0]
             conv_count = self._conn.execute(
                 "SELECT COUNT(*) FROM conversations WHERE archived=0"
             ).fetchone()[0]
@@ -5293,9 +5515,13 @@ class OrivellumDB:
     # Gap cache (v50)
     # -------------------------------------------------------------------------
 
-    def cache_work_gaps(self, work_id: str, gaps: list[dict],
-                        coverage_pct: float | None = None,
-                        suggested_queries: list[str] | None = None) -> None:
+    def cache_work_gaps(
+        self,
+        work_id: str,
+        gaps: list[dict],
+        coverage_pct: float | None = None,
+        suggested_queries: list[str] | None = None,
+    ) -> None:
         """Persist the most-recent gap detection result for *work_id*.
 
         Subsequent calls overwrite the previous row so each Work has at most
@@ -5306,6 +5532,7 @@ class OrivellumDB:
         responses have the same shape as fresh detection runs.
         """
         import json as _json
+
         now = _now()
         with self.governed_write(
             operation="gaps.cache_updated",
@@ -5324,12 +5551,16 @@ class OrivellumDB:
                      coverage_pct            = excluded.coverage_pct,
                      evaluated_at            = excluded.evaluated_at,
                      suggested_queries_json  = excluded.suggested_queries_json""",
-                (work_id, _json.dumps(gaps), coverage_pct, now,
-                 _json.dumps(suggested_queries or [])),
+                (
+                    work_id,
+                    _json.dumps(gaps),
+                    coverage_pct,
+                    now,
+                    _json.dumps(suggested_queries or []),
+                ),
             )
 
-    def get_cached_gaps(self, work_id: str,
-                        max_age_seconds: int = 3600) -> dict | None:
+    def get_cached_gaps(self, work_id: str, max_age_seconds: int = 3600) -> dict | None:
         """Return the cached gap result for *work_id* if it is not stale.
 
         Returns ``None`` when no cache entry exists or the entry is older than
@@ -5339,6 +5570,7 @@ class OrivellumDB:
         callers get the same shape whether data comes from cache or a fresh run.
         """
         import json as _json
+
         with self._lock:
             row = self._conn.execute(
                 "SELECT gaps_json, coverage_pct, evaluated_at, "
@@ -5349,19 +5581,22 @@ class OrivellumDB:
         if not row:
             return None
         import datetime
+
         evaluated = row["evaluated_at"]
         try:
             ts = datetime.datetime.fromisoformat(evaluated)
-            age = (datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - ts.replace(tzinfo=None)).total_seconds()
+            age = (
+                datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - ts.replace(tzinfo=None)
+            ).total_seconds()
             if age > max_age_seconds:
                 return None
         except Exception:
             return None
         return {
-            "gaps":               _json.loads(row["gaps_json"] or "[]"),
-            "coverage_pct":       row["coverage_pct"],
-            "evaluated_at":       evaluated,
-            "suggested_queries":  _json.loads(row["suggested_queries_json"] or "[]"),
+            "gaps": _json.loads(row["gaps_json"] or "[]"),
+            "coverage_pct": row["coverage_pct"],
+            "evaluated_at": evaluated,
+            "suggested_queries": _json.loads(row["suggested_queries_json"] or "[]"),
         }
 
     def get_all_cached_gaps(self, max_age_seconds: int = 3600) -> list[dict]:
@@ -5373,9 +5608,9 @@ class OrivellumDB:
         """
         import datetime
         import json as _json
+
         cutoff = (
-            datetime.datetime.now(datetime.UTC)
-            - datetime.timedelta(seconds=max_age_seconds)
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=max_age_seconds)
         ).strftime("%Y-%m-%d %H:%M:%S")
         with self._lock:
             rows = self._conn.execute(
@@ -5386,13 +5621,15 @@ class OrivellumDB:
             ).fetchall()
         result = []
         for row in rows:
-            result.append({
-                "work_id":             row["work_id"],
-                "gaps":                _json.loads(row["gaps_json"] or "[]"),
-                "coverage_pct":        row["coverage_pct"],
-                "evaluated_at":        row["evaluated_at"],
-                "suggested_queries":   _json.loads(row["suggested_queries_json"] or "[]"),
-            })
+            result.append(
+                {
+                    "work_id": row["work_id"],
+                    "gaps": _json.loads(row["gaps_json"] or "[]"),
+                    "coverage_pct": row["coverage_pct"],
+                    "evaluated_at": row["evaluated_at"],
+                    "suggested_queries": _json.loads(row["suggested_queries_json"] or "[]"),
+                }
+            )
         return result
 
     # -------------------------------------------------------------------------
@@ -5416,8 +5653,10 @@ class OrivellumDB:
             BlockedTransitionError: if an open high/critical finding blocks it.
         """
         from orivellum.capabilities.state_machine import JOB_SM, apply_transition
+
         apply_transition(
-            self, JOB_SM,
+            self,
+            JOB_SM,
             object_id=job_id,
             object_type="job",
             table="jobs",
@@ -5441,6 +5680,7 @@ class OrivellumDB:
         """Create a new job in the 'queued' state.  Returns the new job id."""
         jid = str(uuid.uuid4())
         import json as _json
+
         input_payload = _json.dumps(input_data or {})
         now = _now()
         with self.governed_write(
@@ -5455,17 +5695,23 @@ class OrivellumDB:
                 """INSERT INTO jobs(id, job_type, state, priority, created_at,
                    max_attempts, input, correlation_id)
                    VALUES(?,?,?,?,?,?,?,?)""",
-                (jid, job_type, "queued", priority, now,
-                 max_attempts, input_payload, correlation_id),
+                (
+                    jid,
+                    job_type,
+                    "queued",
+                    priority,
+                    now,
+                    max_attempts,
+                    input_payload,
+                    correlation_id,
+                ),
             )
         return jid
 
     def get_job(self, job_id: str) -> dict | None:
         """Return a single job row, or None."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM jobs WHERE id=?", (job_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         return dict(row) if row else None
 
     def list_jobs(
@@ -5535,7 +5781,11 @@ class OrivellumDB:
             logger.warning("bg_job_upsert failed for %s: %s", job_id, exc)
 
     def bg_job_set_state(
-        self, job_id: str, state: str, *, error: str | None = None,
+        self,
+        job_id: str,
+        state: str,
+        *,
+        error: str | None = None,
         attempts: int | None = None,
     ) -> None:
         """Update state (and optionally error/attempts) of a durable job row."""
@@ -5549,8 +5799,7 @@ class OrivellumDB:
                     )
                 else:
                     self._conn.execute(
-                        "UPDATE bg_jobs SET state=?, error=?, attempts=?, "
-                        "updated_at=? WHERE id=?",
+                        "UPDATE bg_jobs SET state=?, error=?, attempts=?, updated_at=? WHERE id=?",
                         (state, error, attempts, now, job_id),
                     )
                 self._conn.commit()
@@ -5604,6 +5853,7 @@ class OrivellumDB:
         fid = str(uuid.uuid4())
         now = _now()
         import json as _json
+
         payload = _json.dumps(meta or {})
         with self.governed_write(
             operation="finding.created",
@@ -5617,8 +5867,7 @@ class OrivellumDB:
                 """INSERT INTO findings(id, object_id, object_type, kind,
                    description, severity, state, created_at, meta)
                    VALUES(?,?,?,?,?,?,?,?,?)""",
-                (fid, object_id, object_type, kind,
-                 description, severity, "open", now, payload),
+                (fid, object_id, object_type, kind, description, severity, "open", now, payload),
             )
         return fid
 
@@ -5663,9 +5912,7 @@ class OrivellumDB:
     def get_finding(self, finding_id: str) -> dict | None:
         """Return a single finding by id, or None."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM findings WHERE id=?", (finding_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM findings WHERE id=?", (finding_id,)).fetchone()
         return dict(row) if row else None
 
     def resolve_finding(
@@ -5727,6 +5974,7 @@ class OrivellumDB:
         We update when incoming tier <= existing tier (equal or better).
         """
         import json as _json
+
         now = _now()
         payload = _json.dumps(meta or {})
 
@@ -5734,14 +5982,21 @@ class OrivellumDB:
         # A7/A8 → USER_ASSERTED (not independently verified yet).
         # A0–A6 → RETRIEVED (has a source; verifier must run to reach VERIFIED).
         # Backward-compat: treat legacy 'CURRENT' inputs as VERIFIED.
-        new_tier_num = int(authority_tier[1:]) \
-            if len(authority_tier) > 1 and authority_tier[1:].isdigit() else 99
+        new_tier_num = (
+            int(authority_tier[1:])
+            if len(authority_tier) > 1 and authority_tier[1:].isdigit()
+            else 99
+        )
         new_status = "USER_ASSERTED" if new_tier_num >= 7 else "RETRIEVED"
 
         # Statuses considered "live" (can be superseded by a new upsert)
         _LIVE_STATUSES = (
-            'USER_ASSERTED', 'RETRIEVED', 'PARTIALLY_VERIFIED',
-            'VERIFIED', 'CURRENT', 'UNOBSERVED',
+            "USER_ASSERTED",
+            "RETRIEVED",
+            "PARTIALLY_VERIFIED",
+            "VERIFIED",
+            "CURRENT",
+            "UNOBSERVED",
         )
 
         # Read phase — lock held only for the SELECT
@@ -5749,15 +6004,18 @@ class OrivellumDB:
             existing = self._conn.execute(
                 f"""SELECT id, authority_tier, status FROM claims
                    WHERE subject=? AND predicate=?
-                   AND status IN ({','.join('?'*len(_LIVE_STATUSES))})
+                   AND status IN ({",".join("?" * len(_LIVE_STATUSES))})
                    ORDER BY updated_at DESC LIMIT 1""",
                 (subject, predicate, *_LIVE_STATUSES),
             ).fetchone()
 
         if existing:
             cid = existing["id"]
-            old_tier_num = int(existing["authority_tier"][1:]) \
-                if existing["authority_tier"][1:].isdigit() else 99
+            old_tier_num = (
+                int(existing["authority_tier"][1:])
+                if existing["authority_tier"][1:].isdigit()
+                else 99
+            )
 
             if new_tier_num <= old_tier_num:
                 # Update path — governed_write keeps claim + transition + FTS atomic
@@ -5776,21 +6034,36 @@ class OrivellumDB:
                                conv_id=?, ttl_class=?, status=?,
                                updated_at=?, meta=?
                            WHERE id=?""",
-                        (value, unit, authority_tier, source_id,
-                         conv_id, ttl_class, new_status, now, payload, cid),
+                        (
+                            value,
+                            unit,
+                            authority_tier,
+                            source_id,
+                            conv_id,
+                            ttl_class,
+                            new_status,
+                            now,
+                            payload,
+                            cid,
+                        ),
                     )
                     if old_status != new_status:
                         self._conn.execute(
                             """INSERT INTO claim_transitions(id,claim_id,from_status,
                                to_status,actor,reason,created_at)
                                VALUES(?,?,?,?,?,?,?)""",
-                            (str(uuid.uuid4()), cid, old_status, new_status,
-                             "system", "upsert", now),
+                            (
+                                str(uuid.uuid4()),
+                                cid,
+                                old_status,
+                                new_status,
+                                "system",
+                                "upsert",
+                                now,
+                            ),
                         )
                     try:
-                        self._conn.execute(
-                            "DELETE FROM claims_fts WHERE claim_id=?", (cid,)
-                        )
+                        self._conn.execute("DELETE FROM claims_fts WHERE claim_id=?", (cid,))
                         self._conn.execute(
                             "INSERT INTO claims_fts(claim_id,subject,predicate,value)"
                             " VALUES(?,?,?,?)",
@@ -5816,8 +6089,21 @@ class OrivellumDB:
                    source_id,status,confidence,ttl_class,conv_id,created_at,
                    updated_at,meta)
                    VALUES(?,?,?,?,?,?,?,?,1.0,?,?,?,?,?)""",
-                (cid, subject, predicate, value, unit, authority_tier,
-                 source_id, new_status, ttl_class, conv_id, now, now, payload),
+                (
+                    cid,
+                    subject,
+                    predicate,
+                    value,
+                    unit,
+                    authority_tier,
+                    source_id,
+                    new_status,
+                    ttl_class,
+                    conv_id,
+                    now,
+                    now,
+                    payload,
+                ),
             )
             self._conn.execute(
                 """INSERT INTO claim_transitions(id,claim_id,from_status,to_status,
@@ -5826,8 +6112,7 @@ class OrivellumDB:
             )
             try:
                 self._conn.execute(
-                    "INSERT INTO claims_fts(claim_id,subject,predicate,value)"
-                    " VALUES(?,?,?,?)",
+                    "INSERT INTO claims_fts(claim_id,subject,predicate,value) VALUES(?,?,?,?)",
                     (cid, subject, predicate, value),
                 )
             except Exception:
@@ -5835,33 +6120,31 @@ class OrivellumDB:
 
         # Attach evidence if provided (governed internally by add_claim_evidence)
         if evidence_text:
-            self.add_claim_evidence(cid, "assertion", evidence_text,
-                                    source_id=source_id)
+            self.add_claim_evidence(cid, "assertion", evidence_text, source_id=source_id)
         return cid
 
     def get_claim(self, claim_id: str) -> dict | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM claims WHERE id=?", (claim_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM claims WHERE id=?", (claim_id,)).fetchone()
         return dict(row) if row else None
 
-    def get_claim_by_predicate(
-        self, subject: str, predicate: str
-    ) -> dict | None:
+    def get_claim_by_predicate(self, subject: str, predicate: str) -> dict | None:
         """Return the most recent live claim for (subject, predicate).
 
         Prefers VERIFIED > PARTIALLY_VERIFIED > USER_ASSERTED > RETRIEVED > CURRENT.
         """
         _PRIORITY = {
-            "VERIFIED": 0, "PARTIALLY_VERIFIED": 1,
-            "USER_ASSERTED": 2, "RETRIEVED": 3, "CURRENT": 4,
+            "VERIFIED": 0,
+            "PARTIALLY_VERIFIED": 1,
+            "USER_ASSERTED": 2,
+            "RETRIEVED": 3,
+            "CURRENT": 4,
         }
         _LIVE = tuple(_PRIORITY.keys())
         with self._lock:
             rows = self._conn.execute(
                 f"""SELECT * FROM claims WHERE subject=? AND predicate=?
-                   AND status IN ({','.join('?'*len(_LIVE))})
+                   AND status IN ({",".join("?" * len(_LIVE))})
                    ORDER BY updated_at DESC LIMIT 10""",
                 (subject, predicate, *_LIVE),
             ).fetchall()
@@ -5905,9 +6188,7 @@ class OrivellumDB:
     ) -> bool:
         now = _now()
         with self._lock:
-            row = self._conn.execute(
-                "SELECT status FROM claims WHERE id=?", (claim_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT status FROM claims WHERE id=?", (claim_id,)).fetchone()
         if not row:
             return False
         old_status = row["status"]
@@ -5928,8 +6209,7 @@ class OrivellumDB:
             self._conn.execute(
                 """INSERT INTO claim_transitions(id,claim_id,from_status,to_status,
                    actor,reason,created_at) VALUES(?,?,?,?,?,?,?)""",
-                (str(uuid.uuid4()), claim_id, old_status, new_status,
-                 actor, reason, now),
+                (str(uuid.uuid4()), claim_id, old_status, new_status, actor, reason, now),
             )
         return True
 
@@ -5980,16 +6260,14 @@ class OrivellumDB:
 
         # Try FTS5 first
         try:
-            tokens = " OR ".join(
-                f'"{t}"' for t in query.split() if len(t) > 1
-            )
+            tokens = " OR ".join(f'"{t}"' for t in query.split() if len(t) > 1)
             if tokens:
                 sql = f"""
                     SELECT c.* FROM claims c
                     JOIN claims_fts f ON f.claim_id = c.id
                     WHERE {base_filter}
                     AND claims_fts MATCH ?
-                    {' AND c.subject=?' if subject else ''}
+                    {" AND c.subject=?" if subject else ""}
                     ORDER BY rank LIMIT ?
                 """
                 params = [tokens]
@@ -6008,14 +6286,20 @@ class OrivellumDB:
                 qlow = query.lower()
                 # Fetch all live claims (no status filter → picks up all live statuses)
                 all_claims = [
-                    c for c in self.list_claims(subject=subject, status=None, limit=200)
-                    if c.get("status") in (
-                        "VERIFIED", "PARTIALLY_VERIFIED", "USER_ASSERTED",
-                        "RETRIEVED", "CURRENT",
+                    c
+                    for c in self.list_claims(subject=subject, status=None, limit=200)
+                    if c.get("status")
+                    in (
+                        "VERIFIED",
+                        "PARTIALLY_VERIFIED",
+                        "USER_ASSERTED",
+                        "RETRIEVED",
+                        "CURRENT",
                     )
                 ]
                 results = [
-                    c for c in all_claims
+                    c
+                    for c in all_claims
                     if c.get("authority_tier") != "A8"
                     and (
                         qlow in (c.get("predicate") or "").lower()
@@ -6045,6 +6329,7 @@ class OrivellumDB:
         meta: dict | None = None,
     ) -> str:
         import json as _json
+
         now = _now()
         payload = _json.dumps(meta or {})
         with self.governed_write(
@@ -6058,8 +6343,7 @@ class OrivellumDB:
             self._conn.execute(
                 """INSERT INTO capture_stamps(id,channel,source_type,claim_id,
                    raw_text,created_at,meta) VALUES(?,?,?,?,?,?,?)""",
-                (stamp_id, channel, source_type, claim_id,
-                 raw_text, now, payload),
+                (stamp_id, channel, source_type, claim_id, raw_text, now, payload),
             )
         return stamp_id
 
@@ -6074,14 +6358,14 @@ class OrivellumDB:
             self._conn.execute(
                 """INSERT INTO wb_projects(id,title,kind,brief,status,building,
                    created_at,updated_at) VALUES(?,?,?,?, 'active',0,?,?)""",
-                (pid, title, kind, brief, now, now))
+                (pid, title, kind, brief, now, now),
+            )
             self._conn.commit()
         return self.get_wb_project(pid)
 
     def get_wb_project(self, project_id: str) -> dict | None:
         with self._lock:
-            r = self._conn.execute(
-                "SELECT * FROM wb_projects WHERE id=?", (project_id,)).fetchone()
+            r = self._conn.execute("SELECT * FROM wb_projects WHERE id=?", (project_id,)).fetchone()
         return dict(r) if r else None
 
     def list_wb_projects(self, status: str | None = None) -> list[dict]:
@@ -6104,7 +6388,8 @@ class OrivellumDB:
         with self._lock:
             self._conn.execute(
                 f"UPDATE wb_projects SET {cols}, updated_at=? WHERE id=?",
-                (*sets.values(), _now(), project_id))
+                (*sets.values(), _now(), project_id),
+            )
             self._conn.commit()
 
     def claim_wb_build(self, project_id: str, *, require_active: bool = True) -> bool:
@@ -6115,9 +6400,9 @@ class OrivellumDB:
         cond = " AND status='active'" if require_active else ""
         with self._lock:
             cur = self._conn.execute(
-                f"UPDATE wb_projects SET building=1, updated_at=? "
-                f"WHERE id=? AND building=0{cond}",
-                (_now(), project_id))
+                f"UPDATE wb_projects SET building=1, updated_at=? WHERE id=? AND building=0{cond}",
+                (_now(), project_id),
+            )
             self._conn.commit()
             return cur.rowcount == 1
 
@@ -6132,9 +6417,15 @@ class OrivellumDB:
             self._conn.execute("DELETE FROM wb_projects WHERE id=?", (project_id,))
             self._conn.commit()
 
-    def create_wb_version(self, project_id: str, instruction: str,
-                          files: list[dict], checks: dict | None = None,
-                          verdict: str = "verified", note: str = "") -> dict:
+    def create_wb_version(
+        self,
+        project_id: str,
+        instruction: str,
+        files: list[dict],
+        checks: dict | None = None,
+        verdict: str = "verified",
+        note: str = "",
+    ) -> dict:
         """Insert the next version row for a project (version_no assigned
         atomically under the DB lock)."""
         now = _now()
@@ -6142,34 +6433,52 @@ class OrivellumDB:
         with self._lock:
             row = self._conn.execute(
                 "SELECT COALESCE(MAX(version_no),0)+1 FROM wb_versions WHERE project_id=?",
-                (project_id,)).fetchone()
+                (project_id,),
+            ).fetchone()
             version_no = int(row[0])
             self._conn.execute(
                 """INSERT INTO wb_versions(id,project_id,version_no,instruction,
                    note,files_json,checks_json,verdict,created_at)
                    VALUES(?,?,?,?,?,?,?,?,?)""",
-                (vid, project_id, version_no, instruction, note,
-                 json.dumps(files), json.dumps(checks or {}), verdict, now))
-            self._conn.execute(
-                "UPDATE wb_projects SET updated_at=? WHERE id=?", (now, project_id))
+                (
+                    vid,
+                    project_id,
+                    version_no,
+                    instruction,
+                    note,
+                    json.dumps(files),
+                    json.dumps(checks or {}),
+                    verdict,
+                    now,
+                ),
+            )
+            self._conn.execute("UPDATE wb_projects SET updated_at=? WHERE id=?", (now, project_id))
             self._conn.commit()
-        return {"id": vid, "project_id": project_id, "version_no": version_no,
-                "instruction": instruction, "note": note, "files_json": json.dumps(files),
-                "checks_json": json.dumps(checks or {}), "verdict": verdict,
-                "created_at": now}
+        return {
+            "id": vid,
+            "project_id": project_id,
+            "version_no": version_no,
+            "instruction": instruction,
+            "note": note,
+            "files_json": json.dumps(files),
+            "checks_json": json.dumps(checks or {}),
+            "verdict": verdict,
+            "created_at": now,
+        }
 
     def list_wb_versions(self, project_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM wb_versions WHERE project_id=? ORDER BY version_no",
-                (project_id,)).fetchall()
+                "SELECT * FROM wb_versions WHERE project_id=? ORDER BY version_no", (project_id,)
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def get_wb_version(self, project_id: str, version_no: int) -> dict | None:
         with self._lock:
             r = self._conn.execute(
                 "SELECT * FROM wb_versions WHERE project_id=? AND version_no=?",
-                (project_id, version_no)).fetchone()
+                (project_id, version_no),
+            ).fetchone()
         return dict(r) if r else None
 
     # -------------------------------------------------------------------------
@@ -6181,8 +6490,12 @@ class OrivellumDB:
             with self._lock:
                 version = self._get_setting("schema_version", "0")
                 count = self._conn.execute("SELECT COUNT(*) FROM objects").fetchone()[0]
-            return {"status": "ok", "schema_version": int(version), "object_count": count,
-                    "path": self._path}
+            return {
+                "status": "ok",
+                "schema_version": int(version),
+                "object_count": count,
+                "path": self._path,
+            }
         except Exception as exc:
             return {"status": "error", "error": str(exc)}
 
@@ -6212,17 +6525,58 @@ class OrivellumDB:
             Maximum number of results (capped at 50).
         """
         limit = min(limit, 50)
-        _STOP = frozenset({
-            "find", "show", "get", "retrieve", "locate", "where", "give",
-            "list", "the", "my", "a", "an", "that", "which", "what", "i",
-            "we", "me", "you", "us", "made", "created", "generated", "uploaded",
-            "wrote", "built", "produced", "have", "did", "about", "for", "on",
-            "is", "are", "was", "been", "files", "file", "outputs", "output",
-            "all", "any", "some", "latest", "recent", "new",
-        })
+        _STOP = frozenset(
+            {
+                "find",
+                "show",
+                "get",
+                "retrieve",
+                "locate",
+                "where",
+                "give",
+                "list",
+                "the",
+                "my",
+                "a",
+                "an",
+                "that",
+                "which",
+                "what",
+                "i",
+                "we",
+                "me",
+                "you",
+                "us",
+                "made",
+                "created",
+                "generated",
+                "uploaded",
+                "wrote",
+                "built",
+                "produced",
+                "have",
+                "did",
+                "about",
+                "for",
+                "on",
+                "is",
+                "are",
+                "was",
+                "been",
+                "files",
+                "file",
+                "outputs",
+                "output",
+                "all",
+                "any",
+                "some",
+                "latest",
+                "recent",
+                "new",
+            }
+        )
         keywords = [
-            w for w in query.lower().split()
-            if len(w) > 2 and w.isalnum() and w not in _STOP
+            w for w in query.lower().split() if len(w) > 2 and w.isalnum() and w not in _STOP
         ]
 
         sql = """
@@ -6277,8 +6631,9 @@ class OrivellumDB:
             d["meta_data"] = {}
         return d
 
-    def create_forge_project(self, name: str, brief: str = "", work_id: str | None = None,
-                             config: dict | None = None) -> dict:
+    def create_forge_project(
+        self, name: str, brief: str = "", work_id: str | None = None, config: dict | None = None
+    ) -> dict:
         pid = _uuid()
         now = _now()
         with self._lock:
@@ -6311,8 +6666,9 @@ class OrivellumDB:
             rows = self._conn.execute(q, args).fetchall()
         return [self._forge_project_dict(r) for r in rows]
 
-    def update_forge_project(self, project_id: str, config_update: dict | None = None,
-                             **fields) -> None:
+    def update_forge_project(
+        self, project_id: str, config_update: dict | None = None, **fields
+    ) -> None:
         fields["updated_at"] = _now()
         if config_update:
             with self._lock:
@@ -6334,9 +6690,7 @@ class OrivellumDB:
         set_clause = ", ".join(f"{k}=?" for k in updates)
         vals = list(updates.values()) + [project_id]
         with self._lock:
-            self._conn.execute(
-                f"UPDATE forge_projects SET {set_clause} WHERE id=?", vals
-            )
+            self._conn.execute(f"UPDATE forge_projects SET {set_clause} WHERE id=?", vals)
             self._conn.commit()
 
     def delete_forge_project(self, project_id: str) -> None:
@@ -6350,9 +6704,15 @@ class OrivellumDB:
             self._conn.execute("DELETE FROM forge_projects WHERE id=?", (project_id,))
             self._conn.commit()
 
-    def create_forge_job(self, project_id: str, type: str, instruction: str | None = None,
-                         plan_job_id: str | None = None, design_job_id: str | None = None,
-                         target_job_id: str | None = None) -> dict:
+    def create_forge_job(
+        self,
+        project_id: str,
+        type: str,
+        instruction: str | None = None,
+        plan_job_id: str | None = None,
+        design_job_id: str | None = None,
+        target_job_id: str | None = None,
+    ) -> dict:
         jid = _uuid()
         now = _now()
         with self._lock:
@@ -6361,8 +6721,18 @@ class OrivellumDB:
                    (id, project_id, type, status, instruction,
                     plan_job_id, design_job_id, target_job_id, created_at, meta)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (jid, project_id, type, "pending", instruction,
-                 plan_job_id, design_job_id, target_job_id, now, "{}"),
+                (
+                    jid,
+                    project_id,
+                    type,
+                    "pending",
+                    instruction,
+                    plan_job_id,
+                    design_job_id,
+                    target_job_id,
+                    now,
+                    "{}",
+                ),
             )
             self._conn.commit()
             row = self._conn.execute("SELECT * FROM forge_jobs WHERE id=?", (jid,)).fetchone()
@@ -6370,9 +6740,7 @@ class OrivellumDB:
 
     def get_forge_job(self, job_id: str) -> dict | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM forge_jobs WHERE id=?", (job_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM forge_jobs WHERE id=?", (job_id,)).fetchone()
         return self._forge_job_dict(row) if row else None
 
     def list_forge_jobs(self, project_id: str, limit: int = 50) -> list[dict]:
@@ -6385,8 +6753,15 @@ class OrivellumDB:
 
     def update_forge_job(self, job_id: str, **fields) -> None:
         allowed = {
-            "status", "instruction", "plan_job_id", "design_job_id",
-            "target_job_id", "build_dir", "started_at", "completed_at", "meta",
+            "status",
+            "instruction",
+            "plan_job_id",
+            "design_job_id",
+            "target_job_id",
+            "build_dir",
+            "started_at",
+            "completed_at",
+            "meta",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -6397,8 +6772,9 @@ class OrivellumDB:
             self._conn.execute(f"UPDATE forge_jobs SET {set_clause} WHERE id=?", vals)
             self._conn.commit()
 
-    def append_forge_event(self, job_id: str, phase: str, message: str,
-                           data: dict | None = None) -> dict:
+    def append_forge_event(
+        self, job_id: str, phase: str, message: str, data: dict | None = None
+    ) -> dict:
         eid = _uuid()
         now = _now()
         data_json = json.dumps(data) if data is not None else None
@@ -6410,11 +6786,18 @@ class OrivellumDB:
                 (eid, job_id, phase, message, data_json, now),
             )
             self._conn.commit()
-        return {"id": eid, "job_id": job_id, "phase": phase,
-                "message": message, "data": data, "created_at": now}
+        return {
+            "id": eid,
+            "job_id": job_id,
+            "phase": phase,
+            "message": message,
+            "data": data,
+            "created_at": now,
+        }
 
-    def list_forge_events(self, job_id: str, after_id: str | None = None,
-                          limit: int = 500) -> list[dict]:
+    def list_forge_events(
+        self, job_id: str, after_id: str | None = None, limit: int = 500
+    ) -> list[dict]:
         if after_id:
             with self._lock:
                 ts_row = self._conn.execute(
@@ -6452,6 +6835,7 @@ class OrivellumDB:
         now = _now()
         content_json = json.dumps(content, ensure_ascii=False)
         import hashlib
+
         sha = hashlib.sha256(content_json.encode()).hexdigest()
         with self._lock:
             self._conn.execute(

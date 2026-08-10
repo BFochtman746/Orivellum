@@ -6,6 +6,7 @@ and a data dict, renders the template, and returns the filled file.
 .docx  — rendered via docxtpl (Jinja2 inside DOCX)
 .xlsx  — rendered via openpyxl (named-range / cell substitution)
 """
+
 from __future__ import annotations
 
 import json
@@ -106,7 +107,8 @@ class TemplateFillAction(ActionBase):
         doc_id = _register_output(
             out_path,
             work_id or None,
-            db, cfg,
+            db,
+            cfg,
             suffix.lstrip("."),
             output_name or f"Filled {template_doc.get('title', 'Template')}",
             text_content,
@@ -125,6 +127,7 @@ def _fill_docx(template_path: Path, out_path: Path, data: dict) -> tuple[Path, s
     """Render a .docx template via docxtpl (Jinja2) with fallback to regex replace."""
     try:
         from docxtpl import DocxTemplate
+
         tpl = DocxTemplate(str(template_path))
         tpl.render(data)
         tpl.save(str(out_path))
@@ -133,6 +136,7 @@ def _fill_docx(template_path: Path, out_path: Path, data: dict) -> tuple[Path, s
     except ImportError:
         # Fallback: plain text replacement via python-docx
         from docx import Document
+
         doc = Document(str(template_path))
         for para in doc.paragraphs:
             for key, val in data.items():

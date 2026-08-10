@@ -10,6 +10,7 @@ the user's system, documents, and self.  Every claim has:
 
 VER-INV-001: Claims at A8 are NEVER surfaced to the user as facts.
 """
+
 from __future__ import annotations
 
 import logging
@@ -54,10 +55,12 @@ class ClaimLedger:
         a duplicate.  A higher-authority update always wins.
         """
         tier = authority_tier.value if isinstance(authority_tier, AuthorityTier) else authority_tier
-        ttl  = ttl_class.value if isinstance(ttl_class, TTLClass) else ttl_class
+        ttl = ttl_class.value if isinstance(ttl_class, TTLClass) else ttl_class
 
         claim_id = self._db.upsert_claim(
-            subject, predicate, value,
+            subject,
+            predicate,
+            value,
             unit=unit,
             authority_tier=tier,
             source_id=source_id,
@@ -68,7 +71,11 @@ class ClaimLedger:
         )
         logger.debug(
             "Claim captured: %s.%s = %r (tier=%s, id=%s)",
-            subject, predicate, value, tier, claim_id[:8]
+            subject,
+            predicate,
+            value,
+            tier,
+            claim_id[:8],
         )
         return claim_id
 
@@ -93,9 +100,7 @@ class ClaimLedger:
         source_id: str | None = None,
     ) -> str:
         """Attach evidence to an existing claim.  Returns evidence id."""
-        return self._db.add_claim_evidence(
-            claim_id, evidence_type, content, source_id=source_id
-        )
+        return self._db.add_claim_evidence(claim_id, evidence_type, content, source_id=source_id)
 
     # ── Read ───────────────────────────────────────────────────────────────────
 
@@ -128,14 +133,9 @@ class ClaimLedger:
         Used by _build_system_prompt() to inject verified facts into chat context.
         Returns claims ranked by relevance; A8 claims are always excluded.
         """
-        claims = self._db.search_claims_for_context(
-            query, subject=subject, limit=limit
-        )
+        claims = self._db.search_claims_for_context(query, subject=subject, limit=limit)
         # Hard filter: A8 never surfaces regardless of search score
-        return [
-            c for c in claims
-            if c.get("authority_tier") != AuthorityTier.A8.value
-        ]
+        return [c for c in claims if c.get("authority_tier") != AuthorityTier.A8.value]
 
     def format_for_prompt(self, claims: list[dict]) -> str:
         """Render a list of claims as a prompt block.
@@ -151,9 +151,9 @@ class ClaimLedger:
         lines = ["VERIFIED FACTS (from your claim ledger — use these instead of guessing):"]
         for c in claims:
             value = c.get("value", "")
-            unit  = c.get("unit") or ""
-            pred  = c.get("predicate", "")
-            tier  = c.get("authority_tier", "A7")
+            unit = c.get("unit") or ""
+            pred = c.get("predicate", "")
+            tier = c.get("authority_tier", "A7")
             try:
                 tier_label = AuthorityTier(tier).label
             except ValueError:

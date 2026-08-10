@@ -20,6 +20,7 @@ or blank attribution and flags it UNVERIFIED_DRAFT for human approval; if asked
 to produce a *quoted* epigraph it ABSTAINS, because it cannot verify a real
 source. Guessing is a defect, not a feature.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -29,9 +30,9 @@ from dataclasses import dataclass
 @dataclass
 class EpigraphResult:
     text: str
-    attribution: str          # in-world fictional source, or "" for none
-    kind: str                 # always "original" here
-    status: str               # UNVERIFIED_DRAFT (needs human sign-off) or ABSTAINED
+    attribution: str  # in-world fictional source, or "" for none
+    kind: str  # always "original" here
+    status: str  # UNVERIFIED_DRAFT (needs human sign-off) or ABSTAINED
     reason: str = ""
 
 
@@ -39,13 +40,14 @@ class EpigraphResult:
 class CoverVersion:
     version_id: str
     prompt: str
-    status: str               # DRAFT (mock) or ABSTAINED
-    asset_ref: str = ""       # path/ref to generated art at A-01; empty in mock
+    status: str  # DRAFT (mock) or ABSTAINED
+    asset_ref: str = ""  # path/ref to generated art at A-01; empty in mock
     notes: str = ""
 
 
 class Gateway:
     """Base contract. Subclasses implement the two capabilities."""
+
     name = "base"
 
     def original_epigraph(self, chapter_context: dict) -> EpigraphResult:
@@ -58,24 +60,30 @@ class Gateway:
 class MockGateway(Gateway):
     """Deterministic, offline. Produces clearly-labelled DRAFT artifacts and
     abstains on anything it cannot verify. Used for build + test."""
+
     name = "mock"
 
     def original_epigraph(self, chapter_context: dict) -> EpigraphResult:
         want = (chapter_context or {}).get("want_quote", False)
         if want:
             return EpigraphResult(
-                text="", attribution="", kind="original",
+                text="",
+                attribution="",
+                kind="original",
                 status="ABSTAINED",
                 reason="Real-quote/scripture epigraph requested; source cannot be "
-                       "verified in mock. Policy forbids fabricated attributions.",
+                "verified in mock. Policy forbids fabricated attributions.",
             )
         soul = (chapter_context or {}).get("soul", "the chapter's central tension")
         seed = hashlib.sha256(str(chapter_context).encode()).hexdigest()[:6]
-        text = (f"[ORIGINAL EPIGRAPH DRAFT · {seed}] A line, written for this book "
-                f"alone, that speaks to {soul}.")
+        text = (
+            f"[ORIGINAL EPIGRAPH DRAFT · {seed}] A line, written for this book "
+            f"alone, that speaks to {soul}."
+        )
         attribution = (chapter_context or {}).get("in_world_source", "")
-        return EpigraphResult(text=text, attribution=attribution, kind="original",
-                              status="UNVERIFIED_DRAFT")
+        return EpigraphResult(
+            text=text, attribution=attribution, kind="original", status="UNVERIFIED_DRAFT"
+        )
 
     def cover_versions(self, brief: dict, n: int = 3) -> list[CoverVersion]:
         n = max(1, min(int(n), 8))
@@ -84,20 +92,26 @@ class MockGateway(Gateway):
         for i in range(n):
             vid = hashlib.sha256(f"{base}#{i}".encode()).hexdigest()[:8]
             prompt = self._compose_prompt(brief, i)
-            out.append(CoverVersion(version_id=vid, prompt=prompt, status="DRAFT",
-                                    notes="Mock: no raster produced; real art at A-01."))
+            out.append(
+                CoverVersion(
+                    version_id=vid,
+                    prompt=prompt,
+                    status="DRAFT",
+                    notes="Mock: no raster produced; real art at A-01.",
+                )
+            )
         return out
 
     @staticmethod
     def _compose_prompt(brief: dict, variant: int) -> str:
         b = brief or {}
         parts = [
-            f"Book: {b.get('title','(untitled)')}",
-            f"Series: {b.get('series','(standalone)')}",
-            f"Mood: {b.get('mood','')}",
-            f"Palette: {b.get('palette','')}",
-            f"Imagery: {b.get('imagery','')}",
-            f"Composition: {b.get('composition','')}",
+            f"Book: {b.get('title', '(untitled)')}",
+            f"Series: {b.get('series', '(standalone)')}",
+            f"Mood: {b.get('mood', '')}",
+            f"Palette: {b.get('palette', '')}",
+            f"Imagery: {b.get('imagery', '')}",
+            f"Composition: {b.get('composition', '')}",
             f"Variant: {variant} (vary accent + focal image; keep series constants)",
         ]
         return " | ".join(p for p in parts if p.split(": ", 1)[1])
@@ -106,6 +120,7 @@ class MockGateway(Gateway):
 class LemonadeGateway(Gateway):
     """A-01 handoff stub. Wire the real local text model (epigraphs) and image
     model (covers) here."""
+
     name = "lemonade"
 
     def original_epigraph(self, chapter_context: dict) -> EpigraphResult:

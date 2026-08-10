@@ -9,6 +9,7 @@ Orivellum server.  Given a DB handle and work_id it:
   3. Applies the same sample_passages() window logic as the original tool so
      extremely large corpora don't overflow the context window.
 """
+
 from __future__ import annotations
 
 
@@ -24,7 +25,9 @@ def sample_passages(text: str, windows: int = 6, window_chars: int = 1800) -> st
     for i in range(1, windows + 1):
         center = int(n * i / (windows + 1))
         start = max(0, center - window_chars // 2)
-        picks.append((f"MIDDLE ~{int(100*i/(windows+1))}%", text[start:start + window_chars]))
+        picks.append(
+            (f"MIDDLE ~{int(100 * i / (windows + 1))}%", text[start : start + window_chars])
+        )
     picks.append(("ENDING", text[-window_chars:]))
 
     return "\n\n".join(f"[{label}]\n{chunk}" for label, chunk in picks)

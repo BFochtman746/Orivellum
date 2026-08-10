@@ -1,4 +1,5 @@
 """Runnable entry point: python -m orivellum.api.main"""
+
 from __future__ import annotations
 
 import os

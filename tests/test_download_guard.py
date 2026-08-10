@@ -4,6 +4,7 @@ The download endpoint must (a) reject traversal including prefix-sibling
 bypass, (b) serve only the allowlisted user-content subtrees, and (c) never
 serve DB files or key material even inside allowed subtrees.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -16,10 +17,10 @@ from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "orivellum.db"))
@@ -49,6 +50,7 @@ class DownloadGuardTest(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self._sibling, ignore_errors=True)
         self._tmp.cleanup()
 
@@ -89,7 +91,9 @@ class DownloadGuardTest(unittest.TestCase):
         # Belt-and-braces: exercise the resolver itself, independent of any
         # client/proxy URL normalization.
         from fastapi import HTTPException
+
         from orivellum.api.routes import files as files_routes
+
         for bad in ("../etc/passwd", "../" + self._sibling.name + "/leak.txt"):
             with self.assertRaises(HTTPException) as ctx:
                 files_routes._resolve_within_data_dir(bad)

@@ -8,6 +8,7 @@ Acceptance criteria from the remediation packet:
   and confirm the database file was swapped and a safety snapshot was kept.
 - generate_excel output contains at least one chart and a frozen header row.
 """
+
 from __future__ import annotations
 
 import os
@@ -35,6 +36,7 @@ def _make_app(tmp: str):
 
 # ── Workshop sandbox ─────────────────────────────────────────────────────────
 
+
 class TestWorkshopSandbox(unittest.TestCase):
     """The no-network rule must be enforced, not just requested in the prompt."""
 
@@ -47,25 +49,26 @@ class TestWorkshopSandbox(unittest.TestCase):
 
     def _run(self, script: str) -> dict:
         from orivellum.capabilities.workshop import _run_script_safely
+
         return _run_script_safely(
-            script, output_path=str(Path(self._tmp.name) / "out.bin"),
-            max_retries=0, cfg=self.cfg, db=self.db, request="test",
+            script,
+            output_path=str(Path(self._tmp.name) / "out.bin"),
+            max_retries=0,
+            cfg=self.cfg,
+            db=self.db,
+            request="test",
         )
 
     def test_outbound_network_request_fails(self):
         script = (
-            "import urllib.request\n"
-            "urllib.request.urlopen('http://127.0.0.1:1/x', timeout=2)\n"
+            "import urllib.request\nurllib.request.urlopen('http://127.0.0.1:1/x', timeout=2)\n"
         )
         result = self._run(script)
         self.assertFalse(result["ok"])
         self.assertIn("disabled", (result.get("stderr") or "") + result.get("error", ""))
 
     def test_raw_socket_connection_fails(self):
-        result = self._run(
-            "import socket\n"
-            "socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
-        )
+        result = self._run("import socket\nsocket.socket(socket.AF_INET, socket.SOCK_STREAM)\n")
         self.assertFalse(result["ok"])
         self.assertIn("disabled", (result.get("stderr") or "") + result.get("error", ""))
 
@@ -120,6 +123,7 @@ class TestWorkshopSandbox(unittest.TestCase):
 
 # ── Backup restore ───────────────────────────────────────────────────────────
 
+
 class TestBackupRestore(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -140,8 +144,7 @@ class TestBackupRestore(unittest.TestCase):
 
     def test_stage_restore_and_cancel(self):
         self._make_backup_zip()
-        r = self.client.post("/api/backups/orivellum_backup_test.zip/restore",
-                             headers=AUTH_HEADERS)
+        r = self.client.post("/api/backups/orivellum_backup_test.zip/restore", headers=AUTH_HEADERS)
         self.assertEqual(r.status_code, 200, r.text)
         self.assertTrue(r.json()["staged"])
         self.assertTrue((Path(self.cfg.data_dir) / "restore-pending.zip").exists())
@@ -171,6 +174,7 @@ class TestBackupRestore(unittest.TestCase):
 
         zp = self._make_backup_zip()
         import shutil
+
         shutil.copy2(zp, data_dir / "restore-pending.zip")
 
         _apply_pending_restore(self.cfg)
@@ -178,8 +182,7 @@ class TestBackupRestore(unittest.TestCase):
         # DB swapped in
         self.assertEqual((data_dir / "orivellum.db").read_bytes(), b"RESTORED-DB-CONTENT")
         # Library restored
-        self.assertEqual((data_dir / "library" / "doc.txt").read_bytes(),
-                         b"restored library file")
+        self.assertEqual((data_dir / "library" / "doc.txt").read_bytes(), b"restored library file")
         # Pending marker consumed
         self.assertFalse((data_dir / "restore-pending.zip").exists())
         # Safety snapshot holds the old DB
@@ -205,6 +208,7 @@ class TestBackupRestore(unittest.TestCase):
 
 # ── Excel polish ─────────────────────────────────────────────────────────────
 
+
 class TestExcelPolish(unittest.TestCase):
     def test_generated_workbook_has_chart_freeze_and_filter(self):
         import openpyxl
@@ -214,19 +218,22 @@ class TestExcelPolish(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, db, cfg = _make_app(tmp)
             work = db.create_work("Excel Test Work", "for chart checks")
-            db.create_knowledge_item(work_id=work["id"], kind="fact",
-                                     text="test fact", confidence=0.9)
+            db.create_knowledge_item(
+                work_id=work["id"], kind="fact", text="test fact", confidence=0.9
+            )
             db.create_task(work["id"], "a task")
 
             fpath, _doc_id = generate_excel(work["id"], db, cfg)
             wb = openpyxl.load_workbook(str(fpath))
 
-            self.assertGreaterEqual(len(wb["Summary"]._charts), 1,
-                                    "Summary sheet must contain a chart")
+            self.assertGreaterEqual(
+                len(wb["Summary"]._charts), 1, "Summary sheet must contain a chart"
+            )
             self.assertEqual(wb["Knowledge"].freeze_panes, "A2")
             self.assertEqual(wb["Tasks"].freeze_panes, "A2")
-            self.assertTrue(wb["Knowledge"].auto_filter.ref,
-                            "Knowledge sheet must have an autofilter")
+            self.assertTrue(
+                wb["Knowledge"].auto_filter.ref, "Knowledge sheet must have an autofilter"
+            )
 
 
 if __name__ == "__main__":

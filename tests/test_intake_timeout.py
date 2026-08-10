@@ -15,6 +15,7 @@ The patch target for web_search_synthesize is
 ``orivellum.capabilities.websearch.web_search_synthesize`` — the canonical
 location from which intake.py does its inner-function import.
 """
+
 from __future__ import annotations
 
 import concurrent.futures as _cf_real
@@ -22,10 +23,8 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ── Minimal stubs ─────────────────────────────────────────────────────────────
+
 
 def _make_db(doc: dict) -> MagicMock:
     db = MagicMock()
@@ -100,7 +99,6 @@ def _make_executor_class(wait_override: bool | None = None):
 
 
 class TestIntakeResearchTimeout:
-
     def setup_method(self):
         _shutdown_calls.clear()
 
@@ -122,8 +120,14 @@ class TestIntakeResearchTimeout:
             patch("concurrent.futures.ThreadPoolExecutor", executor_cls),
         ):
             from orivellum.capabilities.intake import run_intake
-            run_intake(doc["id"], db=_make_db(doc), cfg=_make_cfg(),
-                       research=True, research_query="wait-false test")
+
+            run_intake(
+                doc["id"],
+                db=_make_db(doc),
+                cfg=_make_cfg(),
+                research=True,
+                research_query="wait-false test",
+            )
 
         done.set()
 
@@ -152,8 +156,14 @@ class TestIntakeResearchTimeout:
             patch("concurrent.futures.ThreadPoolExecutor", executor_cls),
         ):
             from orivellum.capabilities.intake import run_intake
-            profile = run_intake(doc["id"], db=_make_db(doc), cfg=_make_cfg(),
-                                 research=True, research_query="graceful-profile test")
+
+            profile = run_intake(
+                doc["id"],
+                db=_make_db(doc),
+                cfg=_make_cfg(),
+                research=True,
+                research_query="graceful-profile test",
+            )
 
         done.set()
 
@@ -184,13 +194,18 @@ class TestIntakeResearchTimeout:
 
         start = time.monotonic()
         with (
-            patch("orivellum.capabilities.websearch.web_search_synthesize",
-                  _ten_second_synthesis),
+            patch("orivellum.capabilities.websearch.web_search_synthesize", _ten_second_synthesis),
             patch("concurrent.futures.ThreadPoolExecutor", executor_cls),
         ):
             from orivellum.capabilities.intake import run_intake
-            profile = run_intake(doc["id"], db=_make_db(doc), cfg=_make_cfg(),
-                                 research=True, research_query="wall-clock test")
+
+            profile = run_intake(
+                doc["id"],
+                db=_make_db(doc),
+                cfg=_make_cfg(),
+                research=True,
+                research_query="wall-clock test",
+            )
         elapsed = time.monotonic() - start
 
         done.set()  # release the stalling thread so it can clean up

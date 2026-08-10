@@ -6,6 +6,7 @@ tokens are unreadable without the session secret.
 
 Never log, audit-detail, or back up decrypted tokens.
 """
+
 from __future__ import annotations
 
 import base64

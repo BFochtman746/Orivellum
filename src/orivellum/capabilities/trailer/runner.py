@@ -9,6 +9,7 @@ Supports format = 'full' | 'short' | 'both' (default: 'both').
   short → 30 s 9:16 vertical social clip (Reels / TikTok / Shorts)
   both  → package_json = {format:'both', full:{...}, short:{...}}
 """
+
 from __future__ import annotations
 
 import json
@@ -58,8 +59,7 @@ def run_trailer_pipeline(
     if fmt not in VALID_FORMATS:
         fmt = "both"
 
-    def _update(status: str, phase: str, pkg: dict | None = None,
-                err: str | None = None) -> None:
+    def _update(status: str, phase: str, pkg: dict | None = None, err: str | None = None) -> None:
         try:
             db.update_trailer(
                 trailer_id,
@@ -167,54 +167,56 @@ def run_trailer_pipeline(
             val_status = square_pkg["validation"]["status"]  # type: ignore[index]
         elif fmt == "both":
             # Landscape + vertical — backward-compatible envelope
-            full_ready  = full_pkg["validation"]["status"] == "READY"   # type: ignore[index]
+            full_ready = full_pkg["validation"]["status"] == "READY"  # type: ignore[index]
             short_ready = short_pkg["validation"]["status"] == "READY"  # type: ignore[index]
-            val_status  = "READY" if (full_ready and short_ready) else "BLOCKED"
+            val_status = "READY" if (full_ready and short_ready) else "BLOCKED"
             final_pkg = {
-                "format":       "both",
-                "full":         full_pkg,
-                "short":        short_pkg,
+                "format": "both",
+                "full": full_pkg,
+                "short": short_pkg,
                 # Convenience: shared fields promoted to top level so legacy
                 # code that reads pkg.brief / pkg.concept / pkg.docs still works
-                "brief":        full_pkg["brief"],        # type: ignore[index]
-                "concept":      full_pkg["concept"],      # type: ignore[index]
-                "method":       full_pkg["method"],       # type: ignore[index]
-                "generated":    full_pkg["generated"],    # type: ignore[index]
-                "docs":         full_pkg["docs"],         # type: ignore[index]
-                "plan":         full_pkg["plan"],         # type: ignore[index]
-                "validation":   full_pkg["validation"],  # type: ignore[index]
-                "shot_prompts": full_pkg["shot_prompts"], # type: ignore[index]
-                "status":       val_status,
-                "status_badge": "READY" if val_status == "READY"
-                                else f"BLOCKED (full={'✅' if full_ready else '⛔'} "
-                                     f"short={'✅' if short_ready else '⛔'})",
+                "brief": full_pkg["brief"],  # type: ignore[index]
+                "concept": full_pkg["concept"],  # type: ignore[index]
+                "method": full_pkg["method"],  # type: ignore[index]
+                "generated": full_pkg["generated"],  # type: ignore[index]
+                "docs": full_pkg["docs"],  # type: ignore[index]
+                "plan": full_pkg["plan"],  # type: ignore[index]
+                "validation": full_pkg["validation"],  # type: ignore[index]
+                "shot_prompts": full_pkg["shot_prompts"],  # type: ignore[index]
+                "status": val_status,
+                "status_badge": "READY"
+                if val_status == "READY"
+                else f"BLOCKED (full={'✅' if full_ready else '⛔'} "
+                f"short={'✅' if short_ready else '⛔'})",
             }
         else:
             # 'all' — all three formats in one envelope
-            full_ready   = full_pkg["validation"]["status"] == "READY"    # type: ignore[index]
-            short_ready  = short_pkg["validation"]["status"] == "READY"   # type: ignore[index]
+            full_ready = full_pkg["validation"]["status"] == "READY"  # type: ignore[index]
+            short_ready = short_pkg["validation"]["status"] == "READY"  # type: ignore[index]
             square_ready = square_pkg["validation"]["status"] == "READY"  # type: ignore[index]
-            val_status   = "READY" if (full_ready and short_ready and square_ready) else "BLOCKED"
+            val_status = "READY" if (full_ready and short_ready and square_ready) else "BLOCKED"
             final_pkg = {
-                "format":       "all",
-                "full":         full_pkg,
-                "short":        short_pkg,
-                "square":       square_pkg,
+                "format": "all",
+                "full": full_pkg,
+                "short": short_pkg,
+                "square": square_pkg,
                 # Shared fields promoted from full package for legacy compatibility
-                "brief":        full_pkg["brief"],        # type: ignore[index]
-                "concept":      full_pkg["concept"],      # type: ignore[index]
-                "method":       full_pkg["method"],       # type: ignore[index]
-                "generated":    full_pkg["generated"],    # type: ignore[index]
-                "docs":         full_pkg["docs"],         # type: ignore[index]
-                "plan":         full_pkg["plan"],         # type: ignore[index]
-                "validation":   full_pkg["validation"],  # type: ignore[index]
-                "shot_prompts": full_pkg["shot_prompts"], # type: ignore[index]
-                "status":       val_status,
+                "brief": full_pkg["brief"],  # type: ignore[index]
+                "concept": full_pkg["concept"],  # type: ignore[index]
+                "method": full_pkg["method"],  # type: ignore[index]
+                "generated": full_pkg["generated"],  # type: ignore[index]
+                "docs": full_pkg["docs"],  # type: ignore[index]
+                "plan": full_pkg["plan"],  # type: ignore[index]
+                "validation": full_pkg["validation"],  # type: ignore[index]
+                "shot_prompts": full_pkg["shot_prompts"],  # type: ignore[index]
+                "status": val_status,
                 "status_badge": (
-                    "READY" if val_status == "READY"
+                    "READY"
+                    if val_status == "READY"
                     else f"BLOCKED (16:9={'✅' if full_ready else '⛔'} "
-                         f"9:16={'✅' if short_ready else '⛔'} "
-                         f"1:1={'✅' if square_ready else '⛔'})"
+                    f"9:16={'✅' if short_ready else '⛔'} "
+                    f"1:1={'✅' if square_ready else '⛔'})"
                 ),
             }
 

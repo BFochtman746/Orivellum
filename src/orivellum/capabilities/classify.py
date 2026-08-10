@@ -18,6 +18,7 @@ Tiers:
 CLAIM is a separate runtime tier owned by the PKLOS ledger, not by file
 classification, so it is intentionally not returned here.
 """
+
 from __future__ import annotations
 
 import re
@@ -41,31 +42,63 @@ EXCLUDED_FROM_WORKS = frozenset({Tier.ARTIFACT, Tier.SYSTEM})
 # ── deterministic rule tables (first match wins, evaluated in this order) ──────
 
 _SYSTEM_NAMES = {
-    "progress.json", "package.json", "package-lock.json", "pnpm-lock.yaml",
-    "yaml.lock", "uv.lock", "poetry.lock", "requirements.txt", "pyproject.toml",
-    "manifest.json", "manifest.txt", ".replit", ".gitignore", "makefile",
-    "dockerfile", "tsconfig.json", "pnpm-workspace.yaml", "replit.nix",
+    "progress.json",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yaml.lock",
+    "uv.lock",
+    "poetry.lock",
+    "requirements.txt",
+    "pyproject.toml",
+    "manifest.json",
+    "manifest.txt",
+    ".replit",
+    ".gitignore",
+    "makefile",
+    "dockerfile",
+    "tsconfig.json",
+    "pnpm-workspace.yaml",
+    "replit.nix",
 }
 _SYSTEM_EXT = {
-    ".lock", ".log", ".pyc", ".pyo", ".map", ".tmp", ".bak", ".cache",
-    ".toml", ".ini", ".cfg", ".lockb", ".sha256", ".sig",
+    ".lock",
+    ".log",
+    ".pyc",
+    ".pyo",
+    ".map",
+    ".tmp",
+    ".bak",
+    ".cache",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".lockb",
+    ".sha256",
+    ".sig",
 }
 _SYSTEM_PATH = re.compile(
     r"(^|/)(node_modules|__pycache__|\.git|dist|build|\.venv|venv|"
-    r"\.replit-artifact|artifacts)/", re.I)
+    r"\.replit-artifact|artifacts)/",
+    re.I,
+)
 
 # The exact shapes that polluted the corpus (migration batches, run/report ids).
 _ARTIFACT_NAME = re.compile(
-    r"(migration[_\- ]?batch"       # A01_MIGRATION_BATCH_011...
-    r"|^a0\d[_\-]"                   # A01_ / A02_ prefixes
-    r"|\bRP[-_ ]?\d{2,}"            # RP-011 Core Function
-    r"|\bRun[-_ ]?\d{2,}"          # Run-001 Not Run
-    r"|_v\d+\.\d+\.\d+"             # ..._v1.0.0 versioned artifact
-    r"|\bbaseline\b|\bqualification\b|\bregression\b|\bfixture\b)", re.I)
+    r"(migration[_\- ]?batch"  # A01_MIGRATION_BATCH_011...
+    r"|^a0\d[_\-]"  # A01_ / A02_ prefixes
+    r"|\bRP[-_ ]?\d{2,}"  # RP-011 Core Function
+    r"|\bRun[-_ ]?\d{2,}"  # Run-001 Not Run
+    r"|_v\d+\.\d+\.\d+"  # ..._v1.0.0 versioned artifact
+    r"|\bbaseline\b|\bqualification\b|\bregression\b|\bfixture\b)",
+    re.I,
+)
 
 _CONVERSATION_NAME = re.compile(
     r"(chat[_\- ]?export|conversation[_\- ]?\d|message[_\- ]?log|"
-    r"transcript|\bchat\b.*\.(json|jsonl|txt)$)", re.I)
+    r"transcript|\bchat\b.*\.(json|jsonl|txt)$)",
+    re.I,
+)
 
 # Creative canon: manuscript/chapter/scene markers, or the known series.
 _CANON_NAME = re.compile(
@@ -73,12 +106,25 @@ _CANON_NAME = re.compile(
     r"|\bchapter[_\- ]?\d"
     r"|\bch\d{1,3}\b"
     r"|\bmanuscript\b|\bscene\b|\bact[_\- ]?\d"
-    r"|\bdraft[_\- ]?\d|series[_\- ]?bible|book[_\- ]?bible)", re.I)
+    r"|\bdraft[_\- ]?\d|series[_\- ]?bible|book[_\- ]?bible)",
+    re.I,
+)
 _CANON_PATH = re.compile(r"(^|/)(works|manuscript|canon|chapters)/", re.I)
 
 # Readable document extensions default to SOURCE unless matched above.
-_READABLE_EXT = {".docx", ".pdf", ".txt", ".md", ".epub", ".odt", ".rtf",
-                 ".pptx", ".xlsx", ".csv", ".html"}
+_READABLE_EXT = {
+    ".docx",
+    ".pdf",
+    ".txt",
+    ".md",
+    ".epub",
+    ".odt",
+    ".rtf",
+    ".pptx",
+    ".xlsx",
+    ".csv",
+    ".html",
+}
 
 
 @dataclass(frozen=True)
@@ -103,7 +149,7 @@ def classify_object(
     """
     raw = (name or "").strip()
     low = raw.lower()
-    path = (source_path or name or "")
+    path = source_path or name or ""
     ext = PurePosixPath(low).suffix
 
     # 1. SYSTEM — config/build/dependency files and build directories.

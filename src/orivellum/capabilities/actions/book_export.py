@@ -3,6 +3,7 @@
 Pulls all chapters from a Work's active book pipeline in sequence order
 and assembles them into a single .docx manuscript file.
 """
+
 from __future__ import annotations
 
 import logging
@@ -55,7 +56,9 @@ class BookExportAction(ActionBase):
         # Get pipeline for this work
         pipeline = db.get_book_pipeline_for_work(work_id)
         if not pipeline:
-            raise ValueError("No active book pipeline found for this Work. Start the book pipeline first.")
+            raise ValueError(
+                "No active book pipeline found for this Work. Start the book pipeline first."
+            )
 
         pipeline_id = pipeline["id"]
 
@@ -117,8 +120,13 @@ class BookExportAction(ActionBase):
             citations_raw = ch.get("citations") or ""
             if citations_raw:
                 import json as _json
+
                 try:
-                    cits = _json.loads(citations_raw) if isinstance(citations_raw, str) else citations_raw
+                    cits = (
+                        _json.loads(citations_raw)
+                        if isinstance(citations_raw, str)
+                        else citations_raw
+                    )
                     if cits:
                         p = doc.add_paragraph()
                         r = p.add_run("Citations: " + "; ".join(str(c) for c in cits[:5]))
@@ -137,8 +145,7 @@ class BookExportAction(ActionBase):
 
         # Register output
         text_content = "\n\n".join(
-            f"# {ch.get('title','')}\n{(ch.get('text') or '')[:500]}"
-            for ch in chapters
+            f"# {ch.get('title', '')}\n{(ch.get('text') or '')[:500]}" for ch in chapters
         )
         title_out = f"Manuscript — {work.get('title', 'Book')}"
         doc_id = _register_output(fpath, work_id, db, cfg, "docx", title_out, text_content)

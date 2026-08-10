@@ -7,6 +7,7 @@ Usage in test files:
     from tests.conftest import AUTH_HEADERS
     client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 """
+
 from __future__ import annotations
 
 import os

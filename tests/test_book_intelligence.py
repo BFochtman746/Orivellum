@@ -1,4 +1,5 @@
 """Tests for the Book Intelligence view (GET /api/works/{id}/book-intelligence)."""
+
 from __future__ import annotations
 
 import tempfile
@@ -11,10 +12,10 @@ from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -29,7 +30,8 @@ def _seed_doc(db, work_id, title, text, kind="docx"):
 
 
 def _seed_chapter(db, work_id, doc_id, seq, title, text=""):
-    from orivellum.database.db import _now, _uuid
+    from orivellum.database.db import _now
+
     oid = db._create_object("book_chapter")
     with db._lock:
         db._conn.execute(
@@ -112,8 +114,11 @@ class BookIntelligenceTests(unittest.TestCase):
         # 3 knowledge items about quantum mechanics, none about the others
         for i in range(3):
             self.db.create_knowledge_item(
-                work_id=self.work_id, kind="fact",
-                text=f"Quantum mechanics fact number {i}", source_doc_id=doc)
+                work_id=self.work_id,
+                kind="fact",
+                text=f"Quantum mechanics fact number {i}",
+                source_doc_id=doc,
+            )
         body = self._get()
         by_title = {c["title"]: c for c in body["outline"]}
         self.assertEqual(by_title["Quantum Mechanics"]["chapter_status"], "present")
@@ -126,8 +131,7 @@ class BookIntelligenceTests(unittest.TestCase):
         self.assertIn("no_research", kinds)
         self.assertIn("placeholder_chapter", kinds)
         # Missing intro/conclusion detected
-        self.assertEqual(
-            sum(1 for g in body["gaps"] if g["kind"] == "missing_section"), 2)
+        self.assertEqual(sum(1 for g in body["gaps"] if g["kind"] == "missing_section"), 2)
         # Next action targets the zero-research chapter first
         self.assertIn("no research", body["next_action"])
 
@@ -136,7 +140,8 @@ class BookIntelligenceTests(unittest.TestCase):
         for i in range(1, 6):
             _seed_chapter(self.db, self.work_id, doc, i, f"Alpha Topic {i}", "text " * 500)
         k_id = self.db.create_knowledge_item(
-            work_id=self.work_id, kind="fact", text="Alpha Topic insight", source_doc_id=doc)
+            work_id=self.work_id, kind="fact", text="Alpha Topic insight", source_doc_id=doc
+        )
         self.db.update_knowledge_review_status(k_id, "approved")
         body = self._get()
         comp = body["completeness"]

@@ -5,6 +5,7 @@ Uses real ffmpeg-generated audio (available in this environment) so the QA
 thresholds and loudness targets are verified against actual measurements,
 not mocks.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -27,14 +28,24 @@ from orivellum.api.routes.studio import (  # noqa: E402
     _seg_cache_put,
 )
 
-
 # ── Audio fixtures (real ffmpeg output) ───────────────────────────────────────
+
 
 def _gen(path: Path, filt: str, duration: float = 2.0) -> Path:
     r = subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-         "-i", f"{filt}:duration={duration}", str(path)],
-        capture_output=True, timeout=60,
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"{filt}:duration={duration}",
+            str(path),
+        ],
+        capture_output=True,
+        timeout=60,
     )
     assert r.returncode == 0, r.stderr.decode()[:300]
     return path
@@ -46,9 +57,9 @@ def tone_wav(tmp_path):
     raw = _gen(tmp_path / "raw.wav", "sine=frequency=440")
     out = tmp_path / "tone.wav"
     r = subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-i", str(raw),
-         "-af", "volume=-20dB", str(out)],
-        capture_output=True, timeout=60,
+        ["ffmpeg", "-y", "-v", "error", "-i", str(raw), "-af", "volume=-20dB", str(out)],
+        capture_output=True,
+        timeout=60,
     )
     assert r.returncode == 0
     return out
@@ -65,15 +76,16 @@ def clipped_wav(tmp_path):
     raw = _gen(tmp_path / "loud_raw.wav", "sine=frequency=440")
     out = tmp_path / "clipped.wav"
     r = subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-i", str(raw),
-         "-af", "volume=24dB", str(out)],
-        capture_output=True, timeout=60,
+        ["ffmpeg", "-y", "-v", "error", "-i", str(raw), "-af", "volume=24dB", str(out)],
+        capture_output=True,
+        timeout=60,
     )
     assert r.returncode == 0
     return out
 
 
 # ── QA gate ───────────────────────────────────────────────────────────────────
+
 
 def test_qa_passes_healthy_audio(tone_wav):
     assert _qa_check_audio(tone_wav) is None
@@ -97,6 +109,7 @@ def test_qa_flags_unreadable_file(tmp_path):
 
 
 # ── Two-pass mastering ────────────────────────────────────────────────────────
+
 
 def test_measure_loudness_returns_stats(tone_wav):
     stats = _measure_loudness(str(tone_wav))
@@ -122,6 +135,7 @@ def test_mastering_fails_gracefully_on_garbage(tmp_path):
 
 
 # ── Deterministic segment cache ───────────────────────────────────────────────
+
 
 @pytest.fixture()
 def cache_cfg(tmp_path):
@@ -151,6 +165,7 @@ def test_cache_hit_is_qa_validated_and_corrupt_entries_evicted(cache_cfg, tone_w
     """The cache is untrusted: a corrupt/silent entry must be evicted on read,
     never served into a render."""
     from orivellum.api.routes.studio import _seg_cache_path as _p
+
     # Poison the cache with garbage bytes under a valid key
     bad = _p(cache_cfg, "poisoned", "espeak", "af_heart", 1.0)
     bad.parent.mkdir(parents=True, exist_ok=True)
@@ -206,11 +221,13 @@ def test_finalize_never_caches_ai_engine(cache_cfg, tone_wav, tmp_path):
 
 # ── Voice casting endpoints + render gates ────────────────────────────────────
 
+
 @pytest.fixture()
 def work_client(tmp_path):
     from fastapi.testclient import TestClient
-    from orivellum.api.app import create_app
+
     from orivellum.api import _deps
+    from orivellum.api.app import create_app
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
     from orivellum.database.db import OrivellumDB
     from tests.conftest import AUTH_HEADERS
@@ -247,8 +264,7 @@ def test_casting_get_lists_chapters_with_no_casting(work_client):
 
 def test_casting_put_roundtrip_and_clear(work_client):
     client, _db, wid, did = work_client
-    r = client.put(f"/api/studio/works/{wid}/casting",
-                   json={"sections": {did: "bm_george"}})
+    r = client.put(f"/api/studio/works/{wid}/casting", json={"sections": {did: "bm_george"}})
     assert r.status_code == 200
     got = client.get(f"/api/studio/works/{wid}/casting").json()
     assert got["sections"] == {did: "bm_george"}
@@ -261,18 +277,17 @@ def test_casting_put_roundtrip_and_clear(work_client):
 
 def test_casting_put_accepts_clone_voice_ids(work_client):
     client, _db, wid, did = work_client
-    r = client.put(f"/api/studio/works/{wid}/casting",
-                   json={"sections": {did: "clone:abc123"}})
+    r = client.put(f"/api/studio/works/{wid}/casting", json={"sections": {did: "clone:abc123"}})
     assert r.status_code == 200
 
 
 def test_casting_put_rejects_unknown_voice_and_foreign_doc(work_client):
     client, _db, wid, did = work_client
-    r = client.put(f"/api/studio/works/{wid}/casting",
-                   json={"sections": {did: "not_a_voice"}})
+    r = client.put(f"/api/studio/works/{wid}/casting", json={"sections": {did: "not_a_voice"}})
     assert r.status_code == 422
-    r = client.put(f"/api/studio/works/{wid}/casting",
-                   json={"sections": {"not-a-doc": "bm_george"}})
+    r = client.put(
+        f"/api/studio/works/{wid}/casting", json={"sections": {"not-a-doc": "bm_george"}}
+    )
     assert r.status_code == 422
     r = client.get("/api/studio/works/nope/casting")
     assert r.status_code == 404
@@ -282,8 +297,7 @@ def test_render_rejects_clone_in_casting_without_premium(work_client):
     """Even with a normal narrator, a cloned CHAPTER voice must 503 up front
     in BOTH work pipelines when the premium engine is off."""
     client, _db, wid, did = work_client
-    client.put(f"/api/studio/works/{wid}/casting",
-               json={"sections": {did: "clone:abc123"}})
+    client.put(f"/api/studio/works/{wid}/casting", json={"sections": {did: "clone:abc123"}})
     for endpoint in ("/api/studio/tts/work", "/api/studio/tts/work/start"):
         r = client.post(endpoint, json={"work_id": wid, "voice": "af_heart"})
         assert r.status_code == 503, endpoint
@@ -298,20 +312,28 @@ def test_render_with_catalog_casting_produces_audio(work_client):
     """Full sync render with a cast catalog voice: passes the QA gate, comes
     out mastered, and populates the segment cache."""
     client, _db, wid, did = work_client
-    client.put(f"/api/studio/works/{wid}/casting",
-               json={"sections": {did: "bm_george"}})
-    r = client.post("/api/studio/tts/work",
-                    json={"work_id": wid, "voice": "af_heart", "speed": 1.0,
-                          "include_credits": False, "acx_mastering": True})
+    client.put(f"/api/studio/works/{wid}/casting", json={"sections": {did: "bm_george"}})
+    r = client.post(
+        "/api/studio/tts/work",
+        json={
+            "work_id": wid,
+            "voice": "af_heart",
+            "speed": 1.0,
+            "include_credits": False,
+            "acx_mastering": True,
+        },
+    )
     assert r.status_code == 200, r.text[:300]
     assert r.headers["content-type"].startswith("audio/")
     assert len(r.content) > 1000
     # Deterministic cache now holds the espeak segments
     from orivellum.api import _deps
+
     cache_dir = Path(_deps.get_config().data_dir) / "tts-cache"
     assert cache_dir.exists() and any(cache_dir.iterdir())
 
 
 def test_doc_tts_request_masters_by_default():
     from orivellum.api.routes.studio import DocumentTTSRequest
+
     assert DocumentTTSRequest(doc_id="x").acx_mastering is True

@@ -13,6 +13,7 @@ Evidence signals (adapted from the MONARCH rubric to what Orivellum stores):
 All scoring is deterministic and cheap (pure SQL + arithmetic) so it can run
 every night over the whole library.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,17 +28,22 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger("orivellum.evidence")
 
 # ── Scoring weights ──────────────────────────────────────────────────────────
-_W_BASE = 0.45          # production method
-_W_CORROBORATION = 0.25 # independent sources agreeing
-_W_RECENCY = 0.10       # source document age
-_W_REVIEW = 0.20        # human review status
+_W_BASE = 0.45  # production method
+_W_CORROBORATION = 0.25  # independent sources agreeing
+_W_RECENCY = 0.10  # source document age
+_W_REVIEW = 0.20  # human review status
 
 # Base score by origin: rule-based summaries are near-verbatim (high),
 # LLM claims are inferences (lower).
 _BASE_BY_KIND = {
-    "summary": 0.95, "heading": 0.85, "concept": 0.80,
-    "excerpt": 0.75, "fact": 0.70, "claim": 0.65,
-    "entity": 0.55, "relationship": 0.60,
+    "summary": 0.95,
+    "heading": 0.85,
+    "concept": 0.80,
+    "excerpt": 0.75,
+    "fact": 0.70,
+    "claim": 0.65,
+    "entity": 0.55,
+    "relationship": 0.60,
 }
 _DEFAULT_BASE = 0.65
 
@@ -54,9 +60,12 @@ def _parse_ts(ts: str | None) -> datetime | None:
         return None
 
 
-def compute_evidence_score(item: dict, corroborating_sources: int,
-                           source_created_at: str | None,
-                           now: datetime | None = None) -> tuple[float, dict]:
+def compute_evidence_score(
+    item: dict,
+    corroborating_sources: int,
+    source_created_at: str | None,
+    now: datetime | None = None,
+) -> tuple[float, dict]:
     """Return (confidence 0..1, components dict) for a knowledge item."""
     now = now or datetime.now(UTC)
 
@@ -71,8 +80,7 @@ def compute_evidence_score(item: dict, corroborating_sources: int,
         base = min(base, 0.70)
 
     # Corroboration: 0 → 0, 1 extra source → 0.6, 2 → 0.85, 3+ → 1.0
-    corro = min(1.0, (0.0, 0.6, 0.85)[corroborating_sources]
-                if corroborating_sources < 3 else 1.0)
+    corro = min(1.0, (0.0, 0.6, 0.85)[corroborating_sources] if corroborating_sources < 3 else 1.0)
 
     # Recency: linear decay over _MAX_RECENCY_DAYS
     recency = 0.5  # neutral when unknown
@@ -81,16 +89,17 @@ def compute_evidence_score(item: dict, corroborating_sources: int,
         age_days = max(0.0, (now - src_dt).total_seconds() / 86400)
         recency = max(0.0, 1.0 - age_days / _MAX_RECENCY_DAYS)
 
-    review = {"approved": 1.0, "auto": 0.6, "unreviewed": 0.5,
-              "ai_auto": 0.4, "rejected": 0.0}.get(
-        item.get("review_status", "unreviewed"), 0.5)
+    review = {"approved": 1.0, "auto": 0.6, "unreviewed": 0.5, "ai_auto": 0.4, "rejected": 0.0}.get(
+        item.get("review_status", "unreviewed"), 0.5
+    )
 
-    score = (_W_BASE * base + _W_CORROBORATION * corro
-             + _W_RECENCY * recency + _W_REVIEW * review)
+    score = _W_BASE * base + _W_CORROBORATION * corro + _W_RECENCY * recency + _W_REVIEW * review
     score = round(max(0.05, min(1.0, score)), 4)
     components = {
-        "base": round(base, 2), "corroboration": round(corro, 2),
-        "recency": round(recency, 2), "review": round(review, 2),
+        "base": round(base, 2),
+        "corroboration": round(corro, 2),
+        "recency": round(recency, 2),
+        "review": round(review, 2),
         "corroborating_sources": corroborating_sources,
     }
     return score, components
@@ -128,8 +137,7 @@ def rescore_work(work_id: str, db: OrivellumDB, limit: int = 500) -> int:
         others = 0
         if subj and item.get("source_doc_id"):
             others = len(subj_sources.get(subj, set()) - {item["source_doc_id"]})
-        score, components = compute_evidence_score(
-            item, others, item.get("src_created"), now)
+        score, components = compute_evidence_score(item, others, item.get("src_created"), now)
         # Always persist current evidence components (so meta stays fresh even
         # when the score is stable); count only real confidence changes.
         db.update_knowledge_confidence(item["id"], score, evidence=components)
@@ -140,16 +148,18 @@ def rescore_work(work_id: str, db: OrivellumDB, limit: int = 500) -> int:
 
 # ── Contradiction detection ─────────────────────────────────────────────────
 
-_NEGATORS = re.compile(r"\b(not|never|no longer|cannot|can't|isn't|aren't|"
-                       r"doesn't|don't|won't|false|incorrect)\b", re.I)
+_NEGATORS = re.compile(
+    r"\b(not|never|no longer|cannot|can't|isn't|aren't|"
+    r"doesn't|don't|won't|false|incorrect)\b",
+    re.I,
+)
 
 
 def _norm(s: str | None) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
-def detect_contradictions(work_id: str, db: OrivellumDB,
-                          limit: int = 400) -> int:
+def detect_contradictions(work_id: str, db: OrivellumDB, limit: int = 400) -> int:
     """Detect conflicting claims within a Work and record them in `conflicts`.
 
     Two heuristics:
@@ -171,11 +181,12 @@ def detect_contradictions(work_id: str, db: OrivellumDB,
     # avoided in the loops below.
     item_ids = {r["id"] for r in rows}
     with db._lock:
-        existing_rows = db._conn.execute(
-            "SELECT claim_a_id, claim_b_id FROM conflicts").fetchall()
-    existing_pairs = {frozenset((r["claim_a_id"], r["claim_b_id"]))
-                      for r in existing_rows
-                      if r["claim_a_id"] in item_ids or r["claim_b_id"] in item_ids}
+        existing_rows = db._conn.execute("SELECT claim_a_id, claim_b_id FROM conflicts").fetchall()
+    existing_pairs = {
+        frozenset((r["claim_a_id"], r["claim_b_id"]))
+        for r in existing_rows
+        if r["claim_a_id"] in item_ids or r["claim_b_id"] in item_ids
+    }
 
     pending: list[tuple[str, str, str]] = []  # (a_id, b_id, type)
 
@@ -200,8 +211,9 @@ def detect_contradictions(work_id: str, db: OrivellumDB,
         by_pred: dict[str, dict[str, list]] = {}
         for it in items:
             if it.get("predicate") and it.get("object"):
-                by_pred.setdefault(_norm(it["predicate"]), {}) \
-                       .setdefault(_norm(it["object"]), []).append(it)
+                by_pred.setdefault(_norm(it["predicate"]), {}).setdefault(
+                    _norm(it["object"]), []
+                ).append(it)
         for obj_groups in by_pred.values():
             if len(obj_groups) < 2:
                 continue

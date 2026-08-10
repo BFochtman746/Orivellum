@@ -8,6 +8,7 @@ spatial settings endpoints.
 Run with:
     uv run --with pytest pytest tests/test_spatial_audio.py -v
 """
+
 from __future__ import annotations
 
 import math
@@ -39,10 +40,12 @@ _FFMPEG = shutil.which("ffmpeg") is not None
 
 try:
     from fastapi.testclient import TestClient
-    from orivellum.api.app import create_app
+
     from orivellum.api import _deps
+    from orivellum.api.app import create_app
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
     from orivellum.database.db import OrivellumDB
+
     _DEPS_AVAILABLE = True
     _MISSING = ""
 except Exception as _e:  # pragma: no cover
@@ -51,6 +54,7 @@ except Exception as _e:  # pragma: no cover
 
 
 # ── Pan mapping (pure, deterministic) ────────────────────────────────────────
+
 
 class TestVoicePan(unittest.TestCase):
     def test_narrator_is_center(self):
@@ -73,8 +77,7 @@ class TestVoicePan(unittest.TestCase):
             self.assertLessEqual(abs(p), 0.35 + 1e-9, vid)
 
     def test_distinct_voices_get_distinct_positions(self):
-        pans = {voice_pan(v, "narrator") for v in
-                ("af_bella", "am_adam", "bf_emma", "bm_lewis")}
+        pans = {voice_pan(v, "narrator") for v in ("af_bella", "am_adam", "bf_emma", "bm_lewis")}
         # jitter guarantees near-uniqueness even on slot collision
         self.assertGreaterEqual(len(pans), 3)
 
@@ -95,8 +98,7 @@ class TestPanFilter(unittest.TestCase):
     def test_constant_power_property(self):
         for p in (-0.35, -0.1, 0.0, 0.2, 0.35):
             theta = (p + 1.0) * math.pi / 4.0
-            self.assertAlmostEqual(
-                math.cos(theta) ** 2 + math.sin(theta) ** 2, 1.0, places=9)
+            self.assertAlmostEqual(math.cos(theta) ** 2 + math.sin(theta) ** 2, 1.0, places=9)
 
 
 class TestNeedsFinishPass(unittest.TestCase):
@@ -115,12 +117,25 @@ class TestNeedsFinishPass(unittest.TestCase):
 
 # ── ffmpeg-dependent end-to-end (skipped on CI: no ffmpeg) ───────────────────
 
+
 def _make_sine(path: Path, seconds: float = 1.0, freq: int = 440) -> None:
     subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-         "-i", f"sine=frequency={freq}:duration={seconds}:sample_rate=22050",
-         "-ac", "1", str(path)],
-        check=True, capture_output=True, timeout=30,
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency={freq}:duration={seconds}:sample_rate=22050",
+            "-ac",
+            "1",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
     )
 
 
@@ -130,7 +145,8 @@ def _channel_rms(path: Path) -> tuple[float, float]:
         assert w.getnchannels() == 2
         raw = w.readframes(w.getnframes())
     import struct
-    samples = struct.unpack(f"<{len(raw)//2}h", raw)
+
+    samples = struct.unpack(f"<{len(raw) // 2}h", raw)
     left = samples[0::2]
     right = samples[1::2]
     rms = lambda xs: math.sqrt(sum(x * x for x in xs) / max(1, len(xs)))  # noqa: E731
@@ -171,8 +187,7 @@ class TestSpatializeParts(unittest.TestCase):
         self.assertIsNone(spatialize_parts([a], [], "narrator", self.tmp))
 
     def test_missing_file_falls_back(self):
-        self.assertIsNone(spatialize_parts(
-            [self.tmp / "ghost.wav"], ["v"], "narrator", self.tmp))
+        self.assertIsNone(spatialize_parts([self.tmp / "ghost.wav"], ["v"], "narrator", self.tmp))
 
 
 @unittest.skipUnless(_FFMPEG, "ffmpeg not available")
@@ -181,10 +196,24 @@ class TestFinishSpatial(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.speech = self.tmp / "speech.mp3"
         subprocess.run(
-            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-             "-i", "sine=frequency=300:duration=2:sample_rate=44100",
-             "-ac", "2", "-codec:a", "libmp3lame", str(self.speech)],
-            check=True, capture_output=True, timeout=30,
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=300:duration=2:sample_rate=44100",
+                "-ac",
+                "2",
+                "-codec:a",
+                "libmp3lame",
+                str(self.speech),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
         )
 
     def tearDown(self):
@@ -198,10 +227,24 @@ class TestFinishSpatial(unittest.TestCase):
     def test_ambience_bed_mixes_and_ducks(self):
         bed = self.tmp / "bed.mp3"
         subprocess.run(
-            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-             "-i", "anoisesrc=duration=1:sample_rate=44100:amplitude=0.3",
-             "-ac", "2", "-codec:a", "libmp3lame", str(bed)],
-            check=True, capture_output=True, timeout=30,
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "anoisesrc=duration=1:sample_rate=44100:amplitude=0.3",
+                "-ac",
+                "2",
+                "-codec:a",
+                "libmp3lame",
+                str(bed),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
         )
         out = self.tmp / "mixed.mp3"
         self.assertTrue(finish_spatial(str(self.speech), str(out), "subtle", bed))
@@ -216,6 +259,7 @@ class TestFinishSpatial(unittest.TestCase):
 
 # ── Settings endpoints ───────────────────────────────────────────────────────
 
+
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestSpatialSettingsAPI(unittest.TestCase):
     def setUp(self):
@@ -228,8 +272,7 @@ class TestSpatialSettingsAPI(unittest.TestCase):
             serving=ServingConfig(base_url="http://localhost:99999/api/v1"),
         )
         _deps.init(db=self.db, cfg=cfg)
-        self.client = TestClient(create_app(), raise_server_exceptions=False,
-                                 headers=_AUTH_HEADERS)
+        self.client = TestClient(create_app(), raise_server_exceptions=False, headers=_AUTH_HEADERS)
         self.work_id = self.db.create_work("Spatial Test Book")["id"]
 
     def tearDown(self):
@@ -258,16 +301,19 @@ class TestSpatialSettingsAPI(unittest.TestCase):
         self.assertEqual(data["mode"], "wide")
 
     def test_disable_resets_to_defaults(self):
-        self.client.put(f"/api/studio/works/{self.work_id}/spatial",
-                        json={"enabled": True, "mode": "wide"})
-        self.client.put(f"/api/studio/works/{self.work_id}/spatial",
-                        json={"enabled": False, "mode": "subtle"})
+        self.client.put(
+            f"/api/studio/works/{self.work_id}/spatial", json={"enabled": True, "mode": "wide"}
+        )
+        self.client.put(
+            f"/api/studio/works/{self.work_id}/spatial", json={"enabled": False, "mode": "subtle"}
+        )
         work = self.db.get_work(self.work_id)
         self.assertNotIn("spatial_audio", work.get("meta") or {})
 
     def test_rejects_unknown_mode(self):
-        r = self.client.put(f"/api/studio/works/{self.work_id}/spatial",
-                            json={"enabled": True, "mode": "atmos"})
+        r = self.client.put(
+            f"/api/studio/works/{self.work_id}/spatial", json={"enabled": True, "mode": "atmos"}
+        )
         self.assertEqual(r.status_code, 422)
 
     def test_rejects_non_audio_ambience_doc(self):

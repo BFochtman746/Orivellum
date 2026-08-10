@@ -10,12 +10,14 @@ Rules:
 
 Both scope="work" and scope="all" paths are covered.
 """
+
 from __future__ import annotations
 
 import uuid
 from unittest.mock import MagicMock
 
 # ── Minimal DB stub ───────────────────────────────────────────────────────────
+
 
 class _FakeDB:
     """Tiny in-memory stand-in with the interface _build_system_prompt uses."""
@@ -38,25 +40,38 @@ class _FakeDB:
 
 class _FakeConn:
     """Stub for the user_memory query (returns no rows so memory block is skipped)."""
+
     def execute(self, sql, *args):
         return _FakeCursor([])
 
 
 class _FakeCursor:
-    def __init__(self, rows): self._rows = rows
-    def fetchall(self): return self._rows
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
+
 def _item(text: str, review_status: str, work_id: str = "w1") -> dict:
-    return {"id": str(uuid.uuid4()), "text": text, "kind": "fact",
-            "review_status": review_status, "work_id": work_id,
-            "subject": None, "predicate": None, "object": None}
+    return {
+        "id": str(uuid.uuid4()),
+        "text": text,
+        "kind": "fact",
+        "review_status": review_status,
+        "work_id": work_id,
+        "subject": None,
+        "predicate": None,
+        "object": None,
+    }
 
 
 def build_prompt(db, conv, scope="work") -> str:
     from orivellum.api.routes.conversations import _build_system_prompt
+
     return _build_system_prompt(db, conv, scope=scope)
 
 
@@ -64,7 +79,7 @@ def build_prompt(db, conv, scope="work") -> str:
 
 WORK = {"id": "w1", "title": "Test Work"}
 CONV_WITH_WORK = {"id": "c1", "work_id": "w1", "model": None}
-CONV_NO_WORK   = {"id": "c2", "work_id": None,  "model": None}
+CONV_NO_WORK = {"id": "c2", "work_id": None, "model": None}
 
 
 def test_auto_item_included_in_work_scope():
@@ -95,10 +110,10 @@ def test_rejected_item_excluded_from_work_scope():
 def test_mixed_statuses_work_scope():
     """Only trusted items appear; pending + rejected are silently dropped."""
     items = [
-        _item("trusted auto",    "auto"),
-        _item("trusted approved","approved"),
-        _item("pending ai",      "ai_auto"),
-        _item("dismissed",       "rejected"),
+        _item("trusted auto", "auto"),
+        _item("trusted approved", "approved"),
+        _item("pending ai", "ai_auto"),
+        _item("dismissed", "rejected"),
     ]
     db = _FakeDB(items, work=WORK)
     prompt = build_prompt(db, CONV_WITH_WORK, scope="work")
@@ -146,9 +161,9 @@ def test_rejected_item_excluded_from_all_scope():
 
 def test_mixed_statuses_all_scope():
     items = [
-        _item("all auto",     "auto",     work_id="w2"),
+        _item("all auto", "auto", work_id="w2"),
         _item("all approved", "approved", work_id="w2"),
-        _item("all ai_auto",  "ai_auto",  work_id="w2"),
+        _item("all ai_auto", "ai_auto", work_id="w2"),
         _item("all rejected", "rejected", work_id="w2"),
     ]
     db = _FakeDB(items)

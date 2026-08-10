@@ -13,6 +13,7 @@ The existing discipline:
 BUILDABLE-NOW: the retrieval infrastructure (FTS5 + vectors + hybrid search)
 already exists. This adapter wraps it in the canonical Evidence shape.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,9 +27,16 @@ _CAPABILITIES: list[str] = [
     # This adapter answers any predicate that can be found in library documents.
     # It's a broad adapter — the verifier will assign confidence based on
     # passage quality + source authority.
-    "book_title", "book_author", "book_publication_date", "book_publisher",
-    "concept_definition", "procedure_steps", "specification_value",
-    "historical_fact", "technical_spec", "document_claim",
+    "book_title",
+    "book_author",
+    "book_publication_date",
+    "book_publisher",
+    "concept_definition",
+    "procedure_steps",
+    "specification_value",
+    "historical_fact",
+    "technical_spec",
+    "document_claim",
     # Generic sentinel — library can attempt any predicate via hybrid search
     "*",
 ]
@@ -86,6 +94,7 @@ class LibraryAdapter(AdapterBase):
                 hybrid_search_chunks,
                 hybrid_search_knowledge,
             )
+
             evidence: list[Evidence] = []
 
             # Search knowledge items
@@ -95,20 +104,22 @@ class LibraryAdapter(AdapterBase):
                 if not text:
                     continue
                 doc_id = hit.get("source_doc_id") or hit.get("id", "")
-                evidence.append(Evidence(
-                    source_type="library_knowledge",
-                    source_locator=f"knowledge:{hit.get('id', '')}",
-                    authority="A4",
-                    raw_value=text[:500],
-                    predicate=predicate,
-                    subject="",
-                    meta={
-                        "doc_id": doc_id,
-                        "kind": hit.get("kind", "note"),
-                        "work_id": hit.get("work_id"),
-                        "review_status": hit.get("review_status"),
-                    },
-                ))
+                evidence.append(
+                    Evidence(
+                        source_type="library_knowledge",
+                        source_locator=f"knowledge:{hit.get('id', '')}",
+                        authority="A4",
+                        raw_value=text[:500],
+                        predicate=predicate,
+                        subject="",
+                        meta={
+                            "doc_id": doc_id,
+                            "kind": hit.get("kind", "note"),
+                            "work_id": hit.get("work_id"),
+                            "review_status": hit.get("review_status"),
+                        },
+                    )
+                )
 
             # Search document chunks (passage-level, with locators)
             chunk_hits = hybrid_search_chunks(predicate, self._db, work_id=None, limit=5)
@@ -116,21 +127,23 @@ class LibraryAdapter(AdapterBase):
                 text = (chunk.get("text") or "").strip()
                 if not text:
                     continue
-                doc_id  = chunk.get("doc_id") or ""
+                doc_id = chunk.get("doc_id") or ""
                 chunk_id = chunk.get("id") or ""
-                evidence.append(Evidence(
-                    source_type="library_document",
-                    source_locator=f"doc:{doc_id}:chunk:{chunk_id}",
-                    authority="A4",
-                    raw_value=text[:500],
-                    predicate=predicate,
-                    subject="",
-                    meta={
-                        "doc_id": doc_id,
-                        "chunk_id": chunk_id,
-                        "doc_title": chunk.get("doc_title"),
-                    },
-                ))
+                evidence.append(
+                    Evidence(
+                        source_type="library_document",
+                        source_locator=f"doc:{doc_id}:chunk:{chunk_id}",
+                        authority="A4",
+                        raw_value=text[:500],
+                        predicate=predicate,
+                        subject="",
+                        meta={
+                            "doc_id": doc_id,
+                            "chunk_id": chunk_id,
+                            "doc_title": chunk.get("doc_title"),
+                        },
+                    )
+                )
 
             return evidence
         except Exception as exc:

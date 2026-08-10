@@ -8,6 +8,7 @@ Covers:
 
 run_nightshift is monkeypatched to a no-op so the tests stay fast.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -15,7 +16,7 @@ import threading
 import time
 import unittest
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,10 +27,10 @@ from tests.conftest import AUTH_HEADERS
 
 def _make_app(tmp: str):
     """Return a configured FastAPI test app wired to a temp DB."""
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -40,7 +41,7 @@ def _make_app(tmp: str):
 def _seed_run(db, report_path: str | None) -> str:
     """Insert a nightshift_runs row. Returns the ran_at timestamp."""
     run_id = str(uuid.uuid4())
-    ran_at = datetime.now(timezone.utc).isoformat()
+    ran_at = datetime.now(UTC).isoformat()
     with db._lock:
         db._conn.execute(
             "INSERT INTO nightshift_runs(id,ran_at,docs_processed,items_added,report_path)"
@@ -52,15 +53,15 @@ def _seed_run(db, report_path: str | None) -> str:
 
 
 class TestNightshiftRunNow(unittest.TestCase):
-
     def test_run_now_starts_background_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, _db = _make_app(tmp)
             client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             # Replace the actual run with a no-op so the thread finishes instantly.
-            with patch("orivellum.capabilities.nightshift._run_nightshift_passes",
-                       lambda db, cfg: None):
+            with patch(
+                "orivellum.capabilities.nightshift._run_nightshift_passes", lambda db, cfg: None
+            ):
                 resp = client.post("/api/system/nightshift/run-now")
                 self.assertEqual(resp.status_code, 200)
                 self.assertTrue(resp.json().get("started"))
@@ -84,7 +85,6 @@ class TestNightshiftRunNow(unittest.TestCase):
 
 
 class TestNightshiftConcurrency(unittest.TestCase):
-
     def test_two_run_now_requests_yield_one_200_one_409(self):
         """Two near-simultaneous run-now requests: exactly one wins, one 409s."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,8 +116,11 @@ class TestNightshiftConcurrency(unittest.TestCase):
                 t1.join(timeout=5)
                 t2.join(timeout=5)
 
-                self.assertEqual(sorted(statuses), [200, 409],
-                                 f"Expected exactly one 200 and one 409, got {statuses}")
+                self.assertEqual(
+                    sorted(statuses),
+                    [200, 409],
+                    f"Expected exactly one 200 and one 409, got {statuses}",
+                )
 
                 # While the winning run is still in flight, a daemon-style entry
                 # (run_nightshift without _preacquired) must skip, not overlap.
@@ -129,8 +132,9 @@ class TestNightshiftConcurrency(unittest.TestCase):
 
                 with patch.object(ns, "_run_nightshift_passes", _daemon_pass):
                     ns.run_nightshift(_db, None)  # daemon-style call, no reservation
-                self.assertFalse(daemon_ran["passes"],
-                                 "Daemon run must be skipped while a run is in flight")
+                self.assertFalse(
+                    daemon_ran["passes"], "Daemon run must be skipped while a run is in flight"
+                )
 
                 # Release the winner and let its worker thread finish.
                 release.set()
@@ -143,7 +147,6 @@ class TestNightshiftConcurrency(unittest.TestCase):
 
 
 class TestNightshiftLastReport(unittest.TestCase):
-
     def test_last_report_empty_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, _db = _make_app(tmp)
@@ -186,7 +189,6 @@ class TestNightshiftLastReport(unittest.TestCase):
 
 
 class TestNightshiftStatus(unittest.TestCase):
-
     def test_status_reports_last_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)

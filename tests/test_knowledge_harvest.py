@@ -8,6 +8,7 @@ Covers:
 - llm_harvest skipped entirely when ai_extraction_enabled setting is 'false'.
 - llm_harvest skips a chunk gracefully when the LLM call returns None.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,10 +18,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # Helpers to build lightweight stubs
 # ---------------------------------------------------------------------------
+
 
 def _make_page(text: str):
     """Return a minimal page/segment stub."""
@@ -40,9 +41,9 @@ def _make_extraction_result(pages: list, full_text: str | None = None):
 
 def _make_db_and_cfg(tmp: str):
     """Create a real OrivellumDB and OrivellumConfig wired to *tmp*."""
+    from orivellum.api import _deps
     from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
-    from orivellum.api import _deps
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -53,6 +54,7 @@ def _make_db_and_cfg(tmp: str):
 def _knowledge_rows(db, doc_id: str) -> list[dict]:
     """Return all knowledge rows for *doc_id* as plain dicts."""
     import json as _json
+
     with db._lock:
         rows = db._conn.execute(
             "SELECT kind, text, subject, predicate, object, confidence, "
@@ -80,11 +82,13 @@ def _set_toggle(db, value: str) -> None:
 # Unit tests — _parse_extraction
 # ---------------------------------------------------------------------------
 
+
 class TestParseExtraction(unittest.TestCase):
     """_parse_extraction must handle all LLM response shapes gracefully."""
 
     def _parse(self, raw: str) -> dict:
         from orivellum.capabilities.knowledge_harvest import _parse_extraction
+
         return _parse_extraction(raw)
 
     # -- happy path ----------------------------------------------------------
@@ -108,7 +112,11 @@ class TestParseExtraction(unittest.TestCase):
     # -- markdown fence variants ---------------------------------------------
 
     def test_json_in_triple_backtick_fence(self):
-        payload = {"entities": [{"name": "Alice", "description": ""}], "claims": [], "relationships": []}
+        payload = {
+            "entities": [{"name": "Alice", "description": ""}],
+            "claims": [],
+            "relationships": [],
+        }
         raw = "```\n" + json.dumps(payload) + "\n```"
         result = self._parse(raw)
         self.assertEqual(result["entities"][0]["name"], "Alice")
@@ -180,19 +188,21 @@ class TestParseExtraction(unittest.TestCase):
 # Integration tests — llm_harvest writes to the DB
 # ---------------------------------------------------------------------------
 
-_GOOD_LLM_RESPONSE = json.dumps({
-    "entities": [
-        {"name": "Orivellum", "description": "A knowledge management platform"},
-        {"name": "Alice", "description": "Lead researcher"},
-    ],
-    "claims": [
-        {"text": "Orivellum improves productivity."},
-        {"text": "Alice designed the extraction pipeline."},
-    ],
-    "relationships": [
-        {"subject": "Orivellum", "predicate": "built by", "object": "Alice"},
-    ],
-})
+_GOOD_LLM_RESPONSE = json.dumps(
+    {
+        "entities": [
+            {"name": "Orivellum", "description": "A knowledge management platform"},
+            {"name": "Alice", "description": "Lead researcher"},
+        ],
+        "claims": [
+            {"text": "Orivellum improves productivity."},
+            {"text": "Alice designed the extraction pipeline."},
+        ],
+        "relationships": [
+            {"subject": "Orivellum", "predicate": "built by", "object": "Alice"},
+        ],
+    }
+)
 
 
 class TestLlmHarvestDBWrites(unittest.TestCase):
@@ -220,9 +230,7 @@ class TestLlmHarvestDBWrites(unittest.TestCase):
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": llm_text}}]
-        }
+        mock_resp.json.return_value = {"choices": [{"message": {"content": llm_text}}]}
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -268,8 +276,9 @@ class TestLlmHarvestDBWrites(unittest.TestCase):
         rows = _knowledge_rows(self.db, self.doc_id)
         for r in rows:
             if r["kind"] == "entity":
-                self.assertEqual(r["meta"].get("source"), "llm",
-                                 f"meta={r['meta']!r} — expected source=llm")
+                self.assertEqual(
+                    r["meta"].get("source"), "llm", f"meta={r['meta']!r} — expected source=llm"
+                )
 
     # -- claims written correctly --------------------------------------------
 
@@ -347,7 +356,10 @@ class TestLlmHarvestDBWrites(unittest.TestCase):
     def test_entity_with_null_name_skipped(self):
         """Entities where name is null/empty must be silently dropped."""
         payload = {
-            "entities": [{"name": None, "description": "Ghost"}, {"name": "", "description": "Empty"}],
+            "entities": [
+                {"name": None, "description": "Ghost"},
+                {"name": "", "description": "Empty"},
+            ],
             "claims": [],
             "relationships": [],
         }
@@ -382,9 +394,8 @@ class TestLlmHarvestDBWrites(unittest.TestCase):
     def test_llm_returning_none_produces_zero_items(self):
         """When _call_llm_sync returns None (network error etc.), no items are written."""
         from orivellum.capabilities.knowledge_harvest import llm_harvest
-        result = _make_extraction_result(
-            pages=[_make_page("Some content.")]
-        )
+
+        result = _make_extraction_result(pages=[_make_page("Some content.")])
         with patch(
             "orivellum.capabilities.knowledge_harvest._call_llm_sync",
             return_value=None,
@@ -405,6 +416,7 @@ class TestLlmHarvestDBWrites(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Toggle gate — ai_extraction_enabled
 # ---------------------------------------------------------------------------
+
 
 class TestAiExtractionToggle(unittest.TestCase):
     """pipeline.process_document must skip llm_harvest when toggle is false."""
@@ -486,8 +498,11 @@ class TestAiExtractionToggle(unittest.TestCase):
                         process_document(doc_id, str(file_path), "text", None, "Ready Test", db)
 
                     doc = db.get_document(doc_id)
-                    self.assertEqual(doc["readiness"], "ready",
-                                     f"toggle={toggle}: readiness={doc['readiness']!r}")
+                    self.assertEqual(
+                        doc["readiness"],
+                        "ready",
+                        f"toggle={toggle}: readiness={doc['readiness']!r}",
+                    )
                 finally:
                     db.close()
                     tmpdir.cleanup()
@@ -496,6 +511,7 @@ class TestAiExtractionToggle(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Pipeline: document reaches ready even when llm_harvest raises
 # ---------------------------------------------------------------------------
+
 
 class TestPipelineReadinessOnLlmFailure(unittest.TestCase):
     """process_document must leave the document 'ready' even when llm_harvest raises."""
@@ -535,7 +551,8 @@ class TestPipelineReadinessOnLlmFailure(unittest.TestCase):
             doc = db.get_document(doc_id)
             self.assertIsNotNone(doc, "Document record must exist after llm_harvest failure")
             self.assertEqual(
-                doc["readiness"], "ready",
+                doc["readiness"],
+                "ready",
                 f"Document must be ready even when llm_harvest raises; "
                 f"readiness={doc['readiness']!r}, error_message={doc.get('error_message')!r}",
             )
@@ -545,6 +562,7 @@ class TestPipelineReadinessOnLlmFailure(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Settings API: default and toggle persistence
 # ---------------------------------------------------------------------------
+
 
 class TestSettingsApi(unittest.TestCase):
     """get_setting / set_setting must behave correctly for the AI toggle."""
@@ -570,11 +588,11 @@ class TestSettingsApi(unittest.TestCase):
 # Extraction warnings: persisted at each pipeline failure point
 # ---------------------------------------------------------------------------
 
+
 class TestExtractionWarnings(unittest.TestCase):
     """add_extraction_warning is called and persisted for every failure path."""
 
-    def _make_doc(self, db, tmp: str, filename: str = "doc.txt",
-                  write_content: bool = True):
+    def _make_doc(self, db, tmp: str, filename: str = "doc.txt", write_content: bool = True):
         p = Path(tmp) / filename
         if write_content:
             p.write_text("Some content for testing.", encoding="utf-8")
@@ -616,6 +634,7 @@ class TestExtractionWarnings(unittest.TestCase):
     def test_no_readable_text_stores_warning(self):
         """When extraction returns ok=False, a no_readable_text warning is stored."""
         from unittest.mock import MagicMock as _MM
+
         from orivellum.capabilities import pipeline as pipe_module
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -679,23 +698,20 @@ class TestExtractionWarnings(unittest.TestCase):
             db, _ = _make_db_and_cfg(tmp)
 
             doc_err = db.create_document(title="err.txt", kind="text", work_id=None)
-            db.update_document_extracted(doc_err["id"], "", 0,
-                                         readiness="error",
-                                         error_message="forced error")
-            db.add_extraction_warning(doc_err["id"], kind="file_not_found",
-                                      detail="forced error")
+            db.update_document_extracted(
+                doc_err["id"], "", 0, readiness="error", error_message="forced error"
+            )
+            db.add_extraction_warning(doc_err["id"], kind="file_not_found", detail="forced error")
 
             doc_nt = db.create_document(title="nt.txt", kind="text", work_id=None)
-            db.update_document_extracted(doc_nt["id"], "", 0,
-                                         readiness="no_text",
-                                         error_message="no text")
-            db.add_extraction_warning(doc_nt["id"], kind="no_readable_text",
-                                      detail="no text")
+            db.update_document_extracted(
+                doc_nt["id"], "", 0, readiness="no_text", error_message="no text"
+            )
+            db.add_extraction_warning(doc_nt["id"], kind="no_readable_text", detail="no text")
 
             for doc_id in (doc_err["id"], doc_nt["id"]):
                 warnings = db.get_extraction_warnings(doc_id)
-                self.assertEqual(len(warnings), 1,
-                                 f"Expected 1 warning for {doc_id[:8]}")
+                self.assertEqual(len(warnings), 1, f"Expected 1 warning for {doc_id[:8]}")
                 self.assertIsNotNone(warnings[0]["kind"])
                 self.assertIsNotNone(warnings[0]["detail"])
 
@@ -703,6 +719,7 @@ class TestExtractionWarnings(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Full-document indexing — confirms caps are removed / raised correctly
 # ---------------------------------------------------------------------------
+
 
 class TestFullDocumentIndexing(unittest.TestCase):
     """Verify that llm_harvest covers the ENTIRE document, not just the first
@@ -725,8 +742,10 @@ class TestFullDocumentIndexing(unittest.TestCase):
     def test_extracted_text_cap_is_at_least_2_million_chars(self):
         """_EXTRACTED_TEXT_CAP must accommodate novels ≥ 300 k words (~2 M chars)."""
         from orivellum.capabilities.chunking import _EXTRACTED_TEXT_CAP
+
         self.assertGreaterEqual(
-            _EXTRACTED_TEXT_CAP, 2_000_000,
+            _EXTRACTED_TEXT_CAP,
+            2_000_000,
             f"_EXTRACTED_TEXT_CAP={_EXTRACTED_TEXT_CAP} is too small for full novels; "
             "must be ≥ 2,000,000",
         )
@@ -737,12 +756,13 @@ class TestFullDocumentIndexing(unittest.TestCase):
         """A document shorter than _MAX_HARVEST_CHUNKS × _MAX_CHUNK_CHARS must
         be covered completely — every 2 000-char window is sent."""
         from orivellum.capabilities.knowledge_harvest import (
-            _MAX_HARVEST_CHUNKS, _MAX_CHUNK_CHARS,
+            _MAX_CHUNK_CHARS,
+            _MAX_HARVEST_CHUNKS,
         )
 
         # Build a 20 000-char document (10 sequential windows at 2 000 each)
         # Well within the "short doc" threshold
-        doc_text = "word " * 4_000           # ~20 000 chars
+        doc_text = "word " * 4_000  # ~20 000 chars
         self.assertLess(len(doc_text), _MAX_HARVEST_CHUNKS * _MAX_CHUNK_CHARS)
 
         call_offsets: list[int] = []
@@ -752,25 +772,28 @@ class TestFullDocumentIndexing(unittest.TestCase):
             marker = "Chunk:\n"
             idx = prompt.find(marker)
             if idx != -1:
-                chunk = prompt[idx + len(marker):][:50]
+                chunk = prompt[idx + len(marker) :][:50]
                 # Find where this chunk appears in the document
                 pos = doc_text.find(chunk[:20])
                 call_offsets.append(pos if pos >= 0 else -1)
-            return None  # empty response — we only care about CALL pattern
+            return  # empty response — we only care about CALL pattern
 
         with patch(
             "orivellum.capabilities.knowledge_harvest._call_llm_sync",
             side_effect=_capture_llm,
         ):
             from orivellum.capabilities.knowledge_harvest import llm_harvest
+
             result = _make_extraction_result(pages=[], full_text=doc_text)
-            llm_harvest(result, doc_id=self.doc_id, work_id=None,
-                        doc_title="Long Novel", db=self.db)
+            llm_harvest(
+                result, doc_id=self.doc_id, work_id=None, doc_title="Long Novel", db=self.db
+            )
 
         # Must have called LLM at least once per 2 000-char window
         expected_calls = max(1, len(doc_text) // _MAX_CHUNK_CHARS)
         self.assertGreaterEqual(
-            len(call_offsets), expected_calls,
+            len(call_offsets),
+            expected_calls,
             f"Short document: expected ≥{expected_calls} LLM calls, got {len(call_offsets)}",
         )
 
@@ -792,7 +815,7 @@ class TestFullDocumentIndexing(unittest.TestCase):
         # Each section: unique tag + padding to reach exactly section_size chars
         sections: list[str] = []
         for i in range(n_sections):
-            tag = f"SEC_{i:04d}_"     # e.g. "SEC_0000_" (9 chars)
+            tag = f"SEC_{i:04d}_"  # e.g. "SEC_0000_" (9 chars)
             padding = "x" * (section_size - len(tag))
             sections.append(tag + padding)
         doc_text = "".join(sections)
@@ -802,23 +825,27 @@ class TestFullDocumentIndexing(unittest.TestCase):
         def _recording_llm(prompt: str, *args, **kwargs):
             # Find which SEC_NNNN tags appear in the prompt chunk
             import re as _re
+
             for m in _re.finditer(r"SEC_(\d{4})_", prompt):
                 sampled_sections.add(int(m.group(1)))
-            return None
+            return
 
         with patch(
             "orivellum.capabilities.knowledge_harvest._call_llm_sync",
             side_effect=_recording_llm,
         ):
             from orivellum.capabilities.knowledge_harvest import llm_harvest
+
             result = _make_extraction_result(pages=[], full_text=doc_text)
-            llm_harvest(result, doc_id=self.doc_id, work_id=None,
-                        doc_title="Long Novel", db=self.db)
+            llm_harvest(
+                result, doc_id=self.doc_id, work_id=None, doc_title="Long Novel", db=self.db
+            )
 
         # At least one sampled section must be from the second half (section ≥ 30)
         second_half = {s for s in sampled_sections if s >= n_sections // 2}
         self.assertGreater(
-            len(second_half), 0,
+            len(second_half),
+            0,
             f"No LLM call sampled from the second half of the document — "
             f"sampled sections: {sorted(sampled_sections)} "
             "(expected at least one from section ≥ 30). "
@@ -835,12 +862,13 @@ class TestFullDocumentIndexing(unittest.TestCase):
         would leave up to (N % stride) characters uncovered and fail this test.
         """
         from orivellum.capabilities.knowledge_harvest import (
-            _MAX_CHUNK_CHARS, _MAX_HARVEST_CHUNKS,
+            _MAX_CHUNK_CHARS,
+            _MAX_HARVEST_CHUNKS,
         )
 
         # Document longer than _MAX_HARVEST_CHUNKS * _MAX_CHUNK_CHARS so the
         # endpoint-inclusive interpolation path is exercised (not sequential).
-        long_body   = "a" * (_MAX_HARVEST_CHUNKS * _MAX_CHUNK_CHARS + 5_000)
+        long_body = "a" * (_MAX_HARVEST_CHUNKS * _MAX_CHUNK_CHARS + 5_000)
         tail_marker = "TAIL_MARKER_XYZ"
         # Pad tail_marker out to exactly _MAX_CHUNK_CHARS chars so it matches
         # the final window precisely.
@@ -852,16 +880,18 @@ class TestFullDocumentIndexing(unittest.TestCase):
         def _check_tail(prompt: str, *a, **k):
             if tail_marker in prompt:
                 tail_seen[0] = True
-            return None
+            return
 
         with patch(
             "orivellum.capabilities.knowledge_harvest._call_llm_sync",
             side_effect=_check_tail,
         ):
             from orivellum.capabilities.knowledge_harvest import llm_harvest
+
             result = _make_extraction_result(pages=[], full_text=doc_text)
-            llm_harvest(result, doc_id=self.doc_id, work_id=None,
-                        doc_title="Long Novel", db=self.db)
+            llm_harvest(
+                result, doc_id=self.doc_id, work_id=None, doc_title="Long Novel", db=self.db
+            )
 
         self.assertTrue(
             tail_seen[0],
@@ -882,19 +912,22 @@ class TestFullDocumentIndexing(unittest.TestCase):
 
         def _count_llm(*args, **kwargs):
             call_count[0] += 1
-            return None
+            return
 
         with patch(
             "orivellum.capabilities.knowledge_harvest._call_llm_sync",
             side_effect=_count_llm,
         ):
             from orivellum.capabilities.knowledge_harvest import llm_harvest
+
             result = _make_extraction_result(pages=[], full_text=doc_text)
-            llm_harvest(result, doc_id=self.doc_id, work_id=None,
-                        doc_title="Long Novel", db=self.db)
+            llm_harvest(
+                result, doc_id=self.doc_id, work_id=None, doc_title="Long Novel", db=self.db
+            )
 
         self.assertLessEqual(
-            call_count[0], _MAX_HARVEST_CHUNKS,
+            call_count[0],
+            _MAX_HARVEST_CHUNKS,
             f"LLM was called {call_count[0]} times for a 1 M-char document; "
             f"must not exceed _MAX_HARVEST_CHUNKS={_MAX_HARVEST_CHUNKS}",
         )
@@ -903,6 +936,7 @@ class TestFullDocumentIndexing(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Chapter-aware harvest — long chapters must be covered beyond 6 000 chars
 # ---------------------------------------------------------------------------
+
 
 class TestLlmHarvestByChapters(unittest.TestCase):
     """llm_harvest_by_chapters must sample content from EVERY part of a chapter,
@@ -930,12 +964,15 @@ class TestLlmHarvestByChapters(unittest.TestCase):
         self.db.upsert_book_chapters(
             doc_id=self.doc_id,
             work_id=None,
-            chapters=[{
-                "seq": ch["seq"],
-                "level": 1,
-                "title": ch.get("title") or f"Chapter {ch['seq'] + 1}",
-                "text": ch["text"],
-            } for ch in chapters],
+            chapters=[
+                {
+                    "seq": ch["seq"],
+                    "level": 1,
+                    "title": ch.get("title") or f"Chapter {ch['seq'] + 1}",
+                    "text": ch["text"],
+                }
+                for ch in chapters
+            ],
         )
 
     def _insert_chapter(self, seq: int, text: str, title: str = "") -> None:
@@ -945,23 +982,25 @@ class TestLlmHarvestByChapters(unittest.TestCase):
     def test_short_chapter_gets_one_llm_call(self):
         """A chapter shorter than _MAX_CHAPTER_CHARS needs exactly one LLM call."""
         from orivellum.capabilities.knowledge_harvest import (
-            _MAX_CHAPTER_CHARS, llm_harvest_by_chapters,
+            _MAX_CHAPTER_CHARS,
+            llm_harvest_by_chapters,
         )
+
         short_text = "x" * (_MAX_CHAPTER_CHARS - 100)
         self._insert_chapter(0, short_text)
 
         call_count = [0]
+
         def _count(*a, **k):
             call_count[0] += 1
-            return None
+            return
 
-        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync",
-                   side_effect=_count):
-            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None,
-                                    doc_title="Test", db=self.db)
+        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_count):
+            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None, doc_title="Test", db=self.db)
 
-        self.assertEqual(call_count[0], 1,
-                         f"Short chapter expected 1 LLM call, got {call_count[0]}")
+        self.assertEqual(
+            call_count[0], 1, f"Short chapter expected 1 LLM call, got {call_count[0]}"
+        )
 
     def test_long_chapter_samples_beyond_first_6000_chars(self):
         """A chapter longer than _MAX_CHAPTER_CHARS must produce ≥2 LLM calls,
@@ -972,7 +1011,8 @@ class TestLlmHarvestByChapters(unittest.TestCase):
         the second half of the chapter text.
         """
         from orivellum.capabilities.knowledge_harvest import (
-            _MAX_CHAPTER_CHARS, llm_harvest_by_chapters,
+            _MAX_CHAPTER_CHARS,
+            llm_harvest_by_chapters,
         )
 
         # Build a chapter of 3 × _MAX_CHAPTER_CHARS chars with unique section tags
@@ -983,8 +1023,9 @@ class TestLlmHarvestByChapters(unittest.TestCase):
             padding = "y" * (_MAX_CHAPTER_CHARS - len(tag))
             sections.append(tag + padding)
         chapter_text = "".join(sections)
-        self.assertGreater(len(chapter_text), _MAX_CHAPTER_CHARS,
-                           "Chapter must be longer than one prompt window")
+        self.assertGreater(
+            len(chapter_text), _MAX_CHAPTER_CHARS, "Chapter must be longer than one prompt window"
+        )
 
         self._insert_chapter(0, chapter_text, "Chapter 1")
 
@@ -992,21 +1033,22 @@ class TestLlmHarvestByChapters(unittest.TestCase):
 
         def _record_prompt(prompt: str, *a, **k):
             import re as _re
+
             for m in _re.finditer(r"CHSEC_(\d{4})_", prompt):
                 sampled_sections.add(int(m.group(1)))
-            return None
+            return
 
-        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync",
-                   side_effect=_record_prompt):
-            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None,
-                                    doc_title="Test", db=self.db)
+        with patch(
+            "orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_record_prompt
+        ):
+            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None, doc_title="Test", db=self.db)
 
         # Must have seen sections from at least the first AND last parts
-        self.assertIn(0, sampled_sections,
-                      "Section 0 (first 6k chars) was never sampled")
+        self.assertIn(0, sampled_sections, "Section 0 (first 6k chars) was never sampled")
         second_half = {s for s in sampled_sections if s >= n_sections // 2}
         self.assertGreater(
-            len(second_half), 0,
+            len(second_half),
+            0,
             f"No LLM call sampled from the second half of the chapter — "
             f"sampled sections: {sorted(sampled_sections)}. "
             "The [:_MAX_CHAPTER_CHARS] truncation may still be active.",
@@ -1022,13 +1064,15 @@ class TestLlmHarvestByChapters(unittest.TestCase):
         the tail uncovered and fail this test.
         """
         from orivellum.capabilities.knowledge_harvest import (
-            _MAX_CHAPTER_CHARS, _MAX_CHAPTER_CALLS, llm_harvest_by_chapters,
+            _MAX_CHAPTER_CALLS,
+            _MAX_CHAPTER_CHARS,
+            llm_harvest_by_chapters,
         )
 
         # Chapter long enough to trigger the endpoint-inclusive path
-        long_body    = "c" * (_MAX_CHAPTER_CALLS * _MAX_CHAPTER_CHARS + 5_000)
-        tail_marker  = "CH_TAIL_MARKER_XYZ"
-        tail_window  = tail_marker + "d" * (_MAX_CHAPTER_CHARS - len(tail_marker))
+        long_body = "c" * (_MAX_CHAPTER_CALLS * _MAX_CHAPTER_CHARS + 5_000)
+        tail_marker = "CH_TAIL_MARKER_XYZ"
+        tail_window = tail_marker + "d" * (_MAX_CHAPTER_CHARS - len(tail_marker))
         chapter_text = long_body + tail_window
 
         self._insert_chapter(0, chapter_text, "Chapter 1")
@@ -1038,17 +1082,17 @@ class TestLlmHarvestByChapters(unittest.TestCase):
         def _check_tail(prompt: str, *a, **k):
             if tail_marker in prompt:
                 tail_seen[0] = True
-            return None
+            return
 
-        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync",
-                   side_effect=_check_tail):
-            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None,
-                                    doc_title="Test", db=self.db)
+        with patch(
+            "orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_check_tail
+        ):
+            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None, doc_title="Test", db=self.db)
 
         self.assertTrue(
             tail_seen[0],
-            f"CH_TAIL_MARKER_XYZ was never seen in any LLM prompt — "
-            f"the tail of the chapter was dropped. "
+            "CH_TAIL_MARKER_XYZ was never seen in any LLM prompt — "
+            "the tail of the chapter was dropped. "
             "Endpoint-inclusive stride must include a window ending at len(chapter_text).",
         )
 
@@ -1056,24 +1100,27 @@ class TestLlmHarvestByChapters(unittest.TestCase):
         """A very long chapter must not produce more than _MAX_CHAPTER_CALLS
         LLM calls, regardless of its length."""
         from orivellum.capabilities.knowledge_harvest import (
-            _MAX_CHAPTER_CALLS, llm_harvest_by_chapters, _MAX_CHAPTER_CHARS,
+            _MAX_CHAPTER_CALLS,
+            _MAX_CHAPTER_CHARS,
+            llm_harvest_by_chapters,
         )
+
         # Chapter longer than _MAX_CHAPTER_CALLS × _MAX_CHAPTER_CHARS
         long_text = "z" * (_MAX_CHAPTER_CALLS * _MAX_CHAPTER_CHARS + 5_000)
         self._insert_chapter(0, long_text)
 
         call_count = [0]
+
         def _count(*a, **k):
             call_count[0] += 1
-            return None
+            return
 
-        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync",
-                   side_effect=_count):
-            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None,
-                                    doc_title="Test", db=self.db)
+        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_count):
+            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None, doc_title="Test", db=self.db)
 
         self.assertLessEqual(
-            call_count[0], _MAX_CHAPTER_CALLS,
+            call_count[0],
+            _MAX_CHAPTER_CALLS,
             f"Expected ≤{_MAX_CHAPTER_CALLS} LLM calls for a very long chapter, "
             f"got {call_count[0]}",
         )
@@ -1083,26 +1130,28 @@ class TestLlmHarvestByChapters(unittest.TestCase):
         from orivellum.capabilities.knowledge_harvest import llm_harvest_by_chapters
 
         n_chapters = 5
-        self._insert_chapters([
-            {"seq": i, "text": f"Chapter_{i} content here " * 50, "title": f"Ch {i}"}
-            for i in range(n_chapters)
-        ])
+        self._insert_chapters(
+            [
+                {"seq": i, "text": f"Chapter_{i} content here " * 50, "title": f"Ch {i}"}
+                for i in range(n_chapters)
+            ]
+        )
 
         chapters_seen: set[int] = set()
 
         def _record(prompt: str, *a, **k):
             import re as _re
+
             for m in _re.finditer(r"Chapter_(\d+)", prompt):
                 chapters_seen.add(int(m.group(1)))
-            return None
+            return
 
-        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync",
-                   side_effect=_record):
-            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None,
-                                    doc_title="Test", db=self.db)
+        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_record):
+            llm_harvest_by_chapters(doc_id=self.doc_id, work_id=None, doc_title="Test", db=self.db)
 
         self.assertEqual(
-            len(chapters_seen), n_chapters,
+            len(chapters_seen),
+            n_chapters,
             f"Expected all {n_chapters} chapters to be processed; "
             f"only saw chapters: {sorted(chapters_seen)}",
         )

@@ -14,6 +14,7 @@ only from the Lemonade/ROCm runtime API or vendor architecture docs.
 
 BUILDABLE-NOW — spec §6.1.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,12 +31,20 @@ _resolver = AuthorityResolver()
 _verifier = ClaimVerifier()
 
 _CAPABILITIES = [
-    "installed_physical_memory_bytes", "ram_gb",
-    "cpu_model", "cpu_cores", "cpu_threads", "cpu_base_clock_mhz",
+    "installed_physical_memory_bytes",
+    "ram_gb",
+    "cpu_model",
+    "cpu_cores",
+    "cpu_threads",
+    "cpu_base_clock_mhz",
     "gpu_model",
-    "vram_usable_bytes", "vram_gb",           # NOTE: never from AdapterRAM
-    "os_name", "os_version", "os_build",
-    "bios_version", "bios_manufacturer",
+    "vram_usable_bytes",
+    "vram_gb",  # NOTE: never from AdapterRAM
+    "os_name",
+    "os_version",
+    "os_build",
+    "bios_version",
+    "bios_manufacturer",
     "storage_total_bytes",
     "installed_models",
 ]
@@ -77,16 +86,18 @@ class WindowsInventoryAdapter(AdapterBase):
             claim = self._db.get_claim_by_predicate(SUBJECT_DEVICE_A01, predicate)
             if not claim:
                 return []
-            return [Evidence(
-                source_type="windows_inventory_cache",
-                source_locator=f"claims:{claim['id'][:12]}",
-                authority=claim.get("authority_tier", "A0"),
-                raw_value=claim.get("value", ""),
-                predicate=predicate,
-                subject=SUBJECT_DEVICE_A01,
-                captured_at=claim.get("updated_at", ""),
-                meta={"claim_id": claim["id"], "status": claim.get("status")},
-            )]
+            return [
+                Evidence(
+                    source_type="windows_inventory_cache",
+                    source_locator=f"claims:{claim['id'][:12]}",
+                    authority=claim.get("authority_tier", "A0"),
+                    raw_value=claim.get("value", ""),
+                    predicate=predicate,
+                    subject=SUBJECT_DEVICE_A01,
+                    captured_at=claim.get("updated_at", ""),
+                    meta={"claim_id": claim["id"], "status": claim.get("status")},
+                )
+            ]
         except Exception as exc:
             logger.debug("WindowsInventoryAdapter.fetch failed: %s", exc)
             return []
@@ -149,8 +160,9 @@ class WindowsInventoryAdapter(AdapterBase):
             # WITHOUT writing.  Calling update_claim_status() on that id would
             # corrupt a claim we never wrote.  We therefore pre-check authority
             # so the status transition only fires when we know the write happened.
-            incoming_tier_num = int(result.authority.value[1:]) \
-                if result.authority.value[1:].isdigit() else 99
+            incoming_tier_num = (
+                int(result.authority.value[1:]) if result.authority.value[1:].isdigit() else 99
+            )
             try:
                 _existing = self._db.get_claim_by_predicate(subject, predicate)
             except Exception:
@@ -165,7 +177,9 @@ class WindowsInventoryAdapter(AdapterBase):
             _write_wins = incoming_tier_num <= _existing_tier_num
 
             claim_id = self._db.upsert_claim(
-                subject, predicate, store_value,
+                subject,
+                predicate,
+                store_value,
                 authority_tier=result.authority.value,
                 ttl_class=_resolver.resolve(predicate).ttl_class,
                 evidence_text=result.confidence_basis,
@@ -197,49 +211,79 @@ class WindowsInventoryAdapter(AdapterBase):
         # ── CPU ───────────────────────────────────────────────────────────────
         cpu = payload.get("cpu") or {}
         if cpu.get("Name"):
-            _write("cpu_model", [
-                {"source_type": "windows_cim", "source_locator": "Win32_Processor.Name",
-                 "authority": "A0", "raw_value": cpu["Name"]},
-            ])
+            _write(
+                "cpu_model",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_Processor.Name",
+                        "authority": "A0",
+                        "raw_value": cpu["Name"],
+                    },
+                ],
+            )
         if cpu.get("NumberOfCores") is not None:
-            _write("cpu_cores", [
-                {"source_type": "windows_cim", "source_locator": "Win32_Processor.NumberOfCores",
-                 "authority": "A0", "raw_value": str(cpu["NumberOfCores"])},
-            ])
+            _write(
+                "cpu_cores",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_Processor.NumberOfCores",
+                        "authority": "A0",
+                        "raw_value": str(cpu["NumberOfCores"]),
+                    },
+                ],
+            )
         if cpu.get("NumberOfLogicalProcessors") is not None:
-            _write("cpu_threads", [
-                {"source_type": "windows_cim", "source_locator": "Win32_Processor.NumberOfLogicalProcessors",
-                 "authority": "A0", "raw_value": str(cpu["NumberOfLogicalProcessors"])},
-            ])
+            _write(
+                "cpu_threads",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_Processor.NumberOfLogicalProcessors",
+                        "authority": "A0",
+                        "raw_value": str(cpu["NumberOfLogicalProcessors"]),
+                    },
+                ],
+            )
 
         # ── RAM — A0: two independent CIM sources required (spec §5.2) ────────
         mem = payload.get("memory") or {}
         mem_evidence: list[dict] = []
         if mem.get("TotalPhysicalMemory") is not None:
-            mem_evidence.append({
-                "source_type": "windows_cim",
-                "source_locator": "Win32_ComputerSystem.TotalPhysicalMemory",
-                "authority": "A0",
-                "raw_value": str(mem["TotalPhysicalMemory"]),
-            })
+            mem_evidence.append(
+                {
+                    "source_type": "windows_cim",
+                    "source_locator": "Win32_ComputerSystem.TotalPhysicalMemory",
+                    "authority": "A0",
+                    "raw_value": str(mem["TotalPhysicalMemory"]),
+                }
+            )
         if mem.get("PhysicalMemoryCapacitySum") is not None:
-            mem_evidence.append({
-                "source_type": "windows_cim",
-                "source_locator": "Win32_PhysicalMemory.Capacity:sum",
-                "authority": "A0",
-                "raw_value": str(mem["PhysicalMemoryCapacitySum"]),
-            })
+            mem_evidence.append(
+                {
+                    "source_type": "windows_cim",
+                    "source_locator": "Win32_PhysicalMemory.Capacity:sum",
+                    "authority": "A0",
+                    "raw_value": str(mem["PhysicalMemoryCapacitySum"]),
+                }
+            )
         if mem_evidence:
             _write("installed_physical_memory_bytes", mem_evidence)
             # Also store as ram_gb (derived display predicate)
             if mem.get("TotalPhysicalMemory"):
                 gib = mem["TotalPhysicalMemory"] / 1_073_741_824
-                _write("ram_gb", [{
-                    "source_type": "windows_cim",
-                    "source_locator": "Win32_ComputerSystem.TotalPhysicalMemory",
-                    "authority": "A0",
-                    "raw_value": f"{gib:.0f} GiB",
-                }])
+                _write(
+                    "ram_gb",
+                    [
+                        {
+                            "source_type": "windows_cim",
+                            "source_locator": "Win32_ComputerSystem.TotalPhysicalMemory",
+                            "authority": "A0",
+                            "raw_value": f"{gib:.0f} GiB",
+                        }
+                    ],
+                )
 
         # ── GPU — NOTE: no AdapterRAM (INV-REQ-001) ──────────────────────────
         gpu = payload.get("gpu") or {}
@@ -249,8 +293,14 @@ class WindowsInventoryAdapter(AdapterBase):
             # "AMD Radeon 890M Graphics") — pairing both as competing evidence items
             # triggers a material contradiction in the verifier.  Store it as
             # metadata for display only.
-            evidence = [{"source_type": "windows_cim", "source_locator": "Win32_VideoController.Name",
-                         "authority": "A0", "raw_value": gpu["Name"]}]
+            evidence = [
+                {
+                    "source_type": "windows_cim",
+                    "source_locator": "Win32_VideoController.Name",
+                    "authority": "A0",
+                    "raw_value": gpu["Name"],
+                }
+            ]
             _write("gpu_model", evidence)
 
         # AdapterRAM MUST NOT be used for VRAM (INV-REQ-001)
@@ -279,9 +329,9 @@ class WindowsInventoryAdapter(AdapterBase):
         # fail-closed to prevent unknown or spoofed sources from writing claims.
         # source prefix/value → (source_type, authority)
         _VRAM_SOURCE_ALLOWLIST: dict[str, tuple[str, str]] = {
-            "lemonade_api":    ("lemonade_api",   "A0"),
-            "rocm_smi":        ("rocm_smi",        "A0"),
-            "user_supplied":   ("user_supplied",   "A0"),
+            "lemonade_api": ("lemonade_api", "A0"),
+            "rocm_smi": ("rocm_smi", "A0"),
+            "user_supplied": ("user_supplied", "A0"),
             "lemonade_config": ("lemonade_config", "A1"),
         }
 
@@ -289,16 +339,16 @@ class WindowsInventoryAdapter(AdapterBase):
         # resolver's "adapterram" substring check.  These cover underscore/spaced
         # forms that the contiguous-substring check would miss.
         _ADAPTER_RAM_PATTERNS = (
-            "adapterram",           # CamelCase / contiguous (resolver already catches this)
-            "adapter_ram",          # underscore-separated
-            "cim_adapter",          # CIM prefix variants
-            "win32_adapter",        # Win32 prefix variants
-            "videocontroller.video", # VideoMemory field variants
+            "adapterram",  # CamelCase / contiguous (resolver already catches this)
+            "adapter_ram",  # underscore-separated
+            "cim_adapter",  # CIM prefix variants
+            "win32_adapter",  # Win32 prefix variants
+            "videocontroller.video",  # VideoMemory field variants
         )
 
         vram = payload.get("vram") or {}
         vram_source: str = vram.get("source", "unavailable")
-        vram_bytes  = vram.get("total_bytes")
+        vram_bytes = vram.get("total_bytes")
 
         if vram_source != "unavailable" and vram_bytes:
             vram_src_lower = vram_source.lower()
@@ -334,20 +384,30 @@ class WindowsInventoryAdapter(AdapterBase):
                     # VERIFIED, giving a false impression of live-measurement authority.
                     # Config-derived VRAM writes only to vram_gb (A1 minimum) instead.
                     if auth == "A0":
-                        _write("vram_usable_bytes", [{
-                            "source_type": st,
-                            "source_locator": vram_source,
-                            "authority": auth,
-                            "raw_value": str(vram_bytes),
-                        }])
+                        _write(
+                            "vram_usable_bytes",
+                            [
+                                {
+                                    "source_type": st,
+                                    "source_locator": vram_source,
+                                    "authority": auth,
+                                    "raw_value": str(vram_bytes),
+                                }
+                            ],
+                        )
 
                     # vram_gb accepts A1 — written for every allowlisted source.
-                    _write("vram_gb", [{
-                        "source_type": st,
-                        "source_locator": vram_source,
-                        "authority": auth,
-                        "raw_value": f"{gib:.0f} GiB",
-                    }])
+                    _write(
+                        "vram_gb",
+                        [
+                            {
+                                "source_type": st,
+                                "source_locator": vram_source,
+                                "authority": auth,
+                                "raw_value": f"{gib:.0f} GiB",
+                            }
+                        ],
+                    )
 
         # vram_hint (Win32 AdapterRAM advisory) is intentionally ignored here.
         # INV-REQ-001 prohibits AdapterRAM for all vram_* predicates regardless
@@ -357,51 +417,107 @@ class WindowsInventoryAdapter(AdapterBase):
         # ── OS ────────────────────────────────────────────────────────────────
         os_data = payload.get("os") or {}
         if os_data.get("Caption"):
-            _write("os_name", [{"source_type": "windows_cim",
-                                 "source_locator": "Win32_OperatingSystem.Caption",
-                                 "authority": "A0", "raw_value": os_data["Caption"]}])
+            _write(
+                "os_name",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_OperatingSystem.Caption",
+                        "authority": "A0",
+                        "raw_value": os_data["Caption"],
+                    }
+                ],
+            )
         if os_data.get("Version"):
-            _write("os_version", [{"source_type": "windows_cim",
-                                    "source_locator": "Win32_OperatingSystem.Version",
-                                    "authority": "A0", "raw_value": os_data["Version"]}])
+            _write(
+                "os_version",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_OperatingSystem.Version",
+                        "authority": "A0",
+                        "raw_value": os_data["Version"],
+                    }
+                ],
+            )
         if os_data.get("BuildNumber"):
-            _write("os_build", [{"source_type": "windows_cim",
-                                  "source_locator": "Win32_OperatingSystem.BuildNumber",
-                                  "authority": "A0", "raw_value": str(os_data["BuildNumber"])}])
+            _write(
+                "os_build",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_OperatingSystem.BuildNumber",
+                        "authority": "A0",
+                        "raw_value": str(os_data["BuildNumber"]),
+                    }
+                ],
+            )
 
         # ── BIOS ──────────────────────────────────────────────────────────────
         bios = payload.get("bios") or {}
         if bios.get("Manufacturer"):
-            _write("bios_manufacturer", [{"source_type": "windows_cim",
-                                           "source_locator": "Win32_BIOS.Manufacturer",
-                                           "authority": "A1", "raw_value": bios["Manufacturer"]}])
+            _write(
+                "bios_manufacturer",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_BIOS.Manufacturer",
+                        "authority": "A1",
+                        "raw_value": bios["Manufacturer"],
+                    }
+                ],
+            )
         if bios.get("SMBIOSBIOSVersion"):
-            _write("bios_version", [{"source_type": "windows_cim",
-                                      "source_locator": "Win32_BIOS.SMBIOSBIOSVersion",
-                                      "authority": "A1", "raw_value": bios["SMBIOSBIOSVersion"]}])
+            _write(
+                "bios_version",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_BIOS.SMBIOSBIOSVersion",
+                        "authority": "A1",
+                        "raw_value": bios["SMBIOSBIOSVersion"],
+                    }
+                ],
+            )
 
         # ── Storage ───────────────────────────────────────────────────────────
         storage = payload.get("storage") or {}
         if storage.get("TotalBytes"):
-            _write("storage_total_bytes", [{
-                "source_type": "windows_cim",
-                "source_locator": "Win32_DiskDrive.Size:sum",
-                "authority": "A0", "raw_value": str(storage["TotalBytes"]),
-            }])
+            _write(
+                "storage_total_bytes",
+                [
+                    {
+                        "source_type": "windows_cim",
+                        "source_locator": "Win32_DiskDrive.Size:sum",
+                        "authority": "A0",
+                        "raw_value": str(storage["TotalBytes"]),
+                    }
+                ],
+            )
 
         # ── Lemonade installed models ─────────────────────────────────────────
         models = payload.get("installed_models") or []
         if models:
             models_str = ", ".join(str(m) for m in models[:20])
-            _write("installed_models", [{
-                "source_type": "lemonade_api",
-                "source_locator": "lemonade_api:models",
-                "authority": "A0", "raw_value": models_str,
-            }])
+            _write(
+                "installed_models",
+                [
+                    {
+                        "source_type": "lemonade_api",
+                        "source_locator": "lemonade_api:models",
+                        "authority": "A0",
+                        "raw_value": models_str,
+                    }
+                ],
+            )
 
         logger.info(
             "WindowsInventoryAdapter: ingested %d claims (%d verified, %d conflicted, %d unavailable); %d violations",
-            claims_written, claims_verified, claims_conflicted, claims_unavailable, len(violations),
+            claims_written,
+            claims_verified,
+            claims_conflicted,
+            claims_unavailable,
+            len(violations),
         )
 
         return {

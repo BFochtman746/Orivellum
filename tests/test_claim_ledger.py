@@ -13,12 +13,15 @@ Covers:
   - AbstentionPolicy.get_instruction()
   - ClaimLedger.format_for_prompt()
 """
+
 from __future__ import annotations
 
 import pytest
+
 from orivellum.database.db import OrivellumDB
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def db(tmp_path):
@@ -29,13 +32,12 @@ def db(tmp_path):
 
 # ── Schema ────────────────────────────────────────────────────────────────────
 
+
 def test_schema_v60_tables(db):
     """v60 migration must create all four PKLOS tables."""
     tables = {
         row[0]
-        for row in db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        for row in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     assert "claims" in tables
     assert "claim_evidence" in tables
@@ -50,10 +52,14 @@ def test_schema_version_at_least_60(db):
 
 # ── upsert_claim ──────────────────────────────────────────────────────────────
 
+
 def test_upsert_claim_insert_new(db):
     cid = db.upsert_claim(
-        "user_system", "ram_gb", "128",
-        unit="GB", authority_tier="A7",
+        "user_system",
+        "ram_gb",
+        "128",
+        unit="GB",
+        authority_tier="A7",
     )
     assert cid
     claim = db.get_claim(cid)
@@ -107,6 +113,7 @@ def test_upsert_claim_multiple_predicates_are_independent(db):
 
 # ── get_claim_by_predicate ─────────────────────────────────────────────────────
 
+
 def test_get_claim_by_predicate_returns_current(db):
     db.upsert_claim("user_system", "os_name", "Windows 11", authority_tier="A7")
     claim = db.get_claim_by_predicate("user_system", "os_name")
@@ -120,6 +127,7 @@ def test_get_claim_by_predicate_missing_returns_none(db):
 
 
 # ── list_claims ───────────────────────────────────────────────────────────────
+
 
 def test_list_claims_by_subject(db):
     db.upsert_claim("user_system", "ram_gb", "128")
@@ -135,6 +143,7 @@ def test_list_claims_by_subject(db):
 
 
 # ── update_claim_status ───────────────────────────────────────────────────────
+
 
 def test_update_claim_status_transitions(db):
     cid = db.upsert_claim("user_system", "ram_gb", "128")
@@ -161,21 +170,17 @@ def test_update_claim_status_logs_transition(db):
     statuses = [r["to_status"] for r in rows]
     # The explicit STALE transition is always logged.
     # (Initial insert may log USER_ASSERTED; legacy DBs may log CURRENT.)
-    assert "STALE" in statuses    # explicit transition
+    assert "STALE" in statuses  # explicit transition
 
 
 # ── add_claim_evidence ────────────────────────────────────────────────────────
 
+
 def test_add_claim_evidence(db):
     cid = db.upsert_claim("user_system", "ram_gb", "128")
-    eid = db.add_claim_evidence(
-        cid, "assertion", "I have 128GB of RAM",
-        source_id="test-source"
-    )
+    eid = db.add_claim_evidence(cid, "assertion", "I have 128GB of RAM", source_id="test-source")
     assert eid
-    rows = db._conn.execute(
-        "SELECT * FROM claim_evidence WHERE claim_id=?", (cid,)
-    ).fetchall()
+    rows = db._conn.execute("SELECT * FROM claim_evidence WHERE claim_id=?", (cid,)).fetchall()
     assert len(rows) >= 1
     assert rows[0]["evidence_type"] == "assertion"
     assert "128GB" in rows[0]["content"]
@@ -183,22 +188,24 @@ def test_add_claim_evidence(db):
 
 # ── create_capture_stamp ──────────────────────────────────────────────────────
 
+
 def test_create_capture_stamp(db):
     stamp_id = "test-stamp-001"
     db.create_capture_stamp(
-        stamp_id, channel="chat", source_type="A7",
+        stamp_id,
+        channel="chat",
+        source_type="A7",
         raw_text="I have 128GB RAM and an RTX 4090",
         meta={"conv_id": "conv-001"},
     )
-    row = db._conn.execute(
-        "SELECT * FROM capture_stamps WHERE id=?", (stamp_id,)
-    ).fetchone()
+    row = db._conn.execute("SELECT * FROM capture_stamps WHERE id=?", (stamp_id,)).fetchone()
     assert row is not None
     assert row["channel"] == "chat"
     assert "128GB" in row["raw_text"]
 
 
 # ── search_claims_for_context ──────────────────────────────────────────────────
+
 
 def test_search_claims_for_context_finds_relevant(db):
     db.upsert_claim("user_system", "ram_gb", "128", unit="GB")
@@ -224,14 +231,17 @@ def test_search_claims_for_context_fallback_scan(db):
     # Deliberately disable FTS in the search by passing a query that won't FTS-match
     # but will be found by the fallback scan
     results = db.search_claims_for_context("gpu", subject="user_system")
-    assert any("gpu" in r.get("predicate", "").lower() or "4090" in r.get("value", "")
-               for r in results)
+    assert any(
+        "gpu" in r.get("predicate", "").lower() or "4090" in r.get("value", "") for r in results
+    )
 
 
 # ── detect_factual_assertions ─────────────────────────────────────────────────
 
+
 def test_detect_factual_assertions_hardware():
     from orivellum.capabilities.pklos.capture_stamp import detect_factual_assertions
+
     assert detect_factual_assertions("I have 128 GB RAM installed") is True
     assert detect_factual_assertions("My GPU is an RTX 4090") is True
     assert detect_factual_assertions("I'm running Windows 11") is True
@@ -241,6 +251,7 @@ def test_detect_factual_assertions_hardware():
 
 def test_detect_factual_assertions_no_false_positives():
     from orivellum.capabilities.pklos.capture_stamp import detect_factual_assertions
+
     # These should NOT match — they're questions or general statements
     assert detect_factual_assertions("What is the capital of France?") is False
     assert detect_factual_assertions("Write me a poem about autumn") is False
@@ -249,8 +260,10 @@ def test_detect_factual_assertions_no_false_positives():
 
 # ── FactRouter ────────────────────────────────────────────────────────────────
 
+
 def test_fact_router_checkable_facts():
     from orivellum.capabilities.pklos.fact_router import FactRouter, RequestClass
+
     router = FactRouter()
     checkable = [
         "how much RAM do I have?",
@@ -263,12 +276,14 @@ def test_fact_router_checkable_facts():
     ]
     for q in checkable:
         result = router.classify(q)
-        assert result == RequestClass.DETERMINISTICALLY_VERIFIABLE, \
+        assert result == RequestClass.DETERMINISTICALLY_VERIFIABLE, (
             f"Expected DETERMINISTICALLY_VERIFIABLE for: {q!r}, got {result}"
+        )
 
 
 def test_fact_router_general_fact():
     from orivellum.capabilities.pklos.fact_router import FactRouter, RequestClass
+
     router = FactRouter()
     assert router.classify("what is the capital of France?") != RequestClass.CHECKABLE_FACT
     assert router.classify("who invented the telephone?") != RequestClass.CHECKABLE_FACT
@@ -276,6 +291,7 @@ def test_fact_router_general_fact():
 
 def test_fact_router_creative():
     from orivellum.capabilities.pklos.fact_router import FactRouter, RequestClass
+
     router = FactRouter()
     assert router.classify("write me a short story") == RequestClass.CREATIVE
     assert router.classify("generate an outline for my novel") == RequestClass.CREATIVE
@@ -284,6 +300,7 @@ def test_fact_router_creative():
 def test_fact_router_no_false_abstentions():
     """The router must not misclassify common coding/writing questions as CHECKABLE_FACT."""
     from orivellum.capabilities.pklos.fact_router import FactRouter, RequestClass
+
     router = FactRouter()
     safe = [
         "how do I sort a list in Python?",
@@ -293,15 +310,18 @@ def test_fact_router_no_false_abstentions():
     ]
     for q in safe:
         result = router.classify(q)
-        assert result != RequestClass.CHECKABLE_FACT, \
+        assert result != RequestClass.CHECKABLE_FACT, (
             f"False abstention risk for: {q!r} classified as {result}"
+        )
 
 
 # ── AbstentionPolicy ──────────────────────────────────────────────────────────
 
+
 def test_abstention_policy_no_claims():
     """When checkable and no claims → ABSTENTION_INSTRUCTION."""
-    from orivellum.capabilities.pklos.abstention import AbstentionPolicy, ABSTENTION_INSTRUCTION
+    from orivellum.capabilities.pklos.abstention import ABSTENTION_INSTRUCTION, AbstentionPolicy
+
     policy = AbstentionPolicy()
     instruction = policy.get_instruction(is_checkable=True, has_verified_claims=False)
     assert instruction == ABSTENTION_INSTRUCTION
@@ -310,7 +330,8 @@ def test_abstention_policy_no_claims():
 
 def test_abstention_policy_with_claims():
     """When checkable and has claims → VERIFIED_FACTS_INSTRUCTION."""
-    from orivellum.capabilities.pklos.abstention import AbstentionPolicy, VERIFIED_FACTS_INSTRUCTION
+    from orivellum.capabilities.pklos.abstention import VERIFIED_FACTS_INSTRUCTION, AbstentionPolicy
+
     policy = AbstentionPolicy()
     instruction = policy.get_instruction(is_checkable=True, has_verified_claims=True)
     assert instruction == VERIFIED_FACTS_INSTRUCTION
@@ -320,6 +341,7 @@ def test_abstention_policy_with_claims():
 def test_abstention_policy_not_checkable():
     """Non-checkable queries get no instruction."""
     from orivellum.capabilities.pklos.abstention import AbstentionPolicy
+
     policy = AbstentionPolicy()
     instruction = policy.get_instruction(is_checkable=False, has_verified_claims=False)
     assert instruction == ""
@@ -327,8 +349,10 @@ def test_abstention_policy_not_checkable():
 
 # ── ClaimLedger.format_for_prompt ─────────────────────────────────────────────
 
+
 def test_claim_ledger_format_for_prompt(db):
     from orivellum.capabilities.pklos.claim_ledger import ClaimLedger
+
     ledger = ClaimLedger(db)
     cid = db.upsert_claim("user_system", "ram_gb", "128", unit="GB")
     claims = [db.get_claim(cid)]
@@ -341,11 +365,13 @@ def test_claim_ledger_format_for_prompt(db):
 
 def test_claim_ledger_format_for_prompt_empty(db):
     from orivellum.capabilities.pklos.claim_ledger import ClaimLedger
+
     ledger = ClaimLedger(db)
     assert ledger.format_for_prompt([]) == ""
 
 
 # ── VER-INV-001 end-to-end ────────────────────────────────────────────────────
+
 
 def test_ver_inv_001_a8_never_surfaces(db):
     """VER-INV-001: A8 claims must NEVER be returned by any read path."""
@@ -358,6 +384,7 @@ def test_ver_inv_001_a8_never_surfaces(db):
 
     # ClaimLedger also filters
     from orivellum.capabilities.pklos.claim_ledger import ClaimLedger
+
     ledger = ClaimLedger(db)
     context_results = ledger.search_for_context("secret_spec")
     assert all(r.get("authority_tier") != "A8" for r in context_results)
@@ -366,13 +393,25 @@ def test_ver_inv_001_a8_never_surfaces(db):
 def test_full_capture_and_retrieval_pipeline(db):
     """Full pipeline: user states a fact → captured → retrieved as context."""
     # 1. User tells the system their specs (A7 self-reported)
-    db.upsert_claim("user_system", "ram_gb", "128", unit="GB", authority_tier="A7",
-                    evidence_text="I have 128GB RAM")
-    db.upsert_claim("user_system", "gpu_model", "RTX 4090", authority_tier="A7",
-                    evidence_text="I have an RTX 4090")
+    db.upsert_claim(
+        "user_system",
+        "ram_gb",
+        "128",
+        unit="GB",
+        authority_tier="A7",
+        evidence_text="I have 128GB RAM",
+    )
+    db.upsert_claim(
+        "user_system",
+        "gpu_model",
+        "RTX 4090",
+        authority_tier="A7",
+        evidence_text="I have an RTX 4090",
+    )
 
     # 2. Later query — system retrieves from ledger
     from orivellum.capabilities.pklos.claim_ledger import ClaimLedger
+
     ledger = ClaimLedger(db)
     claims = ledger.search_for_context("how much RAM do I have")
     assert any(c["predicate"] == "ram_gb" for c in claims)
@@ -384,10 +423,12 @@ def test_full_capture_and_retrieval_pipeline(db):
 
     # 4. Fact router correctly identifies this as checkable
     from orivellum.capabilities.pklos.fact_router import is_checkable_fact
+
     assert is_checkable_fact("how much RAM do I have?") is True
 
     # 5. Abstention policy says: we have claims, use VERIFIED_FACTS_INSTRUCTION
-    from orivellum.capabilities.pklos.abstention import AbstentionPolicy, VERIFIED_FACTS_INSTRUCTION
+    from orivellum.capabilities.pklos.abstention import VERIFIED_FACTS_INSTRUCTION, AbstentionPolicy
+
     policy = AbstentionPolicy()
     instruction = policy.get_instruction(is_checkable=True, has_verified_claims=True)
     assert instruction == VERIFIED_FACTS_INSTRUCTION

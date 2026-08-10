@@ -10,6 +10,7 @@ Covers:
 - Review resolver: approve files the block + creates knowledge; reject claims;
   double-resolve is a 409.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -69,11 +70,13 @@ class TestNormalizeProposal(unittest.TestCase):
         self.assertEqual(len(out["categories"]), len(set(out["categories"])))
 
     def test_unstated_actions_are_dropped(self):
-        raw = {"actions": [
-            {"text": "fix the explicit thing", "stated": True},
-            {"text": "fix the explicit thing", "stated": False},
-            {"text": "fix the explicit thing"},
-        ]}
+        raw = {
+            "actions": [
+                {"text": "fix the explicit thing", "stated": True},
+                {"text": "fix the explicit thing", "stated": False},
+                {"text": "fix the explicit thing"},
+            ]
+        }
         out = _normalize_proposal(raw, "I must fix the explicit thing today")
         self.assertEqual([a["text"] for a in out["actions"]], ["fix the explicit thing"])
 
@@ -95,8 +98,7 @@ class TestNormalizeProposal(unittest.TestCase):
         self.assertEqual(len(out["actions"]), 1)
 
     def test_unstated_due_date_dropped(self):
-        raw = {"actions": [{"text": "water the plants",
-                            "due": "2026-09-15", "stated": True}]}
+        raw = {"actions": [{"text": "water the plants", "due": "2026-09-15", "stated": True}]}
         out = _normalize_proposal(raw, "Remember to water the plants")
         self.assertEqual(out["actions"][0]["due"], "")
 
@@ -143,6 +145,7 @@ class TestApprovalRecovery(unittest.TestCase):
 
     def test_resume_approved_completes_interrupted_filing(self):
         from orivellum.capabilities.notes import resume_approved
+
         block = self.db.create_note_block("Call the gutter guy", today_str(), source="web")
         self.db.set_note_block_proposal(block["id"], _GOOD_PROPOSAL)
         # Simulate: approved in review, then crash before filing
@@ -152,14 +155,14 @@ class TestApprovalRecovery(unittest.TestCase):
         self.assertEqual(done, 1)
         after = self.db.get_note_block(block["id"])
         self.assertEqual(after["status"], "filed")
-        daily = (Path(self.cfg.data_dir) / "vault" / "Journal" / "Daily"
-                 / f"{block['day']}.md")
+        daily = Path(self.cfg.data_dir) / "vault" / "Journal" / "Daily" / f"{block['day']}.md"
         self.assertTrue(daily.exists())
 
     def test_complete_approval_is_replay_safe(self):
         """Running completion twice never duplicates vault entries, tasks,
         or knowledge."""
         from orivellum.capabilities.notes import complete_approval
+
         block = self.db.create_note_block("Call the gutter guy", today_str(), source="web")
         self.db.set_note_block_proposal(block["id"], _GOOD_PROPOSAL)
         self.db.claim_note_block(block["id"], "approved", expected="proposed")
@@ -168,8 +171,7 @@ class TestApprovalRecovery(unittest.TestCase):
         complete_approval(self.db, self.cfg, blk)
         complete_approval(self.db, self.cfg, blk)  # replay
 
-        daily = (Path(self.cfg.data_dir) / "vault" / "Journal" / "Daily"
-                 / f"{blk['day']}.md")
+        daily = Path(self.cfg.data_dir) / "vault" / "Journal" / "Daily" / f"{blk['day']}.md"
         self.assertEqual(daily.read_text().count(f"block:{blk['id']}"), 1)
         with self.db._lock:
             n_tasks = self.db._conn.execute(
@@ -205,8 +207,7 @@ class TestDailyReport(unittest.TestCase):
         self.assertNotIn("Still in inbox", out["report"])
         # Stored + written to the vault
         self.assertIsNotNone(self.db.get_note_report(day))
-        vault_report = (Path(self.cfg.data_dir) / "vault" / "Reports"
-                        / f"{day}-daily-report.md")
+        vault_report = Path(self.cfg.data_dir) / "vault" / "Reports" / f"{day}-daily-report.md"
         self.assertTrue(vault_report.exists())
 
     def test_empty_day_reports_nothing_approved(self):
@@ -276,8 +277,9 @@ class TestNoteblockReview(unittest.TestCase):
 
     def test_approve_files_block_and_creates_knowledge(self):
         block = self._proposed_block()
-        r = self.client.post(f"/api/review/noteblock:{block['id']}/resolve",
-                             json={"decision": "approve"})
+        r = self.client.post(
+            f"/api/review/noteblock:{block['id']}/resolve", json={"decision": "approve"}
+        )
         self.assertEqual(r.status_code, 200, r.text)
         out = r.json()
         self.assertTrue(out["filed_paths"])
@@ -285,8 +287,7 @@ class TestNoteblockReview(unittest.TestCase):
 
         after = self.db.get_note_block(block["id"])
         self.assertEqual(after["status"], "filed")
-        daily = (Path(self.cfg.data_dir) / "vault" / "Journal" / "Daily"
-                 / f"{block['day']}.md")
+        daily = Path(self.cfg.data_dir) / "vault" / "Journal" / "Daily" / f"{block['day']}.md"
         self.assertTrue(daily.exists())
         self.assertIn("Call the gutter guy", daily.read_text())
         # Knowledge item created with the notes source marker
@@ -298,23 +299,27 @@ class TestNoteblockReview(unittest.TestCase):
 
     def test_reject_claims_block(self):
         block = self._proposed_block()
-        r = self.client.post(f"/api/review/noteblock:{block['id']}/resolve",
-                             json={"decision": "reject"})
+        r = self.client.post(
+            f"/api/review/noteblock:{block['id']}/resolve", json={"decision": "reject"}
+        )
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.db.get_note_block(block["id"])["status"], "rejected")
 
     def test_double_resolve_is_conflict(self):
         block = self._proposed_block()
-        first = self.client.post(f"/api/review/noteblock:{block['id']}/resolve",
-                                 json={"decision": "reject"})
+        first = self.client.post(
+            f"/api/review/noteblock:{block['id']}/resolve", json={"decision": "reject"}
+        )
         self.assertEqual(first.status_code, 200)
-        second = self.client.post(f"/api/review/noteblock:{block['id']}/resolve",
-                                  json={"decision": "approve"})
+        second = self.client.post(
+            f"/api/review/noteblock:{block['id']}/resolve", json={"decision": "approve"}
+        )
         self.assertEqual(second.status_code, 409)
 
     def test_unknown_noteblock_404(self):
-        r = self.client.post(f"/api/review/noteblock:{uuid.uuid4()}/resolve",
-                             json={"decision": "approve"})
+        r = self.client.post(
+            f"/api/review/noteblock:{uuid.uuid4()}/resolve", json={"decision": "approve"}
+        )
         self.assertEqual(r.status_code, 404)
 
 

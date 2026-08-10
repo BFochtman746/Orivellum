@@ -19,6 +19,7 @@ run's summary lands in ``bench_runs`` so results are comparable over time.
 All functions are synchronous — call them from the background executor or a
 worker thread, never from the event loop directly.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,6 +43,7 @@ _DEFAULT_SWEEP_CHARS = (1_000, 8_000, 32_000)
 # ──────────────────────────────────────────────────────────────────────────────
 # Low-level streaming probe
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def stream_probe(
     base_url: str,
@@ -69,8 +71,9 @@ def stream_probe(
     err: str | None = None
 
     try:
-        with httpx.Client(timeout=timeout) as client:
-            with client.stream(
+        with (
+            httpx.Client(timeout=timeout) as client,
+            client.stream(
                 "POST",
                 f"{base_url}/chat/completions",
                 json={
@@ -79,36 +82,32 @@ def stream_probe(
                     "stream": True,
                     "max_tokens": max_tokens,
                 },
-            ) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    chunk = line[6:]
-                    if chunk.strip() == "[DONE]":
-                        break
-                    try:
-                        d = json.loads(chunk)
-                    except json.JSONDecodeError:
-                        continue
-                    usage = d.get("usage")
-                    if isinstance(usage, dict):
-                        usage_completion = (
-                            usage.get("completion_tokens") or usage_completion
-                        )
-                    choices = d.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    piece = (
-                        (delta.get("content") or "")
-                        + (delta.get("reasoning_content") or "")
-                    )
-                    if piece:
-                        if first_tok is None:
-                            first_tok = time.monotonic()
-                        n_deltas += 1
-                        text_parts.append(piece)
+            ) as resp,
+        ):
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                chunk = line[6:]
+                if chunk.strip() == "[DONE]":
+                    break
+                try:
+                    d = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+                usage = d.get("usage")
+                if isinstance(usage, dict):
+                    usage_completion = usage.get("completion_tokens") or usage_completion
+                choices = d.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                piece = (delta.get("content") or "") + (delta.get("reasoning_content") or "")
+                if piece:
+                    if first_tok is None:
+                        first_tok = time.monotonic()
+                    n_deltas += 1
+                    text_parts.append(piece)
     except Exception as exc:  # network / HTTP / protocol errors
         err = f"{type(exc).__name__}: {exc}"[:300]
 
@@ -144,11 +143,15 @@ def _record(db: Any, kind: str, model: str, probe: dict) -> None:
     from orivellum.capabilities.llm import record_llm_call
 
     record_llm_call(
-        db, purpose=f"bench.{kind}", model=model,
+        db,
+        purpose=f"bench.{kind}",
+        model=model,
         latency_ms=int(probe["total_ms"]),
         completion_tokens=probe.get("n_tokens"),
-        ok=probe["ok"], error=probe.get("error"),
-        ttft_ms=probe.get("ttft_ms"), tok_per_s=probe.get("tok_per_s"),
+        ok=probe["ok"],
+        error=probe.get("error"),
+        ttft_ms=probe.get("ttft_ms"),
+        tok_per_s=probe.get("tok_per_s"),
         streamed=True,
     )
 
@@ -156,6 +159,7 @@ def _record(db: Any, kind: str, model: str, probe: dict) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 # Experiments
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def run_ttft_sweep(
     cfg: Any,
@@ -170,18 +174,21 @@ def run_ttft_sweep(
     points = []
     for size in sizes_chars:
         probe = stream_probe(
-            base_url, model,
+            base_url,
+            model,
             _prompt_of_chars(size, "What does the certifier verify? One sentence."),
             max_tokens=32,
         )
         _record(db, "ttft", model, probe)
-        points.append({
-            "prompt_chars": size,
-            "ttft_ms": probe["ttft_ms"],
-            "tok_per_s": probe["tok_per_s"],
-            "ok": probe["ok"],
-            "error": probe["error"],
-        })
+        points.append(
+            {
+                "prompt_chars": size,
+                "ttft_ms": probe["ttft_ms"],
+                "tok_per_s": probe["tok_per_s"],
+                "ok": probe["ok"],
+                "error": probe["error"],
+            }
+        )
         if not probe["ok"]:
             break  # server unreachable — no point hammering larger sizes
     summary = {
@@ -207,15 +214,19 @@ def run_generation_bench(
     probes = []
     for i in range(rounds):
         probe = stream_probe(
-            base_url, model,
-            [{"role": "user",
-              "content": "Write a plain, factual paragraph describing how a "
-                         "public library catalogs new arrivals. No lists."}],
+            base_url,
+            model,
+            [
+                {
+                    "role": "user",
+                    "content": "Write a plain, factual paragraph describing how a "
+                    "public library catalogs new arrivals. No lists.",
+                }
+            ],
             max_tokens=max_tokens,
         )
         _record(db, "generation", model, probe)
-        probes.append({k: probe[k] for k in
-                       ("ok", "error", "ttft_ms", "tok_per_s", "n_tokens")})
+        probes.append({k: probe[k] for k in ("ok", "error", "ttft_ms", "tok_per_s", "n_tokens")})
         if probe["ok"] and probe["tok_per_s"]:
             rates.append(probe["tok_per_s"])
         if not probe["ok"]:
@@ -248,8 +259,14 @@ def run_cache_probe(
     q2 = "What capacity is checked before the lift? One sentence."
     p1 = stream_probe(base_url, model, _prompt_of_chars(prefix_chars, q1), max_tokens=32)
     _record(db, "cache", model, p1)
-    p2: dict = {"ok": False, "error": "skipped: first probe failed",
-                "ttft_ms": None, "total_ms": 0.0, "n_tokens": None, "tok_per_s": None}
+    p2: dict = {
+        "ok": False,
+        "error": "skipped: first probe failed",
+        "ttft_ms": None,
+        "total_ms": 0.0,
+        "n_tokens": None,
+        "tok_per_s": None,
+    }
     if p1["ok"]:
         p2 = stream_probe(base_url, model, _prompt_of_chars(prefix_chars, q2), max_tokens=32)
         _record(db, "cache", model, p2)
@@ -281,6 +298,7 @@ BENCH_KINDS = {
 # ──────────────────────────────────────────────────────────────────────────────
 # Persistence
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def save_bench_run(db: Any, kind: str, label: str, summary: dict) -> dict:
     """Insert one bench_runs row; returns the stored record."""
@@ -325,6 +343,7 @@ def _run_dict(row) -> dict:
 # Telemetry aggregation (reads llm_calls)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def telemetry_summary(db: Any, *, hours: int = 24, purpose: str | None = None) -> dict:
     """Aggregate llm_calls over a window: counts, latency, TTFT, decode rate.
 
@@ -346,10 +365,16 @@ def telemetry_summary(db: Any, *, hours: int = 24, purpose: str | None = None) -
 
     by_purpose: dict[str, dict] = {}
     for p, latency, ttft, tps, ok in rows:
-        b = by_purpose.setdefault(p or "", {
-            "calls": 0, "errors": 0,
-            "_lat": [], "_ttft": [], "_tps": [],
-        })
+        b = by_purpose.setdefault(
+            p or "",
+            {
+                "calls": 0,
+                "errors": 0,
+                "_lat": [],
+                "_ttft": [],
+                "_tps": [],
+            },
+        )
         b["calls"] += 1
         if not ok:
             b["errors"] += 1

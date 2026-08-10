@@ -32,6 +32,7 @@ Typical integration::
     enhanced = enhance_audio(path, output_dir=tmp_dir)
     # Pass enhanced to Whisper; enhanced == path on failure so safe unconditionally.
 """
+
 from __future__ import annotations
 
 import logging
@@ -54,11 +55,11 @@ logger = logging.getLogger(__name__)
 #   False — attempted and failed (package absent or load error)
 #   tuple — (model, df_state) ready to use
 
-_df_lock:  threading.Lock = threading.Lock()
-_df_model: object          = None
-_last_error: str | None    = None   # why the last in-process probe failed
+_df_lock: threading.Lock = threading.Lock()
+_df_model: object = None
+_last_error: str | None = None  # why the last in-process probe failed
 
-_NATIVE_SR = 48_000   # DeepFilterNet3 native sample rate (full-band)
+_NATIVE_SR = 48_000  # DeepFilterNet3 native sample rate (full-band)
 
 # ── Sidecar mode (uv-managed Python 3.11 helper environment) ─────────────────
 # Pinned versions verified working together:
@@ -72,8 +73,8 @@ _SIDECAR_WITH = (
     "torchaudio==2.6.0",
     "soundfile",
 )
-_PROBE_TIMEOUT_S   = 1200   # first probe downloads ~300 MB
-_ENHANCE_TIMEOUT_S = 900    # generous — DFN3 runs ~0.2× realtime on one core
+_PROBE_TIMEOUT_S = 1200  # first probe downloads ~300 MB
+_ENHANCE_TIMEOUT_S = 900  # generous — DFN3 runs ~0.2× realtime on one core
 
 # None = untested, True/False = last result. The marker file lets a passing
 # probe survive server restarts without re-spawning uv on every settings GET.
@@ -83,14 +84,14 @@ _ENHANCE_TIMEOUT_S = 900    # generous — DFN3 runs ~0.2× realtime on one core
 _sidecar_lock = threading.Lock()
 _sidecar_ok: bool | None = None
 _sidecar_error: str | None = None
-_setup_running: bool = False   # forced setup subprocess in flight
-_setup_pending: bool = False   # setup submitted to the executor, not started yet
+_setup_running: bool = False  # forced setup subprocess in flight
+_setup_pending: bool = False  # setup submitted to the executor, not started yet
 # Live progress of the in-flight setup, parsed from uv's streamed output.
 # None when no setup is running.  Guarded by _sidecar_lock.
 _setup_progress: dict | None = None
 
 INSTALL_HINT = (
-    "No install needed — click \"Check again\" and DeepFilterNet3 is set up "
+    'No install needed — click "Check again" and DeepFilterNet3 is set up '
     "automatically (first time downloads ~300 MB, may take a few minutes)."
 )
 
@@ -181,7 +182,8 @@ def _apply_setup_line(line: str, prog: dict) -> None:
         size_txt = ""
         if m.group(2):
             prog["total_mb"] = round(
-                prog.get("total_mb", 0.0) + float(m.group(2)) * _SIZE_TO_MB[m.group(3)], 1)
+                prog.get("total_mb", 0.0) + float(m.group(2)) * _SIZE_TO_MB[m.group(3)], 1
+            )
             size_txt = f" ({m.group(2)} {m.group(3)})"
         prog["detail"] = f"Downloading {m.group(1)}{size_txt}"
         return
@@ -238,12 +240,15 @@ def _kill_setup_tree(proc: subprocess.Popen) -> None:
         try:
             subprocess.run(
                 ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                capture_output=True, timeout=30, creationflags=_CREATIONFLAGS,
+                capture_output=True,
+                timeout=30,
+                creationflags=_CREATIONFLAGS,
             )
         except (OSError, subprocess.TimeoutExpired):
             pass
     else:
         import signal
+
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (OSError, ProcessLookupError):
@@ -268,9 +273,15 @@ def _run_setup(cmd: list[str]) -> tuple[bool, str | None]:
     group_kw: dict = {} if sys.platform == "win32" else {"start_new_session": True}
     try:
         proc = subprocess.Popen(
-            cmd, env=_sidecar_env(), stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-            errors="replace", creationflags=_CREATIONFLAGS, **group_kw,
+            cmd,
+            env=_sidecar_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=_CREATIONFLAGS,
+            **group_kw,
         )
     except OSError as exc:
         return False, f"could not launch uv: {exc}"
@@ -344,7 +355,7 @@ def _sidecar_probe(force: bool) -> bool:
             # Untested and not forced: leave as unknown-unavailable.
             if _sidecar_ok is None:
                 _sidecar_error = (
-                    "Not checked yet — click \"Check again\" to set up "
+                    'Not checked yet — click "Check again" to set up '
                     "automatically (first time downloads ~300 MB)."
                 )
             return False
@@ -365,8 +376,8 @@ def _sidecar_probe(force: bool) -> bool:
 
     # ── subprocess runs WITHOUT the lock ────────────────────────────────────
     logger.info(
-        "Probing DeepFilterNet3 sidecar (Python %s via uv — first run may "
-        "download ~300 MB)…", _SIDECAR_PYTHON,
+        "Probing DeepFilterNet3 sidecar (Python %s via uv — first run may download ~300 MB)…",
+        _SIDECAR_PYTHON,
     )
     _progress_begin()
     ok = False
@@ -404,6 +415,7 @@ def _get_df_model():
             return None if _df_model is False else _df_model
         try:
             from df import init_df  # type: ignore[import]
+
             logger.info("Loading DeepFilterNet3 model (first call — may download ~7 MB)…")
             # init_df() returns 3 values on 0.5.6 and 4 on 0.5.7+ — take the
             # first two (model, df_state) and ignore the rest.
@@ -448,6 +460,7 @@ def probe(force: bool = False) -> dict:
                 _df_model = None
         # Pick up packages installed after interpreter start
         import importlib
+
         importlib.invalidate_caches()
 
     if _get_df_model() is not None:
@@ -501,8 +514,7 @@ def start_setup() -> dict:
     # worker start still sees setting_up=True.
     with _sidecar_lock:
         _setup_pending = True
-    executor.submit_bg(probe, True, kind="dfn3-setup",
-                       label="DeepFilterNet3 sidecar setup")
+    executor.submit_bg(probe, True, kind="dfn3-setup", label="DeepFilterNet3 sidecar setup")
     return probe(force=False)
 
 
@@ -514,23 +526,29 @@ def _enhance_via_sidecar(path: Path, out_path: Path) -> Path:
         return path
     try:
         proc = subprocess.run(
-            cmd, env=_sidecar_env(), capture_output=True, text=True,
-            timeout=_ENHANCE_TIMEOUT_S, creationflags=_CREATIONFLAGS,
+            cmd,
+            env=_sidecar_env(),
+            capture_output=True,
+            text=True,
+            timeout=_ENHANCE_TIMEOUT_S,
+            creationflags=_CREATIONFLAGS,
         )
     except subprocess.TimeoutExpired:
         # A timeout doesn't prove the helper is broken (could be a very long
         # recording) — keep availability, skip enhancement for this file.
         logger.warning(
             "DeepFilterNet3 sidecar timed out for %s after %ss — using original audio",
-            path.name, _ENHANCE_TIMEOUT_S,
+            path.name,
+            _ENHANCE_TIMEOUT_S,
         )
         return path
     except OSError as exc:
         _invalidate_sidecar(f"helper could not be launched: {exc}")
         logger.warning(
             "DeepFilterNet3 sidecar failed for %s: %s — using original audio "
-            "(marked unavailable; use \"Check again\" to re-set-up)",
-            path.name, exc,
+            '(marked unavailable; use "Check again" to re-set-up)',
+            path.name,
+            exc,
         )
         return path
     if proc.returncode != 0 or not out_path.exists():
@@ -539,8 +557,9 @@ def _enhance_via_sidecar(path: Path, out_path: Path) -> Path:
         _invalidate_sidecar(f"helper run failed: {reason}")
         logger.warning(
             "DeepFilterNet3 sidecar failed for %s: %s — using original audio "
-            "(marked unavailable; use \"Check again\" to re-set-up)",
-            path.name, reason,
+            '(marked unavailable; use "Check again" to re-set-up)',
+            path.name,
+            reason,
         )
         return path
     logger.info("DeepFilterNet3 enhanced %s → %s (sidecar)", path.name, out_path.name)
@@ -565,7 +584,7 @@ def enhance_audio(path: Path, output_dir: Path | None = None) -> Path:
     Note: Whisper / faster-whisper happily resamples from 48 kHz to 16 kHz
     internally, so no additional resampling step is needed after enhancement.
     """
-    out_dir  = output_dir if output_dir is not None else path.parent
+    out_dir = output_dir if output_dir is not None else path.parent
     out_path = Path(out_dir) / f"{path.stem}_dfn3.wav"
 
     pair = _get_df_model()
@@ -598,13 +617,16 @@ def enhance_audio(path: Path, output_dir: Path | None = None) -> Path:
 
         logger.info(
             "DeepFilterNet3 enhanced %s → %s (%.1f s audio)",
-            path.name, out_path.name, enhanced.shape[-1] / _NATIVE_SR,
+            path.name,
+            out_path.name,
+            enhanced.shape[-1] / _NATIVE_SR,
         )
         return out_path
 
     except Exception as exc:
         logger.warning(
             "DeepFilterNet3 enhancement failed for %s: %s — using original audio",
-            path.name, exc,
+            path.name,
+            exc,
         )
         return path

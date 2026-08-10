@@ -14,6 +14,7 @@ Gap categories (ranked high → low within each type):
   duplicate_research  — near-duplicate knowledge-item pairs (Jaccard ≥ 0.8)
   no_structure        — no chapter structure at all when docs do exist
 """
+
 from __future__ import annotations
 
 import datetime
@@ -26,11 +27,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MIN_ITEMS_PER_CHAPTER = 3    # below this is "weak coverage"
-_DUPLICATE_THRESHOLD   = 0.80  # Jaccard similarity threshold
-_DUP_SAMPLE_LIMIT      = 150   # max knowledge items to compare pairwise
-_DUP_PAIR_CAP          = 5     # stop after finding this many duplicate pairs
-_STALE_DAYS            = 365   # days before a source is considered stale
+_MIN_ITEMS_PER_CHAPTER = 3  # below this is "weak coverage"
+_DUPLICATE_THRESHOLD = 0.80  # Jaccard similarity threshold
+_DUP_SAMPLE_LIMIT = 150  # max knowledge items to compare pairwise
+_DUP_PAIR_CAP = 5  # stop after finding this many duplicate pairs
+_STALE_DAYS = 365  # days before a source is considered stale
 
 
 @dataclass
@@ -47,7 +48,7 @@ class GapReport:
     work_id: str
     gaps: list[Gap]
     suggested_queries: list[str]
-    coverage_pct: int    # 0-100 — chapters with sufficient coverage
+    coverage_pct: int  # 0-100 — chapters with sufficient coverage
     total_chapters: int
     evaluated_at: str
 
@@ -66,12 +67,11 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
     # ── Gather all data in one lock acquisition ────────────────────────────────
     with db._lock:
         doc_rows = db._conn.execute(
-            "SELECT id, title, created_at FROM documents "
-            "WHERE work_id=? AND readiness='ready'",
+            "SELECT id, title, created_at FROM documents WHERE work_id=? AND readiness='ready'",
             (work_id,),
         ).fetchall()
 
-        doc_ids    = [r["id"] for r in doc_rows]
+        doc_ids = [r["id"] for r in doc_rows]
         doc_titles = {r["id"]: r["title"] for r in doc_rows}
 
         chapters: list[dict] = []
@@ -93,8 +93,7 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
 
         # Missing sources — knowledge items with no source doc
         n_missing_src = db._conn.execute(
-            "SELECT COUNT(*) AS n FROM knowledge "
-            "WHERE work_id=? AND source_doc_id IS NULL",
+            "SELECT COUNT(*) AS n FROM knowledge WHERE work_id=? AND source_doc_id IS NULL",
             (work_id,),
         ).fetchone()["n"]
 
@@ -104,9 +103,7 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
                 "SELECT COUNT(*) AS n FROM knowledge k "
                 "WHERE k.work_id=? "
                 "  AND k.source_doc_id IS NOT NULL "
-                "  AND k.source_doc_id NOT IN ({})".format(
-                    ",".join("?" * len(doc_ids))
-                ),
+                "  AND k.source_doc_id NOT IN ({})".format(",".join("?" * len(doc_ids))),
                 (work_id, *doc_ids),
             ).fetchone()["n"]
         else:
@@ -119,8 +116,7 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
 
         # Sample for duplicate detection (outside-lock computation below)
         kn_sample = db._conn.execute(
-            "SELECT id, text FROM knowledge "
-            "WHERE work_id=? AND LENGTH(text) > 20 LIMIT ?",
+            "SELECT id, text FROM knowledge WHERE work_id=? AND LENGTH(text) > 20 LIMIT ?",
             (work_id, _DUP_SAMPLE_LIMIT),
         ).fetchall()
 
@@ -133,12 +129,10 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
 
     # Stale-source check
     cutoff_date = (
-        datetime.datetime.now(datetime.UTC)
-        - datetime.timedelta(days=_STALE_DAYS)
+        datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=_STALE_DAYS)
     ).isoformat()[:10]
     stale_docs = [
-        r for r in doc_rows
-        if r["created_at"] and str(r["created_at"])[:10] < cutoff_date
+        r for r in doc_rows if r["created_at"] and str(r["created_at"])[:10] < cutoff_date
     ]
 
     # Duplicate-research detection (pairwise Jaccard on text sample)
@@ -163,131 +157,147 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
     for doc_id in doc_ids:
         if doc_id not in docs_with_chapters:
             title = doc_titles.get(doc_id, doc_id[:8])
-            gaps.append(Gap(
-                kind="undocumented_doc",
-                title=f'No structure detected in "{title}"',
-                description=(
-                    f'The document "{title}" has been extracted but no chapter or '
-                    "section headings were found. Consider adding headings to improve "
-                    "structure, or check if the extraction captured the right text."
-                ),
-                severity="medium",
-                metadata={"doc_id": doc_id, "doc_title": title},
-            ))
+            gaps.append(
+                Gap(
+                    kind="undocumented_doc",
+                    title=f'No structure detected in "{title}"',
+                    description=(
+                        f'The document "{title}" has been extracted but no chapter or '
+                        "section headings were found. Consider adding headings to improve "
+                        "structure, or check if the extraction captured the right text."
+                    ),
+                    severity="medium",
+                    metadata={"doc_id": doc_id, "doc_title": title},
+                )
+            )
 
     # 2. Chapters with zero or thin knowledge coverage
     uncovered = 0
     weak = 0
     for ch in chapters:
-        doc_id   = ch["source_doc_id"]
+        doc_id = ch["source_doc_id"]
         kn_count = kn_by_doc.get(doc_id, 0)
         if kn_count == 0:
             uncovered += 1
-            gaps.append(Gap(
-                kind="uncovered_chapter",
-                title=f"No research for \"{ch['title']}\"",
-                description=(
-                    f"The chapter \"{ch['title']}\" has no knowledge items linked to "
-                    "its source document. Run extraction or add notes to fill this gap."
-                ),
-                severity="high",
-                metadata={"chapter_title": ch["title"], "doc_id": doc_id},
-            ))
+            gaps.append(
+                Gap(
+                    kind="uncovered_chapter",
+                    title=f'No research for "{ch["title"]}"',
+                    description=(
+                        f'The chapter "{ch["title"]}" has no knowledge items linked to '
+                        "its source document. Run extraction or add notes to fill this gap."
+                    ),
+                    severity="high",
+                    metadata={"chapter_title": ch["title"], "doc_id": doc_id},
+                )
+            )
         elif kn_count < _MIN_ITEMS_PER_CHAPTER:
             weak += 1
-            gaps.append(Gap(
-                kind="weak_coverage",
-                title=f"Thin coverage for \"{ch['title']}\"",
-                description=(
-                    f"Only {kn_count} knowledge item(s) for \"{ch['title']}\". "
-                    f"Aim for at least {_MIN_ITEMS_PER_CHAPTER} to consider it well covered."
-                ),
-                severity="low",
-                metadata={"chapter_title": ch["title"], "kn_count": kn_count, "doc_id": doc_id},
-            ))
+            gaps.append(
+                Gap(
+                    kind="weak_coverage",
+                    title=f'Thin coverage for "{ch["title"]}"',
+                    description=(
+                        f'Only {kn_count} knowledge item(s) for "{ch["title"]}". '
+                        f"Aim for at least {_MIN_ITEMS_PER_CHAPTER} to consider it well covered."
+                    ),
+                    severity="low",
+                    metadata={"chapter_title": ch["title"], "kn_count": kn_count, "doc_id": doc_id},
+                )
+            )
 
     # 3. No chapter structure at all when docs exist
     total = len(chapters)
     if total == 0 and doc_ids:
-        gaps.append(Gap(
-            kind="no_structure",
-            title="No chapter structure found in this Work",
-            description=(
-                "None of the documents in this Work have extractable section headings. "
-                "Re-extract documents or upload files with clear headings (DOCX, Markdown) "
-                "to enable gap analysis and completeness scoring."
-            ),
-            severity="high",
-            metadata={},
-        ))
+        gaps.append(
+            Gap(
+                kind="no_structure",
+                title="No chapter structure found in this Work",
+                description=(
+                    "None of the documents in this Work have extractable section headings. "
+                    "Re-extract documents or upload files with clear headings (DOCX, Markdown) "
+                    "to enable gap analysis and completeness scoring."
+                ),
+                severity="high",
+                metadata={},
+            )
+        )
 
     # 4. Knowledge items with no source document (missing citation)
     if n_missing_src > 0:
-        s  = "s" if n_missing_src != 1 else ""
+        s = "s" if n_missing_src != 1 else ""
         are = "are" if n_missing_src > 1 else "is"
-        gaps.append(Gap(
-            kind="missing_sources",
-            title=f"{n_missing_src} knowledge item{s} without a source document",
-            description=(
-                f"{n_missing_src} knowledge item{s} {are} not linked to any source document. "
-                "These may be AI-generated facts with no citation. Review them, link to "
-                "source documents, or remove unsupported claims."
-            ),
-            severity="medium",
-            metadata={"count": n_missing_src},
-        ))
+        gaps.append(
+            Gap(
+                kind="missing_sources",
+                title=f"{n_missing_src} knowledge item{s} without a source document",
+                description=(
+                    f"{n_missing_src} knowledge item{s} {are} not linked to any source document. "
+                    "These may be AI-generated facts with no citation. Review them, link to "
+                    "source documents, or remove unsupported claims."
+                ),
+                severity="medium",
+                metadata={"count": n_missing_src},
+            )
+        )
 
     # 5. Orphaned knowledge items (source doc no longer in this work)
     if n_orphaned > 0:
-        s   = "s" if n_orphaned != 1 else ""
+        s = "s" if n_orphaned != 1 else ""
         ref = "reference" if n_orphaned == 1 else "reference"
-        gaps.append(Gap(
-            kind="orphaned_research",
-            title=f"{n_orphaned} knowledge item{s} from unlinked documents",
-            description=(
-                f"{n_orphaned} knowledge item{s} {ref} a source document no longer linked "
-                "to this Work. They may be stale. Consider relinking the source documents "
-                "or removing the orphaned items."
-            ),
-            severity="low",
-            metadata={"count": n_orphaned},
-        ))
+        gaps.append(
+            Gap(
+                kind="orphaned_research",
+                title=f"{n_orphaned} knowledge item{s} from unlinked documents",
+                description=(
+                    f"{n_orphaned} knowledge item{s} {ref} a source document no longer linked "
+                    "to this Work. They may be stale. Consider relinking the source documents "
+                    "or removing the orphaned items."
+                ),
+                severity="low",
+                metadata={"count": n_orphaned},
+            )
+        )
 
     # 6. Stale source documents (older than _STALE_DAYS days)
     if stale_docs:
         n = len(stale_docs)
-        s   = "s" if n != 1 else ""
+        s = "s" if n != 1 else ""
         were = "were" if n > 1 else "was"
-        gaps.append(Gap(
-            kind="stale_source",
-            title=f"{n} source document{s} older than one year",
-            description=(
-                f"{n} document{s} {were} imported more than a year ago. "
-                "Consider checking for newer editions, updated research, or "
-                "more recent primary sources."
-            ),
-            severity="low",
-            metadata={"count": n, "doc_ids": [r["id"] for r in stale_docs[:5]]},
-        ))
+        gaps.append(
+            Gap(
+                kind="stale_source",
+                title=f"{n} source document{s} older than one year",
+                description=(
+                    f"{n} document{s} {were} imported more than a year ago. "
+                    "Consider checking for newer editions, updated research, or "
+                    "more recent primary sources."
+                ),
+                severity="low",
+                metadata={"count": n, "doc_ids": [r["id"] for r in stale_docs[:5]]},
+            )
+        )
 
     # 7. Near-duplicate knowledge items
     if dup_pairs > 0:
         s = "s" if dup_pairs != 1 else ""
-        gaps.append(Gap(
-            kind="duplicate_research",
-            title="Near-duplicate knowledge items detected",
-            description=(
-                f"Found {dup_pairs} pair{s} of knowledge items with highly similar text. "
-                "Duplicates inflate research metrics and reduce clarity. "
-                "Review and merge or remove redundant items."
-            ),
-            severity="medium" if dup_pairs > 2 else "low",
-            metadata={"duplicate_pairs": dup_pairs},
-        ))
+        gaps.append(
+            Gap(
+                kind="duplicate_research",
+                title="Near-duplicate knowledge items detected",
+                description=(
+                    f"Found {dup_pairs} pair{s} of knowledge items with highly similar text. "
+                    "Duplicates inflate research metrics and reduce clarity. "
+                    "Review and merge or remove redundant items."
+                ),
+                severity="medium" if dup_pairs > 2 else "low",
+                metadata={"duplicate_pairs": dup_pairs},
+            )
+        )
 
     # ── Coverage % and query suggestions ──────────────────────────────────────
 
-    covered     = max(0, total - uncovered - weak)
+    covered = max(0, total - uncovered - weak)
     coverage_pct = round(covered / total * 100) if total > 0 else 0
 
     suggestions: list[str] = []

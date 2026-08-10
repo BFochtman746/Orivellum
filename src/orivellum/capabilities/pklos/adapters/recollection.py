@@ -11,6 +11,7 @@ This adapter:
 
 Authority: A7 — User recollection / conversational assertion
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,12 +24,26 @@ logger = logging.getLogger("orivellum.pklos.adapters.recollection")
 # Predicates this adapter can contribute A7 evidence for
 # (any user-assertable hardware/system fact)
 _CAPABILITIES: list[str] = [
-    "ram_gb", "vram_gb", "cpu_model", "cpu_cores", "cpu_threads",
-    "gpu_model", "storage_total_tb", "storage_total_gb",
-    "os_name", "os_version", "os_build",
-    "installed_models", "display_resolution", "display_refresh_hz",
-    "motherboard_model", "psu_watts", "network_adapter",
-    "installed_software", "programming_language", "framework_version",
+    "ram_gb",
+    "vram_gb",
+    "cpu_model",
+    "cpu_cores",
+    "cpu_threads",
+    "gpu_model",
+    "storage_total_tb",
+    "storage_total_gb",
+    "os_name",
+    "os_version",
+    "os_build",
+    "installed_models",
+    "display_resolution",
+    "display_refresh_hz",
+    "motherboard_model",
+    "psu_watts",
+    "network_adapter",
+    "installed_software",
+    "programming_language",
+    "framework_version",
     # Generic: any predicate the user asserts
     "*",
 ]
@@ -80,7 +95,8 @@ class RecollectionAdapter(AdapterBase):
             # Filter to this predicate with usable statuses
             usable_statuses = {"USER_ASSERTED", "VERIFIED", "PARTIALLY_VERIFIED", "CURRENT"}
             matching = [
-                c for c in claims
+                c
+                for c in claims
                 if c.get("predicate") == predicate
                 and c.get("status") in usable_statuses
                 and c.get("authority_tier") != "A8"
@@ -116,7 +132,9 @@ class RecollectionAdapter(AdapterBase):
         Returns the claim_id.
         """
         return self._db.upsert_claim(
-            subject, predicate, raw_value,
+            subject,
+            predicate,
+            raw_value,
             authority_tier="A7",
             conv_id=conv_id,
             evidence_text=evidence_text,

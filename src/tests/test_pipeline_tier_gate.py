@@ -6,6 +6,7 @@ Verifies two things without touching the real database or filesystem:
   2. Ingesting an Ash_and_Silence_Chapter_* archive → exactly one Work proposed
      for review (the CANON archive gate is open).
 """
+
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from orivellum.capabilities.classify import EXCLUDED_FROM_WORKS, Tier, classify_object
 
 # ── Tests that don't need a live DB ────────────────────────────────────────────
+
 
 def test_artifact_archive_never_proposes_work():
     """classify_object on a MIGRATION_BATCH name → ARTIFACT (excluded from Works)."""
@@ -40,8 +42,7 @@ def test_artifact_children_are_classified_excluded():
     for name, path in migration_children:
         clf = classify_object(name, source_path=path)
         assert clf.tier in EXCLUDED_FROM_WORKS, (
-            f"{name!r}: tier {clf.tier!r} is NOT excluded from Works — "
-            "harvest guard would fail"
+            f"{name!r}: tier {clf.tier!r} is NOT excluded from Works — harvest guard would fail"
         )
 
 

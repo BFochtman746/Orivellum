@@ -7,6 +7,7 @@ markitdown fallback for everything else.
 Returns an ExtractionResult with full text, per-page segments, and
 file metadata needed for chunking and knowledge harvest.
 """
+
 from __future__ import annotations
 
 import csv
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PageSegment:
     """A logical page or section of text."""
+
     page: int
     text: str
     heading: str = ""
@@ -44,10 +46,12 @@ class ExtractionResult:
 # PDF
 # ---------------------------------------------------------------------------
 
+
 def _extract_pdf(path: Path, db=None) -> ExtractionResult:
     # --- pdfplumber (primary: best for text-layer PDFs) ---
     try:
         import pdfplumber
+
         pages: list[PageSegment] = []
         headings: list[str] = []
         with pdfplumber.open(path) as pdf:
@@ -77,6 +81,7 @@ def _extract_pdf(path: Path, db=None) -> ExtractionResult:
     # --- pypdf (secondary: handles more edge cases / newer PDFs) ---
     try:
         import pypdf
+
         reader = pypdf.PdfReader(str(path))
         pages2: list[PageSegment] = []
         headings2: list[str] = []
@@ -116,6 +121,7 @@ def _extract_pdf(path: Path, db=None) -> ExtractionResult:
 # DOCX
 # ---------------------------------------------------------------------------
 
+
 def _extract_docx(path: Path) -> ExtractionResult:
     try:
         import docx as _docx  # python-docx
@@ -129,6 +135,7 @@ def _extract_docx(path: Path) -> ExtractionResult:
 
         # Preserve document order by iterating the XML body children
         from docx.oxml.ns import qn  # type: ignore
+
         body = doc.element.body
         for child in body.iterchildren():
             tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
@@ -169,7 +176,7 @@ def _extract_docx(path: Path) -> ExtractionResult:
     # Group into ~40-block pages for the chunker
     chunk_size = 40
     pages = [
-        PageSegment(page=i + 1, text="\n".join(blocks[i * chunk_size:(i + 1) * chunk_size]))
+        PageSegment(page=i + 1, text="\n".join(blocks[i * chunk_size : (i + 1) * chunk_size]))
         for i in range(max(1, (len(blocks) + chunk_size - 1) // chunk_size))
     ]
     return ExtractionResult(
@@ -184,6 +191,7 @@ def _extract_docx(path: Path) -> ExtractionResult:
 # ---------------------------------------------------------------------------
 # Excel / CSV
 # ---------------------------------------------------------------------------
+
 
 def _extract_excel(path: Path) -> ExtractionResult:
     try:
@@ -270,6 +278,7 @@ def _extract_csv(path: Path) -> ExtractionResult:
 # Plain text / Markdown
 # ---------------------------------------------------------------------------
 
+
 def _extract_text(path: Path, kind: str = "text") -> ExtractionResult:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -281,15 +290,13 @@ def _extract_text(path: Path, kind: str = "text") -> ExtractionResult:
     lines = text.splitlines()
     page_size = 100
     pages = [
-        PageSegment(page=i + 1, text="\n".join(lines[i * page_size:(i + 1) * page_size]))
+        PageSegment(page=i + 1, text="\n".join(lines[i * page_size : (i + 1) * page_size]))
         for i in range(max(1, (len(lines) + page_size - 1) // page_size))
     ]
 
     # Extract markdown headings
     headings = [
-        line.lstrip("#").strip()
-        for line in lines
-        if line.startswith("#") and len(line) < 120
+        line.lstrip("#").strip() for line in lines if line.startswith("#") and len(line) < 120
     ]
 
     return ExtractionResult(
@@ -323,10 +330,12 @@ def _vlm_pdf_ocr(path: Path, db=None) -> ExtractionResult | None:
     """
     try:
         from orivellum.configuration.config import load_config
+
         cfg = load_config()
         _vision_model: str = ""
         try:
             from orivellum.api._deps import get_db as _get_db
+
             _db = _get_db()
             _vision_model = _db.get_setting("vision_model", "") or cfg.serving.vision_model
         except Exception:
@@ -361,14 +370,18 @@ def _vlm_pdf_ocr(path: Path, db=None) -> ExtractionResult | None:
                 b64 = base64.b64encode(buf.getvalue()).decode()
 
                 result = llm_call(
-                    [{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": _VLM_OCR_PROMPT},
-                            {"type": "image_url",
-                             "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                        ],
-                    }],
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": _VLM_OCR_PROMPT},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                                },
+                            ],
+                        }
+                    ],
                     base_url=cfg.serving.base_url,
                     model=_vision_model,
                     timeout=cfg.serving.extraction_timeout_sec,
@@ -393,7 +406,10 @@ def _vlm_pdf_ocr(path: Path, db=None) -> ExtractionResult | None:
         full = "\n\n".join(s.text for s in page_segs)
         logger.info(
             "VLM PDF OCR: %s — %d pages, %d words (model=%s)",
-            path.name, len(page_segs), len(full.split()), _vision_model,
+            path.name,
+            len(page_segs),
+            len(full.split()),
+            _vision_model,
         )
         return ExtractionResult(
             kind="pdf",
@@ -424,12 +440,15 @@ def _probe_tesseract() -> None:
         return  # already on PATH
 
     import sys as _sys
+
     if _sys.platform != "win32":
         # On Unix/NixOS ask the login shell — it has a broader PATH
         try:
             result = _sp.run(
                 ["bash", "-lc", "which tesseract"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             candidate = result.stdout.strip()
             if candidate and Path(candidate).is_file():
@@ -463,12 +482,14 @@ def _extract_image_vision(path: Path, db=None) -> ExtractionResult | None:
     """
     try:
         from orivellum.configuration.config import load_config
+
         cfg = load_config()
         # Resolve vision model: DB setting overrides YAML config.
         # Import here (lazy) to avoid circular import at module load.
         _vision_model: str = ""
         try:
             from orivellum.api._deps import get_db as _get_db
+
             _db = _get_db()
             _vision_model = _db.get_setting("vision_model", "") or cfg.serving.vision_model
         except Exception:
@@ -491,29 +512,32 @@ def _extract_image_vision(path: Path, db=None) -> ExtractionResult | None:
         b64 = base64.b64encode(buf.getvalue()).decode()
 
         result = llm_call(
-            [{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Describe everything in this image in detail. "
-                            "Include all visible text, numbers, labels, "
-                            "diagrams, charts, tables, and visual elements. "
-                            "Be thorough — this description will be used for "
-                            "search and knowledge extraction."
-                        ),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                    },
-                ],
-            }],
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Describe everything in this image in detail. "
+                                "Include all visible text, numbers, labels, "
+                                "diagrams, charts, tables, and visual elements. "
+                                "Be thorough — this description will be used for "
+                                "search and knowledge extraction."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
             base_url=cfg.serving.base_url,
             model=_vision_model,
             timeout=cfg.serving.extraction_timeout_sec,
-            purpose="extraction.llm", db=db,
+            purpose="extraction.llm",
+            db=db,
         )
         text = result.text
         if text and text.strip():
@@ -539,6 +563,7 @@ def _extract_image(path: Path, db=None) -> ExtractionResult:
     try:
         import pytesseract
         from PIL import Image
+
         _probe_tesseract()
         img = Image.open(path)
         # Pre-process: convert to RGB so tesseract handles all modes
@@ -571,9 +596,11 @@ def _extract_image(path: Path, db=None) -> ExtractionResult:
 # Markitdown fallback
 # ---------------------------------------------------------------------------
 
+
 def _extract_fallback(path: Path, kind: str) -> ExtractionResult:
     try:
         from markitdown import MarkItDown
+
         md = MarkItDown()
         result = md.convert(str(path))
         text = result.text_content or ""
@@ -591,6 +618,7 @@ def _extract_fallback(path: Path, kind: str) -> ExtractionResult:
 # ---------------------------------------------------------------------------
 # HTML
 # ---------------------------------------------------------------------------
+
 
 def _extract_html(path: Path) -> ExtractionResult:
     """Strip tags and extract readable text from an HTML file."""
@@ -623,8 +651,10 @@ def _extract_html(path: Path) -> ExtractionResult:
         full_text = " ".join(stripper._parts).strip()
         pages = [PageSegment(page=1, text=full_text)] if full_text else []
         return ExtractionResult(
-            kind="html", full_text=full_text,
-            word_count=len(full_text.split()), pages=pages,
+            kind="html",
+            full_text=full_text,
+            word_count=len(full_text.split()),
+            pages=pages,
         )
     except Exception as exc:
         logger.warning("HTML extraction failed for %s: %s", path.name, exc)
@@ -635,9 +665,11 @@ def _extract_html(path: Path) -> ExtractionResult:
 # JSON
 # ---------------------------------------------------------------------------
 
+
 def _extract_json(path: Path) -> ExtractionResult:
     """Format JSON as indented text for indexing."""
     import json
+
     try:
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
         full_text = json.dumps(data, indent=2, ensure_ascii=False)
@@ -646,14 +678,17 @@ def _extract_json(path: Path) -> ExtractionResult:
         full_text = path.read_text(encoding="utf-8", errors="replace")
     pages = [PageSegment(page=1, text=full_text)] if full_text.strip() else []
     return ExtractionResult(
-        kind="json", full_text=full_text,
-        word_count=len(full_text.split()), pages=pages,
+        kind="json",
+        full_text=full_text,
+        word_count=len(full_text.split()),
+        pages=pages,
     )
 
 
 # ---------------------------------------------------------------------------
 # ZIP archive
 # ---------------------------------------------------------------------------
+
 
 def _extract_zip(path: Path) -> ExtractionResult:
     """Extract text from every supported file inside a ZIP archive.
@@ -672,22 +707,34 @@ def _extract_zip(path: Path) -> ExtractionResult:
 
     # Extension → kind map (subset of _KIND_MAP; resolved at call-time)
     _EXT_KIND = {
-        ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
-        ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
-        ".txt": "text", ".md": "markdown",
-        ".png": "image", ".jpg": "image", ".jpeg": "image",
-        ".html": "html", ".htm": "html",
+        ".pdf": "pdf",
+        ".docx": "docx",
+        ".doc": "docx",
+        ".xlsx": "excel",
+        ".xls": "excel",
+        ".csv": "csv",
+        ".txt": "text",
+        ".md": "markdown",
+        ".png": "image",
+        ".jpg": "image",
+        ".jpeg": "image",
+        ".html": "html",
+        ".htm": "html",
         ".json": "json",
-        ".py": "code", ".js": "code", ".ts": "code",
-        ".pptx": "pptx", ".ppt": "pptx",
-        ".eml": "email", ".msg": "email",
+        ".py": "code",
+        ".js": "code",
+        ".ts": "code",
+        ".pptx": "pptx",
+        ".ppt": "pptx",
+        ".eml": "email",
+        ".msg": "email",
     }
 
     all_text: list[str] = []
     all_pages: list[PageSegment] = []
     all_headings: list[str] = []
     # Collect per-member results for informative error messages
-    member_results: list[dict] = []   # {name, status, reason}
+    member_results: list[dict] = []  # {name, status, reason}
 
     try:
         with zipfile.ZipFile(path, "r") as zf:
@@ -704,8 +751,13 @@ def _extract_zip(path: Path) -> ExtractionResult:
                     ext = Path(name).suffix.lower()
                     kind = _EXT_KIND.get(ext)
                     if not kind:
-                        member_results.append({"name": name, "status": "skipped",
-                                               "reason": f"unsupported type ({ext or 'no extension'})"})
+                        member_results.append(
+                            {
+                                "name": name,
+                                "status": "skipped",
+                                "reason": f"unsupported type ({ext or 'no extension'})",
+                            }
+                        )
                         continue
 
                     # ── Collision-safe extraction: prefix with index ────────────
@@ -715,8 +767,9 @@ def _extract_zip(path: Path) -> ExtractionResult:
                         member_path.write_bytes(zf.read(name))
                     except Exception as exc:
                         logger.warning("ZIP: could not read member %s: %s", name, exc)
-                        member_results.append({"name": name, "status": "error",
-                                               "reason": f"read error: {exc}"})
+                        member_results.append(
+                            {"name": name, "status": "error", "reason": f"read error: {exc}"}
+                        )
                         continue
 
                     handler = _DISPATCH.get(kind, lambda p: _extract_fallback(p, kind))
@@ -724,13 +777,15 @@ def _extract_zip(path: Path) -> ExtractionResult:
                         sub = handler(member_path)  # type: ignore[call-arg]
                     except Exception as exc:
                         logger.warning("ZIP: extraction failed for %s: %s", name, exc)
-                        member_results.append({"name": name, "status": "error",
-                                               "reason": f"extraction error: {exc}"})
+                        member_results.append(
+                            {"name": name, "status": "error", "reason": f"extraction error: {exc}"}
+                        )
                         continue
 
                     if not sub.full_text.strip():
-                        member_results.append({"name": name, "status": "empty",
-                                               "reason": "no readable text found"})
+                        member_results.append(
+                            {"name": name, "status": "empty", "reason": "no readable text found"}
+                        )
                         continue
 
                     header = f"=== {name} ==="
@@ -738,19 +793,25 @@ def _extract_zip(path: Path) -> ExtractionResult:
                     all_headings.append(header)
                     offset = len(all_pages)
                     for seg in sub.pages:
-                        all_pages.append(PageSegment(
-                            page=offset + seg.page, text=seg.text, heading=name,
-                        ))
-                    member_results.append({"name": name, "status": "ok",
-                                           "reason": f"{sub.word_count} words"})
+                        all_pages.append(
+                            PageSegment(
+                                page=offset + seg.page,
+                                text=seg.text,
+                                heading=name,
+                            )
+                        )
+                    member_results.append(
+                        {"name": name, "status": "ok", "reason": f"{sub.word_count} words"}
+                    )
 
     except zipfile.BadZipFile as exc:
         logger.error("Bad ZIP file %s: %s", path.name, exc)
-        return ExtractionResult(kind="zip", full_text="", word_count=0,
-                                meta={"error": f"Invalid ZIP file: {exc}"})
+        return ExtractionResult(
+            kind="zip", full_text="", word_count=0, meta={"error": f"Invalid ZIP file: {exc}"}
+        )
 
     full_text = "\n\n".join(all_text)
-    ok_count   = sum(1 for r in member_results if r["status"] == "ok")
+    ok_count = sum(1 for r in member_results if r["status"] == "ok")
     fail_count = sum(1 for r in member_results if r["status"] in ("error", "empty"))
     skip_count = sum(1 for r in member_results if r["status"] == "skipped")
 
@@ -773,7 +834,9 @@ def _extract_zip(path: Path) -> ExtractionResult:
                     f"supported format. Found: {', '.join(exts) or 'unknown'}"
                 )
             else:
-                lines.append(f"ZIP contains {len(member_results)} file(s); none produced readable text:")
+                lines.append(
+                    f"ZIP contains {len(member_results)} file(s); none produced readable text:"
+                )
                 for r in tried[:8]:
                     lines.append(f"  • {Path(r['name']).name}: {r['reason']}")
                 if len(tried) > 8:
@@ -781,9 +844,11 @@ def _extract_zip(path: Path) -> ExtractionResult:
         meta["user_message"] = " ".join(lines)
 
     return ExtractionResult(
-        kind="zip", full_text=full_text,
+        kind="zip",
+        full_text=full_text,
         word_count=len(full_text.split()),
-        pages=all_pages, headings=all_headings,
+        pages=all_pages,
+        headings=all_headings,
         meta=meta,
     )
 
@@ -804,9 +869,9 @@ def _extract_zip(path: Path) -> ExtractionResult:
 import threading as _threading
 
 _fw_lock = _threading.Lock()
-_fw_instance: object = None    # WhisperModel | False | None
-_fw_loaded_size: str = ""      # model size string for the loaded singleton
-_fw_requested_size: str = ""   # the REQUEST that produced the current state
+_fw_instance: object = None  # WhisperModel | False | None
+_fw_loaded_size: str = ""  # model size string for the loaded singleton
+_fw_requested_size: str = ""  # the REQUEST that produced the current state
 _fw_fallback_reason: str | None = None  # why a smaller model was substituted
 
 # Model sizes that need substantial RAM (weights + CTranslate2 workspace).
@@ -818,8 +883,13 @@ _FW_FALLBACK_SIZE = "base"
 
 # Valid sizes for the runtime setting (UI/API validation).
 FW_ALLOWED_SIZES = (
-    "tiny", "base", "small", "medium",
-    "large-v3", "large-v3-turbo", "distil-large-v3",
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3",
+    "large-v3-turbo",
+    "distil-large-v3",
 )
 
 
@@ -841,6 +911,7 @@ def _fw_effective_size(model_size: str) -> tuple[str, str | None]:
         return model_size, None
     try:
         import psutil  # type: ignore[import]
+
         available = psutil.virtual_memory().available
         if available < _FW_HEAVY_MIN_AVAILABLE_BYTES:
             reason = (
@@ -864,7 +935,11 @@ def _fw_snapshot_for(model_size: str) -> tuple[object, str, str | None] | None:
     requested size.
     """
     inst, loaded, requested, reason = (
-        _fw_instance, _fw_loaded_size, _fw_requested_size, _fw_fallback_reason)
+        _fw_instance,
+        _fw_loaded_size,
+        _fw_requested_size,
+        _fw_fallback_reason,
+    )
     if inst is False and requested == model_size:
         return (False, "", None)  # this exact request already failed
     if inst is not None and inst is not False:
@@ -877,7 +952,9 @@ def _fw_snapshot_for(model_size: str) -> tuple[object, str, str | None] | None:
     return None
 
 
-def _get_faster_whisper_snapshot(model_size: str = "large-v3-turbo") -> tuple[object | None, str, str | None]:
+def _get_faster_whisper_snapshot(
+    model_size: str = "large-v3-turbo",
+) -> tuple[object | None, str, str | None]:
     """Return (model | None, loaded_size, fallback_reason) atomically.
 
     The singleton reloads when a DIFFERENT size is requested (settings change),
@@ -919,7 +996,9 @@ def _get_faster_whisper_snapshot(model_size: str = "large-v3-turbo") -> tuple[ob
             try:
                 logger.info(
                     "Loading faster-whisper model '%s' (int8 — first-run "
-                    "download may take a moment)…", attempt_size)
+                    "download may take a moment)…",
+                    attempt_size,
+                )
                 model = WhisperModel(attempt_size, device="auto", compute_type="int8")
                 if attempt_size == model_size:
                     reason = None
@@ -936,8 +1015,7 @@ def _get_faster_whisper_snapshot(model_size: str = "large-v3-turbo") -> tuple[ob
                 logger.info("faster-whisper model '%s' ready.", attempt_size)
                 return (model, attempt_size, reason)
             except Exception as exc:
-                logger.warning("faster-whisper failed to load model '%s': %s",
-                               attempt_size, exc)
+                logger.warning("faster-whisper failed to load model '%s': %s", attempt_size, exc)
         _fw_loaded_size = ""
         _fw_requested_size = model_size  # remember which REQUEST failed
         _fw_fallback_reason = None
@@ -970,7 +1048,9 @@ _FW_MAX_SEGMENTS_META = 2000
 _FW_MAX_WORDS_META = 6000
 
 
-def _transcribe_faster_whisper(path: Path, model_size: str = "large-v3-turbo") -> ExtractionResult | None:
+def _transcribe_faster_whisper(
+    path: Path, model_size: str = "large-v3-turbo"
+) -> ExtractionResult | None:
     """Transcribe *path* locally using faster-whisper.
 
     Captures per-segment AND per-word timestamps into the result meta
@@ -992,30 +1072,38 @@ def _transcribe_faster_whisper(path: Path, model_size: str = "large-v3-turbo") -
             if seg_text:
                 texts.append(seg_text)
             if len(seg_meta) < _FW_MAX_SEGMENTS_META:
-                seg_meta.append({
-                    "start": round(float(seg.start), 2),
-                    "end": round(float(seg.end), 2),
-                    "text": seg_text,
-                })
-            for w in (seg.words or []):
+                seg_meta.append(
+                    {
+                        "start": round(float(seg.start), 2),
+                        "end": round(float(seg.end), 2),
+                        "text": seg_text,
+                    }
+                )
+            for w in seg.words or []:
                 if len(word_meta) >= _FW_MAX_WORDS_META:
                     words_truncated = True
                     break
-                word_meta.append({
-                    "start": round(float(w.start), 2),
-                    "end": round(float(w.end), 2),
-                    "word": w.word.strip(),
-                })
+                word_meta.append(
+                    {
+                        "start": round(float(w.start), 2),
+                        "end": round(float(w.end), 2),
+                        "word": w.word.strip(),
+                    }
+                )
         text = " ".join(texts).strip()
         if not text:
             logger.info("faster-whisper returned no text for %s", path.name)
             return None
         full = f"[Audio transcript: {path.name}]\n\n{text}"
-        logger.info("faster-whisper transcription OK: %d words from %s (model=%s)",
-                    len(text.split()), path.name, loaded_size or model_size)
+        logger.info(
+            "faster-whisper transcription OK: %d words from %s (model=%s)",
+            len(text.split()),
+            path.name,
+            loaded_size or model_size,
+        )
         meta: dict = {
             "transcription": "faster_whisper",
-            "model_size": loaded_size or model_size,   # what actually ran
+            "model_size": loaded_size or model_size,  # what actually ran
             "model_requested": model_size,
             "source": str(path.name),
             "language": getattr(info, "language", None),
@@ -1043,6 +1131,7 @@ def _transcribe_faster_whisper(path: Path, model_size: str = "large-v3-turbo") -
 # Audio extraction (AI server → faster-whisper → metadata-only)
 # ---------------------------------------------------------------------------
 
+
 def _extract_audio(path: Path, db=None) -> ExtractionResult:
     """Transcribe an audio file.
 
@@ -1065,15 +1154,17 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
         # Fall back to load_config() when called from a standalone script or test.
         try:
             from orivellum.api._deps import get_config as _get_cfg
+
             _cfg_obj = _get_cfg()
-            base_url        = _cfg_obj.serving.base_url.rstrip("/")
-            asr_model       = _cfg_obj.serving.asr_model
+            base_url = _cfg_obj.serving.base_url.rstrip("/")
+            asr_model = _cfg_obj.serving.asr_model
             asr_local_model = getattr(_cfg_obj.serving, "asr_local_model", "large-v3-turbo")
         except Exception:
             from orivellum.configuration.config import load_config as _load_cfg
-            _cfg_obj        = _load_cfg()
-            base_url        = _cfg_obj.serving.base_url.rstrip("/")
-            asr_model       = getattr(_cfg_obj.serving, "asr_model", "whisper-1")
+
+            _cfg_obj = _load_cfg()
+            base_url = _cfg_obj.serving.base_url.rstrip("/")
+            asr_model = getattr(_cfg_obj.serving, "asr_model", "whisper-1")
             asr_local_model = getattr(_cfg_obj.serving, "asr_local_model", "large-v3-turbo")
     except Exception:
         pass
@@ -1089,7 +1180,9 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
             "(`uv add faster-whisper`) for fully offline transcription."
         )
         return ExtractionResult(
-            kind="audio", full_text=text, word_count=len(text.split()),
+            kind="audio",
+            full_text=text,
+            word_count=len(text.split()),
             meta={"transcription": None, "reason": msg},
         )
 
@@ -1099,17 +1192,18 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
     # silently falls back to the original file so transcription always runs.
     import shutil as _sh_enh
     import tempfile as _tf_enh  # noqa: E401
+
     _enh_tmp: str | None = None
     transcribe_path = path
     try:
-        if db is not None and \
-                db.get_setting("audio_enhance_enabled", "false").lower() == "true":
+        if db is not None and db.get_setting("audio_enhance_enabled", "false").lower() == "true":
             from orivellum.capabilities.enhancement import (  # noqa: PLC0415
                 enhance_audio as _enhance_audio,
             )
             from orivellum.capabilities.enhancement import (
                 is_available as _dfn_available,
             )
+
             if _dfn_available():
                 _enh_tmp = _tf_enh.mkdtemp(prefix="orivellum_dfn_")
                 _ep = _enhance_audio(path, output_dir=Path(_enh_tmp))
@@ -1131,6 +1225,7 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                 mime_type = mime_type or "application/octet-stream"
 
                 import uuid as _uuid
+
                 boundary = f"---{_uuid.uuid4().hex}"
                 filename = path.name  # keep original filename in the multipart header
 
@@ -1141,14 +1236,14 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                 body_parts.append(
                     f"--{boundary}\r\n"
                     f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-                    f"Content-Type: {mime_type}\r\n\r\n"
-                    .encode() + file_bytes + b"\r\n"
+                    f"Content-Type: {mime_type}\r\n\r\n".encode()
+                    + file_bytes
+                    + b"\r\n"
                 )
                 body_parts.append(
                     f"--{boundary}\r\n"
                     'Content-Disposition: form-data; name="model"\r\n\r\n'
-                    f"{asr_model}\r\n"
-                    .encode()
+                    f"{asr_model}\r\n".encode()
                 )
                 file_and_model = b"".join(body_parts)
 
@@ -1167,8 +1262,7 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                             "segment\r\n"
                             f"--{boundary}\r\n"
                             'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n'
-                            "word\r\n"
-                            .encode()
+                            "word\r\n".encode()
                         )
                     body = file_and_model + extra + f"--{boundary}--\r\n".encode()
                     req = _urlr.Request(
@@ -1189,21 +1283,29 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                     data = _ai_request(verbose=False)
                 transcript = (data.get("text") or "").strip()
                 if transcript:
-                    logger.info("AI server transcription OK: %d words from %s",
-                                len(transcript.split()), path.name)
-                    meta: dict = {"transcription": "ai_server", "asr_model": asr_model,
-                                  "source": str(path.name),
-                                  "enhanced": transcribe_path != path}
+                    logger.info(
+                        "AI server transcription OK: %d words from %s",
+                        len(transcript.split()),
+                        path.name,
+                    )
+                    meta: dict = {
+                        "transcription": "ai_server",
+                        "asr_model": asr_model,
+                        "source": str(path.name),
+                        "enhanced": transcribe_path != path,
+                    }
                     raw_segs = data.get("segments")
                     if isinstance(raw_segs, list) and raw_segs:
                         segs = []
                         for s in raw_segs[:_FW_MAX_SEGMENTS_META]:
                             try:
-                                segs.append({
-                                    "start": round(float(s.get("start", 0.0)), 2),
-                                    "end": round(float(s.get("end", 0.0)), 2),
-                                    "text": str(s.get("text", "")).strip(),
-                                })
+                                segs.append(
+                                    {
+                                        "start": round(float(s.get("start", 0.0)), 2),
+                                        "end": round(float(s.get("end", 0.0)), 2),
+                                        "text": str(s.get("text", "")).strip(),
+                                    }
+                                )
                             except Exception:
                                 continue
                         if segs:
@@ -1213,11 +1315,13 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                         words = []
                         for w in raw_words[:_FW_MAX_WORDS_META]:
                             try:
-                                words.append({
-                                    "start": round(float(w.get("start", 0.0)), 2),
-                                    "end": round(float(w.get("end", 0.0)), 2),
-                                    "word": str(w.get("word", "")).strip(),
-                                })
+                                words.append(
+                                    {
+                                        "start": round(float(w.get("start", 0.0)), 2),
+                                        "end": round(float(w.get("end", 0.0)), 2),
+                                        "word": str(w.get("word", "")).strip(),
+                                    }
+                                )
                             except Exception:
                                 continue
                         if words:
@@ -1240,8 +1344,11 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                 logger.warning("AI server transcription: empty response for %s", path.name)
             except Exception as exc:
                 ai_server_exc = str(exc)
-                logger.info("AI server transcription unavailable for %s (%s) — trying faster-whisper",
-                            path.name, exc)
+                logger.info(
+                    "AI server transcription unavailable for %s (%s) — trying faster-whisper",
+                    path.name,
+                    exc,
+                )
 
         # ── 2. faster-whisper local ───────────────────────────────────────────
         fw_result = _transcribe_faster_whisper(transcribe_path, asr_local_model)
@@ -1282,10 +1389,10 @@ def _extract_email(path: Path) -> ExtractionResult:
         try:
             raw = path.read_bytes()
             msg = _email_mod.message_from_bytes(raw, policy=_ep.default)
-            subject  = str(msg.get("Subject", "")).strip()
-            from_hdr = str(msg.get("From",    "")).strip()
-            to_hdr   = str(msg.get("To",      "")).strip()
-            date_hdr = str(msg.get("Date",    "")).strip()
+            subject = str(msg.get("Subject", "")).strip()
+            from_hdr = str(msg.get("From", "")).strip()
+            to_hdr = str(msg.get("To", "")).strip()
+            date_hdr = str(msg.get("Date", "")).strip()
 
             body_parts: list[str] = []
             for part in msg.walk():
@@ -1310,12 +1417,17 @@ def _extract_email(path: Path) -> ExtractionResult:
                     except Exception:
                         pass
 
-            header_block = "\n".join(filter(None, [
-                f"Subject: {subject}" if subject else "",
-                f"From: {from_hdr}"   if from_hdr else "",
-                f"To: {to_hdr}"       if to_hdr   else "",
-                f"Date: {date_hdr}"   if date_hdr  else "",
-            ]))
+            header_block = "\n".join(
+                filter(
+                    None,
+                    [
+                        f"Subject: {subject}" if subject else "",
+                        f"From: {from_hdr}" if from_hdr else "",
+                        f"To: {to_hdr}" if to_hdr else "",
+                        f"Date: {date_hdr}" if date_hdr else "",
+                    ],
+                )
+            )
             body_text = "\n\n".join(body_parts).strip()
             full_text = f"{header_block}\n\n{body_text}".strip() if body_text else header_block
             if attachments:
@@ -1327,8 +1439,10 @@ def _extract_email(path: Path) -> ExtractionResult:
                 word_count=len(full_text.split()),
                 pages=[PageSegment(page=1, text=full_text)],
                 meta={
-                    "subject": subject, "from": from_hdr,
-                    "to": to_hdr, "date": date_hdr,
+                    "subject": subject,
+                    "from": from_hdr,
+                    "to": to_hdr,
+                    "date": date_hdr,
                     "attachments": attachments,
                 },
             )
@@ -1340,22 +1454,30 @@ def _extract_email(path: Path) -> ExtractionResult:
     if suffix == ".msg":
         try:
             import extract_msg as _em  # type: ignore[import]
+
             with _em.Message(str(path)) as m:
-                subject  = (m.subject  or "").strip()
-                from_hdr = (m.sender   or "").strip()
-                to_hdr   = (m.to       or "").strip()
-                date_hdr = str(m.date  or "").strip()
-                body_text = (m.body    or "").strip()
-                for att in (m.attachments or []):
-                    name = getattr(att, "longFilename", None) or getattr(att, "shortFilename", "attachment")
+                subject = (m.subject or "").strip()
+                from_hdr = (m.sender or "").strip()
+                to_hdr = (m.to or "").strip()
+                date_hdr = str(m.date or "").strip()
+                body_text = (m.body or "").strip()
+                for att in m.attachments or []:
+                    name = getattr(att, "longFilename", None) or getattr(
+                        att, "shortFilename", "attachment"
+                    )
                     if name:
                         attachments.append(name)
-            header_block = "\n".join(filter(None, [
-                f"Subject: {subject}" if subject else "",
-                f"From: {from_hdr}"   if from_hdr else "",
-                f"To: {to_hdr}"       if to_hdr   else "",
-                f"Date: {date_hdr}"   if date_hdr  else "",
-            ]))
+            header_block = "\n".join(
+                filter(
+                    None,
+                    [
+                        f"Subject: {subject}" if subject else "",
+                        f"From: {from_hdr}" if from_hdr else "",
+                        f"To: {to_hdr}" if to_hdr else "",
+                        f"Date: {date_hdr}" if date_hdr else "",
+                    ],
+                )
+            )
             full_text = f"{header_block}\n\n{body_text}".strip() if body_text else header_block
             if attachments:
                 full_text += f"\n\n[Attachments: {', '.join(attachments)}]"
@@ -1365,8 +1487,10 @@ def _extract_email(path: Path) -> ExtractionResult:
                 word_count=len(full_text.split()),
                 pages=[PageSegment(page=1, text=full_text)],
                 meta={
-                    "subject": subject, "from": from_hdr,
-                    "to": to_hdr, "date": date_hdr,
+                    "subject": subject,
+                    "from": from_hdr,
+                    "to": to_hdr,
+                    "date": date_hdr,
                     "attachments": attachments,
                 },
             )
@@ -1381,7 +1505,8 @@ def _extract_email(path: Path) -> ExtractionResult:
             text = raw.decode("utf-8", errors="ignore").strip()
             if len(text) > 50:
                 return ExtractionResult(
-                    kind="email", full_text=text,
+                    kind="email",
+                    full_text=text,
                     word_count=len(text.split()),
                     pages=[PageSegment(page=1, text=text)],
                     meta={"parse_method": "raw_fallback"},

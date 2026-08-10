@@ -4,6 +4,7 @@ Reads a Work's concept graph and mastery levels, then generates a structured
 learning plan as both a downloadable .docx and a new knowledge item so it
 appears in the Learn home.
 """
+
 from __future__ import annotations
 
 import logging
@@ -83,10 +84,14 @@ class StudyPlanAction(ActionBase):
                        ORDER BY created_at DESC LIMIT 40""",
                     (work_id,),
                 ).fetchall()
-            concepts = [{"subject": r["text"], "description": "", "mastery_avg": 0.0} for r in krows]
+            concepts = [
+                {"subject": r["text"], "description": "", "mastery_avg": 0.0} for r in krows
+            ]
 
         if not concepts:
-            raise ValueError("No concepts found for this Work. Add knowledge items or run the learning loop first.")
+            raise ValueError(
+                "No concepts found for this Work. Add knowledge items or run the learning loop first."
+            )
 
         # ── Build .docx study plan ──
         doc = Document()

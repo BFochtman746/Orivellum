@@ -9,6 +9,7 @@ Covers:
 - /api/auth/me and /api/auth/login are exempt
 - Session cookie grants access (login flow)
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -17,18 +18,18 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import TEST_API_KEY, AUTH_HEADERS
-
+from tests.conftest import AUTH_HEADERS, TEST_API_KEY
 
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
+
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -40,8 +41,8 @@ def _make_app(tmp: str):
 # Auth middleware tests
 # ---------------------------------------------------------------------------
 
-class TestAuthMiddleware(unittest.TestCase):
 
+class TestAuthMiddleware(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.app, self.db = _make_app(self._tmpdir.name)
@@ -55,20 +56,17 @@ class TestAuthMiddleware(unittest.TestCase):
     def test_healthz_exempt(self):
         client = TestClient(self.app, raise_server_exceptions=True)
         resp = client.get("/api/healthz")
-        self.assertNotEqual(resp.status_code, 401,
-                            "/api/healthz must not require auth")
+        self.assertNotEqual(resp.status_code, 401, "/api/healthz must not require auth")
 
     def test_version_exempt(self):
         client = TestClient(self.app, raise_server_exceptions=True)
         resp = client.get("/api/version")
-        self.assertNotEqual(resp.status_code, 401,
-                            "/api/version must not require auth")
+        self.assertNotEqual(resp.status_code, 401, "/api/version must not require auth")
 
     def test_auth_me_exempt(self):
         client = TestClient(self.app, raise_server_exceptions=True)
         resp = client.get("/api/auth/me")
-        self.assertEqual(resp.status_code, 200,
-                         "/api/auth/me must be reachable without auth")
+        self.assertEqual(resp.status_code, 200, "/api/auth/me must be reachable without auth")
         self.assertIn("authenticated", resp.json())
 
     def test_auth_login_exempt(self):
@@ -78,40 +76,50 @@ class TestAuthMiddleware(unittest.TestCase):
         resp = client.post("/api/auth/login", json={"key": "wrong"})
         # Should get 401 (bad key) not 401 (no auth middleware) — same status
         # code but the route must be reachable.
-        self.assertIn(resp.status_code, (200, 401, 503),
-                      "/api/auth/login must be reachable without prior auth")
+        self.assertIn(
+            resp.status_code,
+            (200, 401, 503),
+            "/api/auth/login must be reachable without prior auth",
+        )
 
     # ── Protected routes ──────────────────────────────────────────────────
 
     def test_protected_route_without_auth_returns_401(self):
         client = TestClient(self.app, raise_server_exceptions=True)
         resp = client.get("/api/works")
-        self.assertEqual(resp.status_code, 401,
-                         "Protected routes must return 401 without credentials")
+        self.assertEqual(
+            resp.status_code, 401, "Protected routes must return 401 without credentials"
+        )
 
     def test_protected_route_wrong_token_returns_401(self):
-        client = TestClient(self.app, raise_server_exceptions=True,
-                            headers={"X-Api-Key": "totally-wrong-key"})
+        client = TestClient(
+            self.app, raise_server_exceptions=True, headers={"X-Api-Key": "totally-wrong-key"}
+        )
         resp = client.get("/api/works")
         self.assertEqual(resp.status_code, 401)
 
     # ── Bearer token paths ────────────────────────────────────────────────
 
     def test_x_api_key_header_accepted(self):
-        client = TestClient(self.app, raise_server_exceptions=True,
-                            headers={"X-Api-Key": TEST_API_KEY})
+        client = TestClient(
+            self.app, raise_server_exceptions=True, headers={"X-Api-Key": TEST_API_KEY}
+        )
         resp = client.get("/api/works")
         self.assertEqual(resp.status_code, 200)
 
     def test_authorization_bearer_header_accepted(self):
-        client = TestClient(self.app, raise_server_exceptions=True,
-                            headers={"Authorization": f"Bearer {TEST_API_KEY}"})
+        client = TestClient(
+            self.app,
+            raise_server_exceptions=True,
+            headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        )
         resp = client.get("/api/works")
         self.assertEqual(resp.status_code, 200)
 
     def test_authorization_bearer_wrong_key_rejected(self):
-        client = TestClient(self.app, raise_server_exceptions=True,
-                            headers={"Authorization": "Bearer wrong-key"})
+        client = TestClient(
+            self.app, raise_server_exceptions=True, headers={"Authorization": "Bearer wrong-key"}
+        )
         resp = client.get("/api/works")
         self.assertEqual(resp.status_code, 401)
 
@@ -125,8 +133,7 @@ class TestAuthMiddleware(unittest.TestCase):
             self.assertEqual(resp.status_code, 401)
 
             # Login with the correct key
-            login_resp = client.post("/api/auth/login",
-                                     json={"key": TEST_API_KEY})
+            login_resp = client.post("/api/auth/login", json={"key": TEST_API_KEY})
             self.assertEqual(login_resp.status_code, 200)
             self.assertTrue(login_resp.json().get("ok"))
 
@@ -149,8 +156,7 @@ class TestAuthMiddleware(unittest.TestCase):
             self.assertEqual(client.get("/api/works").status_code, 200)
 
             # Logout
-            logout_resp = client.post("/api/auth/logout",
-                                      headers=AUTH_HEADERS)
+            logout_resp = client.post("/api/auth/logout", headers=AUTH_HEADERS)
             self.assertEqual(logout_resp.status_code, 200)
 
             # Session cleared — access should now require a token again
@@ -188,7 +194,8 @@ class TestAuthMiddleware(unittest.TestCase):
 
         resp = client.get("/api/works")
         self.assertEqual(
-            resp.status_code, 401,
+            resp.status_code,
+            401,
             "A session cookie forged with the placeholder key must be rejected",
         )
 
@@ -205,7 +212,8 @@ class TestAuthMiddleware(unittest.TestCase):
 
             resp = client.get("/api/works")
             self.assertEqual(
-                resp.status_code, 401,
+                resp.status_code,
+                401,
                 f"Cookie forged with key {bad_key!r} must be rejected",
             )
 
@@ -230,23 +238,30 @@ class TestCorsRestriction(unittest.TestCase):
         environment REPLIT_DEV_DOMAIN is not set, so no origin regex is
         configured and the wildcard match no longer applies.
         """
-        client = TestClient(self.app, raise_server_exceptions=True,
-                            headers={"Origin": "https://malicious-repl.replit.dev"})
+        client = TestClient(
+            self.app,
+            raise_server_exceptions=True,
+            headers={"Origin": "https://malicious-repl.replit.dev"},
+        )
         # Use an exempt path so auth doesn't interfere — we're testing CORS only.
         resp = client.get("/api/auth/me")
         allow_origin = resp.headers.get("access-control-allow-origin", "")
         self.assertNotEqual(
-            allow_origin, "https://malicious-repl.replit.dev",
+            allow_origin,
+            "https://malicious-repl.replit.dev",
             "Arbitrary *.replit.dev origin must NOT receive credentialed CORS headers",
         )
 
     def test_localhost_origin_is_allowed(self):
         """Localhost origins (dev setup) should be allowed by the static list."""
-        client = TestClient(self.app, raise_server_exceptions=True,
-                            headers={
-                                "Origin": "http://localhost:5173",
-                                "X-Api-Key": TEST_API_KEY,
-                            })
+        client = TestClient(
+            self.app,
+            raise_server_exceptions=True,
+            headers={
+                "Origin": "http://localhost:5173",
+                "X-Api-Key": TEST_API_KEY,
+            },
+        )
         resp = client.get("/api/works")
         # Localhost is in ORIVELLUM_ALLOWED_ORIGINS default; 200 or CORS header present
         self.assertEqual(resp.status_code, 200)
@@ -259,6 +274,7 @@ class TestSessionSecretInit(unittest.TestCase):
         """When SESSION_SECRET is absent, _init_session_secret returns a random value."""
         import os
         import tempfile
+
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.pop("SESSION_SECRET", None)
@@ -279,8 +295,9 @@ class TestSessionSecretInit(unittest.TestCase):
                     "admin",
                     "secret",
                 ]:
-                    self.assertNotEqual(secret, known,
-                                       f"Secret must not be the known literal {known!r}")
+                    self.assertNotEqual(
+                        secret, known, f"Secret must not be the known literal {known!r}"
+                    )
         finally:
             if saved is not None:
                 os.environ["SESSION_SECRET"] = saved
@@ -293,6 +310,7 @@ class TestSessionSecretInit(unittest.TestCase):
         sessions survive backend restarts (login once, stay logged in)."""
         import os
         import tempfile
+
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.pop("SESSION_SECRET", None)
@@ -308,8 +326,7 @@ class TestSessionSecretInit(unittest.TestCase):
                 self.assertGreaterEqual(len(second), 32)
 
                 # The same secret is returned across calls (persistence works)
-                self.assertEqual(first, second,
-                                 "Persisted secret must be stable across restarts")
+                self.assertEqual(first, second, "Persisted secret must be stable across restarts")
 
                 # The secret file WAS written to disk with the same value
                 secret_file = os.path.join(tmp, "session_secret.txt")
@@ -329,6 +346,7 @@ class TestSessionSecretInit(unittest.TestCase):
         """A pre-existing session_secret.txt (>= 32 chars) is used verbatim."""
         import os
         import tempfile
+
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.pop("SESSION_SECRET", None)
@@ -337,8 +355,7 @@ class TestSessionSecretInit(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 os.environ["ORIVELLUM_DATA_DIR"] = tmp
                 existing = "z" * 48
-                with open(os.path.join(tmp, "session_secret.txt"), "w",
-                          encoding="utf-8") as fh:
+                with open(os.path.join(tmp, "session_secret.txt"), "w", encoding="utf-8") as fh:
                     fh.write(existing + "\n")
                 self.assertEqual(_init_session_secret(), existing)
         finally:
@@ -351,6 +368,7 @@ class TestSessionSecretInit(unittest.TestCase):
         """A too-short persisted secret is rejected and replaced with a strong one."""
         import os
         import tempfile
+
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.pop("SESSION_SECRET", None)
@@ -375,6 +393,7 @@ class TestSessionSecretInit(unittest.TestCase):
     def test_env_var_takes_priority(self):
         """When SESSION_SECRET is set to a sufficiently strong value it is returned directly."""
         import os
+
         from orivellum.api.app import _init_session_secret
 
         # Must be >= 32 chars to pass the new entropy check
@@ -389,6 +408,7 @@ class TestSessionSecretInit(unittest.TestCase):
     def test_short_session_secret_raises_runtime_error(self):
         """SESSION_SECRET shorter than 32 chars must cause RuntimeError at startup."""
         import os
+
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.get("SESSION_SECRET")
@@ -398,7 +418,7 @@ class TestSessionSecretInit(unittest.TestCase):
                 _init_session_secret()
             msg = str(ctx.exception)
             self.assertIn("SESSION_SECRET", msg)
-            self.assertIn("32", msg)   # mentions the minimum length
+            self.assertIn("32", msg)  # mentions the minimum length
         finally:
             if saved is not None:
                 os.environ["SESSION_SECRET"] = saved
@@ -408,6 +428,7 @@ class TestSessionSecretInit(unittest.TestCase):
     def test_31_char_secret_raises_runtime_error(self):
         """A SESSION_SECRET that is exactly one char below the minimum must be rejected."""
         import os
+
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.get("SESSION_SECRET")
@@ -424,6 +445,7 @@ class TestSessionSecretInit(unittest.TestCase):
     def test_exactly_32_char_secret_is_accepted(self):
         """SESSION_SECRET of exactly 32 chars must be accepted without error."""
         import os
+
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.get("SESSION_SECRET")
@@ -442,6 +464,7 @@ class TestSessionSecretInit(unittest.TestCase):
         appear in log output (it is persisted to disk, not printed)."""
         import os
         import tempfile
+
         from orivellum.api.app import _init_session_secret
 
         saved = os.environ.pop("SESSION_SECRET", None)
@@ -453,8 +476,7 @@ class TestSessionSecretInit(unittest.TestCase):
                     secret = _init_session_secret()
 
                 log_text = "\n".join(cm.output)
-                self.assertNotIn(secret, log_text,
-                                 "The secret value must never be printed to logs")
+                self.assertNotIn(secret, log_text, "The secret value must never be printed to logs")
         finally:
             if saved is not None:
                 os.environ["SESSION_SECRET"] = saved
@@ -467,6 +489,7 @@ class TestSecretFilesIgnored(unittest.TestCase):
 
     def _read_gitignore(self) -> str:
         from pathlib import Path
+
         root = Path(__file__).parent.parent
         gi = root / ".gitignore"
         return gi.read_text(encoding="utf-8") if gi.exists() else ""
@@ -474,27 +497,37 @@ class TestSecretFilesIgnored(unittest.TestCase):
     def test_api_key_file_is_gitignored(self):
         """data/api_key.txt must be in .gitignore to prevent accidental commits."""
         content = self._read_gitignore()
-        self.assertIn("data/api_key.txt", content,
-                      "data/api_key.txt must be listed in .gitignore")
+        self.assertIn("data/api_key.txt", content, "data/api_key.txt must be listed in .gitignore")
 
     def test_session_secret_file_is_gitignored(self):
         """The persisted session secret must be in .gitignore to prevent session forgery."""
         content = self._read_gitignore()
-        self.assertIn("data/session_secret.txt", content,
-                      "data/session_secret.txt must be listed in .gitignore")
+        self.assertIn(
+            "data/session_secret.txt",
+            content,
+            "data/session_secret.txt must be listed in .gitignore",
+        )
 
     def test_generated_files_not_tracked(self):
         """Confirm the generated secret files are not tracked in git."""
         import subprocess
+
         result = subprocess.run(
-            ["git", "ls-files", "data/api_key.txt", "data/.session_secret",
-             "data/session_secret.txt"],
-            capture_output=True, text=True,
+            [
+                "git",
+                "ls-files",
+                "data/api_key.txt",
+                "data/.session_secret",
+                "data/session_secret.txt",
+            ],
+            capture_output=True,
+            text=True,
             cwd=str(Path(__file__).parent.parent),
         )
         tracked = result.stdout.strip()
         self.assertEqual(
-            tracked, "",
+            tracked,
+            "",
             f"Generated secret files must not be tracked by git; found: {tracked!r}",
         )
 

@@ -3,6 +3,7 @@
 Replaces the retired mobile push channel — workers emit() events and the PWA
 polls GET /api/system/notifications. No browsers or engines involved here.
 """
+
 from __future__ import annotations
 
 import os
@@ -14,13 +15,11 @@ os.environ.setdefault("SESSION_SECRET", "test-orivellum-api-key-12345")
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import AUTH_HEADERS
-
 from orivellum.api import notifications as notif
+from tests.conftest import AUTH_HEADERS
 
 
 class NotificationRingTests(unittest.TestCase):
-
     def setUp(self):
         notif._reset_for_tests()
 
@@ -64,13 +63,12 @@ class NotificationRingTests(unittest.TestCase):
 
 
 class NotificationEndpointTests(unittest.TestCase):
-
     def setUp(self):
         notif._reset_for_tests()
-        from orivellum.configuration.config import OrivellumConfig
-        from orivellum.database.db import OrivellumDB
         from orivellum.api import _deps
         from orivellum.api.app import app
+        from orivellum.configuration.config import OrivellumConfig
+        from orivellum.database.db import OrivellumDB
 
         self._prev_db = _deps._DB
         self._prev_cfg = _deps._CFG
@@ -78,11 +76,11 @@ class NotificationEndpointTests(unittest.TestCase):
         cfg = OrivellumConfig(data_dir=self._tmp.name)
         self.db = OrivellumDB(str(Path(self._tmp.name) / "test.db"))
         _deps.init(db=self.db, cfg=cfg)
-        self.client = TestClient(app, raise_server_exceptions=False,
-                                 headers=AUTH_HEADERS)
+        self.client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
     def tearDown(self):
         from orivellum.api import _deps
+
         self.db.close()
         _deps._DB = self._prev_db
         _deps._CFG = self._prev_cfg
@@ -90,8 +88,7 @@ class NotificationEndpointTests(unittest.TestCase):
         notif._reset_for_tests()
 
     def test_requires_auth(self):
-        bare = TestClient(
-            self.client.app, raise_server_exceptions=False)
+        bare = TestClient(self.client.app, raise_server_exceptions=False)
         resp = bare.get("/api/system/notifications")
         self.assertEqual(resp.status_code, 401)
 
@@ -120,29 +117,28 @@ class NotificationEndpointTests(unittest.TestCase):
         from orivellum.capabilities import pipeline
         from orivellum.capabilities.extraction import ExtractionResult
 
-        created = self.db.create_document(title="My Doc", kind="text",
-                                          work_id=None, sha256="a" * 64)
+        created = self.db.create_document(
+            title="My Doc", kind="text", work_id=None, sha256="a" * 64
+        )
         doc_id = created["id"] if isinstance(created, dict) else created
         src = Path(self._tmp.name) / "mydoc.txt"
         src.write_text("hello world", encoding="utf-8")
 
-        result = ExtractionResult(kind="text", full_text="hello world " * 20,
-                                  word_count=40)
+        result = ExtractionResult(kind="text", full_text="hello world " * 20, word_count=40)
         stub_executor = MagicMock()
-        with patch.object(pipeline, "extract", return_value=result), \
-             patch.object(pipeline, "chunk_and_store"), \
-             patch.object(pipeline, "harvest"), \
-             patch("orivellum.api.executor.get_executor",
-                   return_value=stub_executor):
-            pipeline.process_document(doc_id, str(src), "text", None,
-                                      "My Doc", self.db)
+        with (
+            patch.object(pipeline, "extract", return_value=result),
+            patch.object(pipeline, "chunk_and_store"),
+            patch.object(pipeline, "harvest"),
+            patch("orivellum.api.executor.get_executor", return_value=stub_executor),
+        ):
+            pipeline.process_document(doc_id, str(src), "text", None, "My Doc", self.db)
 
         self.assertEqual(self.db.get_document(doc_id)["readiness"], "ready")
         data = self.client.get("/api/system/notifications").json()
         kinds = [(n["kind"], n["url"]) for n in data["notifications"]]
         self.assertIn(("document_ready", f"/library/{doc_id}"), kinds)
-        ready = next(n for n in data["notifications"]
-                     if n["kind"] == "document_ready")
+        ready = next(n for n in data["notifications"] if n["kind"] == "document_ready")
         self.assertIn("My Doc", ready["body"])
 
 

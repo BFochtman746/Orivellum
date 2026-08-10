@@ -36,6 +36,7 @@ Consistency guarantees
 - Results are only appended when the pair is either newly persisted or
   already exists in doc_dupes — never on INSERT failure.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -52,27 +53,27 @@ logger = logging.getLogger(__name__)
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
 
-_NUM_PERM        = 128   # number of hash functions in the sketch
-_SHINGLE_SIZE    = 5     # word n-gram size
+_NUM_PERM = 128  # number of hash functions in the sketch
+_SHINGLE_SIZE = 5  # word n-gram size
 _NEAR_DUP_THRESH = 0.85
 _REVISION_THRESH = 0.60
-_MIN_WORDS       = 100   # skip very short documents
+_MIN_WORDS = 100  # skip very short documents
 
 # LSH band parameters — 32 bands × 4 rows = 128 = _NUM_PERM
 # P(candidate | s=0.60) ≈ 99 %   P(candidate | s=0.85) ≈ 100 %
 _BANDS = 32
-_ROWS  = 4
+_ROWS = 4
 
-_SAME_WORK_CAP = 200   # max candidates when scoped to a single Work
+_SAME_WORK_CAP = 200  # max candidates when scoped to a single Work
 
 
 # ── In-memory LSH index ───────────────────────────────────────────────────────
 
-_lsh_lock:  threading.Lock                   = threading.Lock()
-_lsh_index: dict[tuple[int, int], list[str]] = {}   # (band, bucket) → [doc_id, ...]
-_lsh_sigs:  dict[str, tuple[int, ...]]       = {}   # doc_id → unpacked sig ints
-_lsh_built: bool     = False
-_lsh_db_id: int | None = None               # id(db._conn) when index was built
+_lsh_lock: threading.Lock = threading.Lock()
+_lsh_index: dict[tuple[int, int], list[str]] = {}  # (band, bucket) → [doc_id, ...]
+_lsh_sigs: dict[str, tuple[int, ...]] = {}  # doc_id → unpacked sig ints
+_lsh_built: bool = False
+_lsh_db_id: int | None = None  # id(db._conn) when index was built
 
 
 def _sig_to_ints(sig: bytes) -> tuple[int, ...]:
@@ -83,7 +84,7 @@ def _sig_to_ints(sig: bytes) -> tuple[int, ...]:
 def _add_to_lsh(doc_id: str, sig_ints: tuple[int, ...]) -> None:
     """Insert one document into the index.  **Caller must hold _lsh_lock.**"""
     for b in range(_BANDS):
-        band = sig_ints[b * _ROWS: (b + 1) * _ROWS]
+        band = sig_ints[b * _ROWS : (b + 1) * _ROWS]
         key = (b, hash(band))
         bucket = _lsh_index.get(key)
         if bucket is None:
@@ -104,9 +105,9 @@ def evict_from_lsh_index(doc_id: str) -> None:
     with _lsh_lock:
         sig_ints = _lsh_sigs.pop(doc_id, None)
         if sig_ints is None:
-            return          # not in index — nothing to do
+            return  # not in index — nothing to do
         for b in range(_BANDS):
-            band = sig_ints[b * _ROWS: (b + 1) * _ROWS]
+            band = sig_ints[b * _ROWS : (b + 1) * _ROWS]
             key = (b, hash(band))
             bucket = _lsh_index.get(key)
             if bucket:
@@ -129,11 +130,11 @@ def _ensure_index_built(db: OrivellumDB) -> None:
     global _lsh_built, _lsh_db_id
     conn_id = id(db._conn)
     if _lsh_built and _lsh_db_id == conn_id:
-        return          # fast path — index is current
+        return  # fast path — index is current
 
     with _lsh_lock:
         if _lsh_built and _lsh_db_id == conn_id:
-            return      # re-check under lock
+            return  # re-check under lock
 
         if _lsh_db_id != conn_id:
             # Different DB connection — tear down the old index first.
@@ -144,22 +145,18 @@ def _ensure_index_built(db: OrivellumDB) -> None:
 
         try:
             with db._lock:
-                rows = db._conn.execute(
-                    "SELECT doc_id, sig FROM minhash_sig"
-                ).fetchall()
+                rows = db._conn.execute("SELECT doc_id, sig FROM minhash_sig").fetchall()
             for row in rows:
                 try:
                     sig_ints = _sig_to_ints(bytes(row["sig"]))
                     _add_to_lsh(row["doc_id"], sig_ints)
                 except Exception:
-                    pass        # malformed row — skip
+                    pass  # malformed row — skip
             _lsh_built = True
             _lsh_db_id = conn_id
             logger.info("LSH index built: %d documents indexed", len(_lsh_sigs))
         except Exception as exc:
-            logger.warning(
-                "LSH index build failed (dedup will fall back gracefully): %s", exc
-            )
+            logger.warning("LSH index build failed (dedup will fall back gracefully): %s", exc)
 
 
 def rebuild_lsh_index(db: OrivellumDB) -> int:
@@ -190,12 +187,13 @@ def _reset_lsh_index() -> None:
 
 # ── MinHash sketch ────────────────────────────────────────────────────────────
 
+
 def _shingles(text: str, k: int = _SHINGLE_SIZE) -> set[str]:
     """Return the set of word k-grams from normalised text."""
     words = re.sub(r"\s+", " ", text.lower()).split()
     if len(words) < k:
         return {" ".join(words)}
-    return {" ".join(words[i: i + k]) for i in range(len(words) - k + 1)}
+    return {" ".join(words[i : i + k]) for i in range(len(words) - k + 1)}
 
 
 def _minhash(shingles: set[str], num_perm: int = _NUM_PERM) -> bytes:
@@ -238,6 +236,7 @@ def _jaccard_ints(a: tuple[int, ...], b: tuple[int, ...]) -> float:
 
 # ── Shared write helper ────────────────────────────────────────────────────────
 
+
 def _maybe_record(
     doc_id: str,
     other_id: str,
@@ -264,6 +263,7 @@ def _maybe_record(
     recorded_ok = False
     try:
         import uuid as _uuid_mod
+
         with db._lock:
             existing = db._conn.execute(
                 """SELECT id FROM doc_dupes
@@ -302,7 +302,10 @@ def _maybe_record(
                     pass
                 logger.info(
                     "Near-dup detected: %s ↔ %s  similarity=%.2f  kind=%s",
-                    doc_id[:8], other_id[:8], sim, kind,
+                    doc_id[:8],
+                    other_id[:8],
+                    sim,
+                    kind,
                 )
     except Exception as exc:
         logger.debug("doc_dupes insert failed: %s", exc)
@@ -312,6 +315,7 @@ def _maybe_record(
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 def compute_and_store(doc_id: str, text: str, db: OrivellumDB) -> bytes | None:
     """Compute MinHash for *text*, persist it, and update the LSH index.
@@ -405,14 +409,12 @@ def find_and_record_near_duplicates(
     candidates: set[str] = set()
     with _lsh_lock:
         for b in range(_BANDS):
-            band = sig_ints[b * _ROWS: (b + 1) * _ROWS]
+            band = sig_ints[b * _ROWS : (b + 1) * _ROWS]
             for cid in _lsh_index.get((b, hash(band)), []):
                 if cid != doc_id:
                     candidates.add(cid)
         # Pull sig ints from memory — zero DB I/O for the comparison itself.
-        candidate_ints = {
-            cid: _lsh_sigs[cid] for cid in candidates if cid in _lsh_sigs
-        }
+        candidate_ints = {cid: _lsh_sigs[cid] for cid in candidates if cid in _lsh_sigs}
 
     # Validate candidates against the documents table in one round-trip.
     # This catches stale index entries from deleted documents without
@@ -430,9 +432,7 @@ def find_and_record_near_duplicates(
             stale = set(candidate_ints) - live_ids
             for stale_id in stale:
                 evict_from_lsh_index(stale_id)
-            candidate_ints = {
-                cid: ints for cid, ints in candidate_ints.items() if cid in live_ids
-            }
+            candidate_ints = {cid: ints for cid, ints in candidate_ints.items() if cid in live_ids}
         except Exception as exc:
             logger.debug("Candidate existence check failed: %s", exc)
             # Proceed with unfiltered candidates — _maybe_record will catch

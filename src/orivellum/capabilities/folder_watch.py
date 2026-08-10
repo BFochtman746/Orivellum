@@ -23,6 +23,7 @@ Seen-file registry (prevents re-import):
   folder_watch_seen — JSON array of canonical absolute paths already imported;
                       capped at 10 000 entries.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,12 +40,38 @@ logger = logging.getLogger("orivellum.folder_watch")
 
 _POLL_INTERVAL_SEC = 60  # within-60-second guarantee
 _SUPPORTED_EXTS = {
-    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".csv",
-    ".pptx", ".ppt", ".txt", ".md", ".py", ".js", ".ts",
-    ".jsx", ".tsx", ".json", ".html", ".htm", ".rtf",
-    ".epub", ".xml", ".zip",
-    ".mp3", ".wav", ".m4a", ".ogg", ".flac",
-    ".png", ".jpg", ".jpeg", ".webp", ".gif",
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".xlsx",
+    ".xls",
+    ".csv",
+    ".pptx",
+    ".ppt",
+    ".txt",
+    ".md",
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".json",
+    ".html",
+    ".htm",
+    ".rtf",
+    ".epub",
+    ".xml",
+    ".zip",
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".ogg",
+    ".flac",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
 }
 
 _thread: threading.Thread | None = None
@@ -52,6 +79,7 @@ _stop_event = threading.Event()
 
 
 # ─── Watch-dirs config helpers ────────────────────────────────────────────────
+
 
 def get_watch_dirs(db: OrivellumDB) -> list[dict]:
     """Return the list of configured watch directories.
@@ -71,11 +99,13 @@ def get_watch_dirs(db: OrivellumDB) -> list[dict]:
     # Legacy single-dir compat
     legacy_path = db.get_setting("folder_watch_path", "").strip()
     if legacy_path:
-        return [{
-            "path": legacy_path,
-            "work_id": db.get_setting("folder_watch_work_id", "").strip() or None,
-            "enabled": db.get_setting("folder_watch_enabled", "false").lower() == "true",
-        }]
+        return [
+            {
+                "path": legacy_path,
+                "work_id": db.get_setting("folder_watch_work_id", "").strip() or None,
+                "enabled": db.get_setting("folder_watch_enabled", "false").lower() == "true",
+            }
+        ]
     return []
 
 
@@ -101,6 +131,7 @@ def get_watch_status(db: OrivellumDB) -> dict:
 
 # ─── Seen-file registry ────────────────────────────────────────────────────────
 
+
 def _get_seen_paths(db: OrivellumDB) -> set[str]:
     try:
         raw = db.get_setting("folder_watch_seen", "")
@@ -123,17 +154,34 @@ def _mark_seen(paths: list[str], db: OrivellumDB) -> None:
 # ─── File importer ────────────────────────────────────────────────────────────
 
 _KIND_MAP: dict[str, str] = {
-    ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
-    ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
-    ".pptx": "pptx", ".ppt": "pptx",
-    ".txt": "text", ".md": "markdown",
-    ".png": "image", ".jpg": "image", ".jpeg": "image",
-    ".webp": "image", ".gif": "image",
-    ".mp3": "audio", ".wav": "audio", ".m4a": "audio",
-    ".ogg": "audio", ".flac": "audio",
-    ".py": "code", ".js": "code", ".ts": "code",
-    ".jsx": "code", ".tsx": "code",
-    ".json": "json", ".html": "html", ".htm": "html",
+    ".pdf": "pdf",
+    ".docx": "docx",
+    ".doc": "docx",
+    ".xlsx": "excel",
+    ".xls": "excel",
+    ".csv": "csv",
+    ".pptx": "pptx",
+    ".ppt": "pptx",
+    ".txt": "text",
+    ".md": "markdown",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".gif": "image",
+    ".mp3": "audio",
+    ".wav": "audio",
+    ".m4a": "audio",
+    ".ogg": "audio",
+    ".flac": "audio",
+    ".py": "code",
+    ".js": "code",
+    ".ts": "code",
+    ".jsx": "code",
+    ".tsx": "code",
+    ".json": "json",
+    ".html": "html",
+    ".htm": "html",
     ".zip": "zip",
 }
 
@@ -150,6 +198,7 @@ def _import_file(file_path: Path, work_id: str | None, db: OrivellumDB) -> bool:
         sha256 = hashlib.sha256(file_path.read_bytes()).hexdigest()
 
         from orivellum.api._deps import get_config
+
         cfg = get_config()
         lib_root = Path(cfg.data_dir) / "library"
         lib_root.mkdir(parents=True, exist_ok=True)
@@ -179,10 +228,15 @@ def _import_file(file_path: Path, work_id: str | None, db: OrivellumDB) -> bool:
 
         from orivellum.api.executor import get_executor
         from orivellum.capabilities.pipeline import process_document
+
         get_executor().submit(
             process_document,
-            doc_id=doc["id"], file_path=str(dest), kind=kind,
-            work_id=work_id, title=file_path.name, db=db,
+            doc_id=doc["id"],
+            file_path=str(dest),
+            kind=kind,
+            work_id=work_id,
+            title=file_path.name,
+            db=db,
         )
         logger.info("folder_watch: imported %s → id=%s", file_path.name, doc["id"])
         return True
@@ -193,6 +247,7 @@ def _import_file(file_path: Path, work_id: str | None, db: OrivellumDB) -> bool:
 
 
 # ─── Main polling loop ────────────────────────────────────────────────────────
+
 
 def _watch_loop(db: OrivellumDB) -> None:
     logger.info("folder_watch: daemon started (interval=%ds)", _POLL_INTERVAL_SEC)
@@ -222,9 +277,11 @@ def _watch_loop(db: OrivellumDB) -> None:
                         continue
 
                     for f in sorted(p.iterdir()):
-                        if (f.is_file()
-                                and f.suffix.lower() in _SUPPORTED_EXTS
-                                and str(f) not in seen):
+                        if (
+                            f.is_file()
+                            and f.suffix.lower() in _SUPPORTED_EXTS
+                            and str(f) not in seen
+                        ):
                             if _import_file(f, work_id, db):
                                 newly_seen.append(str(f))
                                 seen.add(str(f))
@@ -242,6 +299,7 @@ def _watch_loop(db: OrivellumDB) -> None:
         # Write scan status so the UI can display last-scan info
         try:
             from datetime import datetime
+
             scan_status = {
                 "scanned_at": datetime.now(UTC).isoformat(),
                 "dirs": dir_statuses,
@@ -256,6 +314,7 @@ def _watch_loop(db: OrivellumDB) -> None:
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
+
 
 def start_watcher(db: OrivellumDB) -> None:
     """Start the folder-watch background thread.  Idempotent."""

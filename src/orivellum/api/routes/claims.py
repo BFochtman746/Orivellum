@@ -10,6 +10,7 @@ Endpoints:
 
 VER-INV-001: A8 claims are never returned by any read endpoint.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,6 +23,7 @@ _A8_BLOCKED = "A8"  # Never surface A8 through the API
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
+
 
 class ClaimCreate(BaseModel):
     subject: str
@@ -49,6 +51,7 @@ class ClaimSearch(BaseModel):
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
+
 
 @router.post("")
 def create_claim(body: ClaimCreate):
@@ -127,7 +130,8 @@ def update_claim_status(claim_id: str, body: ClaimStatusPatch):
         raise HTTPException(404, f"Claim {claim_id!r} not found")
 
     changed = db.update_claim_status(
-        claim_id, body.status,
+        claim_id,
+        body.status,
         actor=body.actor or "user",
         reason=body.reason,
     )

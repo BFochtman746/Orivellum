@@ -68,14 +68,11 @@ def work_client(tmp_path):
     for title, text in (("ch1", CH1_TEXT), ("ch2", CH2_TEXT)):
         doc = db.create_document(title=title, work_id=work["id"], kind="text")
         with db._lock:
-            db._conn.execute(
-                "UPDATE documents SET readiness='ready' WHERE id=?", (doc["id"],)
-            )
+            db._conn.execute("UPDATE documents SET readiness='ready' WHERE id=?", (doc["id"],))
             db._conn.commit()
         db.add_chunk(doc["id"], text, page=0)
 
-    client = TestClient(create_app(), raise_server_exceptions=False,
-                        headers=AUTH_HEADERS)
+    client = TestClient(create_app(), raise_server_exceptions=False, headers=AUTH_HEADERS)
     return client, cfg, work["id"]
 
 
@@ -93,8 +90,14 @@ def _wait_job(client, job_id: str, timeout: float = 90.0) -> dict:
 
 
 def _render(client, wid: str, **overrides) -> dict:
-    body = {"work_id": wid, "voice": "af_heart", "speed": 1.0,
-            "include_credits": False, "acx_mastering": False, **overrides}
+    body = {
+        "work_id": wid,
+        "voice": "af_heart",
+        "speed": 1.0,
+        "include_credits": False,
+        "acx_mastering": False,
+        **overrides,
+    }
     r = client.post("/api/studio/tts/work/start", json=body)
     assert r.status_code == 200, r.text[:300]
     return _wait_job(client, r.json()["job_id"])

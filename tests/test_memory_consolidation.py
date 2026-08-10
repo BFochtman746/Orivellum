@@ -8,26 +8,29 @@ Covers:
   - Nightshift pass: _pass_memory_promote
   - _memory_text_similarity helper
 """
+
 from __future__ import annotations
 
 import sys
 import tempfile
-import time
 import unittest
+from datetime import UTC
 from pathlib import Path
 
 # Ensure src/ is on the path before any import
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+
 def _make_db(path: str):
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(path)
 
 
 # ─── Schema v100 ──────────────────────────────────────────────────────────────
 
-class TestSchemaV100(unittest.TestCase):
 
+class TestSchemaV100(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -43,16 +46,24 @@ class TestSchemaV100(unittest.TestCase):
         self.assertIsNotNone(row, "memory_conflicts table must exist after v100 migration")
 
     def test_memory_conflicts_columns(self):
-        cols = {r[1] for r in self.db._conn.execute(
-            "PRAGMA table_info(memory_conflicts)"
-        ).fetchall()}
-        for col in ("id", "memory_id_a", "memory_id_b", "detected_at",
-                    "resolved", "resolution", "resolved_at"):
+        cols = {
+            r[1] for r in self.db._conn.execute("PRAGMA table_info(memory_conflicts)").fetchall()
+        }
+        for col in (
+            "id",
+            "memory_id_a",
+            "memory_id_b",
+            "detected_at",
+            "resolved",
+            "resolution",
+            "resolved_at",
+        ):
             self.assertIn(col, cols, f"Column '{col}' must exist in memory_conflicts")
 
     def test_memory_conflicts_unique_constraint(self):
         """INSERT OR IGNORE on the same pair must produce exactly one row."""
         import uuid
+
         aid, bid = str(uuid.uuid4()), str(uuid.uuid4())
         # Normalise order the way the DB method does
         id_a, id_b = sorted([aid, bid])
@@ -73,8 +84,8 @@ class TestSchemaV100(unittest.TestCase):
 
 # ─── DB methods ───────────────────────────────────────────────────────────────
 
-class TestRecordMemoryConflict(unittest.TestCase):
 
+class TestRecordMemoryConflict(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -125,7 +136,6 @@ class TestRecordMemoryConflict(unittest.TestCase):
 
 
 class TestGetMemoryConflicts(unittest.TestCase):
-
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -179,7 +189,6 @@ class TestGetMemoryConflicts(unittest.TestCase):
 
 
 class TestResolveMemoryConflict(unittest.TestCase):
-
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -231,6 +240,7 @@ class TestResolveMemoryConflict(unittest.TestCase):
 
 # ─── resolve_memory_conflict_atomic ──────────────────────────────────────────
 
+
 class TestConflictCallerOrderPreserved(unittest.TestCase):
     """Verify that record_memory_conflict stores in caller-provided order."""
 
@@ -256,10 +266,12 @@ class TestConflictCallerOrderPreserved(unittest.TestCase):
         row = self.db._conn.execute(
             "SELECT memory_id_a, memory_id_b FROM memory_conflicts WHERE id=?", (cid,)
         ).fetchone()
-        self.assertEqual(row["memory_id_a"], a,
-                         "memory_id_a must be the first caller argument (caller-provided order)")
-        self.assertEqual(row["memory_id_b"], b,
-                         "memory_id_b must be the second caller argument")
+        self.assertEqual(
+            row["memory_id_a"],
+            a,
+            "memory_id_a must be the first caller argument (caller-provided order)",
+        )
+        self.assertEqual(row["memory_id_b"], b, "memory_id_b must be the second caller argument")
 
     def test_reverse_order_returns_same_conflict_id(self):
         """(A,B) and (B,A) calls must return the same conflict id (idempotent)."""
@@ -267,8 +279,9 @@ class TestConflictCallerOrderPreserved(unittest.TestCase):
         b = self._seed("fact_y", "Y value two")
         cid1 = self.db.record_memory_conflict(a, b)
         cid2 = self.db.record_memory_conflict(b, a)
-        self.assertEqual(cid1, cid2,
-                         "Reverse-order call must return same conflict id (no duplicate row)")
+        self.assertEqual(
+            cid1, cid2, "Reverse-order call must return same conflict id (no duplicate row)"
+        )
 
     def test_keep_a_retains_intended_fact(self):
         """keep_a must retain the memory whose content was passed as memory_id_a.
@@ -278,7 +291,7 @@ class TestConflictCallerOrderPreserved(unittest.TestCase):
         the newer fact survives in the DB.
         """
         newer_id = self._seed("lang_newer", "I use Rust for systems work")
-        older_id  = self._seed("lang_older",  "I use C for systems work")
+        older_id = self._seed("lang_older", "I use C for systems work")
         # Explicitly pass (newer, older) — dedup convention
         cid = self.db.record_memory_conflict(newer_id, older_id)
         ok, reason = self.db.resolve_memory_conflict_atomic(cid, "keep_a")
@@ -287,19 +300,17 @@ class TestConflictCallerOrderPreserved(unittest.TestCase):
         row = self.db._conn.execute(
             "SELECT valid_to FROM user_memory WHERE id=?", (newer_id,)
         ).fetchone()
-        self.assertIsNone(row["valid_to"],
-                          "keep_a must leave memory_id_a (newer, Rust) current")
+        self.assertIsNone(row["valid_to"], "keep_a must leave memory_id_a (newer, Rust) current")
         # The older fact (C) must be soft-deleted
         old_row = self.db._conn.execute(
             "SELECT valid_to FROM user_memory WHERE id=?", (older_id,)
         ).fetchone()
-        self.assertIsNotNone(old_row["valid_to"],
-                             "keep_a must soft-delete memory_id_b (older, C)")
+        self.assertIsNotNone(old_row["valid_to"], "keep_a must soft-delete memory_id_b (older, C)")
 
     def test_keep_b_retains_intended_fact(self):
         """keep_b must retain the memory whose content was passed as memory_id_b."""
         newer_id = self._seed("pref_newer", "I prefer coffee in the morning")
-        older_id  = self._seed("pref_older",  "I prefer tea in the morning")
+        older_id = self._seed("pref_older", "I prefer tea in the morning")
         cid = self.db.record_memory_conflict(newer_id, older_id)
         ok, reason = self.db.resolve_memory_conflict_atomic(cid, "keep_b")
         self.assertTrue(ok, reason)
@@ -307,14 +318,14 @@ class TestConflictCallerOrderPreserved(unittest.TestCase):
         row_b = self.db._conn.execute(
             "SELECT valid_to FROM user_memory WHERE id=?", (older_id,)
         ).fetchone()
-        self.assertIsNone(row_b["valid_to"],
-                          "keep_b must leave memory_id_b (older, tea) current")
+        self.assertIsNone(row_b["valid_to"], "keep_b must leave memory_id_b (older, tea) current")
         # The newer fact (coffee) is memory_id_a and must be soft-deleted
         row_a = self.db._conn.execute(
             "SELECT valid_to FROM user_memory WHERE id=?", (newer_id,)
         ).fetchone()
-        self.assertIsNotNone(row_a["valid_to"],
-                             "keep_b must soft-delete memory_id_a (newer, coffee)")
+        self.assertIsNotNone(
+            row_a["valid_to"], "keep_b must soft-delete memory_id_a (newer, coffee)"
+        )
 
 
 class TestResolveMemoryConflictAtomic(unittest.TestCase):
@@ -454,10 +465,11 @@ class TestResolveMemoryConflictAtomic(unittest.TestCase):
 
 # ─── _memory_text_similarity ──────────────────────────────────────────────────
 
-class TestMemoryTextSimilarity(unittest.TestCase):
 
+class TestMemoryTextSimilarity(unittest.TestCase):
     def _sim(self, a: str, b: str) -> float:
         from orivellum.capabilities.nightshift import _memory_text_similarity
+
         return _memory_text_similarity(a, b)
 
     def test_identical_strings_score_one(self):
@@ -488,8 +500,8 @@ class TestMemoryTextSimilarity(unittest.TestCase):
 
 # ─── _pass_memory_dedup ───────────────────────────────────────────────────────
 
-class TestPassMemoryDedup(unittest.TestCase):
 
+class TestPassMemoryDedup(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -500,14 +512,18 @@ class TestPassMemoryDedup(unittest.TestCase):
 
     def _run_dedup(self):
         from orivellum.capabilities.nightshift import _pass_memory_dedup
+
         report: list[str] = []
         _pass_memory_dedup(self.db, report)
         return report
 
     def _current_rows(self):
-        return [dict(r) for r in self.db._conn.execute(
-            "SELECT id, key, value, valid_to FROM user_memory WHERE valid_to IS NULL"
-        ).fetchall()]
+        return [
+            dict(r)
+            for r in self.db._conn.execute(
+                "SELECT id, key, value, valid_to FROM user_memory WHERE valid_to IS NULL"
+            ).fetchall()
+        ]
 
     def test_no_facts_runs_without_error(self):
         """Pass must be a no-op and not raise when there are no memory rows."""
@@ -519,6 +535,7 @@ class TestPassMemoryDedup(unittest.TestCase):
         """Two current rows with the same key and near-identical value → only one survives."""
         # Seed the same key twice by bypassing the upsert (which would soft-delete the first)
         import uuid as _uuid
+
         now = "2026-01-01T00:00:00+00:00"
         older = "2026-01-01T00:00:00+00:00"
         newer = "2026-01-02T00:00:00+00:00"
@@ -527,7 +544,15 @@ class TestPassMemoryDedup(unittest.TestCase):
             " VALUES(?,?,?,?,?,?,?)",
             [
                 (str(_uuid.uuid4()), "dup_key", "I prefer Python", "semantic", older, older, older),
-                (str(_uuid.uuid4()), "dup_key", "I prefer Python.", "semantic", newer, newer, newer),
+                (
+                    str(_uuid.uuid4()),
+                    "dup_key",
+                    "I prefer Python.",
+                    "semantic",
+                    newer,
+                    newer,
+                    newer,
+                ),
             ],
         )
         self.db._conn.commit()
@@ -545,16 +570,31 @@ class TestPassMemoryDedup(unittest.TestCase):
           intersection = {} → Jaccard = 0.0
         """
         import uuid as _uuid
+
         t1 = "2026-01-01T00:00:00+00:00"
         t2 = "2026-01-02T00:00:00+00:00"
         self.db._conn.executemany(
             "INSERT INTO user_memory(id, key, value, memory_type, valid_from, txn_time, created_at)"
             " VALUES(?,?,?,?,?,?,?)",
             [
-                (str(_uuid.uuid4()), "conflict_key",
-                 "morning sunrise coffee before breakfast", "semantic", t1, t1, t1),
-                (str(_uuid.uuid4()), "conflict_key",
-                 "night owl late evening deadlines midnight", "semantic", t2, t2, t2),
+                (
+                    str(_uuid.uuid4()),
+                    "conflict_key",
+                    "morning sunrise coffee before breakfast",
+                    "semantic",
+                    t1,
+                    t1,
+                    t1,
+                ),
+                (
+                    str(_uuid.uuid4()),
+                    "conflict_key",
+                    "night owl late evening deadlines midnight",
+                    "semantic",
+                    t2,
+                    t2,
+                    t2,
+                ),
             ],
         )
         self.db._conn.commit()
@@ -575,6 +615,7 @@ class TestPassMemoryDedup(unittest.TestCase):
         user review instead.
         """
         import uuid as _uuid
+
         t1 = "2026-01-01T00:00:00+00:00"
         t2 = "2026-01-02T00:00:00+00:00"
         aid = str(_uuid.uuid4())
@@ -583,8 +624,24 @@ class TestPassMemoryDedup(unittest.TestCase):
             "INSERT INTO user_memory(id, key, value, memory_type, valid_from, txn_time, created_at)"
             " VALUES(?,?,?,?,?,?,?)",
             [
-                (aid, "pref_lang",    "My favourite language is Rust and systems programming", "semantic", t1, t1, t1),
-                (bid, "fav_language", "My favourite language is Rust and systems programming", "semantic", t2, t2, t2),
+                (
+                    aid,
+                    "pref_lang",
+                    "My favourite language is Rust and systems programming",
+                    "semantic",
+                    t1,
+                    t1,
+                    t1,
+                ),
+                (
+                    bid,
+                    "fav_language",
+                    "My favourite language is Rust and systems programming",
+                    "semantic",
+                    t2,
+                    t2,
+                    t2,
+                ),
             ],
         )
         self.db._conn.commit()
@@ -592,20 +649,26 @@ class TestPassMemoryDedup(unittest.TestCase):
         # BOTH rows must still be current — no auto-deletion for cross-key facts
         current = self._current_rows()
         cross_rows = [r for r in current if r["key"] in ("pref_lang", "fav_language")]
-        self.assertEqual(len(cross_rows), 2,
-                         "Cross-key near-dups must not be auto-deleted; both rows must remain")
+        self.assertEqual(
+            len(cross_rows),
+            2,
+            "Cross-key near-dups must not be auto-deleted; both rows must remain",
+        )
         # A conflict must have been registered for user review
         conflicts = self.db.get_memory_conflicts(resolved=False)
         cross_conflict = [
-            c for c in conflicts
-            if set([c.get("memory_id_a"), c.get("memory_id_b")]) == {aid, bid}
+            c for c in conflicts if set([c.get("memory_id_a"), c.get("memory_id_b")]) == {aid, bid}
         ]
-        self.assertGreater(len(cross_conflict), 0,
-                           "A conflict record must be created for cross-key near-duplicates")
+        self.assertGreater(
+            len(cross_conflict),
+            0,
+            "A conflict record must be created for cross-key near-duplicates",
+        )
 
     def test_dedup_is_idempotent(self):
         """Running dedup twice must produce the same result as running it once."""
         import uuid as _uuid
+
         t1 = "2026-01-01T00:00:00+00:00"
         t2 = "2026-01-02T00:00:00+00:00"
         self.db._conn.executemany(
@@ -621,14 +684,17 @@ class TestPassMemoryDedup(unittest.TestCase):
         count_after_first = len(self._current_rows())
         self._run_dedup()
         count_after_second = len(self._current_rows())
-        self.assertEqual(count_after_first, count_after_second,
-                         "Idempotency: second dedup run must not change row count")
+        self.assertEqual(
+            count_after_first,
+            count_after_second,
+            "Idempotency: second dedup run must not change row count",
+        )
 
 
 # ─── _pass_memory_promote ─────────────────────────────────────────────────────
 
-class TestPassMemoryPromote(unittest.TestCase):
 
+class TestPassMemoryPromote(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -639,6 +705,7 @@ class TestPassMemoryPromote(unittest.TestCase):
 
     def _run_promote(self):
         from orivellum.capabilities.nightshift import _pass_memory_promote
+
         report: list[str] = []
         _pass_memory_promote(self.db, report)
         return report
@@ -646,8 +713,9 @@ class TestPassMemoryPromote(unittest.TestCase):
     def _seed_episodic_history(self, key: str, values: list[str]) -> None:
         """Insert multiple episodic rows for a key (historical rows + one current)."""
         import uuid as _uuid
-        from datetime import datetime, timezone, timedelta
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        from datetime import datetime, timedelta
+
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         for i, value in enumerate(values):
             ts = (base + timedelta(hours=i)).isoformat()
             next_ts = (base + timedelta(hours=i + 1)).isoformat() if i < len(values) - 1 else None
@@ -666,8 +734,9 @@ class TestPassMemoryPromote(unittest.TestCase):
             "SELECT memory_type FROM user_memory WHERE key='rare_key' AND valid_to IS NULL"
         ).fetchone()
         self.assertIsNotNone(row)
-        self.assertEqual(row["memory_type"], "episodic",
-                         "Key with < 3 episodic rows must not be promoted")
+        self.assertEqual(
+            row["memory_type"], "episodic", "Key with < 3 episodic rows must not be promoted"
+        )
 
     def test_three_or_more_episodic_gets_promoted(self):
         """3 episodic occurrences must promote the current row to semantic."""
@@ -677,8 +746,11 @@ class TestPassMemoryPromote(unittest.TestCase):
             "SELECT memory_type FROM user_memory WHERE key='frequent_key' AND valid_to IS NULL"
         ).fetchone()
         self.assertIsNotNone(row, "A current row must exist after promotion")
-        self.assertEqual(row["memory_type"], "semantic",
-                         "Current row must be promoted to semantic after 3+ episodic rows")
+        self.assertEqual(
+            row["memory_type"],
+            "semantic",
+            "Current row must be promoted to semantic after 3+ episodic rows",
+        )
 
     def test_already_semantic_not_double_promoted(self):
         """A key whose current row is already semantic must not be touched."""
@@ -690,8 +762,9 @@ class TestPassMemoryPromote(unittest.TestCase):
         after_count = self.db._conn.execute(
             "SELECT COUNT(*) AS n FROM user_memory WHERE key='semantic_key'"
         ).fetchone()["n"]
-        self.assertEqual(before_count, after_count,
-                         "Already-semantic key must not create an extra row")
+        self.assertEqual(
+            before_count, after_count, "Already-semantic key must not create an extra row"
+        )
 
     def test_promotion_is_idempotent(self):
         """Running promote twice must produce the same result as once."""
@@ -704,20 +777,22 @@ class TestPassMemoryPromote(unittest.TestCase):
         count_2 = self.db._conn.execute(
             "SELECT COUNT(*) AS n FROM user_memory WHERE key='idem_promote' AND valid_to IS NULL"
         ).fetchone()["n"]
-        self.assertEqual(count_1, count_2,
-                         "Promotion is idempotent: second run must not create extra rows")
+        self.assertEqual(
+            count_1, count_2, "Promotion is idempotent: second run must not create extra rows"
+        )
 
     def test_promotion_preserves_source_evidence_id(self):
         """Promoted semantic row must carry the same source_evidence_id as the
         original episodic row — evidence provenance survives promotion."""
         import uuid as _uuid
+
         evidence_id = str(_uuid.uuid4())
         conv_id = str(_uuid.uuid4())
         key = "ev_pres"
         now_t = "2026-01-01T00:00:00+00:00"
         # Insert 3 episodic rows directly; set evidence on the current one
         for i in range(3):
-            ts = f"2026-01-0{i+1}T00:00:00+00:00"
+            ts = f"2026-01-0{i + 1}T00:00:00+00:00"
             is_current = i == 2
             self.db._conn.execute(
                 """INSERT INTO user_memory
@@ -725,9 +800,14 @@ class TestPassMemoryPromote(unittest.TestCase):
                     txn_time, created_at, source_conv_id, source_evidence_id)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    str(_uuid.uuid4()), key, f"fact v{i}", "episodic",
-                    ts, None if is_current else ts,
-                    ts, ts,
+                    str(_uuid.uuid4()),
+                    key,
+                    f"fact v{i}",
+                    "episodic",
+                    ts,
+                    None if is_current else ts,
+                    ts,
+                    ts,
                     conv_id if is_current else None,
                     evidence_id if is_current else None,
                 ),
@@ -741,18 +821,23 @@ class TestPassMemoryPromote(unittest.TestCase):
             (key,),
         ).fetchone()
         self.assertIsNotNone(sem, "A semantic row must exist after promotion")
-        self.assertEqual(sem["source_evidence_id"], evidence_id,
-                         "source_evidence_id must be preserved across promotion")
-        self.assertEqual(sem["source_conv_id"], conv_id,
-                         "source_conv_id must be preserved across promotion")
+        self.assertEqual(
+            sem["source_evidence_id"],
+            evidence_id,
+            "source_evidence_id must be preserved across promotion",
+        )
+        self.assertEqual(
+            sem["source_conv_id"], conv_id, "source_conv_id must be preserved across promotion"
+        )
 
     def test_promotion_report_mentions_promoted_count(self):
         """The report list must mention the promoted count when promotion happens."""
         self._seed_episodic_history("report_key", ["ev 1", "ev 2", "ev 3"])
         report = self._run_promote()
         combined = " ".join(report)
-        self.assertIn("promote", combined.lower(),
-                      "Report must contain 'promote' when facts are promoted")
+        self.assertIn(
+            "promote", combined.lower(), "Report must contain 'promote' when facts are promoted"
+        )
 
 
 if __name__ == "__main__":

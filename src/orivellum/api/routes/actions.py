@@ -9,6 +9,7 @@ POST /api/actions/{name}/preview     → confirm_message (no side effects)
 POST /api/actions/{name}/execute     → execute + return download URL
 POST /api/actions/template-fill      → multipart: template file + data → execute
 """
+
 from __future__ import annotations
 
 import json
@@ -23,12 +24,15 @@ logger = logging.getLogger("orivellum.api.actions")
 router = APIRouter(prefix="/api/actions", tags=["actions"], dependencies=[Depends(require_auth)])
 # ── Lazy registry loader ───────────────────────────────────────────────────────
 
+
 def _registry():
     from orivellum.capabilities.actions import get_registry
+
     return get_registry()
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
+
 
 @router.get("")
 def list_actions():
@@ -45,6 +49,7 @@ def list_runs(
     """Return recent action runs, newest first."""
     db = get_db()
     from orivellum.capabilities.actions import list_runs as _list_runs
+
     runs = _list_runs(db, limit=limit, work_id=work_id)
     return {"runs": runs, "count": len(runs)}
 
@@ -54,6 +59,7 @@ def get_run(run_id: str):
     """Return a single action run by ID."""
     db = get_db()
     from orivellum.capabilities.actions import get_run as _get_run
+
     run = _get_run(db, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -70,6 +76,7 @@ def get_run_log(run_id: str):
     """
     db = get_db()
     from orivellum.capabilities.actions import get_run as _get_run
+
     run = _get_run(db, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -77,11 +84,13 @@ def get_run_log(run_id: str):
     lines: list[dict] = []
 
     # Start event
-    lines.append({
-        "ts": run["created_at"],
-        "level": "info",
-        "msg": f"Action '{run['action_name']}' started",
-    })
+    lines.append(
+        {
+            "ts": run["created_at"],
+            "level": "info",
+            "msg": f"Action '{run['action_name']}' started",
+        }
+    )
 
     # Inputs summary
     try:
@@ -89,19 +98,23 @@ def get_run_log(run_id: str):
     except Exception:
         inputs = {}
     if inputs:
-        lines.append({
-            "ts": run["created_at"],
-            "level": "info",
-            "msg": "Inputs: " + json.dumps(inputs, ensure_ascii=False),
-        })
+        lines.append(
+            {
+                "ts": run["created_at"],
+                "level": "info",
+                "msg": "Inputs: " + json.dumps(inputs, ensure_ascii=False),
+            }
+        )
 
     # Work scope
     if run.get("work_id"):
-        lines.append({
-            "ts": run["created_at"],
-            "level": "info",
-            "msg": f"Scoped to work: {run['work_id']}",
-        })
+        lines.append(
+            {
+                "ts": run["created_at"],
+                "level": "info",
+                "msg": f"Scoped to work: {run['work_id']}",
+            }
+        )
 
     # Outcome
     status = run.get("status", "running")
@@ -111,13 +124,17 @@ def get_run_log(run_id: str):
         label = run.get("output_label") or "output ready"
         lines.append({"ts": completed_at, "level": "info", "msg": f"Completed: {label}"})
         if run.get("output_path"):
-            lines.append({"ts": completed_at, "level": "info", "msg": f"Output: {run['output_path']}"})
+            lines.append(
+                {"ts": completed_at, "level": "info", "msg": f"Output: {run['output_path']}"}
+            )
     elif status == "error":
-        lines.append({
-            "ts": completed_at,
-            "level": "error",
-            "msg": run.get("error") or "Action failed with an unknown error",
-        })
+        lines.append(
+            {
+                "ts": completed_at,
+                "level": "error",
+                "msg": run.get("error") or "Action failed with an unknown error",
+            }
+        )
     else:
         lines.append({"ts": run["created_at"], "level": "info", "msg": "Action is still running…"})
 
@@ -125,9 +142,10 @@ def get_run_log(run_id: str):
     if run.get("completed_at") and run.get("created_at"):
         try:
             from datetime import datetime
+
             start = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
-            end   = datetime.fromisoformat(run["completed_at"].replace("Z", "+00:00"))
-            secs  = round((end - start).total_seconds(), 1)
+            end = datetime.fromisoformat(run["completed_at"].replace("Z", "+00:00"))
+            secs = round((end - start).total_seconds(), 1)
             lines.append({"ts": completed_at, "level": "info", "msg": f"Duration: {secs}s"})
         except Exception:
             pass
@@ -168,9 +186,7 @@ async def retry_run(run_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
-        raise internal_error(
-            logger, exc, f"retry of action {run['action_name']!r}"
-        ) from exc
+        raise internal_error(logger, exc, f"retry of action {run['action_name']!r}") from exc
 
     download_url: str | None = None
     if result.get("output_path"):

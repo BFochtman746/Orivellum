@@ -4,6 +4,7 @@ Browser MediaRecorder captures arrive as .webm (Chrome/Firefox); the upload
 route must accept them like any other audio format. The background worker is
 mocked — these tests only cover the request-validation layer.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -13,19 +14,18 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import AUTH_HEADERS
-
 from orivellum.api.routes import studio as studio_routes
+from tests.conftest import AUTH_HEADERS
 
 # Minimal EBML header — enough for the magic-byte signature check.
 _WEBM_BYTES = b"\x1a\x45\xdf\xa3" + b"\x00" * 64
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -41,7 +41,8 @@ class TranscribeWebmUploadTest(unittest.TestCase):
         self._jobs_patch.start()
         # Never run the real worker — validation is all we test here.
         self._worker_patch = mock.patch.object(
-            studio_routes, "_run_transcribe_job", lambda *a, **k: None)
+            studio_routes, "_run_transcribe_job", lambda *a, **k: None
+        )
         self._worker_patch.start()
 
     def tearDown(self):
@@ -58,6 +59,7 @@ class TranscribeWebmUploadTest(unittest.TestCase):
 
     def test_webm_recording_accepted(self):
         from orivellum.api import _deps
+
         with TestClient(self.app, headers=AUTH_HEADERS) as client:
             _deps.init(db=self.db, cfg=self.cfg)
             r = self._post(client, "recording-2026-08-10.webm", _WEBM_BYTES)
@@ -67,6 +69,7 @@ class TranscribeWebmUploadTest(unittest.TestCase):
     def test_webm_mislabeled_content_rejected(self):
         """A .webm name with non-EBML bytes must fail the magic-byte gate."""
         from orivellum.api import _deps
+
         with TestClient(self.app, headers=AUTH_HEADERS) as client:
             _deps.init(db=self.db, cfg=self.cfg)
             r = self._post(client, "recording.webm", b"not really webm data")
@@ -74,6 +77,7 @@ class TranscribeWebmUploadTest(unittest.TestCase):
 
     def test_unsupported_extension_still_rejected(self):
         from orivellum.api import _deps
+
         with TestClient(self.app, headers=AUTH_HEADERS) as client:
             _deps.init(db=self.db, cfg=self.cfg)
             r = self._post(client, "clip.txt", b"hello")

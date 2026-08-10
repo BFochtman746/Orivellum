@@ -4,6 +4,7 @@ Manages every visual/physical aspect of the product and enforces series
 branding across many books and many series. Deterministic core (spine + wrap
 math, series-token cascade, design verification, sealing) is fully working.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -26,11 +27,23 @@ SPINE_FACTOR = {"white": 0.002252, "cream": 0.0025, "color": 0.0032}
 SPINE_COVER_ALLOWANCE = 0.06
 SPINE_TEXT_MIN_PAGES = 79
 TRIMS = {
-    "5x8": (5.0, 8.0), "5.25x8": (5.25, 8.0), "5.5x8.5": (5.5, 8.5),
-    "6x9": (6.0, 9.0), "7x10": (7.0, 10.0), "4.25x6.87": (4.25, 6.87),
+    "5x8": (5.0, 8.0),
+    "5.25x8": (5.25, 8.0),
+    "5.5x8.5": (5.5, 8.5),
+    "6x9": (6.0, 9.0),
+    "7x10": (7.0, 10.0),
+    "4.25x6.87": (4.25, 6.87),
 }
-BRAND_KEYS = ["body_font", "heading_font", "palette", "imagery",
-              "composition", "title_pos", "author_pos", "logo"]
+BRAND_KEYS = [
+    "body_font",
+    "heading_font",
+    "palette",
+    "imagery",
+    "composition",
+    "title_pos",
+    "author_pos",
+    "logo",
+]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS atelier_series (
@@ -83,17 +96,21 @@ def _db_path() -> str:
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
+
 def _sha(t: str) -> str:
     return hashlib.sha256(t.encode()).hexdigest()
 
+
 def _canon(p: Any) -> str:
     return json.dumps(p, sort_keys=True, separators=(",", ":"))
+
 
 def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "untitled"
 
 
 # ── cover math (deterministic, researched KDP formulas) ──────────────────────
+
 
 def spine_width(pages: int, paper: str) -> float:
     return pages * SPINE_FACTOR[paper] + SPINE_COVER_ALLOWANCE
@@ -103,8 +120,13 @@ def wrap_dimensions(trim: str, pages: int, paper: str) -> dict:
     tw, th = TRIMS[trim]
     spine = spine_width(pages, paper)
     return {
-        "trim": trim, "trim_w": tw, "trim_h": th, "paper": paper, "pages": pages,
-        "bleed": BLEED, "spine_width": round(spine, 4),
+        "trim": trim,
+        "trim_w": tw,
+        "trim_h": th,
+        "paper": paper,
+        "pages": pages,
+        "bleed": BLEED,
+        "spine_width": round(spine, 4),
         "full_cover_width": round(2 * BLEED + 2 * tw + spine, 4),
         "full_cover_height": round(th + 2 * BLEED, 4),
         "spine_text_allowed": pages >= SPINE_TEXT_MIN_PAGES,
@@ -114,6 +136,7 @@ def wrap_dimensions(trim: str, pages: int, paper: str) -> dict:
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
+
 
 def _connect() -> sqlite3.Connection:
     c = sqlite3.connect(_db_path())
@@ -138,6 +161,7 @@ def _ledger_append(conn: sqlite3.Connection, scope: str, kind: str, payload: Any
 
 
 # ── public API ────────────────────────────────────────────────────────────────
+
 
 def cmd_init(_a: Any = None) -> int:
     conn = _connect()
@@ -244,8 +268,14 @@ def get_book(slug: str) -> dict | None:
     return d
 
 
-def create_book(series_slug: str, title: str, number: int = 1,
-                pages: int = 300, paper: str = "cream", trim: str = "6x9") -> dict:
+def create_book(
+    series_slug: str,
+    title: str,
+    number: int = 1,
+    pages: int = 300,
+    paper: str = "cream",
+    trim: str = "6x9",
+) -> dict:
     conn = _connect()
     ser = conn.execute("SELECT * FROM atelier_series WHERE slug=?", (series_slug,)).fetchone()
     if not ser:
@@ -261,9 +291,19 @@ def create_book(series_slug: str, title: str, number: int = 1,
         "INSERT INTO atelier_book (slug,title,series,number,pages,paper,trim,created_at) VALUES (?,?,?,?,?,?,?,?)",
         (s, title, series_slug, number, pages, paper, trim, _now()),
     )
-    _ledger_append(conn, f"book:{s}", "book.created",
-                   {"title": title, "series": series_slug, "number": number,
-                    "pages": pages, "paper": paper, "trim": trim})
+    _ledger_append(
+        conn,
+        f"book:{s}",
+        "book.created",
+        {
+            "title": title,
+            "series": series_slug,
+            "number": number,
+            "pages": pages,
+            "paper": paper,
+            "trim": trim,
+        },
+    )
     conn.commit()
     return get_book(s)  # type: ignore[return-value]
 
@@ -274,12 +314,17 @@ def get_spec(slug: str) -> dict:
     if not row:
         raise KeyError(f"Book '{slug}' not found.")
     b = dict(row)
-    return {"book": b["title"], "series": b["series"], "number": b["number"],
-            **wrap_dimensions(b["trim"], b["pages"], b["paper"])}
+    return {
+        "book": b["title"],
+        "series": b["series"],
+        "number": b["number"],
+        **wrap_dimensions(b["trim"], b["pages"], b["paper"]),
+    }
 
 
-def generate_covers(slug: str, versions: int = 3, mood: str = "",
-                    gateway_name: str = "mock") -> list[dict]:
+def generate_covers(
+    slug: str, versions: int = 3, mood: str = "", gateway_name: str = "mock"
+) -> list[dict]:
     conn = _connect()
     row = conn.execute("SELECT * FROM atelier_book WHERE slug=?", (slug,)).fetchone()
     if not row:
@@ -294,8 +339,11 @@ def generate_covers(slug: str, versions: int = 3, mood: str = "",
         b = dict(conn.execute("SELECT * FROM atelier_book WHERE slug=?", (slug,)).fetchone())
     brand = json.loads(ser["brand"])
     brief = {
-        "title": b["title"], "series": ser["name"], "series_number": b["number"],
-        "mood": b["tagline"], **{k: brand.get(k, "") for k in BRAND_KEYS},
+        "title": b["title"],
+        "series": ser["name"],
+        "series_number": b["number"],
+        "mood": b["tagline"],
+        **{k: brand.get(k, "") for k in BRAND_KEYS},
     }
     engine = gw.get_gateway(gateway_name)
     cover_list = engine.cover_versions(brief, n=versions)
@@ -305,10 +353,19 @@ def generate_covers(slug: str, versions: int = 3, mood: str = "",
             "INSERT INTO atelier_cover_version (book,version_id,prompt,status,notes,at) VALUES (?,?,?,?,?,?)",
             (slug, v.version_id, v.prompt, v.status, v.notes, _now()),
         )
-        out.append({"version_id": v.version_id, "prompt": v.prompt, "status": v.status, "notes": v.notes})
-    _ledger_append(conn, f"book:{slug}", "cover.generated",
-                   {"gateway": engine.name, "count": len(cover_list),
-                    "versions": [v.version_id for v in cover_list]})
+        out.append(
+            {"version_id": v.version_id, "prompt": v.prompt, "status": v.status, "notes": v.notes}
+        )
+    _ledger_append(
+        conn,
+        f"book:{slug}",
+        "cover.generated",
+        {
+            "gateway": engine.name,
+            "count": len(cover_list),
+            "versions": [v.version_id for v in cover_list],
+        },
+    )
     conn.commit()
     return out
 
@@ -348,15 +405,25 @@ def seal_design(slug: str, author: str, choose_version: str) -> dict:
     row = conn.execute("SELECT * FROM atelier_book WHERE slug=?", (slug,)).fetchone()
     b = dict(row)
     manifest = {
-        "book": b["title"], "series": b["series"], "number": b["number"],
-        "spec": vr["spec"], "chosen_cover": choose_version,
-        "author": author, "sealed_at": _now(),
+        "book": b["title"],
+        "series": b["series"],
+        "number": b["number"],
+        "spec": vr["spec"],
+        "chosen_cover": choose_version,
+        "author": author,
+        "sealed_at": _now(),
     }
     ph = _sha(_canon(manifest))
     manifest["package_sha256"] = ph
-    conn.execute("UPDATE atelier_book SET state='SEALED', sealed_version=? WHERE slug=?",
-                 (choose_version, slug))
-    _ledger_append(conn, f"book:{slug}", "cover.sealed",
-                   {"version": choose_version, "sha256": ph, "author": author})
+    conn.execute(
+        "UPDATE atelier_book SET state='SEALED', sealed_version=? WHERE slug=?",
+        (choose_version, slug),
+    )
+    _ledger_append(
+        conn,
+        f"book:{slug}",
+        "cover.sealed",
+        {"version": choose_version, "sha256": ph, "author": author},
+    )
     conn.commit()
     return manifest

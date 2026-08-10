@@ -8,6 +8,7 @@ becomes its own searchable document linked to the Work.
 Usage:
     uv run python scripts/import_excel_vault.py
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -17,7 +18,7 @@ from pathlib import Path
 
 # ── Resolve project root ───────────────────────────────────────────────────────
 ROOT = Path(__file__).parent.parent
-SRC  = ROOT / "src"
+SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
@@ -37,14 +38,14 @@ def main() -> None:
         sys.exit(f"[ERROR] ZIP not found: {ZIP_PATH}")
 
     print("Initialising Orivellum database …")
-    from orivellum.database.db import OrivellumDB
-    from orivellum.configuration.config import load_config as get_config
-    from orivellum.capabilities.pipeline import process_document
     from orivellum.api import _deps
+    from orivellum.capabilities.pipeline import process_document
+    from orivellum.configuration.config import load_config as get_config
+    from orivellum.database.db import OrivellumDB
 
     cfg = get_config()
-    db  = OrivellumDB(cfg.database.path)
-    _deps.init(db=db, cfg=cfg)   # required by process_document → get_config() inside pipeline
+    db = OrivellumDB(cfg.database.path)
+    _deps.init(db=db, cfg=cfg)  # required by process_document → get_config() inside pipeline
 
     # ── 1. Find or create the Work ─────────────────────────────────────────────
     WORK_TITLE = "Microsoft Excel Mastery"
@@ -78,6 +79,7 @@ def main() -> None:
 
     # Check dedup
     import sqlite3
+
     with sqlite3.connect(cfg.database.path) as _conn:
         _conn.row_factory = sqlite3.Row
         row = _conn.execute("SELECT id FROM documents WHERE sha256=?", (sha,)).fetchone()
@@ -136,6 +138,7 @@ def main() -> None:
 
     # ── 4. Report results ──────────────────────────────────────────────────────
     import sqlite3 as _s
+
     with _s.connect(cfg.database.path) as conn:
         conn.row_factory = _s.Row
         children = conn.execute(

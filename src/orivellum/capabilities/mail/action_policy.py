@@ -7,6 +7,7 @@ IMPLEMENTATION-SPECIFICATION §6 and SECURITY-AND-ACTION-POLICY §Action authori
 Policy version is embedded in every audit event so the system can
 reconstruct which rules were active when an action was applied.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +23,7 @@ from orivellum.capabilities.mail.models import (
 )
 
 POLICY_VERSION = "1.0.0"
-POLICY_HASH    = hashlib.sha256(POLICY_VERSION.encode()).hexdigest()[:12]
+POLICY_HASH = hashlib.sha256(POLICY_VERSION.encode()).hexdigest()[:12]
 
 
 @dataclass(frozen=True)
@@ -57,17 +58,27 @@ def evaluate(
 
     if action_type == ACTION_SEND:
         if not send_enabled:
-            return PolicyDecision(False, "Send is disabled; enable Mail.Send and set send_enabled", action_type)
+            return PolicyDecision(
+                False, "Send is disabled; enable Mail.Send and set send_enabled", action_type
+            )
         if not explicit_user_approval:
-            return PolicyDecision(False, "Send requires explicit per-item user approval", action_type)
+            return PolicyDecision(
+                False, "Send requires explicit per-item user approval", action_type
+            )
 
     if action_type == ACTION_CREATE_DRAFT:
         if is_high_risk and not explicit_user_approval:
-            return PolicyDecision(False, "High-risk message requires explicit approval before draft creation", action_type)
+            return PolicyDecision(
+                False,
+                "High-risk message requires explicit approval before draft creation",
+                action_type,
+            )
 
     if action_type in (ACTION_MOVE, ACTION_CREATE_DRAFT, ACTION_SEND):
         if not explicit_user_approval:
-            return PolicyDecision(False, f"{action_type} requires explicit user approval", action_type)
+            return PolicyDecision(
+                False, f"{action_type} requires explicit user approval", action_type
+            )
 
     if action_type == ACTION_UNDO_MOVE:
         if not explicit_user_approval:

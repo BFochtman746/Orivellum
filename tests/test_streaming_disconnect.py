@@ -5,6 +5,7 @@ is still streaming tokens, whatever partial reply has arrived is persisted
 with the truncation marker — leaving the conversation with a complete
 assistant turn rather than a missing one.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -13,15 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helper: build a minimal real DB wired into deps
 # ---------------------------------------------------------------------------
 
+
 def _make_db(tmp: str):
-    from orivellum.database.db import OrivellumDB
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -32,6 +33,7 @@ def _make_db(tmp: str):
 # ---------------------------------------------------------------------------
 # Helper: mock httpx.AsyncClient that streams a fixed list of SSE lines
 # ---------------------------------------------------------------------------
+
 
 def _make_httpx_mock(sse_lines: list[str]):
     """Return a mock AsyncClient that yields the given SSE lines then stops."""
@@ -58,6 +60,7 @@ def _make_httpx_mock(sse_lines: list[str]):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_partial_reply_persisted_on_client_disconnect():
     """GeneratorExit mid-stream must save the partial reply with truncation marker."""
@@ -75,29 +78,31 @@ async def test_partial_reply_persisted_on_client_disconnect():
 
         from orivellum.api.routes.conversations import _stream_response
 
-        with patch(
-            "orivellum.api.routes.conversations._maybe_dispatch_intent",
-            new_callable=AsyncMock,
-            return_value=None,
+        with (
+            patch(
+                "orivellum.api.routes.conversations._maybe_dispatch_intent",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("httpx.AsyncClient", return_value=mock_client),
         ):
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                gen = _stream_response(db, conv, "Say hello")
+            gen = _stream_response(db, conv, "Say hello")
 
-                # The generator now emits a control event (message_id/state) before
-                # any token.  Advance past all control events until we land on the
-                # first token event so at least one token is buffered in full_reply.
-                first_token_event: str | None = None
-                for _ in range(15):
-                    ev = await gen.__anext__()
-                    if "Hello" in ev:
-                        first_token_event = ev
-                        break
-                assert first_token_event is not None, (
-                    "Expected a 'Hello' token event within the first 15 SSE events"
-                )
+            # The generator now emits a control event (message_id/state) before
+            # any token.  Advance past all control events until we land on the
+            # first token event so at least one token is buffered in full_reply.
+            first_token_event: str | None = None
+            for _ in range(15):
+                ev = await gen.__anext__()
+                if "Hello" in ev:
+                    first_token_event = ev
+                    break
+            assert first_token_event is not None, (
+                "Expected a 'Hello' token event within the first 15 SSE events"
+            )
 
-                # Simulate client navigating away (disconnect)
-                await gen.aclose()
+            # Simulate client navigating away (disconnect)
+            await gen.aclose()
 
         messages = db.get_messages(conv["id"])
         assistant_msgs = [m for m in messages if m["role"] == "assistant"]
@@ -133,16 +138,18 @@ async def test_no_message_saved_when_disconnect_before_any_tokens():
 
         from orivellum.api.routes.conversations import _stream_response
 
-        with patch(
-            "orivellum.api.routes.conversations._maybe_dispatch_intent",
-            new_callable=AsyncMock,
-            return_value=None,
+        with (
+            patch(
+                "orivellum.api.routes.conversations._maybe_dispatch_intent",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("httpx.AsyncClient", return_value=mock_client),
         ):
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                gen = _stream_response(db, conv, "Say something")
+            gen = _stream_response(db, conv, "Say something")
 
-                # Close immediately — before the generator reaches its first yield
-                await gen.aclose()
+            # Close immediately — before the generator reaches its first yield
+            await gen.aclose()
 
         messages = db.get_messages(conv["id"])
         assistant_msgs = [m for m in messages if m["role"] == "assistant"]
@@ -172,16 +179,18 @@ async def test_full_reply_saved_normally_without_disconnect():
 
         from orivellum.api.routes.conversations import _stream_response
 
-        with patch(
-            "orivellum.api.routes.conversations._maybe_dispatch_intent",
-            new_callable=AsyncMock,
-            return_value=None,
+        with (
+            patch(
+                "orivellum.api.routes.conversations._maybe_dispatch_intent",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("httpx.AsyncClient", return_value=mock_client),
         ):
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                # Consume all events — no disconnect
-                events = []
-                async for event in _stream_response(db, conv, "Finish this"):
-                    events.append(event)
+            # Consume all events — no disconnect
+            events = []
+            async for event in _stream_response(db, conv, "Finish this"):
+                events.append(event)
 
         messages = db.get_messages(conv["id"])
         assistant_msgs = [m for m in messages if m["role"] == "assistant"]

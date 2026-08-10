@@ -8,6 +8,7 @@ Covers:
 - Cache is warmed before a mutation is tested (proper stale scenario)
 - Math helpers: _norm_vec, _dot
 """
+
 from __future__ import annotations
 
 import os
@@ -18,16 +19,16 @@ import pytest
 
 from orivellum.capabilities.embeddings import (
     _dot,
-    _norm_vec,
     _load_vecs,
+    _norm_vec,
     bump_vector_cache_version,
     invalidate_vector_cache,
     pack_vector,
     semantic_search,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _rand_vec(dim: int, rng: random.Random) -> list[float]:
     return [rng.gauss(0, 1) for _ in range(dim)]
@@ -35,6 +36,7 @@ def _rand_vec(dim: int, rng: random.Random) -> list[float]:
 
 def _make_db(tmp_path, name: str = "test.db"):
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(str(tmp_path / name))
 
 
@@ -62,6 +64,7 @@ def _seed_chunks(db, doc_id, n: int, dim: int, rng: random.Random) -> list[str]:
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
     """Wipe all caches before and after every test for isolation."""
@@ -81,6 +84,7 @@ _CHUNK_SQL = """
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
+
 
 def test_perf_cold_and_warm(tmp_path):
     """Cold-miss + warm-hit both within latency budget for 20 k vectors."""
@@ -116,8 +120,9 @@ def test_perf_cold_and_warm(tmp_path):
     warm_budget = 1.5 if os.getenv("CI") else 0.5
     assert cold_s < 5.0, f"Cold path {cold_s:.2f}s > 5s budget"
     assert warm_s < warm_budget, f"Warm path {warm_s:.2f}s > {warm_budget}s budget"
-    assert [r["id"] for r in cold] == [r["id"] for r in warm], \
+    assert [r["id"] for r in cold] == [r["id"] for r in warm], (
         "Warm cache returned different results than cold load"
+    )
 
     if len(cold) > 1:
         for a, b in zip(cold, cold[1:]):
@@ -152,8 +157,9 @@ def test_no_cross_db_contamination(tmp_path):
     oids_a = {e[0] for e in entries_a}
     oids_b = {e[0] for e in entries_b}
 
-    assert oids_a.isdisjoint(oids_b), \
+    assert oids_a.isdisjoint(oids_b), (
         "Cache entries from db_a and db_b overlap — cross-DB contamination"
+    )
     # Spot-check that the right chunks ended up in the right cache
     assert ids_a[0] in oids_a and ids_a[0] not in oids_b
     assert ids_b[0] in oids_b and ids_b[0] not in oids_a
@@ -186,8 +192,7 @@ def test_replacement_invalidates_cache(tmp_path):
     _, _, nvec_after = entries_after[0]
 
     # The normalized vectors must differ (new_vec ≠ original_vec with overwhelming probability)
-    assert nvec_before != nvec_after, \
-        "Cache still holds pre-replacement vector after store_vector"
+    assert nvec_before != nvec_after, "Cache still holds pre-replacement vector after store_vector"
 
 
 def test_cache_warms_then_stales_on_new_vector(tmp_path):
@@ -213,8 +218,7 @@ def test_cache_warms_then_stales_on_new_vector(tmp_path):
     # ── Next _load_vecs must rebuild and include the new entry ─────────────────
     entries_fresh = _load_vecs(db, "chunk", _CHUNK_SQL, ())
     fresh_ids = {e[0] for e in entries_fresh}
-    assert cid_new in fresh_ids, \
-        "Newly stored vector not present in cache after version bump"
+    assert cid_new in fresh_ids, "Newly stored vector not present in cache after version bump"
     assert len(entries_fresh) == N + 1
 
 
@@ -256,8 +260,9 @@ def test_ai_auto_items_included_in_semantic_search(tmp_path):
 
     result_ids = {r["id"] for r in results}
     # ai_auto item has a vector and review_status != 'rejected' → must appear
-    assert kid in result_ids, \
+    assert kid in result_ids, (
         "ai_auto knowledge item missing from semantic_search results (eligibility filter too strict)"
+    )
 
 
 def test_batch_review_invalidates_knowledge_cache(tmp_path):
@@ -293,8 +298,9 @@ def test_batch_review_invalidates_knowledge_cache(tmp_path):
     try:
         # Before batch-reject: item must be visible (ai_auto is eligible)
         before = semantic_search("test query", db, object_type="knowledge", limit=20)
-        assert any(r["id"] == kid for r in before), \
+        assert any(r["id"] == kid for r in before), (
             "ai_auto item not visible in semantic search before batch-reject"
+        )
 
         # Simulate the batch-review endpoint: raw SQL + explicit bump
         with db._lock:
@@ -307,8 +313,9 @@ def test_batch_review_invalidates_knowledge_cache(tmp_path):
 
         # After batch-reject: item must be absent (rejected is excluded)
         after = semantic_search("test query", db, object_type="knowledge", limit=20)
-        assert not any(r["id"] == kid for r in after), \
+        assert not any(r["id"] == kid for r in after), (
             "Batch-rejected ai_auto item still appears in semantic search"
+        )
     finally:
         emb_mod.embed_texts = original
 
@@ -351,8 +358,9 @@ def test_delete_knowledge_item_invalidates_cache(tmp_path):
     bump_vector_cache_version(db._path, "knowledge")
 
     entries_after = _load_vecs(db, "knowledge", knowledge_sql, ())
-    assert not any(e[0] == kid for e in entries_after), \
+    assert not any(e[0] == kid for e in entries_after), (
         "Deleted knowledge item still in cache after bump"
+    )
 
 
 def test_delete_chunks_invalidates_cache(tmp_path):
@@ -374,8 +382,9 @@ def test_delete_chunks_invalidates_cache(tmp_path):
     db.delete_chunks(doc_id)
 
     entries_after = _load_vecs(db, "chunk", _CHUNK_SQL, ())
-    assert not any(e[0] == cid for e in entries_after), \
+    assert not any(e[0] == cid for e in entries_after), (
         "Cleared chunk still in cache after delete_chunks"
+    )
 
 
 def test_delete_document_invalidates_cache(tmp_path):
@@ -397,8 +406,9 @@ def test_delete_document_invalidates_cache(tmp_path):
     db.delete_document(doc_id)
 
     entries_after = _load_vecs(db, "chunk", _CHUNK_SQL, ())
-    assert not any(e[0] == cid for e in entries_after), \
+    assert not any(e[0] == cid for e in entries_after), (
         "Chunk of deleted document still in cache after delete_document"
+    )
 
 
 def test_work_reassignment_invalidates_chunk_cache(tmp_path):
@@ -427,8 +437,9 @@ def test_work_reassignment_invalidates_chunk_cache(tmp_path):
 
     entries_after = _load_vecs(db, "chunk", _CHUNK_SQL, ())
     entry_after = next(e for e in entries_after if e[0] == cid)
-    assert entry_after[1].get("work_id") == work_id, \
+    assert entry_after[1].get("work_id") == work_id, (
         "Chunk still shows old work_id in cache after update_document_work"
+    )
 
 
 def test_nightshift_orphan_cleanup_invalidates_chunk_cache(tmp_path):
@@ -439,8 +450,8 @@ def test_nightshift_orphan_cleanup_invalidates_chunk_cache(tmp_path):
     detects these orphaned chunk vectors, deletes them (vc_deleted > 0), and
     must bump the "chunk" cache so semantic search no longer returns them.
     """
+    from orivellum.capabilities.embeddings import _cache_lock, _vec_cache, _version_counters
     from orivellum.capabilities.nightshift import _pass_orphan_cleanup
-    from orivellum.capabilities.embeddings import _vec_cache, _version_counters, _cache_lock
 
     rng = random.Random(303)
     DIM = 32
@@ -464,7 +475,7 @@ def test_nightshift_orphan_cleanup_invalidates_chunk_cache(tmp_path):
     # Freeze the cache to simulate a warm snapshot that predates the delete
     with _cache_lock:
         _version_counters[(db._path, "chunk")] = 0
-        _vec_cache.pop((db._path, "chunk"), None)   # force rebuild on next call
+        _vec_cache.pop((db._path, "chunk"), None)  # force rebuild on next call
         # Insert stale version so next _load_vecs reads version=0 and rebuilds
         # only when version_counter > 0 (i.e. after the bump)
 
@@ -474,8 +485,7 @@ def test_nightshift_orphan_cleanup_invalidates_chunk_cache(tmp_path):
 
     with _cache_lock:
         chunk_ver = _version_counters.get((db._path, "chunk"), 0)
-    assert chunk_ver > 0, \
-        "chunk cache version not bumped after orphan vector cleanup"
+    assert chunk_ver > 0, "chunk cache version not bumped after orphan vector cleanup"
 
 
 def test_nightshift_orphan_cleanup_invalidates_knowledge_cache(tmp_path):
@@ -485,10 +495,11 @@ def test_nightshift_orphan_cleanup_invalidates_knowledge_cache(tmp_path):
     knowledge ID. Nightshift detects this orphaned vector (vk_deleted > 0) and
     must bump the 'knowledge' cache version.
     """
-    from orivellum.capabilities.nightshift import _pass_orphan_cleanup
-    from orivellum.capabilities.embeddings import _version_counters, _cache_lock
-
     import uuid as _uuid_mod
+
+    from orivellum.capabilities.embeddings import _cache_lock, _version_counters
+    from orivellum.capabilities.nightshift import _pass_orphan_cleanup
+
     rng = random.Random(404)
     DIM = 32
 
@@ -502,8 +513,7 @@ def test_nightshift_orphan_cleanup_invalidates_knowledge_cache(tmp_path):
         db._conn.execute(
             """INSERT INTO vectors(id, object_id, object_type, embedding, dim, created_at)
                VALUES(?,?,?,?,?,datetime('now'))""",
-            (str(_uuid_mod.uuid4()), fake_kid, "knowledge",
-             pack_vector(_rand_vec(DIM, rng)), DIM),
+            (str(_uuid_mod.uuid4()), fake_kid, "knowledge", pack_vector(_rand_vec(DIM, rng)), DIM),
         )
         db._conn.commit()
 
@@ -517,8 +527,7 @@ def test_nightshift_orphan_cleanup_invalidates_knowledge_cache(tmp_path):
 
     with _cache_lock:
         know_ver = _version_counters.get((db._path, "knowledge"), 0)
-    assert know_ver > 0, \
-        "knowledge cache version not bumped after orphan knowledge vector cleanup"
+    assert know_ver > 0, "knowledge cache version not bumped after orphan knowledge vector cleanup"
 
 
 def test_norm_vec_and_dot():

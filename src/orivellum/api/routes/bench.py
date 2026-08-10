@@ -14,6 +14,7 @@ background executor (visible on the job dashboard) and returns immediately;
 results land in ``bench_runs``.  The retrieval eval is DB-local (plus the
 embeddings endpoint) and runs inline in a worker thread.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,6 +29,7 @@ logger = logging.getLogger("orivellum.api.bench")
 
 router = APIRouter(prefix="/api/bench", tags=["bench"], dependencies=[Depends(require_auth)])
 # ── Request models (FA-09: typed, length-bounded, extras forbidden) ─────────────
+
 
 class BenchRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -53,6 +55,7 @@ class RetrievalEvalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     k: int = 5
     label: str = Field(default="", max_length=100)
+
 
 # Server-side benchmark concurrency guard.  Probes stream against the live
 # LLM server for up to minutes; overlapping runs would contend for executor
@@ -91,8 +94,7 @@ async def start_bench(payload: BenchRunRequest):
     db = get_db()
     cfg = get_config()
     try:
-        submit_bg(_run_bench_guarded, fn, cfg, db, kind, label,
-                  label=f"bench.{kind}", kind="bench")
+        submit_bg(_run_bench_guarded, fn, cfg, db, kind, label, label=f"bench.{kind}", kind="bench")
     except Exception:
         with _bench_guard:
             _bench_active["kind"] = None
@@ -120,12 +122,11 @@ async def get_telemetry_summary(hours: int = 24, purpose: str | None = None):
 
     from orivellum.capabilities.bench import telemetry_summary
 
-    return await asyncio.to_thread(
-        telemetry_summary, get_db(), hours=hours, purpose=purpose
-    )
+    return await asyncio.to_thread(telemetry_summary, get_db(), hours=hours, purpose=purpose)
 
 
 # ── Golden set ────────────────────────────────────────────────────────────────
+
 
 @router.get("/goldens")
 async def get_goldens(kind: str | None = None):
@@ -176,6 +177,7 @@ async def seed_goldens(payload: GoldenSeedRequest = GoldenSeedRequest()):
 
 
 # ── Retrieval eval ────────────────────────────────────────────────────────────
+
 
 @router.post("/eval/retrieval")
 async def run_retrieval_eval(payload: RetrievalEvalRequest = RetrievalEvalRequest()):

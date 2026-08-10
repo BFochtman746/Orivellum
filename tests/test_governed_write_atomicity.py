@@ -12,6 +12,7 @@ the database is left fully consistent:
 Tests cover three representative high-level methods (``create_document``,
 ``create_job``, ``upsert_claim``) plus low-level ``governed_write`` blocks.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -21,10 +22,10 @@ import pytest
 
 from orivellum.database.db import OrivellumDB
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def db() -> OrivellumDB:
@@ -43,27 +44,15 @@ def _outbox_count(db: OrivellumDB) -> int:
 
 
 def _doc_exists(db: OrivellumDB, doc_id: str) -> bool:
-    return bool(
-        db._conn.execute(
-            "SELECT 1 FROM documents WHERE id=?", (doc_id,)
-        ).fetchone()
-    )
+    return bool(db._conn.execute("SELECT 1 FROM documents WHERE id=?", (doc_id,)).fetchone())
 
 
 def _object_exists(db: OrivellumDB, oid: str) -> bool:
-    return bool(
-        db._conn.execute(
-            "SELECT 1 FROM objects WHERE id=?", (oid,)
-        ).fetchone()
-    )
+    return bool(db._conn.execute("SELECT 1 FROM objects WHERE id=?", (oid,)).fetchone())
 
 
 def _job_exists(db: OrivellumDB, job_id: str) -> bool:
-    return bool(
-        db._conn.execute(
-            "SELECT 1 FROM jobs WHERE id=?", (job_id,)
-        ).fetchone()
-    )
+    return bool(db._conn.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone())
 
 
 def _claim_exists(db: OrivellumDB, subject: str, predicate: str) -> bool:
@@ -78,6 +67,7 @@ def _claim_exists(db: OrivellumDB, subject: str, predicate: str) -> bool:
 # ---------------------------------------------------------------------------
 # 1. Direct governed_write blocks — exception inside the yield
 # ---------------------------------------------------------------------------
+
 
 class TestDirectBlockRollback:
     """Exception raised inside the governed_write body rolls back atomically."""
@@ -105,9 +95,7 @@ class TestDirectBlockRollback:
                 raise ValueError("simulated crash")
 
         # (a) domain row must not exist
-        row = db._conn.execute(
-            "SELECT 1 FROM settings WHERE id=?", (sentinel_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT 1 FROM settings WHERE id=?", (sentinel_id,)).fetchone()
         assert row is None, "Rolled-back settings row must not be visible"
 
         # (b) no new audit row
@@ -119,14 +107,16 @@ class TestDirectBlockRollback:
     def test_no_audit_row_written_on_block_exception(self, db: OrivellumDB) -> None:
         """Verify audit row count stays the same when the block raises."""
         before = _audit_count(db)
-        with pytest.raises(RuntimeError):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError),
+            db.governed_write(
                 operation="test.noop",
                 event_type="test.noop",
                 object_id="none",
                 object_type="setting",
-            ):
-                raise RuntimeError("abort immediately")
+            ),
+        ):
+            raise RuntimeError("abort immediately")
         assert _audit_count(db) == before
 
     def test_verify_chain_intact_after_direct_block_exception(self, db: OrivellumDB) -> None:
@@ -135,14 +125,16 @@ class TestDirectBlockRollback:
         db.set_setting("pre_key", "pre_value", actor="test")
 
         # Failed write
-        with pytest.raises(RuntimeError):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError),
+            db.governed_write(
                 operation="test.crash",
                 event_type="test.crash",
                 object_id="crash-obj",
                 object_type="setting",
-            ):
-                raise RuntimeError("crash during domain SQL")
+            ),
+        ):
+            raise RuntimeError("crash during domain SQL")
 
         ok, reason = db.verify_audit_chain()
         assert ok is True, f"Chain broken after failed write: {reason}"
@@ -152,6 +144,7 @@ class TestDirectBlockRollback:
 # ---------------------------------------------------------------------------
 # 2. Audit-write failure (post-yield crash) via _audit_tx patch
 # ---------------------------------------------------------------------------
+
 
 class TestPostYieldAuditFailure:
     """Failure in _audit_tx (post-yield, pre-commit) rolls back domain SQL."""
@@ -230,6 +223,7 @@ class TestPostYieldAuditFailure:
 # 3. Domain-SQL failure (exception inside yield from DB constraint)
 # ---------------------------------------------------------------------------
 
+
 class TestDomainSQLFailure:
     """An exception thrown by the domain SQL itself rolls back atomically."""
 
@@ -250,18 +244,21 @@ class TestDomainSQLFailure:
 
         # Attempt a governed_write that tries to insert a row with the same id
         import sqlite3
-        with pytest.raises(sqlite3.IntegrityError):
-            with db.governed_write(
+
+        with (
+            pytest.raises(sqlite3.IntegrityError),
+            db.governed_write(
                 operation="job.created",
                 event_type="job.created",
                 object_id=fixed_id,
                 object_type="job",
-            ):
-                db._conn.execute(
-                    """INSERT INTO jobs(id, job_type, state, priority, created_at,
+            ),
+        ):
+            db._conn.execute(
+                """INSERT INTO jobs(id, job_type, state, priority, created_at,
                        max_attempts, input) VALUES(?,?,?,?,?,?,?)""",
-                    (fixed_id, "test_dup", "queued", 0, "2099-01-01", 3, "{}"),
-                )
+                (fixed_id, "test_dup", "queued", 0, "2099-01-01", 3, "{}"),
+            )
 
         # Row count must not have grown
         assert _audit_count(db) == before_audit, "No audit row on constraint violation"
@@ -274,6 +271,7 @@ class TestDomainSQLFailure:
 # ---------------------------------------------------------------------------
 # 4. Chain integrity across mixed successful + failed writes
 # ---------------------------------------------------------------------------
+
 
 class TestChainIntegrityAfterMixedWrites:
     """verify_audit_chain() must return (True, '') even after failed writes."""

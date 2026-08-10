@@ -1,0 +1,18 @@
+# gitleaks fingerprint ignore list — fake credentials in test fixtures, verified 2026-08-10.
+# RULE: only append fingerprints after manually confirming the value is not a real secret.
+7003a82a0a3f446d5a32fad34ee01071037cd911:tests/test_work_render_resume.py:generic-api-key:22
+9faa38770e8a24dab205a88104ebf59b40af17d1:tests/test_work_render_quality_report.py:generic-api-key:15
+263bce9f0e6c4339ba8f5c670ba2d561c0bf07a4:tests/test_browser_notifications.py:generic-api-key:13
+698de585c72312201cef0e63e7b11b348e954ff0:tests/test_transcribe_jobs.py:generic-api-key:22
+76d939dff4c5ad62e57ad15e37d45211b7e2a2a0:tests/test_spatial_audio.py:generic-api-key:23
+2b6a14c12f8ecde360285e5b10f76e0bbe45ed8b:tests/test_premium_tts_sidecar.py:generic-api-key:194
+93e22efb16efbc0d0d9ef984f60acd74acb906a9:tests/test_measurement_layer.py:generic-api-key:21
+dba23221fa2fa0f4259ddd47fe17a395a8356c5e:tests/test_tts_concat.py:generic-api-key:29
+fadbec121c2e100110111256117994e35aa1953e:tests/test_streaming_tts.py:generic-api-key:55
+812d0a03399e6872c20267fb103f308099a8415f:tests/test_voice_designer_fallback.py:generic-api-key:32
+fd4f97343cae4f8b4d62c022b077f35781ae0b1e:tests/test_ocr_isolation.py:generic-api-key:25
+b26e736c6bed16e754fc4a195d514e5d164cd36c:tests/conftest.py:generic-api-key:17
+3736bfaa0d33f40529c80de01723ba9beba009de:tests/test_studio_status.py:generic-api-key:23
+0d0b99d863ab27dcbae897049487428b02b20779:tests/test_persist_invariant.py:generic-api-key:30
+91090136e6bd2fe1ebef276ea5dd631446f151bd:tests/conftest.py:generic-api-key:17
+a62a34dee89ec5c3e3bb96f80abb55f188f5d65d:tests/conftest.py:generic-api-key:17

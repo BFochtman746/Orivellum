@@ -17,6 +17,7 @@ Examples:
     uv run python scripts/run_diagnostics.py --vacuum --out diag.md
     uv run python scripts/run_diagnostics.py --json > diag.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,24 +36,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run a full Orivellum system diagnostic and produce a report."
     )
-    parser.add_argument("--vacuum", action="store_true",
-                        help="Run SQLite VACUUM after checks (safe, recommended periodically)")
-    parser.add_argument("--json", action="store_true",
-                        help="Output raw JSON instead of Markdown")
-    parser.add_argument("--out", metavar="FILE",
-                        help="Write report to FILE (default: stdout)")
+    parser.add_argument(
+        "--vacuum",
+        action="store_true",
+        help="Run SQLite VACUUM after checks (safe, recommended periodically)",
+    )
+    parser.add_argument("--json", action="store_true", help="Output raw JSON instead of Markdown")
+    parser.add_argument("--out", metavar="FILE", help="Write report to FILE (default: stdout)")
     args = parser.parse_args()
 
     print("⏳ Running Orivellum system diagnostic…", file=sys.stderr)
     t0 = time.monotonic()
 
+    from orivellum.capabilities.diagnostics import run_full_diagnostic
     from orivellum.configuration.config import load_config
     from orivellum.database.db import OrivellumDB
-    from orivellum.capabilities.diagnostics import run_full_diagnostic
 
     cfg = load_config()
     data_dir = os.environ.get("ORIVELLUM_DATA_DIR", "data")
-    db_path  = os.path.join(data_dir, "orivellum.db")
+    db_path = os.path.join(data_dir, "orivellum.db")
 
     if not os.path.exists(db_path):
         # Fallback: look for db in common locations
@@ -87,7 +89,9 @@ def main() -> None:
     else:
         print("🎉 All checks passed — system looks healthy!", file=sys.stderr)
 
-    output = json.dumps(result, indent=2, ensure_ascii=False) if args.json else result["markdown_report"]
+    output = (
+        json.dumps(result, indent=2, ensure_ascii=False) if args.json else result["markdown_report"]
+    )
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:

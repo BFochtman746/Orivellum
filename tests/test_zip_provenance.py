@@ -9,27 +9,23 @@ Verifies:
    but no provenance row.
 3. The backfill is idempotent — running it twice doesn't double-insert.
 """
+
 from __future__ import annotations
 
 import io
-import json
-import os
 import sys
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 # Allow importing orivellum from the source tree without installation
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from orivellum.database.db import OrivellumDB
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _make_db(tmp_path: Path) -> OrivellumDB:
     db = OrivellumDB(str(tmp_path / "test.db"))
@@ -64,10 +60,12 @@ def _make_zip_bytes(members: dict[str, bytes]) -> bytes:
 
 def _create_parent_zip_doc(db: OrivellumDB, tmp_path: Path) -> tuple[str, Path]:
     """Create a parent ZIP document record and write a real ZIP file to disk."""
-    zip_bytes = _make_zip_bytes({
-        "chapter1.txt": b"The quick brown fox jumps over the lazy dog.",
-        "chapter2.txt": b"Pack my box with five dozen liquor jugs.",
-    })
+    zip_bytes = _make_zip_bytes(
+        {
+            "chapter1.txt": b"The quick brown fox jumps over the lazy dog.",
+            "chapter2.txt": b"Pack my box with five dozen liquor jugs.",
+        }
+    )
     zip_path = tmp_path / "archive.zip"
     zip_path.write_bytes(zip_bytes)
 
@@ -84,11 +82,18 @@ def _create_parent_zip_doc(db: OrivellumDB, tmp_path: Path) -> tuple[str, Path]:
 
 # ── 1. Pipeline — immediate provenance on explosion ────────────────────────────
 
+
 class TestZipExplodeProvenance:
     """_explode_zip_into_documents must write provenance rows immediately."""
 
-    def _explode(self, db: OrivellumDB, tmp_path: Path,
-                 parent_id: str, zip_path: Path, title: str = "archive.zip") -> list[str]:
+    def _explode(
+        self,
+        db: OrivellumDB,
+        tmp_path: Path,
+        parent_id: str,
+        zip_path: Path,
+        title: str = "archive.zip",
+    ) -> list[str]:
         """Run _explode_zip_into_documents with mocked config/executor."""
         (tmp_path / "library").mkdir(exist_ok=True)
         cfg_mock = MagicMock()
@@ -96,10 +101,15 @@ class TestZipExplodeProvenance:
 
         # get_config and _tracked_submit are imported locally inside the function,
         # so patch them at their definition sites.
-        with patch("orivellum.api._deps.get_config", return_value=cfg_mock), \
-             patch("orivellum.api.executor._tracked_submit",
-                   side_effect=Exception("no executor in tests")):
+        with (
+            patch("orivellum.api._deps.get_config", return_value=cfg_mock),
+            patch(
+                "orivellum.api.executor._tracked_submit",
+                side_effect=Exception("no executor in tests"),
+            ),
+        ):
             from orivellum.capabilities.pipeline import _explode_zip_into_documents
+
             return _explode_zip_into_documents(parent_id, zip_path, None, title, db)
 
     def test_each_child_gets_provenance_row(self, tmp_path: Path) -> None:
@@ -148,11 +158,16 @@ class TestZipExplodeProvenance:
         without creating a new document — no crash should occur."""
         db = _make_db(tmp_path)
         import hashlib as _hl
+
         txt_content = b"Pre-existing document content."
         sha = _hl.sha256(txt_content).hexdigest()
         preexist = db.create_document(
-            title="preexist.txt", source="manual", sha256=sha,
-            kind="text", work_id=None, content_path="preexist.txt",
+            title="preexist.txt",
+            source="manual",
+            sha256=sha,
+            kind="text",
+            work_id=None,
+            content_path="preexist.txt",
         )
 
         zip_bytes = _make_zip_bytes({"preexist.txt": txt_content})
@@ -160,9 +175,12 @@ class TestZipExplodeProvenance:
         zip_path.write_bytes(zip_bytes)
 
         parent_doc = db.create_document(
-            title="dedup.zip", source=str(zip_path),
+            title="dedup.zip",
+            source=str(zip_path),
             sha256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-            kind="zip", work_id=None, content_path=str(zip_path),
+            kind="zip",
+            work_id=None,
+            content_path=str(zip_path),
         )
 
         children = self._explode(db, tmp_path, parent_doc["id"], zip_path, "dedup.zip")
@@ -171,14 +189,13 @@ class TestZipExplodeProvenance:
 
 # ── 2. Nightshift backfill pass ───────────────────────────────────────────────
 
+
 class TestZipProvenanceBackfill:
     """_pass_zip_provenance_backfill must fill rows for pre-existing ZIP children."""
 
-    def _insert_zip_child(
-        self, db: OrivellumDB, parent_id: str, work_id: str | None = None
-    ) -> str:
+    def _insert_zip_child(self, db: OrivellumDB, parent_id: str, work_id: str | None = None) -> str:
         """Insert a document that looks like a ZIP child (has from_zip in meta)."""
-        import json as _json
+
         # Use create_document so the objects row is also created correctly,
         # then patch in the from_zip meta directly.
         doc = db.create_document(
@@ -215,6 +232,7 @@ class TestZipProvenanceBackfill:
         assert _count_provenance(db, child2) == 0
 
         from orivellum.capabilities.nightshift import _pass_zip_provenance_backfill
+
         report: list[str] = []
         _pass_zip_provenance_backfill(db, report)
 
@@ -228,6 +246,7 @@ class TestZipProvenanceBackfill:
         child_id = self._insert_zip_child(db, parent_id)
 
         from orivellum.capabilities.nightshift import _pass_zip_provenance_backfill
+
         _pass_zip_provenance_backfill(db, [])
 
         with db._lock:
@@ -245,6 +264,7 @@ class TestZipProvenanceBackfill:
         child_id = self._insert_zip_child(db, parent_id)
 
         from orivellum.capabilities.nightshift import _pass_zip_provenance_backfill
+
         _pass_zip_provenance_backfill(db, [])
         _pass_zip_provenance_backfill(db, [])
 
@@ -266,6 +286,7 @@ class TestZipProvenanceBackfill:
         assert _count_provenance(db, child_id) == 1
 
         from orivellum.capabilities.nightshift import _pass_zip_provenance_backfill
+
         report: list[str] = []
         _pass_zip_provenance_backfill(db, report)
 
@@ -290,6 +311,7 @@ class TestZipProvenanceBackfill:
         )
 
         from orivellum.capabilities.nightshift import _pass_zip_provenance_backfill
+
         _pass_zip_provenance_backfill(db, [])
 
         assert _count_provenance(db, normal_doc["id"]) == 0, (
@@ -304,6 +326,7 @@ class TestZipProvenanceBackfill:
         self._insert_zip_child(db, parent_id)
 
         from orivellum.capabilities.nightshift import _pass_zip_provenance_backfill
+
         report: list[str] = []
         _pass_zip_provenance_backfill(db, report)
 

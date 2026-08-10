@@ -68,6 +68,7 @@ Every stage is wrapped in a try/except.  Failures are logged at DEBUG and
 the previous stage's output is returned unchanged so a bad embedding
 endpoint or LLM timeout never silently breaks the response path.
 """
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -87,8 +88,8 @@ _RRF_K: int = 60
 
 # Default channel weights (configurable per-call).
 _W_SEMANTIC: float = 0.5
-_W_LEXICAL:  float = 0.3
-_W_GRAPH:    float = 0.2
+_W_LEXICAL: float = 0.3
+_W_GRAPH: float = 0.2
 
 # Maximum conversation chunks to use when deriving semantic memory hits.
 _SEM_CHUNK_LIMIT: int = 10
@@ -116,13 +117,56 @@ _RERANK_TOP_K: int = 8
 _COMPLEXITY_THRESHOLD: int = 2
 
 # Stopwords filtered out during entity extraction and graph boost.
-_STOPWORDS: frozenset[str] = frozenset({
-    "the", "and", "for", "are", "was", "were", "will", "with", "this",
-    "that", "from", "have", "had", "has", "been", "what", "when", "where",
-    "who", "how", "why", "can", "did", "does", "not", "but", "his", "her",
-    "its", "they", "them", "their", "our", "your", "all", "any", "some",
-    "you", "which", "about", "into", "out", "get", "got", "let", "use",
-})
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "are",
+        "was",
+        "were",
+        "will",
+        "with",
+        "this",
+        "that",
+        "from",
+        "have",
+        "had",
+        "has",
+        "been",
+        "what",
+        "when",
+        "where",
+        "who",
+        "how",
+        "why",
+        "can",
+        "did",
+        "does",
+        "not",
+        "but",
+        "his",
+        "her",
+        "its",
+        "they",
+        "them",
+        "their",
+        "our",
+        "your",
+        "all",
+        "any",
+        "some",
+        "you",
+        "which",
+        "about",
+        "into",
+        "out",
+        "get",
+        "got",
+        "let",
+        "use",
+    }
+)
 
 
 # ─── Channel implementations ──────────────────────────────────────────────────
@@ -160,7 +204,7 @@ def _channel_semantic(query: str, db: OrivellumDB) -> list[dict]:
         conv_best_score: dict[str, float] = {}
         for h in chunk_hits:
             cid = h.get("conv_id") or ""
-            s   = float(h.get("score", 0.0))
+            s = float(h.get("score", 0.0))
             if cid and s > conv_best_score.get(cid, 0.0):
                 conv_best_score[cid] = s
 
@@ -226,12 +270,12 @@ def _channel_graph(query: str, db: OrivellumDB, limit: int = 20) -> list[dict]:
 
 def _merge(
     semantic_hits: list[dict],
-    lexical_hits:  list[dict],
-    graph_hits:    list[dict],
+    lexical_hits: list[dict],
+    graph_hits: list[dict],
     *,
     semantic_weight: float = _W_SEMANTIC,
-    lexical_weight:  float = _W_LEXICAL,
-    graph_weight:    float = _W_GRAPH,
+    lexical_weight: float = _W_LEXICAL,
+    graph_weight: float = _W_GRAPH,
     limit: int = 20,
 ) -> list[dict]:
     """Weighted Reciprocal Rank Fusion + dedup + retrieval_source annotation.
@@ -251,8 +295,8 @@ def _merge(
 
     channel_configs = [
         (semantic_hits, semantic_weight, "semantic"),
-        (lexical_hits,  lexical_weight,  "lexical"),
-        (graph_hits,    graph_weight,    "graph"),
+        (lexical_hits, lexical_weight, "lexical"),
+        (graph_hits, graph_weight, "graph"),
     ]
 
     for hits, weight, channel_name in channel_configs:
@@ -260,11 +304,14 @@ def _merge(
             mid = hit.get("id")
             if not mid:
                 continue
-            entry = fused.setdefault(mid, {
-                "hit": hit,
-                "score": 0.0,
-                "channels": set(),
-            })
+            entry = fused.setdefault(
+                mid,
+                {
+                    "hit": hit,
+                    "score": 0.0,
+                    "channels": set(),
+                },
+            )
             entry["score"] += weight / (_RRF_K + rank + 1)
             entry["channels"].add(channel_name)
 
@@ -286,10 +333,10 @@ def _merge(
         hit["rrf_score"] = round(e["score"], 6)
 
         # Clean up internal-only fields before returning
-        hit.pop("_sem_score",      None)
-        hit.pop("_graph_matched",  None)
-        hit.pop("_graph_score",    None)
-        hit.pop("bm25_score",      None)
+        hit.pop("_sem_score", None)
+        hit.pop("_graph_matched", None)
+        hit.pop("_graph_score", None)
+        hit.pop("bm25_score", None)
 
         results.append(hit)
 
@@ -305,8 +352,8 @@ def search_memories(
     limit: int = 20,
     *,
     semantic_weight: float = _W_SEMANTIC,
-    lexical_weight:  float = _W_LEXICAL,
-    graph_weight:    float = _W_GRAPH,
+    lexical_weight: float = _W_LEXICAL,
+    graph_weight: float = _W_GRAPH,
 ) -> list[dict]:
     """Three-channel hybrid memory retrieval.
 
@@ -338,8 +385,8 @@ def search_memories(
     # Fetch limit headroom per channel so the merge has room to deduplicate
     channel_limit = min(max(limit * 2, 20), 50)
 
-    sem_hits:  list[dict] = []
-    lex_hits:  list[dict] = []
+    sem_hits: list[dict] = []
+    lex_hits: list[dict] = []
     graph_hits: list[dict] = []
 
     # Run all three channels concurrently — they are I/O-bound (DB + optional
@@ -354,9 +401,9 @@ def search_memories(
     pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="mem_retrieval")
     try:
         fs: dict[concurrent.futures.Future, str] = {
-            pool.submit(_channel_semantic, query, db):               "semantic",
-            pool.submit(_channel_lexical,  query, db, channel_limit): "lexical",
-            pool.submit(_channel_graph,    query, db, channel_limit): "graph",
+            pool.submit(_channel_semantic, query, db): "semantic",
+            pool.submit(_channel_lexical, query, db, channel_limit): "lexical",
+            pool.submit(_channel_graph, query, db, channel_limit): "graph",
         }
         done, _not_done = concurrent.futures.wait(fs.keys(), timeout=_CHANNEL_TIMEOUT)
         for future in done:
@@ -367,15 +414,16 @@ def search_memories(
                 logger.debug("search_memories channel=%s error: %s", channel, exc)
                 result = []
             if channel == "semantic":
-                sem_hits   = result
+                sem_hits = result
             elif channel == "lexical":
-                lex_hits   = result
+                lex_hits = result
             else:
                 graph_hits = result
         if _not_done:
             logger.debug(
                 "search_memories: %d channel(s) timed out after %ds",
-                len(_not_done), _CHANNEL_TIMEOUT,
+                len(_not_done),
+                _CHANNEL_TIMEOUT,
             )
     finally:
         # Do not block on slow channels — abandon running threads so the
@@ -384,11 +432,16 @@ def search_memories(
 
     logger.debug(
         "search_memories q=%r sem=%d lex=%d graph=%d",
-        query[:60], len(sem_hits), len(lex_hits), len(graph_hits),
+        query[:60],
+        len(sem_hits),
+        len(lex_hits),
+        len(graph_hits),
     )
 
     return _merge(
-        sem_hits, lex_hits, graph_hits,
+        sem_hits,
+        lex_hits,
+        graph_hits,
         semantic_weight=semantic_weight,
         lexical_weight=lexical_weight,
         graph_weight=graph_weight,
@@ -406,7 +459,7 @@ def _memory_text(fact: dict) -> str:
     memory fact dict (which stores text in two separate ``key`` and ``value``
     fields rather than the ``text`` field that knowledge/chunk candidates use).
     """
-    key   = str(fact.get("key",   "")).strip()
+    key = str(fact.get("key", "")).strip()
     value = str(fact.get("value", "")).strip()
     return f"{key}: {value}" if key else value
 
@@ -439,8 +492,7 @@ def _graph_boost_scores(
         return candidates
 
     q_tokens = [
-        t for t in re.findall(r"\b[a-zA-Z][a-zA-Z0-9]{2,}\b", query)
-        if t.lower() not in _STOPWORDS
+        t for t in re.findall(r"\b[a-zA-Z][a-zA-Z0-9]{2,}\b", query) if t.lower() not in _STOPWORDS
     ]
     if not q_tokens:
         return candidates
@@ -469,7 +521,7 @@ def _graph_boost_scores(
         match_count = sum(1 for e in matched_entities if e in text)
         if match_count > 0:
             c["rrf_score"] = round(
-                c.get("rrf_score", 0.0) * (_GRAPH_BOOST_MULT ** match_count),
+                c.get("rrf_score", 0.0) * (_GRAPH_BOOST_MULT**match_count),
                 8,
             )
         result.append(c)
@@ -494,17 +546,18 @@ def _cross_encoder_score_one(
     """
     from orivellum.capabilities.llm import llm_call
 
-    text    = _memory_text(fact)
-    prompt  = (
+    text = _memory_text(fact)
+    prompt = (
         f'Query: "{query[:200]}"\n'
         f'Memory fact: "{text[:300]}"\n\n'
         "Rate how relevant this memory fact is to the query.\n"
         "Output ONLY a single integer from 0 (completely irrelevant) "
         "to 10 (perfectly relevant). Nothing else."
     )
-    result  = llm_call(
+    result = llm_call(
         [{"role": "user", "content": prompt}],
-        cfg=cfg, db=db,
+        cfg=cfg,
+        db=db,
         purpose="rerank.cross_encoder",
         timeout=5,
         max_tokens=5,
@@ -540,15 +593,14 @@ def _cross_encoder_rerank(
         return candidates
 
     pool_size = min(_CE_MAX_CANDIDATES, len(candidates))
-    top       = candidates[:pool_size]
-    rest      = candidates[pool_size:]
-    scored    = [dict(c) for c in top]
+    top = candidates[:pool_size]
+    rest = candidates[pool_size:]
+    scored = [dict(c) for c in top]
 
     pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="ce_rerank")
     try:
         fs: dict[concurrent.futures.Future, int] = {
-            pool.submit(_cross_encoder_score_one, query, c, cfg, db): i
-            for i, c in enumerate(top)
+            pool.submit(_cross_encoder_score_one, query, c, cfg, db): i for i, c in enumerate(top)
         }
         done, _not_done = concurrent.futures.wait(fs.keys(), timeout=_CE_TOTAL_TIMEOUT)
         for future in done:
@@ -562,14 +614,15 @@ def _cross_encoder_rerank(
         if _not_done:
             logger.debug(
                 "cross_encoder: %d future(s) timed out after %.1fs",
-                len(_not_done), _CE_TOTAL_TIMEOUT,
+                len(_not_done),
+                _CE_TOTAL_TIMEOUT,
             )
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
     # Sort top candidates by cross_encoder_score; fall through to original
     # BM25 order for unscored ones.
-    with_score    = [c for c in scored if "cross_encoder_score" in c]
+    with_score = [c for c in scored if "cross_encoder_score" in c]
     without_score = [c for c in scored if "cross_encoder_score" not in c]
     with_score.sort(key=lambda x: x["cross_encoder_score"], reverse=True)
 
@@ -608,17 +661,41 @@ def query_complexity_score(query: str) -> int:
 
     # Multi-domain connectors
     connectors = {
-        "and", "connects", "between", "compared", "versus", "vs",
-        "relates", "link", "alongside", "intersection", "relationship",
+        "and",
+        "connects",
+        "between",
+        "compared",
+        "versus",
+        "vs",
+        "relates",
+        "link",
+        "alongside",
+        "intersection",
+        "relationship",
     }
     if words & connectors:
         score += 1
 
     # Temporal references
     temporal = {
-        "before", "after", "since", "during", "when", "year", "month",
-        "ago", "recent", "recently", "last", "first", "early", "late",
-        "history", "previously", "then", "now",
+        "before",
+        "after",
+        "since",
+        "during",
+        "when",
+        "year",
+        "month",
+        "ago",
+        "recent",
+        "recently",
+        "last",
+        "first",
+        "early",
+        "late",
+        "history",
+        "previously",
+        "then",
+        "now",
     }
     if words & temporal:
         score += 1
@@ -659,7 +736,7 @@ class ReActMemoryAgent:
     MAX_ITER: int = 4
 
     def __init__(self, db: OrivellumDB, cfg: Any) -> None:
-        self.db  = db
+        self.db = db
         self.cfg = cfg
 
     def run(self, query: str) -> list[dict]:
@@ -667,21 +744,16 @@ class ReActMemoryAgent:
         from orivellum.capabilities.llm import llm_call
 
         collected: list[dict] = []
-        seen_ids: set[str]    = set()
+        seen_ids: set[str] = set()
         context_log: list[str] = []
 
         for iteration in range(self.MAX_ITER):
             # Summarise collected facts for the decision prompt
-            collected_keys = ", ".join(
-                f.get("key", "") for f in collected[:5]
-            ) or "none"
-            context_str = (
-                "\n".join(context_log[-3:]) if context_log
-                else "No tools called yet."
-            )
+            collected_keys = ", ".join(f.get("key", "") for f in collected[:5]) or "none"
+            context_str = "\n".join(context_log[-3:]) if context_log else "No tools called yet."
 
             decision_prompt = (
-                f'You are a memory retrieval agent. '
+                f"You are a memory retrieval agent. "
                 f'Original query: "{query[:250]}"\n\n'
                 f"Facts collected so far ({len(collected)}): {collected_keys}\n"
                 f"Tool history:\n{context_str}\n\n"
@@ -694,7 +766,8 @@ class ReActMemoryAgent:
 
             result = llm_call(
                 [{"role": "user", "content": decision_prompt}],
-                cfg=self.cfg, db=self.db,
+                cfg=self.cfg,
+                db=self.db,
                 purpose="react.memory.decision",
                 timeout=10,
                 max_tokens=120,
@@ -714,10 +787,10 @@ class ReActMemoryAgent:
             if action.get("done"):
                 break
 
-            tool      = str(action.get("tool", "lexical_search")).strip()
+            tool = str(action.get("tool", "lexical_search")).strip()
             sub_query = str(action.get("query", query)).strip() or query
 
-            hits      = self._call_tool(tool, sub_query)
+            hits = self._call_tool(tool, sub_query)
             new_count = 0
             for h in hits:
                 mid = h.get("id")
@@ -727,12 +800,14 @@ class ReActMemoryAgent:
                     new_count += 1
 
             context_log.append(
-                f"iter={iteration + 1} tool={tool!r} "
-                f"q={sub_query[:60]!r} new={new_count}"
+                f"iter={iteration + 1} tool={tool!r} q={sub_query[:60]!r} new={new_count}"
             )
             logger.debug(
                 "ReAct iter=%d tool=%s new_hits=%d total=%d",
-                iteration + 1, tool, new_count, len(collected),
+                iteration + 1,
+                tool,
+                new_count,
+                len(collected),
             )
 
             if new_count == 0:
@@ -746,13 +821,12 @@ class ReActMemoryAgent:
         try:
             if tool == "semantic_search":
                 return _channel_semantic(sub_query, self.db)
-            elif tool == "lexical_search":
+            if tool == "lexical_search":
                 return _channel_lexical(sub_query, self.db, limit=10)
-            elif tool == "graph_traverse":
+            if tool == "graph_traverse":
                 return _channel_graph(sub_query, self.db, limit=10)
-            else:
-                logger.debug("ReAct unknown tool %r, defaulting to lexical", tool)
-                return _channel_lexical(sub_query, self.db, limit=10)
+            logger.debug("ReAct unknown tool %r, defaulting to lexical", tool)
+            return _channel_lexical(sub_query, self.db, limit=10)
         except Exception as exc:
             logger.debug("ReAct tool=%s error: %s", tool, exc)
             return []
@@ -815,24 +889,23 @@ def rerank_memories(
     # reorder the list.  Stage 4 (listwise) uses this map so the RRF fusion
     # is always BM25-rank + LLM-rank, never cross-encoder-rank + LLM-rank.
     _bm25_rank_by_id: dict[str, int] = {
-        c.get("id", ""): rank
-        for rank, c in enumerate(after_bm25)
-        if c.get("id")
+        c.get("id", ""): rank for rank, c in enumerate(after_bm25) if c.get("id")
     }
     _bm25_total = len(after_bm25)
 
     # ── Stage 3: Cross-encoder (pointwise LLM, feature-flagged) ───────────────
     after_ce = after_bm25
-    ce_ran   = False
-    ai_on    = False
+    ce_ran = False
+    ai_on = False
     try:
         if db is not None:
             ai_on = db.get_setting("ai_reranking_enabled", "false") == "true"
         if ai_on:
             from orivellum.configuration.config import load_config as _lc
+
             cfg = _lc()
             after_ce = _cross_encoder_rerank(query, after_bm25, cfg, db)
-            ce_ran   = True
+            ce_ran = True
     except Exception as exc:
         logger.debug("rerank stage 3 cross_encoder error: %s", exc)
     stages.append({"name": "cross_encoder", "count": len(after_ce), "ran": ce_ran})
@@ -843,16 +916,15 @@ def rerank_memories(
     # controls which candidates reach this stage, not a substitute for BM25.
     # Candidates outside the top-_LW_TOP_K window receive a large LLM-rank
     # penalty (_outside) so they naturally follow top-slice results.
-    final  = after_ce
+    final = after_ce
     lw_ran = False
     if ai_on and len(after_ce) >= 3:
         try:
             from orivellum.configuration.config import load_config as _lc
-            cfg       = _lc()
+
+            cfg = _lc()
             top_slice = after_ce[:_LW_TOP_K]
-            lw_indices = _llm_rerank(
-                query, top_slice, db, cfg, text_field="_mem_text"
-            )
+            lw_indices = _llm_rerank(query, top_slice, db, cfg, text_field="_mem_text")
             if lw_indices is not None:
                 # _llm_rerank returns a permutation of 0-based indices into
                 # top_slice (most-relevant-first).  Convert to a rank map
@@ -867,17 +939,14 @@ def rerank_memories(
                     lw_rank_of.setdefault(i, _outside)
 
                 def _slice_rrf(slice_pos: int) -> float:
-                    cand     = top_slice[slice_pos]
+                    cand = top_slice[slice_pos]
                     # BM25 rank is stable, independent of CE reordering
-                    bm25_r   = _bm25_rank_by_id.get(cand.get("id", ""), _outside)
-                    lw_r     = lw_rank_of[slice_pos]
-                    return (
-                        1.0 / (_RRF_K + bm25_r + 1)
-                        + 1.0 / (_RRF_K + lw_r   + 1)
-                    )
+                    bm25_r = _bm25_rank_by_id.get(cand.get("id", ""), _outside)
+                    lw_r = lw_rank_of[slice_pos]
+                    return 1.0 / (_RRF_K + bm25_r + 1) + 1.0 / (_RRF_K + lw_r + 1)
 
                 reordered = sorted(range(len(top_slice)), key=_slice_rrf, reverse=True)
-                final  = [top_slice[i] for i in reordered] + after_ce[_LW_TOP_K:]
+                final = [top_slice[i] for i in reordered] + after_ce[_LW_TOP_K:]
                 lw_ran = True
         except Exception as exc:
             logger.debug("rerank stage 4 listwise error: %s", exc)
@@ -887,13 +956,15 @@ def rerank_memories(
     result: list[dict] = []
     for c in final[:top_k]:
         c = dict(c)
-        c.pop("_mem_text",    None)
-        c.pop("_rerank_idx",  None)
+        c.pop("_mem_text", None)
+        c.pop("_rerank_idx", None)
         result.append(c)
 
     logger.debug(
         "rerank_memories q=%r candidates=%d → top_k=%d stages=%s",
-        query[:60], len(candidates), len(result),
+        query[:60],
+        len(candidates),
+        len(result),
         [s["name"] for s in stages],
     )
     return result, {"stages": stages}
@@ -908,8 +979,8 @@ def search_and_rerank_memories(
     *,
     limit: int = _RERANK_TOP_K,
     semantic_weight: float = _W_SEMANTIC,
-    lexical_weight:  float = _W_LEXICAL,
-    graph_weight:    float = _W_GRAPH,
+    lexical_weight: float = _W_LEXICAL,
+    graph_weight: float = _W_GRAPH,
 ) -> tuple[list[dict], dict]:
     """Hybrid retrieval + three-stage reranking + optional ReAct agent.
 
@@ -941,7 +1012,9 @@ def search_and_rerank_memories(
     # ── Retrieval phase ────────────────────────────────────────────────────────
     def _hybrid_candidates() -> list[dict]:
         return search_memories(
-            query, db, limit=limit * 3,
+            query,
+            db,
+            limit=limit * 3,
             semantic_weight=semantic_weight,
             lexical_weight=lexical_weight,
             graph_weight=graph_weight,
@@ -950,8 +1023,9 @@ def search_and_rerank_memories(
     if react_used:
         try:
             from orivellum.configuration.config import load_config as _lc
-            cfg        = _lc()
-            agent      = ReActMemoryAgent(db, cfg)
+
+            cfg = _lc()
+            agent = ReActMemoryAgent(db, cfg)
             candidates = agent.run(query)
             # ReAct can legitimately return [] without throwing — for example
             # when the LLM says done=true before calling any tool, when all
@@ -959,9 +1033,7 @@ def search_and_rerank_memories(
             # such case fall back to one-shot hybrid retrieval so callers
             # receive the same results they would have gotten on a simple query.
             if not candidates:
-                logger.debug(
-                    "ReAct returned no candidates; falling back to hybrid retrieval"
-                )
+                logger.debug("ReAct returned no candidates; falling back to hybrid retrieval")
                 candidates = _hybrid_candidates()
                 # react_used stays True — the agent *was* invoked; the fallback
                 # is a safety net, not a strategy change.
@@ -978,6 +1050,6 @@ def search_and_rerank_memories(
     meta: dict = {
         "retrieval_stages": stages_meta.get("stages", []),
         "complexity_score": complexity,
-        "react_used":       react_used,
+        "react_used": react_used,
     }
     return reranked, meta

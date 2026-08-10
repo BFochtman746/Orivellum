@@ -9,6 +9,7 @@ Covers:
 - POST /api/library/duplicates/{id}/resolve
 - Resolution filters list_near_duplicates correctly
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -17,21 +18,21 @@ import uuid
 from pathlib import Path
 
 from orivellum.capabilities.dedup import (
-    _shingles,
-    _minhash,
     _jaccard,
+    _minhash,
+    _shingles,
     compute_and_store,
     find_and_record_near_duplicates,
 )
 from orivellum.database.db import OrivellumDB
 
-
 # ── Test app factory (matches conftest pattern) ───────────────────────────────
 
+
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -41,20 +42,22 @@ def _make_app(tmp: str):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_doc(db: OrivellumDB, title: str = "Doc", work_id: str | None = None) -> dict:
     return db.create_document(
-        title=title, source="/tmp/x.pdf", sha256=uuid.uuid4().hex,
-        kind="pdf", work_id=work_id,
+        title=title,
+        source="/tmp/x.pdf",
+        sha256=uuid.uuid4().hex,
+        kind="pdf",
+        work_id=work_id,
     )
 
 
 def _long_text(words: int = 200, seed: str = "alpha") -> str:
     """Return a text blob of ~`words` distinct hashed tokens."""
     import hashlib
-    return " ".join(
-        hashlib.sha256(f"{seed}{i}".encode()).hexdigest()[:8]
-        for i in range(words)
-    )
+
+    return " ".join(hashlib.sha256(f"{seed}{i}".encode()).hexdigest()[:8] for i in range(words))
 
 
 def _make_pair(db: OrivellumDB, similarity: float = 0.9) -> tuple[dict, dict, str]:
@@ -73,8 +76,8 @@ def _make_pair(db: OrivellumDB, similarity: float = 0.9) -> tuple[dict, dict, st
 
 # ── Unit: MinHash ─────────────────────────────────────────────────────────────
 
-class TestMinHashUnit(unittest.TestCase):
 
+class TestMinHashUnit(unittest.TestCase):
     def test_shingles_returns_ngrams(self):
         s = _shingles("a b c d e", k=3)
         self.assertIn("a b c", s)
@@ -111,8 +114,8 @@ class TestMinHashUnit(unittest.TestCase):
 
 # ── Unit: compute_and_store ───────────────────────────────────────────────────
 
-class TestComputeAndStore(unittest.TestCase):
 
+class TestComputeAndStore(unittest.TestCase):
     def test_stores_sig_for_long_text(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, db = _make_app(tmp)
@@ -146,8 +149,8 @@ class TestComputeAndStore(unittest.TestCase):
 
 # ── Unit: find_and_record_near_duplicates ─────────────────────────────────────
 
-class TestFindNearDuplicates(unittest.TestCase):
 
+class TestFindNearDuplicates(unittest.TestCase):
     def test_near_identical_text_detected(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, db = _make_app(tmp)
@@ -218,8 +221,8 @@ class TestFindNearDuplicates(unittest.TestCase):
 
 # ── Unit: resolve_near_duplicate ──────────────────────────────────────────────
 
-class TestResolveNearDuplicate(unittest.TestCase):
 
+class TestResolveNearDuplicate(unittest.TestCase):
     def test_keep_both_marks_resolved(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, db = _make_app(tmp)
@@ -272,21 +275,27 @@ class TestResolveNearDuplicate(unittest.TestCase):
             _, db = _make_app(tmp)
             _, _, dupe_id = _make_pair(db)
             # Appears before resolution
-            self.assertTrue(any(r["id"] == dupe_id for r in db.list_near_duplicates(resolved=False)))
+            self.assertTrue(
+                any(r["id"] == dupe_id for r in db.list_near_duplicates(resolved=False))
+            )
             # Disappears after
             db.resolve_near_duplicate(dupe_id, "keep_both")
-            self.assertFalse(any(r["id"] == dupe_id for r in db.list_near_duplicates(resolved=False)))
+            self.assertFalse(
+                any(r["id"] == dupe_id for r in db.list_near_duplicates(resolved=False))
+            )
             # Surfaces with resolved=True
             self.assertTrue(any(r["id"] == dupe_id for r in db.list_near_duplicates(resolved=True)))
 
 
 # ── API: GET /library/duplicates ──────────────────────────────────────────────
 
-class TestLibraryDuplicatesEndpoint(unittest.TestCase):
 
+class TestLibraryDuplicatesEndpoint(unittest.TestCase):
     def _setup(self):
         from fastapi.testclient import TestClient
+
         from tests.conftest import AUTH_HEADERS
+
         tmp = tempfile.mkdtemp()
         app, db = _make_app(tmp)
         client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
@@ -337,11 +346,13 @@ class TestLibraryDuplicatesEndpoint(unittest.TestCase):
 
 # ── API: POST /library/duplicates/{id}/resolve ────────────────────────────────
 
-class TestResolveDuplicateEndpoint(unittest.TestCase):
 
+class TestResolveDuplicateEndpoint(unittest.TestCase):
     def _setup(self):
         from fastapi.testclient import TestClient
+
         from tests.conftest import AUTH_HEADERS
+
         tmp = tempfile.mkdtemp()
         app, db = _make_app(tmp)
         client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)

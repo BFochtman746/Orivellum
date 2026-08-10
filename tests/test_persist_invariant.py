@@ -19,6 +19,7 @@ Create-paths exercised
 Run with:
     uv run --with pytest pytest tests/test_persist_invariant.py -v
 """
+
 from __future__ import annotations
 
 import os
@@ -65,8 +66,7 @@ class TestRegisterOutput(unittest.TestCase):
         fake_docx.write_bytes(b"PK\x03\x04" + b"\x00" * 100)  # minimal ZIP header
 
         text = "This is a generated research report about machine learning."
-        doc_id = _register_output(fake_docx, None, self.db, self.cfg,
-                                  "docx", "Test Report", text)
+        doc_id = _register_output(fake_docx, None, self.db, self.cfg, "docx", "Test Report", text)
 
         # 1. Document exists
         with self.db._lock:
@@ -74,24 +74,23 @@ class TestRegisterOutput(unittest.TestCase):
                 "SELECT id, readiness FROM documents WHERE id=?", (doc_id,)
             ).fetchone()
         self.assertIsNotNone(doc, "Document was not created by _register_output")
-        self.assertEqual(doc["readiness"], "ready",
-                         "Document readiness should be 'ready' after _register_output")
+        self.assertEqual(
+            doc["readiness"], "ready", "Document readiness should be 'ready' after _register_output"
+        )
 
         # 2. At least one chunk exists (FTS searchable)
         with self.db._lock:
             chunks = self.db._conn.execute(
                 "SELECT COUNT(*) AS n FROM chunks WHERE doc_id=?", (doc_id,)
             ).fetchone()
-        self.assertGreater(chunks["n"], 0,
-                           "No chunks created — document is not keyword-searchable")
+        self.assertGreater(chunks["n"], 0, "No chunks created — document is not keyword-searchable")
 
         # 3. Provenance record exists (Amendment-1 invariant)
         with self.db._lock:
             prov = self.db._conn.execute(
                 "SELECT source FROM object_provenance WHERE object_id=?", (doc_id,)
             ).fetchone()
-        self.assertIsNotNone(prov,
-                             "No provenance record — object_provenance missing entry")
+        self.assertIsNotNone(prov, "No provenance record — object_provenance missing entry")
         self.assertEqual(prov["source"], "generation")
 
     def test_xlsx_is_registered_and_chunked(self):
@@ -104,8 +103,9 @@ class TestRegisterOutput(unittest.TestCase):
         fake_xlsx.write_bytes(b"PK\x03\x04" + b"\x00" * 100)
 
         text = "Revenue Q1 2024: $1.2 M.  Expenses Q1 2024: $0.9 M."
-        doc_id = _register_output(fake_xlsx, None, self.db, self.cfg,
-                                  "xlsx", "Revenue Summary", text)
+        doc_id = _register_output(
+            fake_xlsx, None, self.db, self.cfg, "xlsx", "Revenue Summary", text
+        )
 
         with self.db._lock:
             chunks = self.db._conn.execute(
@@ -123,8 +123,9 @@ class TestRegisterOutput(unittest.TestCase):
         fake_zip.write_bytes(b"PK\x03\x04" + b"\x00" * 100)
 
         text = "Tax package 2024: 12 documents, 7 expense-matched"
-        doc_id = _register_output(fake_zip, None, self.db, self.cfg,
-                                  "zip", "Tax Package 2024", text)
+        doc_id = _register_output(
+            fake_zip, None, self.db, self.cfg, "zip", "Tax Package 2024", text
+        )
 
         with self.db._lock:
             doc = self.db._conn.execute(
@@ -146,8 +147,9 @@ class TestRegisterOutput(unittest.TestCase):
         fake_docx.write_bytes(b"PK\x03\x04" + b"\x00" * 100)
 
         # work_id=None (unscoped) avoids FK constraint on works table in test DB
-        doc_id = _register_output(fake_docx, None, self.db, self.cfg,
-                                  "docx", "Report", "Content for library path test.")
+        doc_id = _register_output(
+            fake_docx, None, self.db, self.cfg, "docx", "Report", "Content for library path test."
+        )
 
         with self.db._lock:
             row = self.db._conn.execute(
@@ -170,8 +172,9 @@ class TestRegisterOutput(unittest.TestCase):
         fake_xlsx = out_dir / "summary_libtest.xlsx"
         fake_xlsx.write_bytes(b"PK\x03\x04" + b"\x00" * 100)
 
-        doc_id = _register_output(fake_xlsx, None, self.db, self.cfg,
-                                  "xlsx", "Summary", "Revenue data here.")
+        doc_id = _register_output(
+            fake_xlsx, None, self.db, self.cfg, "xlsx", "Summary", "Revenue data here."
+        )
 
         with self.db._lock:
             row = self.db._conn.execute(
@@ -179,8 +182,9 @@ class TestRegisterOutput(unittest.TestCase):
             ).fetchone()
 
         resolved = self._lib_root() / row["content_path"]
-        self.assertTrue(resolved.exists(),
-                        f"Library cannot resolve XLSX content_path: {row['content_path']}")
+        self.assertTrue(
+            resolved.exists(), f"Library cannot resolve XLSX content_path: {row['content_path']}"
+        )
 
     def test_zip_content_path_resolves_under_lib_root(self):
         """_register_output ZIP content_path resolves correctly under lib_root."""
@@ -191,8 +195,9 @@ class TestRegisterOutput(unittest.TestCase):
         fake_zip = out_dir / "pkg_libtest.zip"
         fake_zip.write_bytes(b"PK\x03\x04" + b"\x00" * 100)
 
-        doc_id = _register_output(fake_zip, None, self.db, self.cfg,
-                                  "zip", "Package", "Archive content here.")
+        doc_id = _register_output(
+            fake_zip, None, self.db, self.cfg, "zip", "Package", "Archive content here."
+        )
 
         with self.db._lock:
             row = self.db._conn.execute(
@@ -200,8 +205,9 @@ class TestRegisterOutput(unittest.TestCase):
             ).fetchone()
 
         resolved = self._lib_root() / row["content_path"]
-        self.assertTrue(resolved.exists(),
-                        f"Library cannot resolve ZIP content_path: {row['content_path']}")
+        self.assertTrue(
+            resolved.exists(), f"Library cannot resolve ZIP content_path: {row['content_path']}"
+        )
 
 
 class TestRegisterAndIndex(unittest.TestCase):
@@ -316,8 +322,11 @@ class TestRegisterAndIndex(unittest.TestCase):
                 "SELECT text FROM chunks WHERE doc_id=?", (doc_id,)
             ).fetchall()
         chunk_texts = " ".join(r["text"] for r in chunks)
-        self.assertIn("Machine learning", chunk_texts,
-                      "Source text not present in audiobook chunks — not searchable")
+        self.assertIn(
+            "Machine learning",
+            chunk_texts,
+            "Source text not present in audiobook chunks — not searchable",
+        )
 
 
 class TestRegisterTextNote(unittest.TestCase):
@@ -371,17 +380,28 @@ class TestRegisterTextNote(unittest.TestCase):
         shared_file = out_dir / "dedup_test.txt"
         shared_file.write_text("Same content registered twice.", encoding="utf-8")
 
-        id1 = register_and_index(shared_file, "Same content registered twice.",
-                                 "txt", self.db, self.cfg,
-                                 title="First registration",
-                                 provenance_source="generation")
-        id2 = register_and_index(shared_file, "Same content registered twice.",
-                                 "txt", self.db, self.cfg,
-                                 title="Second registration",
-                                 provenance_source="studio")
+        id1 = register_and_index(
+            shared_file,
+            "Same content registered twice.",
+            "txt",
+            self.db,
+            self.cfg,
+            title="First registration",
+            provenance_source="generation",
+        )
+        id2 = register_and_index(
+            shared_file,
+            "Same content registered twice.",
+            "txt",
+            self.db,
+            self.cfg,
+            title="Second registration",
+            provenance_source="studio",
+        )
 
-        self.assertEqual(id1, id2,
-                         "Same file registered twice should return the same doc_id (SHA dedup)")
+        self.assertEqual(
+            id1, id2, "Same file registered twice should return the same doc_id (SHA dedup)"
+        )
 
 
 class TestStudioRoundTrip(unittest.TestCase):
@@ -415,6 +435,7 @@ class TestStudioRoundTrip(unittest.TestCase):
         """Close the current DB connection and open a fresh one to the same file."""
         self.db.close()
         from orivellum.database.db import OrivellumDB
+
         self.db = OrivellumDB(self._db_path)
 
     # ── TTS clip ─────────────────────────────────────────────────────────────
@@ -446,9 +467,12 @@ class TestStudioRoundTrip(unittest.TestCase):
             ).fetchone()
 
         self.assertIsNotNone(doc, "Document vanished after simulated restart")
-        self.assertEqual(doc["readiness"], "ready",
-                         f"readiness degraded to {doc['readiness']!r} after restart — "
-                         "document is no longer usable")
+        self.assertEqual(
+            doc["readiness"],
+            "ready",
+            f"readiness degraded to {doc['readiness']!r} after restart — "
+            "document is no longer usable",
+        )
 
     def test_tts_clip_chunks_survive_restart(self):
         """FTS chunks for a TTS clip are still present after a simulated restart."""
@@ -474,8 +498,7 @@ class TestStudioRoundTrip(unittest.TestCase):
                 "SELECT COUNT(*) AS n FROM chunks WHERE doc_id=?", (doc_id,)
             ).fetchone()["n"]
 
-        self.assertGreater(n, 0,
-                           "Chunks missing after restart — document not FTS-searchable")
+        self.assertGreater(n, 0, "Chunks missing after restart — document not FTS-searchable")
 
     def test_tts_clip_surfaces_via_fts_after_restart(self):
         """search_chunks() on a fresh DB instance finds the registered TTS clip."""
@@ -503,10 +526,14 @@ class TestStudioRoundTrip(unittest.TestCase):
             h.get("text", "") or h.get("snippet", "") or "" for h in hits
         ).lower()
 
-        self.assertGreater(len(hits), 0,
-                           "search_chunks returned nothing after restart — FTS index lost")
-        self.assertIn("quantum", chunk_texts,
-                      "Expected 'quantum' in FTS results but none of the hits contain it")
+        self.assertGreater(
+            len(hits), 0, "search_chunks returned nothing after restart — FTS index lost"
+        )
+        self.assertIn(
+            "quantum",
+            chunk_texts,
+            "Expected 'quantum' in FTS results but none of the hits contain it",
+        )
 
     # ── Generated image ───────────────────────────────────────────────────────
 
@@ -535,8 +562,9 @@ class TestStudioRoundTrip(unittest.TestCase):
             ).fetchone()
 
         self.assertIsNotNone(doc)
-        self.assertEqual(doc["readiness"], "ready",
-                         "Generated image readiness degraded after restart")
+        self.assertEqual(
+            doc["readiness"], "ready", "Generated image readiness degraded after restart"
+        )
 
     def test_generated_image_fts_after_restart(self):
         """search_chunks() finds a generated image by its prompt text after restart."""
@@ -562,10 +590,10 @@ class TestStudioRoundTrip(unittest.TestCase):
             h.get("text", "") or h.get("snippet", "") or "" for h in hits
         ).lower()
 
-        self.assertGreater(len(hits), 0,
-                           "search_chunks returned no results after restart — PNG prompt not indexed")
-        self.assertIn("cityscape", chunk_texts,
-                      "Expected 'cityscape' in FTS results after restart")
+        self.assertGreater(
+            len(hits), 0, "search_chunks returned no results after restart — PNG prompt not indexed"
+        )
+        self.assertIn("cityscape", chunk_texts, "Expected 'cityscape' in FTS results after restart")
 
     # ── Provenance survives restart ───────────────────────────────────────────
 
@@ -595,8 +623,9 @@ class TestStudioRoundTrip(unittest.TestCase):
                 (doc_id,),
             ).fetchone()
 
-        self.assertIsNotNone(prov,
-                             "Provenance row missing after restart — recall queries will fail")
+        self.assertIsNotNone(
+            prov, "Provenance row missing after restart — recall queries will fail"
+        )
         self.assertEqual(prov["source"], "studio")
         self.assertEqual(prov["origin_id"], "restart-prov-check")
 
@@ -709,18 +738,28 @@ class TestLibraryPathResolution(unittest.TestCase):
         shared = out_dir / "shared_libtest.txt"
         shared.write_text("Content for dedup test.", encoding="utf-8")
 
-        id1 = register_and_index(shared, "Content for dedup test.", "txt",
-                                 self.db, self.cfg, provenance_source="generation")
-        id2 = register_and_index(shared, "Content for dedup test.", "txt",
-                                 self.db, self.cfg, provenance_source="studio")
+        id1 = register_and_index(
+            shared,
+            "Content for dedup test.",
+            "txt",
+            self.db,
+            self.cfg,
+            provenance_source="generation",
+        )
+        id2 = register_and_index(
+            shared, "Content for dedup test.", "txt", self.db, self.cfg, provenance_source="studio"
+        )
 
         self.assertEqual(id1, id2, "Same file should dedup to the same doc_id")
 
         # lib_root/generated should have at most 1 entry for this file
         gen_dir = self._lib_root() / "generated"
         entries = list(gen_dir.glob("*shared_libtest*"))
-        self.assertEqual(len(entries), 1,
-                         f"Expected 1 library entry for deduped file, found {len(entries)}: {entries}")
+        self.assertEqual(
+            len(entries),
+            1,
+            f"Expected 1 library entry for deduped file, found {len(entries)}: {entries}",
+        )
 
     def test_library_doc_survives_source_deletion(self):
         """A registered Studio output remains resolvable under lib_root even after
@@ -783,6 +822,7 @@ class TestIntakeResearchPath(unittest.TestCase):
     def test_intake_research_registers_library_document(self):
         """run_intake with research=True creates a library document + provenance row."""
         from unittest.mock import patch
+
         from orivellum.capabilities.intake import run_intake
 
         # Create a minimal source document with extracted text already set (avoids
@@ -810,19 +850,27 @@ class TestIntakeResearchPath(unittest.TestCase):
         # web_search_synthesize is imported locally inside run_intake, so we patch
         # the function on its source module (orivellum.capabilities.websearch).
         # Also suppress background embedding calls that would fail without _deps.
-        with patch("orivellum.capabilities.websearch.web_search_synthesize",
-                   return_value=(fake_summary, fake_sources)):
-            with patch("orivellum.capabilities.embeddings.embed_chunks_for_doc",
-                       return_value=None):
-                try:
-                    run_intake(doc_id, db=self.db, cfg=self.cfg,
-                               research=True, research_query="quantum computing")
-                except Exception:
-                    # run_intake may fail on stages that need AI services; that's
-                    # fine — the research registration happens in a try/except block
-                    # and should have already persisted the note by the time intake
-                    # reaches any AI-dependent stage.
-                    pass
+        with (
+            patch(
+                "orivellum.capabilities.websearch.web_search_synthesize",
+                return_value=(fake_summary, fake_sources),
+            ),
+            patch("orivellum.capabilities.embeddings.embed_chunks_for_doc", return_value=None),
+        ):
+            try:
+                run_intake(
+                    doc_id,
+                    db=self.db,
+                    cfg=self.cfg,
+                    research=True,
+                    research_query="quantum computing",
+                )
+            except Exception:
+                # run_intake may fail on stages that need AI services; that's
+                # fine — the research registration happens in a try/except block
+                # and should have already persisted the note by the time intake
+                # reaches any AI-dependent stage.
+                pass
 
         # The research note must appear as a library document with source="intake".
         with self.db._lock:
@@ -833,14 +881,19 @@ class TestIntakeResearchPath(unittest.TestCase):
                 (doc_id,),
             ).fetchall()
 
-        self.assertGreater(len(rows), 0,
-                           "Intake research did not create a library document with provenance")
-        self.assertEqual(rows[0]["readiness"], "ready",
-                         "Intake research library document readiness is not 'ready'")
+        self.assertGreater(
+            len(rows), 0, "Intake research did not create a library document with provenance"
+        )
+        self.assertEqual(
+            rows[0]["readiness"],
+            "ready",
+            "Intake research library document readiness is not 'ready'",
+        )
 
     def test_intake_research_chunks_are_searchable(self):
         """Research note library document has FTS chunks so keyword search works."""
         from unittest.mock import patch
+
         from orivellum.capabilities.intake import run_intake
 
         doc = self.db.create_document(
@@ -858,21 +911,28 @@ class TestIntakeResearchPath(unittest.TestCase):
 
         fake_summary = "Recent ML research shows transformers dominate NLP benchmarks."
 
-        with patch("orivellum.capabilities.websearch.web_search_synthesize",
-                   return_value=(fake_summary, [])):
-            with patch("orivellum.capabilities.embeddings.embed_chunks_for_doc",
-                       return_value=None):
-                try:
-                    run_intake(doc_id, db=self.db, cfg=self.cfg,
-                               research=True, research_query="machine learning")
-                except Exception:
-                    pass
+        with (
+            patch(
+                "orivellum.capabilities.websearch.web_search_synthesize",
+                return_value=(fake_summary, []),
+            ),
+            patch("orivellum.capabilities.embeddings.embed_chunks_for_doc", return_value=None),
+        ):
+            try:
+                run_intake(
+                    doc_id,
+                    db=self.db,
+                    cfg=self.cfg,
+                    research=True,
+                    research_query="machine learning",
+                )
+            except Exception:
+                pass
 
         # Find the research library document(s) for this source doc
         with self.db._lock:
             note_docs = self.db._conn.execute(
-                "SELECT object_id FROM object_provenance "
-                "WHERE source='intake' AND origin_id=?",
+                "SELECT object_id FROM object_provenance WHERE source='intake' AND origin_id=?",
                 (doc_id,),
             ).fetchall()
 
@@ -883,8 +943,9 @@ class TestIntakeResearchPath(unittest.TestCase):
             chunks = self.db._conn.execute(
                 "SELECT COUNT(*) AS n FROM chunks WHERE doc_id=?", (note_doc_id,)
             ).fetchone()
-        self.assertGreater(chunks["n"], 0,
-                           "Research note has no FTS chunks — not keyword-searchable")
+        self.assertGreater(
+            chunks["n"], 0, "Research note has no FTS chunks — not keyword-searchable"
+        )
 
 
 class TestSchemaV70Migration(unittest.TestCase):
@@ -904,15 +965,15 @@ class TestSchemaV70Migration(unittest.TestCase):
     def test_object_provenance_columns(self):
         """All required provenance columns are present."""
         with self.db._lock:
-            cols = {r["name"] for r in self.db._conn.execute(
-                "PRAGMA table_info(object_provenance)"
-            ).fetchall()}
+            cols = {
+                r["name"]
+                for r in self.db._conn.execute("PRAGMA table_info(object_provenance)").fetchall()
+            }
         for col in ("id", "object_id", "source", "origin_id", "work_id", "topic_id", "created_at"):
             self.assertIn(col, cols, f"Column '{col}' missing from object_provenance")
 
     def test_upgrade_from_v69_applies_v70(self):
         """A fresh DB at v69 correctly upgrades to v70 (monotonic migration order)."""
-        import sqlite3
         from orivellum.database.schema import MIGRATIONS
 
         # Verify v70 is declared AFTER all migrations with version < 70,
@@ -929,15 +990,16 @@ class TestSchemaV70Migration(unittest.TestCase):
         )
 
         # Simulate an upgrade from v69: only migrations with v > 69 should be pending.
-        pending = sorted([(v, d, s) for v, d, s in MIGRATIONS if v > 69],
-                         key=lambda x: x[0])
+        pending = sorted([(v, d, s) for v, d, s in MIGRATIONS if v > 69], key=lambda x: x[0])
         pending_versions = [v for v, _, _ in pending]
-        self.assertIn(70, pending_versions,
-                      "v70 is not in the pending list for a v69→v70 upgrade")
+        self.assertIn(70, pending_versions, "v70 is not in the pending list for a v69→v70 upgrade")
         # v66 must NOT be in the upgrade path for a v69 DB (it's already applied)
-        self.assertNotIn(66, pending_versions,
-                         "v66 is incorrectly in the pending list for a v69 DB — "
-                         "it was already applied before v69")
+        self.assertNotIn(
+            66,
+            pending_versions,
+            "v66 is incorrectly in the pending list for a v69 DB — "
+            "it was already applied before v69",
+        )
 
 
 class TestRotationRace(unittest.TestCase):
@@ -976,12 +1038,12 @@ class TestRotationRace(unittest.TestCase):
             key=lambda f: f.stat().st_mtime,
             reverse=True,
         )
-        for old in files[self._MAX_OUTPUTS:]:
+        for old in files[self._MAX_OUTPUTS :]:
             old.unlink(missing_ok=True)
 
     def _make_outputs(self, out_dir: Path, n: int) -> list[Path]:
         """Create *n* dummy output files (oldest first by mtime)."""
-        import time
+
         files = []
         for i in range(n):
             p = out_dir / f"dummy_{i:04d}.bin"
@@ -1006,7 +1068,7 @@ class TestRotationRace(unittest.TestCase):
         clip.write_bytes(b"ID3" + b"\x00" * 100)
         # Give it a future mtime so it is the NEWEST (kept) but we test it
         # by deliberately putting it last — the oldest file will be rotated.
-        import time as _time
+
         os.utime(str(clip), (2_000_000, 2_000_000))
 
         # ── STEP 1: Synchronous link BEFORE rotation ──────────────────────────
@@ -1026,7 +1088,7 @@ class TestRotationRace(unittest.TestCase):
 
         # ── STEP 3: Background registration (uses prelinked path) ─────────────
         doc_id = register_and_index(
-            doc_path=linked_abs,        # background thread uses lib copy
+            doc_path=linked_abs,  # background thread uses lib copy
             text_content="TTS source text for rotation race test.",
             kind="mp3",
             db=self.db,
@@ -1101,19 +1163,28 @@ class TestRotationRace(unittest.TestCase):
         clip.write_bytes(b"ID3" + b"\x00" * 64)
 
         rel1 = _ensure_lib_symlink(clip, lib_root)
-        id1 = register_and_index(clip, "first", "mp3", self.db, self.cfg,
-                                  provenance_source="studio", _prelinked_rel=rel1)
+        id1 = register_and_index(
+            clip, "first", "mp3", self.db, self.cfg, provenance_source="studio", _prelinked_rel=rel1
+        )
 
         # Simulate second registration (e.g. duplicate route call)
         rel2 = _ensure_lib_symlink(clip, lib_root)  # returns same path (exists)
-        id2 = register_and_index(clip, "second", "mp3", self.db, self.cfg,
-                                  provenance_source="studio", _prelinked_rel=rel2)
+        id2 = register_and_index(
+            clip,
+            "second",
+            "mp3",
+            self.db,
+            self.cfg,
+            provenance_source="studio",
+            _prelinked_rel=rel2,
+        )
 
         self.assertEqual(id1, id2, "Duplicate registrations must dedup to same doc_id")
         gen_dir = lib_root / "generated"
         entries = list(gen_dir.glob("*dedup_race*"))
-        self.assertEqual(len(entries), 1,
-                         f"Expected exactly 1 library entry; found {len(entries)}: {entries}")
+        self.assertEqual(
+            len(entries), 1, f"Expected exactly 1 library entry; found {len(entries)}: {entries}"
+        )
 
 
 class TestUploadProvenance(unittest.TestCase):
@@ -1164,12 +1235,11 @@ class TestUploadProvenance(unittest.TestCase):
                 (doc_id,),
             ).fetchone()
 
-        self.assertIsNotNone(prov,
-                             "No provenance row created for uploaded document")
-        self.assertEqual(prov["source"], "upload",
-                         f"Expected source='upload', got {prov['source']!r}")
-        self.assertIsNone(prov["work_id"],
-                          "work_id should be None for an unscoped upload")
+        self.assertIsNotNone(prov, "No provenance row created for uploaded document")
+        self.assertEqual(
+            prov["source"], "upload", f"Expected source='upload', got {prov['source']!r}"
+        )
+        self.assertIsNone(prov["work_id"], "work_id should be None for an unscoped upload")
 
     def test_upload_with_work_id_sets_provenance_work_id(self):
         """process_document passes work_id into the provenance row for work-linked docs."""
@@ -1195,21 +1265,21 @@ class TestUploadProvenance(unittest.TestCase):
 
         self.assertIsNotNone(prov)
         self.assertEqual(prov["source"], "upload")
-        self.assertEqual(prov["work_id"], work_id,
-                         "Provenance work_id must match the document's linked Work")
+        self.assertEqual(
+            prov["work_id"], work_id, "Provenance work_id must match the document's linked Work"
+        )
 
     def test_origin_id_is_sha256_of_uploaded_file(self):
         """process_document uses the document sha256 as the provenance origin_id."""
         import hashlib
+
         from orivellum.capabilities.pipeline import process_document
 
         doc_id, file_path = self._write_doc(
             "sha_upload.txt",
             "Content with a specific SHA for origin_id verification.",
         )
-        expected_sha = hashlib.sha256(
-            Path(file_path).read_bytes()
-        ).hexdigest()
+        expected_sha = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
 
         process_document(doc_id, file_path, "text", None, "SHA Upload", self.db)
 
@@ -1220,8 +1290,9 @@ class TestUploadProvenance(unittest.TestCase):
             ).fetchone()
 
         self.assertIsNotNone(prov)
-        self.assertEqual(prov["origin_id"], expected_sha,
-                         "origin_id must be the sha256 of the uploaded file")
+        self.assertEqual(
+            prov["origin_id"], expected_sha, "origin_id must be the sha256 of the uploaded file"
+        )
 
     def test_provenance_row_exists_after_readiness_is_ready(self):
         """Provenance is recorded only after the document reaches readiness='ready'.
@@ -1247,10 +1318,10 @@ class TestUploadProvenance(unittest.TestCase):
                 (doc_id,),
             ).fetchone()
 
-        self.assertEqual(doc["readiness"], "ready",
-                         "Document readiness must be 'ready' after process_document")
-        self.assertIsNotNone(prov,
-                             "Provenance row must exist when document is ready")
+        self.assertEqual(
+            doc["readiness"], "ready", "Document readiness must be 'ready' after process_document"
+        )
+        self.assertIsNotNone(prov, "Provenance row must exist when document is ready")
 
 
 if __name__ == "__main__":

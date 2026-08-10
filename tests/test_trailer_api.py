@@ -11,6 +11,7 @@ Covers:
 - DB helpers: create_trailer, update_trailer, get_trailer, list_trailers.
 - Offline pipeline smoke: run_trailer_pipeline completes without a live LLM.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -21,16 +22,16 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import AUTH_HEADERS
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -49,12 +50,12 @@ def _make_ready_doc(db, work_id: str, text: str = "word " * 500) -> dict:
 # Schema / DB layer
 # ---------------------------------------------------------------------------
 
+
 class TrailerSchemaTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.app, self.db = _make_app(self._tmp.name)
-        self.client = TestClient(self.app, raise_server_exceptions=True,
-                                 headers=AUTH_HEADERS)
+        self.client = TestClient(self.app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
     def tearDown(self):
         self.db.close()
@@ -81,8 +82,7 @@ class TrailerSchemaTests(unittest.TestCase):
     def test_update_trailer_status(self):
         work = self.db.create_work(title="Test Book", work_type="writing")
         t = self.db.create_trailer(work["id"])
-        self.db.update_trailer(t["id"], status="ready", phase="package",
-                               package_json='{"ok":true}')
+        self.db.update_trailer(t["id"], status="ready", phase="package", package_json='{"ok":true}')
         updated = self.db.get_trailer(t["id"])
         self.assertEqual(updated["status"], "ready")
         self.assertEqual(updated["package_json"], '{"ok":true}')
@@ -101,12 +101,12 @@ class TrailerSchemaTests(unittest.TestCase):
 # API: eligibility guard
 # ---------------------------------------------------------------------------
 
+
 class TrailerEligibilityTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.app, self.db = _make_app(self._tmp.name)
-        self.client = TestClient(self.app, raise_server_exceptions=True,
-                                 headers=AUTH_HEADERS)
+        self.client = TestClient(self.app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
     def tearDown(self):
         self.db.close()
@@ -126,8 +126,7 @@ class TrailerEligibilityTests(unittest.TestCase):
     def test_422_when_only_document_not_ready(self):
         """Work with a document in 'imported' state → 422 (text not extracted)."""
         work = self.db.create_work(title="Draft Work", work_type="writing")
-        self.db.create_document(title="unprocessed.docx", kind="docx",
-                                work_id=work["id"])
+        self.db.create_document(title="unprocessed.docx", kind="docx", work_id=work["id"])
         r = self.client.post(f"/api/works/{work['id']}/trailer")
         self.assertEqual(r.status_code, 422)
 
@@ -138,8 +137,9 @@ class TrailerEligibilityTests(unittest.TestCase):
         r = self.client.post(f"/api/works/{work['id']}/trailer")
         # Background asyncio.create_task may fail inside TestClient sync context;
         # we only assert the HTTP handshake succeeded and the record was created.
-        self.assertIn(r.status_code, (200, 500),
-                      f"Unexpected status: {r.status_code} — {r.text[:300]}")
+        self.assertIn(
+            r.status_code, (200, 500), f"Unexpected status: {r.status_code} — {r.text[:300]}"
+        )
         if r.status_code == 200:
             body = r.json()
             self.assertIn("trailer_id", body)
@@ -150,46 +150,51 @@ class TrailerEligibilityTests(unittest.TestCase):
         work = self.db.create_work(title="Square Work", work_type="writing")
         _make_ready_doc(self.db, work["id"])
         r = self.client.post(f"/api/works/{work['id']}/trailer?format=square")
-        self.assertIn(r.status_code, (200, 500),
-                      f"format=square rejected unexpectedly: {r.status_code} — {r.text[:300]}")
+        self.assertIn(
+            r.status_code,
+            (200, 500),
+            f"format=square rejected unexpectedly: {r.status_code} — {r.text[:300]}",
+        )
         if r.status_code == 200:
             body = r.json()
             self.assertIn("trailer_id", body)
-            self.assertEqual(body["format"], "square",
-                             "Response must echo back format='square'")
+            self.assertEqual(body["format"], "square", "Response must echo back format='square'")
 
     def test_format_all_accepted_by_route(self):
         """format=all must be accepted by the route (not rejected with 422)."""
         work = self.db.create_work(title="All Formats Work", work_type="writing")
         _make_ready_doc(self.db, work["id"])
         r = self.client.post(f"/api/works/{work['id']}/trailer?format=all")
-        self.assertIn(r.status_code, (200, 500),
-                      f"format=all rejected unexpectedly: {r.status_code} — {r.text[:300]}")
+        self.assertIn(
+            r.status_code,
+            (200, 500),
+            f"format=all rejected unexpectedly: {r.status_code} — {r.text[:300]}",
+        )
         if r.status_code == 200:
             body = r.json()
             self.assertIn("trailer_id", body)
-            self.assertEqual(body["format"], "all",
-                             "Response must echo back format='all'")
+            self.assertEqual(body["format"], "all", "Response must echo back format='all'")
 
     def test_invalid_format_rejected_with_422(self):
         """An unknown format value must be rejected before the pipeline starts."""
         work = self.db.create_work(title="Bad Format Work", work_type="writing")
         _make_ready_doc(self.db, work["id"])
         r = self.client.post(f"/api/works/{work['id']}/trailer?format=widescreen")
-        self.assertEqual(r.status_code, 422,
-                         f"Expected 422 for unknown format, got {r.status_code}")
+        self.assertEqual(
+            r.status_code, 422, f"Expected 422 for unknown format, got {r.status_code}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # API: list and detail
 # ---------------------------------------------------------------------------
 
+
 class TrailerListDetailTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.app, self.db = _make_app(self._tmp.name)
-        self.client = TestClient(self.app, raise_server_exceptions=True,
-                                 headers=AUTH_HEADERS)
+        self.client = TestClient(self.app, raise_server_exceptions=True, headers=AUTH_HEADERS)
         self.work = self.db.create_work(title="My Book", work_type="writing")
         self.work_id = self.work["id"]
 
@@ -228,13 +233,23 @@ class TrailerListDetailTests(unittest.TestCase):
 
     def test_detail_returns_full_record(self):
         import json
+
         t = self.db.create_trailer(self.work_id)
-        pkg = {"status": "READY", "docs": {}, "brief": {}, "concept": {},
-               "method": {}, "plan": {}, "validation": {"status": "READY",
-               "critical": 0, "findings": []}, "status_badge": "✓",
-               "generated": "now", "shot_prompts": {}}
-        self.db.update_trailer(t["id"], status="ready", phase="package",
-                               package_json=json.dumps(pkg))
+        pkg = {
+            "status": "READY",
+            "docs": {},
+            "brief": {},
+            "concept": {},
+            "method": {},
+            "plan": {},
+            "validation": {"status": "READY", "critical": 0, "findings": []},
+            "status_badge": "✓",
+            "generated": "now",
+            "shot_prompts": {},
+        }
+        self.db.update_trailer(
+            t["id"], status="ready", phase="package", package_json=json.dumps(pkg)
+        )
 
         r = self.client.get(f"/api/works/{self.work_id}/trailers/{t['id']}")
         self.assertEqual(r.status_code, 200)
@@ -257,12 +272,16 @@ class TrailerListDetailTests(unittest.TestCase):
 # Offline pipeline smoke test
 # ---------------------------------------------------------------------------
 
+
 def _run_offline(db, work_id: str, trailer_id: str, fmt: str = "both"):
     """Helper: run the pipeline in offline mode and return the stored result dict."""
-    import os, json
+    import json
+    import os
+
     os.environ["MEDIA_STUDIO_OFFLINE"] = "1"
     try:
         from orivellum.capabilities.trailer import run_trailer_pipeline
+
         run_trailer_pipeline(db, work_id, trailer_id, fmt)
         result = db.get_trailer(trailer_id)
         if result.get("package_json"):
@@ -291,16 +310,16 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="both")
         self.assertEqual(
-            result["status"], "ready",
+            result["status"],
+            "ready",
             f"Expected 'ready', got {result['status']!r}. Error: {result.get('error')}",
         )
         self.assertIsNotNone(result["package_json"])
         pkg = result["_pkg"]
 
         # Combined package shape
-        self.assertEqual(pkg.get("format"), "both",
-                         "Top-level 'format' key must be 'both'")
-        self.assertIn("full",  pkg, "Combined package must have a 'full' sub-package")
+        self.assertEqual(pkg.get("format"), "both", "Top-level 'format' key must be 'both'")
+        self.assertIn("full", pkg, "Combined package must have a 'full' sub-package")
         self.assertIn("short", pkg, "Combined package must have a 'short' sub-package")
 
         # Legacy convenience keys promoted to top level
@@ -308,15 +327,22 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
             self.assertIn(key, pkg, f"Top-level key '{key}' must be promoted from full package")
 
         # Both sub-packages must have all 9 doc keys
-        required = {"book_brief", "concepts", "method", "shotlist",
-                    "narration_script", "music_brief", "titles",
-                    "assembly_sheet", "production_package"}
+        required = {
+            "book_brief",
+            "concepts",
+            "method",
+            "shotlist",
+            "narration_script",
+            "music_brief",
+            "titles",
+            "assembly_sheet",
+            "production_package",
+        }
         for fmt_key in ("full", "short"):
             docs = pkg[fmt_key].get("docs", {})
             self.assertTrue(
                 required.issubset(set(docs.keys())),
-                f"'{fmt_key}' sub-package missing doc keys: "
-                f"{required - set(docs.keys())}",
+                f"'{fmt_key}' sub-package missing doc keys: {required - set(docs.keys())}",
             )
 
         # shot_prompts: every entry must be a non-empty string with no
@@ -330,7 +356,8 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
             )
             for key, text in shot_prompts.items():
                 self.assertIsInstance(
-                    text, str,
+                    text,
+                    str,
                     f"'{fmt_key}'.shot_prompts[{key!r}] must be a string",
                 )
                 self.assertTrue(
@@ -338,7 +365,8 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
                     f"'{fmt_key}'.shot_prompts[{key!r}] must be non-empty",
                 )
                 self.assertNotIn(
-                    "\n\n\n", text,
+                    "\n\n\n",
+                    text,
                     f"'{fmt_key}'.shot_prompts[{key!r}] contains consecutive blank "
                     f"lines — a missing field (image_model, video_model, resolution, "
                     f"frames, steps, or seed_policy) produces extra whitespace that "
@@ -351,16 +379,25 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         """format='full' must reach status='ready' in offline mode."""
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="full")
-        self.assertEqual(result["status"], "ready",
-                         f"Error: {result.get('error')}")
+        self.assertEqual(result["status"], "ready", f"Error: {result.get('error')}")
         pkg = result["_pkg"]
         # Flat (non-combined) package — no sub-packages
         self.assertNotEqual(pkg.get("format"), "both")
-        required = {"book_brief", "concepts", "method", "shotlist",
-                    "narration_script", "music_brief", "titles",
-                    "assembly_sheet", "production_package"}
-        self.assertTrue(required.issubset(set(pkg.get("docs", {}).keys())),
-                        f"Missing doc keys: {required - set(pkg.get('docs', {}).keys())}")
+        required = {
+            "book_brief",
+            "concepts",
+            "method",
+            "shotlist",
+            "narration_script",
+            "music_brief",
+            "titles",
+            "assembly_sheet",
+            "production_package",
+        }
+        self.assertTrue(
+            required.issubset(set(pkg.get("docs", {}).keys())),
+            f"Missing doc keys: {required - set(pkg.get('docs', {}).keys())}",
+        )
 
     # ── format=short ───────────────────────────────────────────────────────
 
@@ -368,8 +405,7 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         """format='short' must reach status='ready' in offline mode."""
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="short")
-        self.assertEqual(result["status"], "ready",
-                         f"Error: {result.get('error')}")
+        self.assertEqual(result["status"], "ready", f"Error: {result.get('error')}")
         pkg = result["_pkg"]
         self.assertEqual(pkg.get("format"), "short")
         self.assertEqual(pkg.get("aspect_ratio"), "9:16")
@@ -382,20 +418,17 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         pkg = result["_pkg"]
         shots = pkg.get("plan", {}).get("shots", [])
 
-        self.assertEqual(len(shots), 3,
-                         f"Expected exactly 3 shots, got {len(shots)}")
+        self.assertEqual(len(shots), 3, f"Expected exactly 3 shots, got {len(shots)}")
         for i, (s, expected_type) in enumerate(zip(shots, ("hook", "peak", "close"))):
             self.assertEqual(
-                s.get("beat_type"), expected_type,
+                s.get("beat_type"),
+                expected_type,
                 f"Shot {i} beat_type should be '{expected_type}', got {s.get('beat_type')!r}",
             )
-            self.assertIn("vertical_framing_note", s,
-                          f"Shot {i} missing vertical_framing_note")
-            self.assertTrue(s["vertical_framing_note"],
-                            f"Shot {i} vertical_framing_note is empty")
+            self.assertIn("vertical_framing_note", s, f"Shot {i} missing vertical_framing_note")
+            self.assertTrue(s["vertical_framing_note"], f"Shot {i} vertical_framing_note is empty")
         total_dur = sum(s.get("duration", 0) for s in shots)
-        self.assertEqual(total_dur, 30,
-                         f"Shot durations must sum to 30s, got {total_dur}s")
+        self.assertEqual(total_dur, 30, f"Shot durations must sum to 30s, got {total_dur}s")
 
     def test_short_plan_narration_within_30s(self):
         """Short offline plan: all narration t_start values must be within [0, 30)."""
@@ -405,13 +438,16 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         narration = pkg.get("plan", {}).get("narration", [])
         for ln in narration:
             t_start = ln.get("t_start", 0)
-            self.assertGreaterEqual(t_start, 0,
-                                    f"Narration t_start {t_start} < 0")
-            self.assertLess(t_start, 30,
-                            f"Narration t_start {t_start} >= 30s clip duration (would fail validation)")
+            self.assertGreaterEqual(t_start, 0, f"Narration t_start {t_start} < 0")
+            self.assertLess(
+                t_start,
+                30,
+                f"Narration t_start {t_start} >= 30s clip duration (would fail validation)",
+            )
         if narration:
-            self.assertEqual(narration[0]["t_start"], 0,
-                             "First (hook) narration line must be at t=0")
+            self.assertEqual(
+                narration[0]["t_start"], 0, "First (hook) narration line must be at t=0"
+            )
 
     # ── shot prompt format (ComfyUI paste safety) ─────────────────────────
 
@@ -428,36 +464,36 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         This test catches regressions where _apply_render_settings() stops
         filling a required field.
         """
-        import re
+
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="full")
         self.assertEqual(
-            result["status"], "ready",
+            result["status"],
+            "ready",
             f"Error: {result.get('error')}",
         )
         pkg = result["_pkg"]
 
         shot_prompts: dict = pkg.get("shot_prompts", {})
-        self.assertTrue(shot_prompts,
-                        "Package must contain at least one shot_prompt entry")
+        self.assertTrue(shot_prompts, "Package must contain at least one shot_prompt entry")
 
         # Keys must follow the shot_NN naming convention
         for key in shot_prompts:
             self.assertRegex(
-                key, r"^shot_\d{2}$",
+                key,
+                r"^shot_\d{2}$",
                 f"shot_prompts key {key!r} does not match shot_NN pattern",
             )
 
         for key, text in shot_prompts.items():
             # Must be a non-empty string
-            self.assertIsInstance(text, str,
-                                  f"shot_prompts[{key!r}] must be a string")
-            self.assertTrue(text.strip(),
-                            f"shot_prompts[{key!r}] must not be empty")
+            self.assertIsInstance(text, str, f"shot_prompts[{key!r}] must be a string")
+            self.assertTrue(text.strip(), f"shot_prompts[{key!r}] must not be empty")
 
             # No 'None' literal — indicates a missing render-settings field
             self.assertNotIn(
-                "] None", text,
+                "] None",
+                text,
                 f"shot_prompts[{key!r}] contains a bare 'None' — "
                 f"image_model, video_model, or another render-settings field "
                 f"was not filled by _apply_render_settings().",
@@ -465,18 +501,27 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
 
             # No consecutive blank lines (\\n\\n\\n = empty field between sections)
             self.assertNotIn(
-                "\n\n\n", text,
+                "\n\n\n",
+                text,
                 f"shot_prompts[{key!r}] contains consecutive blank lines — "
                 f"a missing image_prompt, motion_prompt, or negative_prompt "
                 f"produces extra whitespace that breaks ComfyUI paste.",
             )
 
             # Required section headers must all be present
-            for header in ("[IMAGE MODEL]", "[POSITIVE]", "[NEGATIVE]",
-                           "[VIDEO MODEL]", "[MOTION]", "[SETTINGS]",
-                           "[SEED]", "[UPSCALE]"):
+            for header in (
+                "[IMAGE MODEL]",
+                "[POSITIVE]",
+                "[NEGATIVE]",
+                "[VIDEO MODEL]",
+                "[MOTION]",
+                "[SETTINGS]",
+                "[SEED]",
+                "[UPSCALE]",
+            ):
                 self.assertIn(
-                    header, text,
+                    header,
+                    text,
                     f"shot_prompts[{key!r}] is missing the {header!r} section",
                 )
 
@@ -486,26 +531,24 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         independently of build() and must be verified separately."""
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="short")
-        self.assertEqual(result["status"], "ready",
-                         f"Error: {result.get('error')}")
+        self.assertEqual(result["status"], "ready", f"Error: {result.get('error')}")
         pkg = result["_pkg"]
 
         shot_prompts: dict = pkg.get("shot_prompts", {})
-        self.assertTrue(shot_prompts,
-                        "Short package must contain at least one shot_prompt entry")
+        self.assertTrue(shot_prompts, "Short package must contain at least one shot_prompt entry")
 
         for key, text in shot_prompts.items():
-            self.assertIsInstance(text, str,
-                                  f"short shot_prompts[{key!r}] must be a string")
-            self.assertTrue(text.strip(),
-                            f"short shot_prompts[{key!r}] must not be empty")
+            self.assertIsInstance(text, str, f"short shot_prompts[{key!r}] must be a string")
+            self.assertTrue(text.strip(), f"short shot_prompts[{key!r}] must not be empty")
             self.assertNotIn(
-                "] None", text,
+                "] None",
+                text,
                 f"short shot_prompts[{key!r}] contains a bare 'None' — "
                 f"a render-settings field was not filled.",
             )
             self.assertNotIn(
-                "\n\n\n", text,
+                "\n\n\n",
+                text,
                 f"short shot_prompts[{key!r}] contains consecutive blank lines.",
             )
 
@@ -515,8 +558,7 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         """format='square' must reach status='ready' in offline mode."""
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="square")
-        self.assertEqual(result["status"], "ready",
-                         f"Error: {result.get('error')}")
+        self.assertEqual(result["status"], "ready", f"Error: {result.get('error')}")
         pkg = result["_pkg"]
         self.assertEqual(pkg.get("format"), "square")
         self.assertEqual(pkg.get("aspect_ratio"), "1:1")
@@ -529,24 +571,22 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         pkg = result["_pkg"]
         shots = pkg.get("plan", {}).get("shots", [])
 
-        self.assertEqual(len(shots), 3,
-                         f"Expected exactly 3 shots, got {len(shots)}")
+        self.assertEqual(len(shots), 3, f"Expected exactly 3 shots, got {len(shots)}")
         for i, (s, expected_type) in enumerate(zip(shots, ("hook", "peak", "close"))):
             self.assertEqual(
-                s.get("beat_type"), expected_type,
+                s.get("beat_type"),
+                expected_type,
                 f"Shot {i} beat_type should be '{expected_type}', got {s.get('beat_type')!r}",
             )
             self.assertEqual(
-                s.get("resolution"), "768x768",
+                s.get("resolution"),
+                "768x768",
                 f"Shot {i} resolution must be 768x768 for 1:1 square, got {s.get('resolution')!r}",
             )
-            self.assertIn("square_framing_note", s,
-                          f"Shot {i} missing square_framing_note")
-            self.assertTrue(s["square_framing_note"],
-                            f"Shot {i} square_framing_note is empty")
+            self.assertIn("square_framing_note", s, f"Shot {i} missing square_framing_note")
+            self.assertTrue(s["square_framing_note"], f"Shot {i} square_framing_note is empty")
         total_dur = sum(s.get("duration", 0) for s in shots)
-        self.assertEqual(total_dur, 30,
-                         f"Shot durations must sum to 30s, got {total_dur}s")
+        self.assertEqual(total_dur, 30, f"Shot durations must sum to 30s, got {total_dur}s")
 
     def test_square_plan_narration_within_30s(self):
         """Square offline plan: all narration t_start values must be within [0, 30)."""
@@ -556,50 +596,45 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         narration = pkg.get("plan", {}).get("narration", [])
         for ln in narration:
             t_start = ln.get("t_start", 0)
-            self.assertGreaterEqual(t_start, 0,
-                                    f"Narration t_start {t_start} < 0")
-            self.assertLess(t_start, 30,
-                            f"Narration t_start {t_start} >= 30s clip duration")
+            self.assertGreaterEqual(t_start, 0, f"Narration t_start {t_start} < 0")
+            self.assertLess(t_start, 30, f"Narration t_start {t_start} >= 30s clip duration")
         if narration:
-            self.assertEqual(narration[0]["t_start"], 0,
-                             "First (hook) narration line must be at t=0")
+            self.assertEqual(
+                narration[0]["t_start"], 0, "First (hook) narration line must be at t=0"
+            )
 
     def test_square_shot_prompts_are_clean_for_comfyui_paste(self):
         """Square-format (1:1) shot_prompts must be non-empty strings with no
         consecutive blank lines and must include the [SQUARE FRAMING] section."""
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="square")
-        self.assertEqual(result["status"], "ready",
-                         f"Error: {result.get('error')}")
+        self.assertEqual(result["status"], "ready", f"Error: {result.get('error')}")
         pkg = result["_pkg"]
 
         shot_prompts: dict = pkg.get("shot_prompts", {})
-        self.assertTrue(shot_prompts,
-                        "Square package must contain at least one shot_prompt entry")
+        self.assertTrue(shot_prompts, "Square package must contain at least one shot_prompt entry")
 
         for key, text in shot_prompts.items():
-            self.assertIsInstance(text, str,
-                                  f"square shot_prompts[{key!r}] must be a string")
-            self.assertTrue(text.strip(),
-                            f"square shot_prompts[{key!r}] must not be empty")
-            self.assertNotIn("] None", text,
-                             f"square shot_prompts[{key!r}] contains a bare 'None'")
-            self.assertNotIn("\n\n\n", text,
-                             f"square shot_prompts[{key!r}] contains consecutive blank lines")
-            self.assertIn("[SQUARE FRAMING]", text,
-                          f"square shot_prompts[{key!r}] missing [SQUARE FRAMING] section")
+            self.assertIsInstance(text, str, f"square shot_prompts[{key!r}] must be a string")
+            self.assertTrue(text.strip(), f"square shot_prompts[{key!r}] must not be empty")
+            self.assertNotIn("] None", text, f"square shot_prompts[{key!r}] contains a bare 'None'")
+            self.assertNotIn(
+                "\n\n\n", text, f"square shot_prompts[{key!r}] contains consecutive blank lines"
+            )
+            self.assertIn(
+                "[SQUARE FRAMING]",
+                text,
+                f"square shot_prompts[{key!r}] missing [SQUARE FRAMING] section",
+            )
 
     def test_square_assembly_has_crop_rule(self):
         """Square package assembly must include the crop_rule describing the centre-third crop."""
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="square")
         pkg = result["_pkg"]
-        self.assertIn("crop_rule", pkg,
-                      "Square package must have a top-level crop_rule field")
-        self.assertIn("centre", pkg["crop_rule"].lower(),
-                      "crop_rule must mention centre-crop")
-        self.assertIn("platform_targets", pkg,
-                      "Square package must list platform_targets")
+        self.assertIn("crop_rule", pkg, "Square package must have a top-level crop_rule field")
+        self.assertIn("centre", pkg["crop_rule"].lower(), "crop_rule must mention centre-crop")
+        self.assertIn("platform_targets", pkg, "Square package must list platform_targets")
         targets = pkg["platform_targets"]
         self.assertTrue(
             any("Instagram" in t for t in targets),
@@ -612,19 +647,17 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         """format='all' must reach status='ready' and return full, short, and square."""
         t = self.db.create_trailer(self.work_id)
         result = _run_offline(self.db, self.work_id, t["id"], fmt="all")
-        self.assertEqual(result["status"], "ready",
-                         f"Error: {result.get('error')}")
+        self.assertEqual(result["status"], "ready", f"Error: {result.get('error')}")
         pkg = result["_pkg"]
 
-        self.assertEqual(pkg.get("format"), "all",
-                         "Top-level 'format' key must be 'all'")
-        self.assertIn("full",   pkg, "Combined 'all' package must have 'full' sub-package")
-        self.assertIn("short",  pkg, "Combined 'all' package must have 'short' sub-package")
+        self.assertEqual(pkg.get("format"), "all", "Top-level 'format' key must be 'all'")
+        self.assertIn("full", pkg, "Combined 'all' package must have 'full' sub-package")
+        self.assertIn("short", pkg, "Combined 'all' package must have 'short' sub-package")
         self.assertIn("square", pkg, "Combined 'all' package must have 'square' sub-package")
 
         # Each sub-package must carry the right format + aspect_ratio
-        self.assertEqual(pkg["full"].get("aspect_ratio"),   "16:9")
-        self.assertEqual(pkg["short"].get("aspect_ratio"),  "9:16")
+        self.assertEqual(pkg["full"].get("aspect_ratio"), "16:9")
+        self.assertEqual(pkg["short"].get("aspect_ratio"), "9:16")
         self.assertEqual(pkg["square"].get("aspect_ratio"), "1:1")
 
         # Legacy keys promoted to top level
@@ -640,8 +673,11 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         # Either READY (all pass) or BLOCKED with all three indicators
         if "BLOCKED" in badge:
             for indicator in ("16:9", "9:16", "1:1"):
-                self.assertIn(indicator, badge,
-                              f"BLOCKED status_badge must mention '{indicator}', got: {badge!r}")
+                self.assertIn(
+                    indicator,
+                    badge,
+                    f"BLOCKED status_badge must mention '{indicator}', got: {badge!r}",
+                )
 
     # ── failure path ───────────────────────────────────────────────────────
 
@@ -650,6 +686,7 @@ class TrailerPipelineSmokeTests(unittest.TestCase):
         empty_work = self.db.create_work(title="Empty Work", work_type="writing")
         t = self.db.create_trailer(empty_work["id"])
         from orivellum.capabilities.trailer import run_trailer_pipeline
+
         run_trailer_pipeline(self.db, empty_work["id"], t["id"])
         result = self.db.get_trailer(t["id"])
         self.assertEqual(result["status"], "failed")

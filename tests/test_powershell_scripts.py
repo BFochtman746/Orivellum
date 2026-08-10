@@ -15,6 +15,7 @@ Rules enforced for every scripts/**/*.ps1 file:
      tool strips the BOM).
   3. No NUL bytes / UTF-16 accidents.
 """
+
 from __future__ import annotations
 
 import codecs
@@ -50,7 +51,7 @@ def test_ps1_has_utf8_bom(path: Path):
 def test_ps1_is_ascii_only(path: Path):
     raw = path.read_bytes()
     if raw.startswith(codecs.BOM_UTF8):
-        raw = raw[len(codecs.BOM_UTF8):]
+        raw = raw[len(codecs.BOM_UTF8) :]
 
     assert b"\x00" not in raw, (
         f"{path.name} contains NUL bytes -- it was probably saved as "
@@ -69,6 +70,5 @@ def test_ps1_is_ascii_only(path: Path):
                 break  # one report per line is enough
     assert not bad, (
         f"{path.name} contains non-ASCII characters. Replace em-dashes with "
-        "'-', curly quotes with straight quotes, arrows with '->', etc.:\n"
-        + "\n".join(bad[:20])
+        "'-', curly quotes with straight quotes, arrows with '->', etc.:\n" + "\n".join(bad[:20])
     )

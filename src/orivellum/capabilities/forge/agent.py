@@ -6,6 +6,7 @@ complete static website (HTML + CSS + JS) in the build directory.
 
 Tool loop exits when the model outputs {"tool": "done", "summary": "…"}.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,8 +21,8 @@ from orivellum.capabilities.llm import llm_call
 logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 30
-MAX_FILE_READ = 8000   # chars
-MAX_OUTPUT   = 4000    # chars of subprocess output
+MAX_FILE_READ = 8000  # chars
+MAX_OUTPUT = 4000  # chars of subprocess output
 
 POLICY_ALLOWED_CMDS = {"node", "npm", "npx", "eslint"}
 
@@ -54,7 +55,11 @@ def _run_cmd(cmd: str, cwd: pathlib.Path) -> str:
         return f"[BLOCKED] Command not allowed: {parts[0] if parts else '(empty)'}"
     try:
         proc = subprocess.run(
-            parts, cwd=str(cwd), capture_output=True, text=True, timeout=30,
+            parts,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         out = (proc.stdout + proc.stderr)[:MAX_OUTPUT]
         return out if out else f"[exit {proc.returncode}]"
@@ -96,7 +101,7 @@ def run_builder(
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user",   "content": user_primer},
+        {"role": "user", "content": user_primer},
     ]
 
     if on_event:
@@ -139,7 +144,7 @@ def run_builder(
                 on_event("build_done", summary)
             return summary
 
-        elif tool == "write_file":
+        if tool == "write_file":
             rel = call.get("path", "")
             content = call.get("content", "")
             if not rel:
@@ -175,8 +180,9 @@ def run_builder(
                 messages.append(_tool_result("list_files", "[BLOCKED]"))
                 continue
             if target_dir.is_dir():
-                entries = sorted(str(p.relative_to(build_dir))
-                                 for p in target_dir.rglob("*") if not p.is_dir())
+                entries = sorted(
+                    str(p.relative_to(build_dir)) for p in target_dir.rglob("*") if not p.is_dir()
+                )
                 messages.append(_tool_result("list_files", "\n".join(entries[:200]) or "(empty)"))
             else:
                 messages.append(_tool_result("list_files", "[DIR NOT FOUND]"))

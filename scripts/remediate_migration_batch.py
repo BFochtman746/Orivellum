@@ -21,6 +21,7 @@ Usage
 
 See REMEDIATION.md for the recommended full sequence including DB backup.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,22 +30,22 @@ import shutil
 import sqlite3
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # ── Pattern (mirrors classify.py _ARTIFACT_NAME) ──────────────────────────────
 _ARTIFACT_NAME = re.compile(
-    r"(migration[_\- ]?batch"    # A01_MIGRATION_BATCH_011...
-    r"|^a0\d[_\-]"               # A01_ / A02_ prefixes
-    r"|\bRP[-_ ]?\d{2,}"         # RP-011 Core Function
-    r"|\bRun[-_ ]?\d{2,}"        # Run-001 Not Run
-    r"|_v\d+\.\d+\.\d+"          # ..._v1.0.0 versioned artifact
+    r"(migration[_\- ]?batch"  # A01_MIGRATION_BATCH_011...
+    r"|^a0\d[_\-]"  # A01_ / A02_ prefixes
+    r"|\bRP[-_ ]?\d{2,}"  # RP-011 Core Function
+    r"|\bRun[-_ ]?\d{2,}"  # Run-001 Not Run
+    r"|_v\d+\.\d+\.\d+"  # ..._v1.0.0 versioned artifact
     r"|\bbaseline\b|\bqualification\b|\bregression\b|\bfixture\b)",
     re.I,
 )
 
-NOW = datetime.now(timezone.utc).isoformat()
-ARCHIVE_SUFFIX = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+NOW = datetime.now(UTC).isoformat()
+ARCHIVE_SUFFIX = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _is_artifact(text: str | None) -> bool:
@@ -87,8 +88,7 @@ def _log(
         """INSERT INTO a01_remediation_log
            (id, entity_type, entity_id, field, old_value, new_value, reason, batch)
            VALUES (?,?,?,?,?,?,?,?)""",
-        (str(uuid.uuid4()), entity_type, entity_id, field,
-         old_value, new_value, reason, batch),
+        (str(uuid.uuid4()), entity_type, entity_id, field, old_value, new_value, reason, batch),
     )
 
 
@@ -99,9 +99,13 @@ def _find_artifact_documents(conn: sqlite3.Connection) -> list[dict]:
     ).fetchall()
     return [
         {
-            "id": r[0], "title": r[1], "source": r[2],
-            "content_path": r[3], "sha256": r[4],
-            "tier": r[5], "work_id": r[6],
+            "id": r[0],
+            "title": r[1],
+            "source": r[2],
+            "content_path": r[3],
+            "sha256": r[4],
+            "tier": r[5],
+            "work_id": r[6],
         }
         for r in rows
         if _is_artifact(r[1]) or _is_artifact(r[2])
@@ -118,9 +122,7 @@ def _archived_files_exists(conn: sqlite3.Connection) -> bool:
 
 def _find_artifact_works(conn: sqlite3.Connection) -> list[dict]:
     """Return Works whose title matches the artifact pattern."""
-    rows = conn.execute(
-        "SELECT id, title, work_type, status FROM works"
-    ).fetchall()
+    rows = conn.execute("SELECT id, title, work_type, status FROM works").fetchall()
     return [
         {"id": r[0], "title": r[1], "work_type": r[2], "status": r[3]}
         for r in rows
@@ -133,9 +135,9 @@ def run_dry_run(conn: sqlite3.Connection) -> None:
     docs = _find_artifact_documents(conn)
     works = _find_artifact_works(conn)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  DRY RUN — no changes will be written")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     print(f"DOCUMENTS to reclassify to ARTIFACT tier ({len(docs)} rows):")
     if docs:
@@ -152,8 +154,10 @@ def run_dry_run(conn: sqlite3.Connection) -> None:
             n = conn.execute(
                 "SELECT COUNT(*) FROM documents WHERE work_id=?", (w["id"],)
             ).fetchone()[0]
-            print(f"  [{w['id'][:8]}] status: {w['status']!r} → 'archived'  "
-                  f"title={w['title']!r}  attached_docs={n}")
+            print(
+                f"  [{w['id'][:8]}] status: {w['status']!r} → 'archived'  "
+                f"title={w['title']!r}  attached_docs={n}"
+            )
     else:
         print("  (none found — database is already clean)")
 
@@ -165,15 +169,15 @@ def run_dry_run(conn: sqlite3.Connection) -> None:
     if orphan_work_ids:
         print(f"WORKS that own reclassified docs but have clean titles ({len(orphan_work_ids)}):")
         for wid in orphan_work_ids:
-            row = conn.execute(
-                "SELECT title, status FROM works WHERE id=?", (wid,)
-            ).fetchone()
+            row = conn.execute("SELECT title, status FROM works WHERE id=?", (wid,)).fetchone()
             if row:
-                print(f"  [{wid[:8]}] title={row[0]!r} status={row[1]!r}  "
-                      "(will NOT be archived — title is clean)")
+                print(
+                    f"  [{wid[:8]}] title={row[0]!r} status={row[1]!r}  "
+                    "(will NOT be archived — title is clean)"
+                )
         print()
 
-    print(f"Run with --apply to make these changes (after backing up the DB).\n")
+    print("Run with --apply to make these changes (after backing up the DB).\n")
 
 
 def run_apply(conn: sqlite3.Connection, archive_dir: Path) -> None:
@@ -224,13 +228,18 @@ def run_apply(conn: sqlite3.Connection, archive_dir: Path) -> None:
             if d["tier"] == "artifact":
                 print(f"  [doc] {d['id'][:8]} already 'artifact' — skip")
                 continue
-            conn.execute(
-                "UPDATE documents SET tier='artifact' WHERE id=?", (d["id"],)
+            conn.execute("UPDATE documents SET tier='artifact' WHERE id=?", (d["id"],))
+            _log(
+                conn,
+                entity_type="document",
+                entity_id=d["id"],
+                field="tier",
+                old_value=d["tier"],
+                new_value="artifact",
+                reason="A01_MIGRATION_BATCH artifact pattern matched in title/source",
+                batch=batch,
+                dry_run=False,
             )
-            _log(conn, entity_type="document", entity_id=d["id"],
-                 field="tier", old_value=d["tier"], new_value="artifact",
-                 reason="A01_MIGRATION_BATCH artifact pattern matched in title/source",
-                 batch=batch, dry_run=False)
             print(f"  [doc] {d['id'][:8]} tier {d['tier']!r} → 'artifact'  {d['title']!r}")
             changed_docs += 1
 
@@ -238,13 +247,18 @@ def run_apply(conn: sqlite3.Connection, archive_dir: Path) -> None:
             if w["status"] == "archived":
                 print(f"  [wrk] {w['id'][:8]} already archived — skip")
                 continue
-            conn.execute(
-                "UPDATE works SET status='archived' WHERE id=?", (w["id"],)
+            conn.execute("UPDATE works SET status='archived' WHERE id=?", (w["id"],))
+            _log(
+                conn,
+                entity_type="work",
+                entity_id=w["id"],
+                field="status",
+                old_value=w["status"],
+                new_value="archived",
+                reason="Work title matches A01_MIGRATION_BATCH artifact pattern",
+                batch=batch,
+                dry_run=False,
             )
-            _log(conn, entity_type="work", entity_id=w["id"],
-                 field="status", old_value=w["status"], new_value="archived",
-                 reason="Work title matches A01_MIGRATION_BATCH artifact pattern",
-                 batch=batch, dry_run=False)
             print(f"  [wrk] {w['id'][:8]} status {w['status']!r} → 'archived'  {w['title']!r}")
             changed_works += 1
 
@@ -268,8 +282,14 @@ def run_apply(conn: sqlite3.Connection, archive_dir: Path) -> None:
                     """INSERT OR IGNORE INTO archived_files
                        (id, original_path, archive_path, sha256, reason, archived_at)
                        VALUES (?,?,?,?,?,?)""",
-                    (str(uuid.uuid4()), str(src), str(dst),
-                     sha256, "A01_MIGRATION_BATCH remediation", NOW),
+                    (
+                        str(uuid.uuid4()),
+                        str(src),
+                        str(dst),
+                        sha256,
+                        "A01_MIGRATION_BATCH remediation",
+                        NOW,
+                    ),
                 )
                 conn.commit()
             archived_count += 1
@@ -278,8 +298,10 @@ def run_apply(conn: sqlite3.Connection, archive_dir: Path) -> None:
             skipped_copy.append(str(src))
 
     if not has_archived_files_tbl:
-        print("  [info] archived_files table absent — skipped archival ledger entries "
-              "(DB schema pre-v26); file copies still landed in archive_dir")
+        print(
+            "  [info] archived_files table absent — skipped archival ledger entries "
+            "(DB schema pre-v26); file copies still landed in archive_dir"
+        )
 
     print()
     print(f"Apply complete (batch={batch}):")
@@ -351,12 +373,14 @@ def run_verify(conn: sqlite3.Connection) -> int:
     # Works that are still active (not archived)
     active_works = [w for w in works if w["status"] == "active"]
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  VERIFICATION REPORT")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     if bad_docs:
-        print(f"FAIL — {len(bad_docs)} document(s) matched artifact pattern but tier != 'artifact':")
+        print(
+            f"FAIL — {len(bad_docs)} document(s) matched artifact pattern but tier != 'artifact':"
+        )
         for d in bad_docs:
             print(f"  [{d['id'][:8]}] tier={d['tier']!r}  {d['title']!r}")
     else:
@@ -372,9 +396,9 @@ def run_verify(conn: sqlite3.Connection) -> int:
     # Overall stats
     total_works = conn.execute("SELECT COUNT(*) FROM works WHERE status='active'").fetchone()[0]
     total_docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-    artifact_docs = conn.execute(
-        "SELECT COUNT(*) FROM documents WHERE tier='artifact'"
-    ).fetchone()[0]
+    artifact_docs = conn.execute("SELECT COUNT(*) FROM documents WHERE tier='artifact'").fetchone()[
+        0
+    ]
 
     print()
     print(f"Active Works  : {total_works}")
@@ -385,9 +409,8 @@ def run_verify(conn: sqlite3.Connection) -> int:
     if bad_docs or active_works:
         print("Remediation is INCOMPLETE. Run --apply to finish.\n")
         return 1
-    else:
-        print("Remediation verified OK — database is clean.\n")
-        return 0
+    print("Remediation verified OK — database is clean.\n")
+    return 0
 
 
 def main() -> None:
@@ -396,20 +419,30 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--db", default="data/orivellum.db",
-                        help="Path to the SQLite database (default: data/orivellum.db)")
-    parser.add_argument("--archive-dir", default="data/remediation_archive",
-                        help="Where to copy displaced content files (default: data/remediation_archive)")
+    parser.add_argument(
+        "--db",
+        default="data/orivellum.db",
+        help="Path to the SQLite database (default: data/orivellum.db)",
+    )
+    parser.add_argument(
+        "--archive-dir",
+        default="data/remediation_archive",
+        help="Where to copy displaced content files (default: data/remediation_archive)",
+    )
 
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--dry-run", action="store_true",
-                       help="Show what would change without writing anything")
-    group.add_argument("--apply", action="store_true",
-                       help="Apply the remediation (log all changes for reversal)")
-    group.add_argument("--reverse", action="store_true",
-                       help="Undo the most recent applied batch")
-    group.add_argument("--verify", action="store_true",
-                       help="Check that no artifact items remain active/unclassified")
+    group.add_argument(
+        "--dry-run", action="store_true", help="Show what would change without writing anything"
+    )
+    group.add_argument(
+        "--apply", action="store_true", help="Apply the remediation (log all changes for reversal)"
+    )
+    group.add_argument("--reverse", action="store_true", help="Undo the most recent applied batch")
+    group.add_argument(
+        "--verify",
+        action="store_true",
+        help="Check that no artifact items remain active/unclassified",
+    )
 
     args = parser.parse_args()
     db_path = Path(args.db)

@@ -6,16 +6,15 @@ Verifies that:
    a permanently 'running' one.
 3. get_recent_jobs returns entries newest-first up to the requested limit.
 """
+
 from __future__ import annotations
 
-import time
+# Reset module-level executor between tests so each test starts fresh.
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
 
 import pytest
 
-# Reset module-level executor between tests so each test starts fresh.
-import importlib
 import orivellum.api.executor as _exec_mod
 
 
@@ -34,6 +33,7 @@ def fresh_executor():
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _noop():
     pass
 
@@ -48,8 +48,8 @@ def _failing_work():
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-class TestTrackedSubmitLifecycle:
 
+class TestTrackedSubmitLifecycle:
     def test_successful_job_transitions_to_done(self):
         done_evt = threading.Event()
         original = _fast_work
@@ -63,8 +63,9 @@ class TestTrackedSubmitLifecycle:
 
         # Entry should be visible immediately after submission
         jobs_before = _exec_mod.get_recent_jobs()
-        assert any(j["label"] == "slow_work" and j["kind"] == "test"
-                   for j in jobs_before), "job not visible right after submit"
+        assert any(j["label"] == "slow_work" and j["kind"] == "test" for j in jobs_before), (
+            "job not visible right after submit"
+        )
 
         # Wait for completion
         done_evt.wait(timeout=3)
@@ -131,7 +132,8 @@ class TestZipChildTracking:
 
     def test_zip_child_uses_tracked_submit(self):
         """_explode_zip_into_documents must create a tracked job entry per child."""
-        from unittest.mock import patch, MagicMock, call
+        from unittest.mock import MagicMock, patch
+
         import orivellum.capabilities.pipeline as _pipeline
 
         # Patch _tracked_submit so we can assert it was called instead of
@@ -145,26 +147,32 @@ class TestZipChildTracking:
             f.result.return_value = None
             return f
 
-        with patch("orivellum.capabilities.pipeline._tracked_submit",
-                   _fake_tracked_submit, create=True):
+        with patch(
+            "orivellum.capabilities.pipeline._tracked_submit", _fake_tracked_submit, create=True
+        ):
             # Patch at the import site used inside _explode_zip_into_documents
             with patch("orivellum.api.executor._tracked_submit", _fake_tracked_submit):
                 # Verify the function reference inside pipeline uses the patched version
                 import importlib
+
                 importlib.reload(_pipeline)
 
         # After reload, _tracked_submit is re-imported; verify the symbol exists in module
         # (we can't easily run _explode_zip_into_documents without a real ZIP, but
         # the code-path inspection above verifies the import site is correct)
         import inspect
+
         src = inspect.getsource(_pipeline._explode_zip_into_documents)
-        assert ("submit_bg" in src or "_tracked_submit" in src), \
-            "_explode_zip_into_documents must route through the tracked executor " \
+        assert "submit_bg" in src or "_tracked_submit" in src, (
+            "_explode_zip_into_documents must route through the tracked executor "
             "(submit_bg/_tracked_submit), not get_executor().submit() or raw threads"
-        assert "threading.Thread" not in src, \
+        )
+        assert "threading.Thread" not in src, (
             "_explode_zip_into_documents must not spawn raw threads"
-        assert "get_executor" not in src or "get_executor" not in src.split("_tracked_submit")[0], \
+        )
+        assert "get_executor" not in src or "get_executor" not in src.split("_tracked_submit")[0], (
             "get_executor().submit() call should not precede _tracked_submit in ZIP path"
+        )
 
 
 class TestAtomicRetryClaim:
@@ -249,9 +257,7 @@ class TestOrphanReconciliation:
             with db._lock:
                 rows = {
                     r["id"]: (r["state"], r["error"])
-                    for r in db._conn.execute(
-                        "SELECT id, state, error FROM bg_jobs"
-                    ).fetchall()
+                    for r in db._conn.execute("SELECT id, state, error FROM bg_jobs").fetchall()
                 }
             assert rows["j-run"] == ("failed", "orphaned by restart")
             assert rows["j-queue"] == ("failed", "orphaned by restart")
@@ -261,7 +267,6 @@ class TestOrphanReconciliation:
 
 
 class TestGetRecentJobs:
-
     def test_returns_newest_first(self):
         evts = [threading.Event() for _ in range(3)]
 
@@ -269,8 +274,7 @@ class TestGetRecentJobs:
             evts[idx].set()
 
         futs = [
-            _exec_mod._tracked_submit(_work, i, kind="order", label=f"job_{i}")
-            for i in range(3)
+            _exec_mod._tracked_submit(_work, i, kind="order", label=f"job_{i}") for i in range(3)
         ]
         for f in futs:
             f.result(timeout=3)

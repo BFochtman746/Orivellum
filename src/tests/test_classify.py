@@ -3,6 +3,7 @@
 Runs with pytest OR standalone: `python src/tests/test_classify.py`.
 Uses the REAL names that polluted the corpus so a regression is caught.
 """
+
 import sys
 from pathlib import Path
 
@@ -64,9 +65,11 @@ def test_deterministic_no_llm_needed_for_known_shapes():
 
 def test_ambiguous_uses_injected_llm():
     called = {}
+
     def fake_llm(n, txt):
         called["hit"] = n
         return Tier.SOURCE
+
     c = classify_object("mystery_blob_xyz", kind=None, llm_tiebreak=fake_llm)
     assert called.get("hit") == "mystery_blob_xyz"
     assert c.reason == "llm tiebreak"

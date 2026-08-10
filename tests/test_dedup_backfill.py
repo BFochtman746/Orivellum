@@ -17,6 +17,7 @@ Confirms three failure modes the scan must handle correctly:
 5. The "short doc skipped" case does not interfere with pairing among long docs
    that appear alongside it in the same scan batch.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -26,16 +27,17 @@ from pathlib import Path
 
 from orivellum.capabilities.dedup import _MIN_WORDS, _reset_lsh_index
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
 
     cfg = OrivellumConfig(data_dir=tmp)
     from orivellum.database.db import OrivellumDB
+
     db = OrivellumDB(str(Path(tmp) / "test.db"))
     _deps.init(db=db, cfg=cfg)
     return app, db
@@ -43,8 +45,10 @@ def _make_app(tmp: str):
 
 def _make_doc(db, title: str = "Doc") -> dict:
     return db.create_document(
-        title=title, source=f"/tmp/{uuid.uuid4().hex}.pdf",
-        sha256=uuid.uuid4().hex, kind="pdf",
+        title=title,
+        source=f"/tmp/{uuid.uuid4().hex}.pdf",
+        sha256=uuid.uuid4().hex,
+        kind="pdf",
     )
 
 
@@ -74,10 +78,8 @@ def _short_text() -> str:
 def _large_text(approx_words: int = 100_000) -> str:
     """Return a very long text (~100k words) to stress the background task."""
     import hashlib
-    chunk = " ".join(
-        hashlib.sha256(f"tok{i}".encode()).hexdigest()[:8]
-        for i in range(500)
-    )
+
+    chunk = " ".join(hashlib.sha256(f"tok{i}".encode()).hexdigest()[:8] for i in range(500))
     # Repeat enough times to reach the target word count
     repetitions = max(1, approx_words // 500)
     return (chunk + " ") * repetitions
@@ -103,14 +105,16 @@ def _sig_exists(db, doc_id: str) -> bool:
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
-class TestScanDuplicatesBackfill(unittest.TestCase):
 
+class TestScanDuplicatesBackfill(unittest.TestCase):
     def setUp(self):
         _reset_lsh_index()
 
     def _client(self, tmp: str):
         from fastapi.testclient import TestClient
+
         from tests.conftest import AUTH_HEADERS
+
         app, db = _make_app(tmp)
         client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
         return client, db
@@ -132,8 +136,7 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
             resp = client.post("/api/library/scan-duplicates")
             self.assertEqual(resp.status_code, 200)
             body = resp.json()
-            self.assertEqual(body["queued"], 2,
-                             "Both ready docs must be queued for scanning")
+            self.assertEqual(body["queued"], 2, "Both ready docs must be queued for scanning")
 
             # Background task has run synchronously inside TestClient
             self.assertTrue(
@@ -158,12 +161,9 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
             resp = client.get("/api/library/duplicates")
             self.assertEqual(resp.status_code, 200)
             pairs = resp.json()["pairs"]
-            pair_ids = {
-                frozenset([p["doc_a_id"], p["doc_b_id"]]) for p in pairs
-            }
+            pair_ids = {frozenset([p["doc_a_id"], p["doc_b_id"]]) for p in pairs}
             expected = frozenset([doc_a["id"], doc_b["id"]])
-            self.assertIn(expected, pair_ids,
-                          "The new pair must appear in GET /library/duplicates")
+            self.assertIn(expected, pair_ids, "The new pair must appear in GET /library/duplicates")
 
     def test_pair_similarity_above_near_duplicate_threshold(self):
         """Detected pair must carry similarity ≥ 0.85 for near-identical text."""
@@ -187,7 +187,8 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
                 ).fetchone()
             self.assertIsNotNone(row)
             self.assertGreaterEqual(
-                row["similarity"], 0.85,
+                row["similarity"],
+                0.85,
                 "Near-identical texts must produce similarity ≥ 0.85",
             )
             self.assertEqual(row["kind"], "near_duplicate")
@@ -204,8 +205,9 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
             _set_ready(db, short_doc["id"], _short_text())
 
             resp = client.post("/api/library/scan-duplicates")
-            self.assertEqual(resp.status_code, 200,
-                             "Scan must succeed even with a short document in the batch")
+            self.assertEqual(
+                resp.status_code, 200, "Scan must succeed even with a short document in the batch"
+            )
 
             self.assertFalse(
                 _sig_exists(db, short_doc["id"]),
@@ -321,7 +323,8 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
             resp2 = client.post("/api/library/scan-duplicates")
             self.assertEqual(resp2.status_code, 200)
             self.assertEqual(
-                resp2.json()["queued"], 0,
+                resp2.json()["queued"],
+                0,
                 "Second scan must report queued=0 (already indexed)",
             )
 
@@ -343,7 +346,8 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
             body2 = resp2.json()
             self.assertEqual(body2["queued"], 0)
             self.assertGreaterEqual(
-                body2["already_indexed"], 2,
+                body2["already_indexed"],
+                2,
                 "already_indexed must count the sigs stored in the first scan",
             )
 
@@ -369,7 +373,8 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
                     (doc_a["id"], doc_b["id"], doc_b["id"], doc_a["id"]),
                 ).fetchone()[0]
             self.assertEqual(
-                count, 1,
+                count,
+                1,
                 "Running scan twice must not insert duplicate pair rows",
             )
 
@@ -405,7 +410,8 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
             resp = client.post("/api/library/scan-duplicates")
             self.assertEqual(resp.status_code, 200)
             self.assertEqual(
-                resp.json()["queued"], 0,
+                resp.json()["queued"],
+                0,
                 "Non-ready documents must be excluded from the backfill scan",
             )
 
@@ -414,8 +420,7 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             client, db = self._client(tmp)
             resp = client.post("/api/library/scan-duplicates")
-            self.assertIn("message", resp.json(),
-                          "Scan response must include a 'message' field")
+            self.assertIn("message", resp.json(), "Scan response must include a 'message' field")
 
     def test_unrelated_ready_docs_do_not_produce_pair(self):
         """Two ready documents with completely different text must not be paired."""
@@ -427,8 +432,7 @@ class TestScanDuplicatesBackfill(unittest.TestCase):
 
             def _unique_text(seed: str, n: int = 200) -> str:
                 return " ".join(
-                    hashlib.sha256(f"{seed}{i}".encode()).hexdigest()[:8]
-                    for i in range(n)
+                    hashlib.sha256(f"{seed}{i}".encode()).hexdigest()[:8] for i in range(n)
                 )
 
             doc_a = _make_doc(db, "Doc Alpha")

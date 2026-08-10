@@ -10,26 +10,29 @@ Covers:
  - recall intent fast-path classification
  - _handle_recall_query always combines semantic + keyword results
 """
+
 from __future__ import annotations
 
-import json
-import sqlite3
 import tempfile
 import unittest
+from datetime import UTC
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
+from unittest.mock import patch
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def _make_db(path: str) -> "OrivellumDB":
-    import sys, os
+
+def _make_db(path: str):
+    import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(path)
 
 
 # ─── Schema v98 ───────────────────────────────────────────────────────────────
+
 
 class TestSchemaMigration(unittest.TestCase):
     """v98 adds bi-temporal columns and drops the unique-key constraint."""
@@ -46,45 +49,46 @@ class TestSchemaMigration(unittest.TestCase):
 
     def test_conversation_chunks_table_exists(self):
         tables = {
-            r[0] for r in self.db._conn.execute(
+            r[0]
+            for r in self.db._conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-        self.assertIn("conversation_chunks", tables,
-                      "conversation_chunks table must exist (schema v65+)")
+        self.assertIn(
+            "conversation_chunks", tables, "conversation_chunks table must exist (schema v65+)"
+        )
 
     def test_user_memory_has_bitemporal_columns(self):
         """v98 adds memory_type, valid_from, valid_to, txn_time."""
-        cols = {r[1] for r in self.db._conn.execute(
-            "PRAGMA table_info(user_memory)"
-        ).fetchall()}
+        cols = {r[1] for r in self.db._conn.execute("PRAGMA table_info(user_memory)").fetchall()}
         for col in ("memory_type", "valid_from", "valid_to", "txn_time"):
-            self.assertIn(col, cols,
-                          f"Column '{col}' must be present after v98 migration")
+            self.assertIn(col, cols, f"Column '{col}' must be present after v98 migration")
 
     def test_conversation_chunks_index_exists(self):
         indexes = {
-            r[0] for r in self.db._conn.execute(
+            r[0]
+            for r in self.db._conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='index'"
             ).fetchall()
         }
         self.assertTrue(
             any("cc" in ix or "conv" in ix for ix in indexes),
-            f"Expected index on conversation_chunks; found: {indexes}"
+            f"Expected index on conversation_chunks; found: {indexes}",
         )
 
     def test_um_key_unique_index_dropped(self):
         """um_key unique index must be gone — multiple rows per key are now allowed."""
         indexes = {
-            r[0] for r in self.db._conn.execute(
+            r[0]
+            for r in self.db._conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='index'"
             ).fetchall()
         }
-        self.assertNotIn("um_key", indexes,
-                         "um_key UNIQUE index must be dropped by v98 migration")
+        self.assertNotIn("um_key", indexes, "um_key UNIQUE index must be dropped by v98 migration")
 
 
 # ─── upsert_memory_fact ───────────────────────────────────────────────────────
+
 
 class TestUpsertMemoryFact(unittest.TestCase):
     """Bi-temporal append-only design: each update creates a new row."""
@@ -102,8 +106,10 @@ class TestUpsertMemoryFact(unittest.TestCase):
 
     def test_same_value_is_noop(self):
         self.db.upsert_memory_fact("my_name", "Alice")
-        self.assertFalse(self.db.upsert_memory_fact("my_name", "Alice"),
-                         "Identical value must return False (no-op)")
+        self.assertFalse(
+            self.db.upsert_memory_fact("my_name", "Alice"),
+            "Identical value must return False (no-op)",
+        )
 
     def test_changed_value_returns_true(self):
         self.db.upsert_memory_fact("my_name", "Alice")
@@ -144,8 +150,7 @@ class TestUpsertMemoryFact(unittest.TestCase):
             "SELECT value FROM user_memory WHERE key='pref' AND valid_to IS NOT NULL"
         ).fetchall()
         self.assertEqual(len(superseded), 1)
-        self.assertEqual(superseded[0]["value"], "dark",
-                         "Old value must be the superseded row")
+        self.assertEqual(superseded[0]["value"], "dark", "Old value must be the superseded row")
 
     def test_memory_type_stored_correctly(self):
         self.db.upsert_memory_fact("event", "Visited Paris", memory_type="episodic")
@@ -159,8 +164,9 @@ class TestUpsertMemoryFact(unittest.TestCase):
         facts = self.db.get_current_memory_facts()
         fact = next((f for f in facts if f["key"] == "k"), None)
         self.assertIsNotNone(fact)
-        self.assertEqual(fact["memory_type"], "semantic",
-                         "Invalid memory_type must fall back to 'semantic'")
+        self.assertEqual(
+            fact["memory_type"], "semantic", "Invalid memory_type must fall back to 'semantic'"
+        )
 
     def test_all_five_types_accepted(self):
         for mtype in ("episodic", "semantic", "procedural", "working", "zettelkasten"):
@@ -168,8 +174,7 @@ class TestUpsertMemoryFact(unittest.TestCase):
             self.db.upsert_memory_fact(key, "value", memory_type=mtype)
             facts = self.db.get_current_memory_facts()
             fact = next((f for f in facts if f["key"] == key), None)
-            self.assertEqual(fact["memory_type"], mtype,
-                             f"Type '{mtype}' must be stored unchanged")
+            self.assertEqual(fact["memory_type"], mtype, f"Type '{mtype}' must be stored unchanged")
 
     def test_get_current_memory_facts_returns_multiple_keys(self):
         self.db.upsert_memory_fact("k1", "v1")
@@ -184,8 +189,9 @@ class TestUpsertMemoryFact(unittest.TestCase):
         self.db.upsert_memory_fact("name", "New")
         facts = self.db.get_current_memory_facts()
         name_facts = [f for f in facts if f["key"] == "name"]
-        self.assertEqual(len(name_facts), 1,
-                         "get_current_memory_facts must return only live rows per key")
+        self.assertEqual(
+            len(name_facts), 1, "get_current_memory_facts must return only live rows per key"
+        )
         self.assertEqual(name_facts[0]["value"], "New")
 
     def test_empty_key_is_rejected(self):
@@ -204,6 +210,7 @@ class TestUpsertMemoryFact(unittest.TestCase):
 
 
 # ─── update_memory_fact ───────────────────────────────────────────────────────
+
 
 class TestUpdateMemoryFact(unittest.TestCase):
     """update_memory_fact must preserve the current-row invariant even when
@@ -234,8 +241,8 @@ class TestUpdateMemoryFact(unittest.TestCase):
 
     def test_update_from_historical_id_still_closes_current(self):
         """Passing a historical row ID must close the CURRENT row, not the historical one."""
-        self.db.upsert_memory_fact("name", "Alice")   # row 1 (becomes historical)
-        self.db.upsert_memory_fact("name", "Bob")     # row 2 (current)
+        self.db.upsert_memory_fact("name", "Alice")  # row 1 (becomes historical)
+        self.db.upsert_memory_fact("name", "Bob")  # row 2 (current)
         # Get the historical row's ID
         hist = self.db._conn.execute(
             "SELECT id FROM user_memory WHERE key='name' AND valid_to IS NOT NULL"
@@ -246,8 +253,9 @@ class TestUpdateMemoryFact(unittest.TestCase):
         self.assertTrue(result)
         # Invariant: exactly one live row
         live = self._current_rows("name")
-        self.assertEqual(len(live), 1,
-                         "Exactly one live row must exist after update from historical ID")
+        self.assertEqual(
+            len(live), 1, "Exactly one live row must exist after update from historical ID"
+        )
         self.assertEqual(live[0]["value"], "Corrected from history")
 
     def test_historical_rows_unchanged_after_update(self):
@@ -263,10 +271,14 @@ class TestUpdateMemoryFact(unittest.TestCase):
             "SELECT id, value, valid_to FROM user_memory WHERE id=?",
             (hist_before["id"],),
         ).fetchone()
-        self.assertEqual(hist_after["value"], hist_before["value"],
-                         "Historical row value must not change")
-        self.assertEqual(hist_after["valid_to"], hist_before["valid_to"],
-                         "Historical row valid_to must not change")
+        self.assertEqual(
+            hist_after["value"], hist_before["value"], "Historical row value must not change"
+        )
+        self.assertEqual(
+            hist_after["valid_to"],
+            hist_before["valid_to"],
+            "Historical row valid_to must not change",
+        )
 
     def test_update_nonexistent_id_returns_false(self):
         self.assertFalse(self.db.update_memory_fact("nonexistent-uuid", "value"))
@@ -278,6 +290,7 @@ class TestUpdateMemoryFact(unittest.TestCase):
 
 
 # ─── cleanup_working_memory_ttl ───────────────────────────────────────────────
+
 
 class TestCleanupWorkingMemoryTTL(unittest.TestCase):
     """Working-memory rows older than TTL must be soft-expired; other types must not."""
@@ -292,8 +305,9 @@ class TestCleanupWorkingMemoryTTL(unittest.TestCase):
 
     def _back_date(self, key: str, minutes: int) -> None:
         """Move the valid_from of the current row for key back by `minutes`."""
-        from datetime import datetime, timedelta, timezone
-        past = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        from datetime import datetime, timedelta
+
+        past = (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
         self.db._conn.execute(
             "UPDATE user_memory SET valid_from=? WHERE key=? AND valid_to IS NULL",
             (past, key),
@@ -339,6 +353,7 @@ class TestCleanupWorkingMemoryTTL(unittest.TestCase):
 
 # ─── Conversation chunks ──────────────────────────────────────────────────────
 
+
 class TestEmbedConversationExchangeAlwaysPersists(unittest.TestCase):
     """embed_conversation_exchange must always store a text chunk, even for short turns."""
 
@@ -353,10 +368,12 @@ class TestEmbedConversationExchangeAlwaysPersists(unittest.TestCase):
     def test_short_exchange_is_still_stored(self):
         """A short exchange like 'hi' / 'hello' must persist a conversation_chunks row."""
         import sys
+
         sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-        from orivellum.capabilities.embeddings import embed_conversation_exchange
         from unittest.mock import patch
+
         from orivellum.capabilities import embeddings as emb
+        from orivellum.capabilities.embeddings import embed_conversation_exchange
 
         # Simulate embedding endpoint returning None (down / short text below threshold)
         with patch.object(emb, "embed_text", return_value=None):
@@ -366,16 +383,19 @@ class TestEmbedConversationExchangeAlwaysPersists(unittest.TestCase):
         # The chunk must be searchable via keyword
         hits = self.db.search_conversation_chunks("hi", limit=5)
         found = [h for h in hits if h["id"] == chunk_id]
-        self.assertTrue(len(found) > 0,
-                        "Short exchange chunk must be persisted and keyword-searchable")
+        self.assertTrue(
+            len(found) > 0, "Short exchange chunk must be persisted and keyword-searchable"
+        )
 
     def test_long_exchange_persists_and_attempts_embedding(self):
         """A long exchange stores the chunk and attempts embedding."""
         import sys
+
         sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-        from orivellum.capabilities.embeddings import embed_conversation_exchange
         from unittest.mock import patch
+
         from orivellum.capabilities import embeddings as emb
+        from orivellum.capabilities.embeddings import embed_conversation_exchange
 
         fake_vec = [0.1] * 384
         with patch.object(emb, "embed_text", return_value=fake_vec):
@@ -389,18 +409,19 @@ class TestEmbedConversationExchangeAlwaysPersists(unittest.TestCase):
         self.assertIsNotNone(chunk_id)
         # Check vector was stored
         vec_row = self.db._conn.execute(
-            "SELECT id FROM vectors WHERE object_id=? AND object_type='conv_chunk'",
-            (chunk_id,)
+            "SELECT id FROM vectors WHERE object_id=? AND object_type='conv_chunk'", (chunk_id,)
         ).fetchone()
         self.assertIsNotNone(vec_row, "Vector must be stored for long exchange")
 
     def test_chunk_persisted_even_when_embedding_endpoint_down(self):
         """Chunk must persist even if embed_text returns None (endpoint unavailable)."""
         import sys
+
         sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-        from orivellum.capabilities.embeddings import embed_conversation_exchange
         from unittest.mock import patch
+
         from orivellum.capabilities import embeddings as emb
+        from orivellum.capabilities.embeddings import embed_conversation_exchange
 
         with patch.object(emb, "embed_text", return_value=None):
             chunk_id = embed_conversation_exchange(
@@ -414,12 +435,10 @@ class TestEmbedConversationExchangeAlwaysPersists(unittest.TestCase):
         row = self.db._conn.execute(
             "SELECT id FROM conversation_chunks WHERE id=?", (chunk_id,)
         ).fetchone()
-        self.assertIsNotNone(row,
-            "Chunk must be stored even when embedding endpoint is down")
+        self.assertIsNotNone(row, "Chunk must be stored even when embedding endpoint is down")
         # No vector should exist (endpoint was down)
         vec = self.db._conn.execute(
-            "SELECT id FROM vectors WHERE object_id=? AND object_type='conv_chunk'",
-            (chunk_id,)
+            "SELECT id FROM vectors WHERE object_id=? AND object_type='conv_chunk'", (chunk_id,)
         ).fetchone()
         self.assertIsNone(vec, "No vector should be stored when endpoint returns None")
 
@@ -449,8 +468,7 @@ class TestConversationChunks(unittest.TestCase):
         cid = self.db.add_conversation_chunk("nonexistent-conv", "User: Gamma\n\nAssistant: Yes")
         hits = self.db.search_conversation_chunks("Gamma", limit=5)
         ids = [h["id"] for h in hits]
-        self.assertIn(cid, ids,
-                      "Orphan chunks (conv deleted) must be returned via LEFT JOIN")
+        self.assertIn(cid, ids, "Orphan chunks (conv deleted) must be returned via LEFT JOIN")
 
     def test_search_returns_conv_title_null_for_orphan(self):
         self.db.add_conversation_chunk("ghost-conv", "User: Delta\n\nAssistant: No")
@@ -469,6 +487,7 @@ class TestConversationChunks(unittest.TestCase):
 
 # ─── backfill_embeddings includes conv_chunk ─────────────────────────────────
 
+
 class TestBackfillIncludesConvChunk(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
@@ -481,6 +500,7 @@ class TestBackfillIncludesConvChunk(unittest.TestCase):
     def test_backfill_processes_conversation_chunks(self):
         """backfill_embeddings() must select conv_chunk rows without vectors."""
         from orivellum.capabilities import embeddings as emb
+
         # Text must be > 30 chars to pass the SQL length filter in backfill_embeddings
         cid = self.db.add_conversation_chunk(
             "cx", "User: Tell me about the project\n\nAssistant: Sure, here is the overview"
@@ -493,20 +513,23 @@ class TestBackfillIncludesConvChunk(unittest.TestCase):
             call_log.append(list(texts))
             return [fake_vec for _ in texts]
 
-        with patch.object(emb, "embed_texts", side_effect=mock_embed_texts), \
-             patch.object(emb, "_BACKFILL_BATCH", 50):
+        with (
+            patch.object(emb, "embed_texts", side_effect=mock_embed_texts),
+            patch.object(emb, "_BACKFILL_BATCH", 50),
+        ):
             n = emb.backfill_embeddings(self.db, max_items=50)
 
         # At least one call must have included the conversation chunk text
         all_texts = [t for batch in call_log for t in batch]
         self.assertTrue(
             any("project" in t.lower() for t in all_texts),
-            f"backfill did not process conversation chunk; texts passed: {all_texts}"
+            f"backfill did not process conversation chunk; texts passed: {all_texts}",
         )
 
     def test_backfill_stops_on_endpoint_down(self):
         """When embed_texts returns None, backfill must stop and return 0."""
         from orivellum.capabilities import embeddings as emb
+
         self.db.add_conversation_chunk("cy", "User: Test\n\nAssistant: Ok")
 
         with patch.object(emb, "embed_texts", return_value=None):
@@ -523,9 +546,11 @@ class TestBackfillIncludesConvChunk(unittest.TestCase):
 
 # ─── Recall intent fast-path ─────────────────────────────────────────────────
 
+
 class TestRecallIntentFastPath(unittest.TestCase):
     def _classify(self, text: str) -> str:
         from orivellum.capabilities.intent import classify_intent
+
         return classify_intent(text, "http://x", "m")["intent"]
 
     def test_where_are_we_on(self):
@@ -554,10 +579,12 @@ class TestRecallIntentFastPath(unittest.TestCase):
 
 # ─── _handle_recall_query: always combines semantic + keyword ─────────────────
 
+
 class TestHandleRecallAlwaysCombines(unittest.TestCase):
     """_handle_recall_query must use both semantic search AND keyword fallback,
     so unembedded chunks (stored during endpoint outage) are always discoverable.
     """
+
     def setUp(self):
         self.tmp = tempfile.mktemp(suffix=".db")
         self.db = _make_db(self.tmp)
@@ -569,14 +596,19 @@ class TestHandleRecallAlwaysCombines(unittest.TestCase):
     def test_keyword_hits_included_even_when_semantic_returns_results(self):
         """When semantic search returns hits AND keyword finds different ones,
         both must appear in the combined results."""
-        import sys, os
+        import sys
+
         sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
         from orivellum.api.routes.conversations import _handle_recall_query
         from orivellum.capabilities import embeddings as emb
 
         # Store two chunks: only the second has a vector (simulates partial outage)
-        id1 = self.db.add_conversation_chunk("c1", "User: Project Zeta status\n\nAssistant: Not started")
-        id2 = self.db.add_conversation_chunk("c2", "User: Project Alpha status\n\nAssistant: In progress")
+        id1 = self.db.add_conversation_chunk(
+            "c1", "User: Project Zeta status\n\nAssistant: Not started"
+        )
+        id2 = self.db.add_conversation_chunk(
+            "c2", "User: Project Alpha status\n\nAssistant: In progress"
+        )
 
         # Give c2 a fake vector so semantic search returns it
         fake_vec = emb.pack_vector([0.5] * 384)
@@ -584,21 +616,35 @@ class TestHandleRecallAlwaysCombines(unittest.TestCase):
 
         def mock_sem_search(q, db, limit=5):
             # Return only the c2 chunk (the one with a vector)
-            return [{"id": id2, "conv_id": "c2", "conv_title": "Alpha conv",
-                     "text": "User: Project Alpha status\n\nAssistant: In progress",
-                     "created_at": "2026-01-01", "score": 0.9}]
+            return [
+                {
+                    "id": id2,
+                    "conv_id": "c2",
+                    "conv_title": "Alpha conv",
+                    "text": "User: Project Alpha status\n\nAssistant: In progress",
+                    "created_at": "2026-01-01",
+                    "score": 0.9,
+                }
+            ]
 
         def mock_synth(*args, **kwargs):
             return "Synthesized recall answer"
 
-        with patch.object(emb, "semantic_search", side_effect=mock_sem_search), \
-             patch("orivellum.api.routes.conversations._call_sync",
-                   return_value="Synthesized recall answer", create=True), \
-             patch("orivellum.capabilities.cognition._call_sync",
-                   return_value="Synthesized recall answer", create=True):
+        with (
+            patch.object(emb, "semantic_search", side_effect=mock_sem_search),
+            patch(
+                "orivellum.api.routes.conversations._call_sync",
+                return_value="Synthesized recall answer",
+                create=True,
+            ),
+            patch(
+                "orivellum.capabilities.cognition._call_sync",
+                return_value="Synthesized recall answer",
+                create=True,
+            ),
+        ):
             # Query for "Zeta" — only the keyword (not vector) chunk matches
-            reply, meta = _handle_recall_query(self.db, "Project Zeta status",
-                                               "http://x", "m")
+            reply, meta = _handle_recall_query(self.db, "Project Zeta status", "http://x", "m")
 
         # The reply should include content from the keyword-only chunk (c1)
         # OR the meta should reflect that conv_hits were found
@@ -616,8 +662,7 @@ class TestHandleRecallAlwaysCombines(unittest.TestCase):
             return []
 
         with patch.object(emb, "semantic_search", side_effect=mock_sem):
-            reply, meta = _handle_recall_query(self.db, "nonexistent topic",
-                                               "http://x", "m")
+            reply, meta = _handle_recall_query(self.db, "nonexistent topic", "http://x", "m")
 
         self.assertIn("Nothing found", reply)
         self.assertEqual(meta.get("intent"), "recall")

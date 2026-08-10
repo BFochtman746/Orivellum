@@ -20,6 +20,7 @@ ROUTE-REQ-002: the "does this output sentence contain a checkable claim?"
 classifier MUST be measured for recall (the leak point). A missed claim is
 a silent guarantee failure.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,11 +35,12 @@ logger = logging.getLogger("orivellum.pklos.output_validator")
 
 # ── Answer contract schema ─────────────────────────────────────────────────────
 
+
 @dataclass
 class ClaimRef:
     claim_id: str
     statement: str
-    status: str             # "verified" | "partial" | "conflicted" | "asserted"
+    status: str  # "verified" | "partial" | "conflicted" | "asserted"
     evidence_ids: list[str] = field(default_factory=list)
 
 
@@ -55,6 +57,7 @@ class AnswerContract:
 
     Spec §5.6.
     """
+
     answer: str
     claims_used: list[ClaimRef] = field(default_factory=list)
     inferences: list[InferenceRef] = field(default_factory=list)
@@ -66,7 +69,7 @@ class AnswerContract:
 class ValidationResult:
     passed: bool
     violations: list[str]
-    answer: str                 # possibly revised answer
+    answer: str  # possibly revised answer
     must_regenerate: bool = False
 
 
@@ -75,11 +78,20 @@ class ValidationResult:
 # Patterns that indicate a specific factual assertion about the user's system
 _SPECIFIC_FACT_PATTERNS = [
     # "X has/have N GB/TB/etc."
-    re.compile(r"\b(?:has|have|contains?|with)\s+\d+\s*(?:gb|tb|mhz|ghz|cores?|threads?|vram)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:has|have|contains?|with)\s+\d+\s*(?:gb|tb|mhz|ghz|cores?|threads?|vram)\b",
+        re.IGNORECASE,
+    ),
     # "N GB of RAM/VRAM/memory/storage"
-    re.compile(r"\b\d+\s*(?:gb|tb|mib|gib|tib)\s+(?:of\s+)?(?:ram|memory|vram|storage|ssd|nvme)\b", re.IGNORECASE),
+    re.compile(
+        r"\b\d+\s*(?:gb|tb|mib|gib|tib)\s+(?:of\s+)?(?:ram|memory|vram|storage|ssd|nvme)\b",
+        re.IGNORECASE,
+    ),
     # "your CPU/GPU/RAM is X"
-    re.compile(r"\byour\s+(?:cpu|gpu|processor|graphics|ram|memory|os|operating system|ssd|nvme|vram|system)\s+(?:is|are|has|have)\b", re.IGNORECASE),
+    re.compile(
+        r"\byour\s+(?:cpu|gpu|processor|graphics|ram|memory|os|operating system|ssd|nvme|vram|system)\s+(?:is|are|has|have)\b",
+        re.IGNORECASE,
+    ),
     # "running Windows/Linux/Ubuntu X"
     re.compile(r"\brunning\s+(?:windows|linux|ubuntu|macos)\s+\d", re.IGNORECASE),
     # "X GB installed"
@@ -88,9 +100,15 @@ _SPECIFIC_FACT_PATTERNS = [
 
 # Hedged-language patterns — these indicate the model is uncertain
 _HEDGE_PATTERNS = [
-    re.compile(r"\b(?:i think|i believe|i assume|probably|likely|might be|could be|appears to be|seems to be|typically|usually)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:i think|i believe|i assume|probably|likely|might be|could be|appears to be|seems to be|typically|usually)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(?:based on your earlier|you mentioned|you said|you told me)\b", re.IGNORECASE),
-    re.compile(r"\b(?:don\'t have verified|no verified|i don\'t have|cannot verify|unable to verify)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:don\'t have verified|no verified|i don\'t have|cannot verify|unable to verify)\b",
+        re.IGNORECASE,
+    ),
 ]
 
 # Abstention patterns — the model correctly said it doesn't know
@@ -120,11 +138,12 @@ def _is_abstention(text: str) -> bool:
 
 def _split_to_sentences(text: str) -> list[str]:
     """Split text into sentences for per-sentence validation."""
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
     return [s.strip() for s in sentences if s.strip()]
 
 
 # ── Validator ──────────────────────────────────────────────────────────────────
+
 
 class OutputValidator:
     """Spec §5.6 — validates the model's answer against the claim ledger.
@@ -223,7 +242,8 @@ class OutputValidator:
         if must_regenerate:
             logger.warning(
                 "Output validator: %d hard violations in answer for query %r",
-                len(hard_violations), query[:60]
+                len(hard_violations),
+                query[:60],
             )
 
         return ValidationResult(
@@ -251,9 +271,9 @@ class OutputValidator:
         # Build a direct answer from verified claims
         lines = ["Based on your verified system data:"]
         for c in verified_claims[:8]:
-            pred  = c.get("predicate", "")
+            pred = c.get("predicate", "")
             value = c.get("value", "")
-            unit  = c.get("unit") or ""
+            unit = c.get("unit") or ""
             c.get("authority_tier", "A7")
             status = c.get("status", "")
             display = f"{value} {unit}".strip()

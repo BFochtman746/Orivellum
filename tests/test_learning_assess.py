@@ -11,6 +11,7 @@ All tests use the real OrivellumDB with in-memory SQLite so the full schema
 and migration stack is exercised without disk I/O.  The LLM gateway is
 patched at the module boundary so tests never make real network calls.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -20,12 +21,13 @@ import pytest
 
 from tests.conftest import AUTH_HEADERS
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_db():
     """Fresh in-memory OrivellumDB with full schema applied."""
     from orivellum.database import OrivellumDB
+
     return OrivellumDB(":memory:")
 
 
@@ -56,8 +58,9 @@ def _make_test_client(db):
     """Build a FastAPI TestClient wired to the given DB (no lifespan needed)."""
     from fastapi import FastAPI
     from starlette.testclient import TestClient
-    from orivellum.api.routes import learning
+
     from orivellum.api import _deps
+    from orivellum.api.routes import learning
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
 
     cfg = OrivellumConfig()
@@ -72,10 +75,11 @@ def _make_test_client(db):
     return TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
 
-DUMMY_URL = "http://localhost:11434/v1"   # truthy; _call is always patched
+DUMMY_URL = "http://localhost:11434/v1"  # truthy; _call is always patched
 
 
 # ── L1: _record_mastery ────────────────────────────────────────────────────────
+
 
 class TestRecordMastery:
     """Direct tests of the _record_mastery internal helper."""
@@ -83,7 +87,8 @@ class TestRecordMastery:
     def test_pass_increments_consecutive(self):
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import _record_mastery, _get_mastery
+        from orivellum.capabilities.learning import _get_mastery, _record_mastery
+
         _record_mastery(db, cid, score=0.9, route="STAY_HERE", feedback="Good")
         m = _get_mastery(db, cid)
         assert m["consecutive_passes"] == 1
@@ -92,7 +97,8 @@ class TestRecordMastery:
     def test_fail_resets_consecutive(self):
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import _record_mastery, _get_mastery
+        from orivellum.capabilities.learning import _get_mastery, _record_mastery
+
         _record_mastery(db, cid, score=0.9, route="STAY_HERE", feedback="Good")
         _record_mastery(db, cid, score=0.9, route="STAY_HERE", feedback="Good")
         _record_mastery(db, cid, score=0.3, route="STAY_HERE", feedback="Wrong")
@@ -102,7 +108,8 @@ class TestRecordMastery:
     def test_three_passes_graduates(self):
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import _record_mastery, _is_graduated
+        from orivellum.capabilities.learning import _is_graduated, _record_mastery
+
         for _ in range(3):
             _record_mastery(db, cid, score=0.9, route="STEP_FORWARD", feedback="")
         assert _is_graduated(db, cid)
@@ -110,14 +117,17 @@ class TestRecordMastery:
 
 # ── L2: assess_answer (LLM mocked) ────────────────────────────────────────────
 
+
 class TestAssessAnswer:
     """assess_answer with the LLM response stubbed out."""
 
     def _assess(self, db, concept_id, score_json: str):
         from orivellum.capabilities.learning import assess_answer
+
         with patch("orivellum.capabilities.learning._call", return_value=score_json):
             return assess_answer(
-                db, concept_id,
+                db,
+                concept_id,
                 question="Why does the sky look blue?",
                 answer="Because of Rayleigh scattering of sunlight",
                 base_url=DUMMY_URL,
@@ -170,6 +180,7 @@ class TestAssessAnswer:
         work_id, cid = _seed(db)
         self._assess(db, cid, '{"score":0.9,"feedback":"Correct!"}')
         from orivellum.capabilities.learning import get_mastery_summary
+
         summary = get_mastery_summary(db, work_id)
         assert summary["total"] >= 1
         assert "mastery_pct" in summary
@@ -179,6 +190,7 @@ class TestAssessAnswer:
         db = _make_db()
         _, cid = _seed(db)
         from orivellum.capabilities.learning import assess_answer
+
         with patch("orivellum.capabilities.learning._call", return_value="not json"):
             result = assess_answer(db, cid, "Q?", "A", base_url=DUMMY_URL, model="test")
         assert result["route"] == "STAY_HERE"
@@ -190,13 +202,14 @@ class TestAssessAnswer:
         for _ in range(3):
             self._assess(db, cid, '{"score":0.9,"feedback":"Correct!"}')
         from orivellum.capabilities.learning import _is_graduated
+
         assert _is_graduated(db, cid), "concept must be graduated after 3 consecutive passes"
 
     def test_fail_then_pass_resets_streak(self):
         db = _make_db()
         _, cid = _seed(db)
         self._assess(db, cid, '{"score":0.9,"feedback":"Correct!"}')
-        self._assess(db, cid, '{"score":0.2,"feedback":"Wrong"}')   # reset streak
+        self._assess(db, cid, '{"score":0.2,"feedback":"Wrong"}')  # reset streak
         self._assess(db, cid, '{"score":0.9,"feedback":"Correct!"}')
         with db._lock:
             row = db._conn.execute(
@@ -209,12 +222,14 @@ class TestAssessAnswer:
 
 # ── L2b: Error classification ──────────────────────────────────────────────────
 
+
 class TestErrorClassification:
     """assess_answer must classify wrong answers and return targeted remediation."""
 
     def _assess_raw(self, db, cid: str, json_str: str):
         """Call assess_answer with a mocked LLM that returns json_str."""
         from orivellum.capabilities.learning import assess_answer
+
         with patch("orivellum.capabilities.learning._call", return_value=json_str):
             return assess_answer(db, cid, "Q?", "A", base_url="http://x", model="t")
 
@@ -223,7 +238,8 @@ class TestErrorClassification:
         db = _make_db()
         _, cid = _seed(db)
         result = self._assess_raw(
-            db, cid,
+            db,
+            cid,
             '{"score":0.9,"feedback":"Great.","error_type":"null","remediation_hint":"n/a"}',
         )
         assert result["error_type"] is None, "correct answer must have error_type=None"
@@ -234,7 +250,8 @@ class TestErrorClassification:
         db = _make_db()
         _, cid = _seed(db)
         result = self._assess_raw(
-            db, cid,
+            db,
+            cid,
             '{"score":0.6,"feedback":"Small slip.","error_type":"careless_slip",'
             '"remediation_hint":"Double-check your arithmetic."}',
         )
@@ -255,7 +272,8 @@ class TestErrorClassification:
         db = _make_db()
         _, cid = _seed(db)
         result = self._assess_raw(
-            db, cid,
+            db,
+            cid,
             '{"score":0.4,"feedback":"You know the concept but missed a step.",'
             '"error_type":"procedural_gap","remediation_hint":"Re-derive step 2."}',
         )
@@ -266,7 +284,8 @@ class TestErrorClassification:
         db = _make_db()
         _, cid = _seed(db)
         result = self._assess_raw(
-            db, cid,
+            db,
+            cid,
             '{"score":0.1,"feedback":"No knowledge shown.","error_type":"knowledge_gap",'
             '"remediation_hint":"Review the prerequisites first."}',
         )
@@ -278,7 +297,8 @@ class TestErrorClassification:
         db = _make_db()
         _, cid = _seed(db)
         result = self._assess_raw(
-            db, cid,
+            db,
+            cid,
             '{"score":0.3,"feedback":"Bad.","error_type":"totally_invented","remediation_hint":"..."}',
         )
         assert result["error_type"] is None, "unrecognised error_type must be None"
@@ -288,10 +308,13 @@ class TestErrorClassification:
         db = _make_db()
         _, cid = _seed(db)
         result = self._assess_raw(
-            db, cid,
+            db,
+            cid,
             '{"score":0.8,"feedback":"Good.","error_type":"careless_slip","remediation_hint":"fix it"}',
         )
-        assert result["error_type"] is None, "score >= 0.75 must clear error_type regardless of LLM output"
+        assert result["error_type"] is None, (
+            "score >= 0.75 must clear error_type regardless of LLM output"
+        )
 
     def test_deep_review_needed_after_two_misconceptions(self):
         """deep_review_needed must be True after ≥ 2 conceptual_misconception records."""
@@ -303,21 +326,24 @@ class TestErrorClassification:
         )
         # First occurrence: deep_review_needed must be False (count=1, threshold=2)
         r1 = self._assess_raw(db, cid, misconception_json)
-        assert r1["deep_review_needed"] is False, "single misconception must not trigger deep review"
+        assert r1["deep_review_needed"] is False, (
+            "single misconception must not trigger deep review"
+        )
 
         # Second occurrence: threshold reached → deep_review_needed must be True
         r2 = self._assess_raw(db, cid, misconception_json)
-        assert r2["deep_review_needed"] is True, "≥2 misconceptions must set deep_review_needed=True"
+        assert r2["deep_review_needed"] is True, (
+            "≥2 misconceptions must set deep_review_needed=True"
+        )
 
     def test_v95_schema_columns_exist(self):
         """A fresh OrivellumDB must have error_type and remediation_hint on work_mastery (v95)."""
         db = _make_db()
         with db._lock:
             cols = {
-                row[1]
-                for row in db._conn.execute("PRAGMA table_info(work_mastery)").fetchall()
+                row[1] for row in db._conn.execute("PRAGMA table_info(work_mastery)").fetchall()
             }
-        assert "error_type"       in cols, "v95: error_type column must exist on work_mastery"
+        assert "error_type" in cols, "v95: error_type column must exist on work_mastery"
         assert "remediation_hint" in cols, "v95: remediation_hint column must exist on work_mastery"
 
     def test_result_includes_all_classification_fields(self):
@@ -325,7 +351,8 @@ class TestErrorClassification:
         db = _make_db()
         _, cid = _seed(db)
         result = self._assess_raw(
-            db, cid,
+            db,
+            cid,
             '{"score":0.4,"feedback":"Wrong.","error_type":"procedural_gap","remediation_hint":"try again"}',
         )
         for field in ("error_type", "remediation_hint", "deep_review_needed", "socratic_followup"):
@@ -333,6 +360,7 @@ class TestErrorClassification:
 
 
 # ── L3b: HTTP route — error classification passthrough ───────────────────────
+
 
 class TestAssessRouteErrorClassification:
     """HTTP route must pass error classification fields through to the client."""
@@ -342,9 +370,11 @@ class TestAssessRouteErrorClassification:
         db = _make_db()
         work_id, cid = _seed(db)
         client = _make_test_client(db)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.3,"feedback":"Wrong.","error_type":"careless_slip",'
-                                '"remediation_hint":"Check your sign."}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.3,"feedback":"Wrong.","error_type":"careless_slip",'
+            '"remediation_hint":"Check your sign."}',
+        ):
             r = client.post(
                 f"/api/works/{work_id}/learning/assess",
                 json={"concept_id": cid, "question": "Q?", "answer": "A"},
@@ -384,21 +414,26 @@ class TestAssessRouteErrorClassification:
 
         client = _make_test_client(db)
         # knowledge_gap with an unstarted prereq → should STEP_BACKWARD to prereq
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.1,"feedback":"No knowledge.","error_type":"knowledge_gap",'
-                                '"remediation_hint":"Study algebra first."}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.1,"feedback":"No knowledge.","error_type":"knowledge_gap",'
+            '"remediation_hint":"Study algebra first."}',
+        ):
             r = client.post(
                 f"/api/works/{wid}/learning/assess",
                 json={"concept_id": concept_id, "question": "Q?", "answer": "I don't know"},
             )
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["route"] in ("STEP_BACKWARD", "STAY_HERE"), "knowledge_gap should route backward when prereqs unstarted"
+        assert body["route"] in ("STEP_BACKWARD", "STAY_HERE"), (
+            "knowledge_gap should route backward when prereqs unstarted"
+        )
         assert "suggested_prereq_id" in body
         assert "suggested_prereq_subject" in body
 
 
 # ── Transfer question tests ───────────────────────────────────────────────────
+
 
 class TestTransferQuestions:
     """get_question and assess_answer must handle transfer mode correctly."""
@@ -410,8 +445,11 @@ class TestTransferQuestions:
         db = _make_db()
         _, cid = _seed(db)
         from orivellum.capabilities.learning import get_question
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"question":"Why blue?","context_snippet":"Rayleigh"}'):
+
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"question":"Why blue?","context_snippet":"Rayleigh"}',
+        ):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="auto")
         assert result["question_type"] == "recall"
         assert "question" in result
@@ -421,23 +459,31 @@ class TestTransferQuestions:
         db = _make_db()
         _, cid = _seed(db)
         # Seed 2 passing mastery records so streak = 2
-        from orivellum.capabilities.learning import _record_mastery, _TRANSFER_STREAK_THRESHOLD
+        from orivellum.capabilities.learning import _TRANSFER_STREAK_THRESHOLD, _record_mastery
+
         for _ in range(_TRANSFER_STREAK_THRESHOLD):
             _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
         from orivellum.capabilities.learning import get_question
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"question":"Novel scenario?","context_snippet":"concept x"}'):
+
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"question":"Novel scenario?","context_snippet":"concept x"}',
+        ):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="auto")
-        assert result["question_type"] == "transfer", \
+        assert result["question_type"] == "transfer", (
             f"Expected transfer at streak={_TRANSFER_STREAK_THRESHOLD}, got {result['question_type']}"
+        )
 
     def test_get_question_explicit_transfer_ignores_streak(self):
         """Explicit type='transfer' must serve a transfer question regardless of streak."""
         db = _make_db()
         _, cid = _seed(db)
         from orivellum.capabilities.learning import get_question
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"question":"Novel?","context_snippet":"concept"}'):
+
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"question":"Novel?","context_snippet":"concept"}',
+        ):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="transfer")
         assert result["question_type"] == "transfer"
 
@@ -445,11 +491,18 @@ class TestTransferQuestions:
         """Explicit type='recall' must stay recall even when streak >= threshold."""
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import _record_mastery, _TRANSFER_STREAK_THRESHOLD, get_question
+        from orivellum.capabilities.learning import (
+            _TRANSFER_STREAK_THRESHOLD,
+            _record_mastery,
+            get_question,
+        )
+
         for _ in range(_TRANSFER_STREAK_THRESHOLD + 1):
             _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"question":"Classic recall Q?","context_snippet":"notes"}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"question":"Classic recall Q?","context_snippet":"notes"}',
+        ):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="recall")
         assert result["question_type"] == "recall"
 
@@ -458,6 +511,7 @@ class TestTransferQuestions:
         db = _make_db()
         _, cid = _seed(db)
         from orivellum.capabilities.learning import get_question
+
         result = get_question(db, cid, base_url="", model="t", question_type="auto")
         assert result["question_type"] in ("recall", "transfer")
         assert "question" in result and result["question"]
@@ -466,9 +520,11 @@ class TestTransferQuestions:
 
     def _assess_transfer(self, db, cid: str, score_json: str, qt: str = "transfer"):
         from orivellum.capabilities.learning import assess_answer
+
         with patch("orivellum.capabilities.learning._call", return_value=score_json):
-            return assess_answer(db, cid, "Q?", "A",
-                                 base_url="http://x", model="t", question_type=qt)
+            return assess_answer(
+                db, cid, "Q?", "A", base_url="http://x", model="t", question_type=qt
+            )
 
     def test_correct_transfer_awards_double_streak(self):
         """A correct transfer answer must increment consecutive_passes by 2."""
@@ -483,8 +539,9 @@ class TestTransferQuestions:
                 " WHERE concept_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 (cid,),
             ).fetchone()
-        assert row["consecutive_passes"] == 2, \
+        assert row["consecutive_passes"] == 2, (
             f"Expected 2 consecutive_passes for correct transfer, got {row['consecutive_passes']}"
+        )
         assert row["question_type"] == "transfer"
 
     def test_wrong_transfer_resets_streak(self):
@@ -492,7 +549,9 @@ class TestTransferQuestions:
         db = _make_db()
         _, cid = _seed(db)
         self._assess_transfer(
-            db, cid, '{"score":0.3,"feedback":"Wrong.","error_type":"knowledge_gap","remediation_hint":""}'
+            db,
+            cid,
+            '{"score":0.3,"feedback":"Wrong.","error_type":"knowledge_gap","remediation_hint":""}',
         )
         with db._lock:
             row = db._conn.execute(
@@ -507,7 +566,9 @@ class TestTransferQuestions:
         db = _make_db()
         _, cid = _seed(db)
         self._assess_transfer(
-            db, cid, '{"score":0.9,"feedback":"Good.","error_type":"null","remediation_hint":""}',
+            db,
+            cid,
+            '{"score":0.9,"feedback":"Good.","error_type":"null","remediation_hint":""}',
             qt="recall",
         )
         with db._lock:
@@ -516,21 +577,26 @@ class TestTransferQuestions:
                 " WHERE concept_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 (cid,),
             ).fetchone()
-        assert row["consecutive_passes"] == 1, \
+        assert row["consecutive_passes"] == 1, (
             f"Expected 1 for correct recall, got {row['consecutive_passes']}"
+        )
 
     def test_transfer_can_graduate_in_fewer_attempts(self):
         """Two correct transfer answers should graduate a concept that needs 3 normal passes."""
         db = _make_db()
         _, cid = _seed(db)
         from orivellum.capabilities.learning import _PASSES_TO_GRAD, _is_graduated
+
         # With +2 per correct transfer, 2 correct transfer answers = 4 passes ≥ _PASSES_TO_GRAD (3)
         for _ in range(2):
             self._assess_transfer(
-                db, cid, '{"score":0.9,"feedback":"Excellent.","error_type":"null","remediation_hint":""}'
+                db,
+                cid,
+                '{"score":0.9,"feedback":"Excellent.","error_type":"null","remediation_hint":""}',
             )
-        assert _is_graduated(db, cid), \
+        assert _is_graduated(db, cid), (
             f"Should be graduated after 2 correct transfer answers (4 streak ≥ {_PASSES_TO_GRAD})"
+        )
 
     def test_assess_answer_echoes_question_type(self):
         """assess_answer return dict must include question_type matching the input."""
@@ -546,8 +612,7 @@ class TestTransferQuestions:
         db = _make_db()
         with db._lock:
             cols = {
-                row[1]
-                for row in db._conn.execute("PRAGMA table_info(work_mastery)").fetchall()
+                row[1] for row in db._conn.execute("PRAGMA table_info(work_mastery)").fetchall()
             }
         assert "question_type" in cols, "v96: question_type must exist on work_mastery"
 
@@ -563,8 +628,9 @@ class TestTransferQuestions:
             db, cid, '{"score":0.9,"feedback":"B.","error_type":"null","remediation_hint":""}'
         )
         # Second: 4 passes total ≥ _PASSES_TO_GRAD → STEP_FORWARD
-        assert result2["route"] == "STEP_FORWARD", \
+        assert result2["route"] == "STEP_FORWARD", (
             f"Expected STEP_FORWARD after 4 transfer streak, got {result2['route']}"
+        )
 
     # ── Fallback integrity ────────────────────────────────────────────────────
 
@@ -573,36 +639,54 @@ class TestTransferQuestions:
         db = _make_db()
         _, cid = _seed(db)
         # Seed streak so auto would resolve to transfer if it could
-        from orivellum.capabilities.learning import _record_mastery, _TRANSFER_STREAK_THRESHOLD, get_question
+        from orivellum.capabilities.learning import (
+            _TRANSFER_STREAK_THRESHOLD,
+            _record_mastery,
+            get_question,
+        )
+
         for _ in range(_TRANSFER_STREAK_THRESHOLD):
             _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
         result = get_question(db, cid, base_url="", model="t", question_type="auto")
-        assert result["question_type"] == "recall", \
+        assert result["question_type"] == "recall", (
             "Offline fallback must be 'recall', never 'transfer'"
+        )
 
     def test_llm_failure_fallback_always_returns_recall(self):
         """When the LLM returns None (network failure), get_question must return 'recall'."""
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import _record_mastery, _TRANSFER_STREAK_THRESHOLD, get_question
+        from orivellum.capabilities.learning import (
+            _TRANSFER_STREAK_THRESHOLD,
+            _record_mastery,
+            get_question,
+        )
+
         for _ in range(_TRANSFER_STREAK_THRESHOLD):
             _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
         with patch("orivellum.capabilities.learning._call", return_value=None):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="auto")
-        assert result["question_type"] == "recall", \
+        assert result["question_type"] == "recall", (
             "LLM failure fallback must be 'recall', never 'transfer'"
+        )
 
     def test_json_parse_failure_fallback_always_returns_recall(self):
         """When LLM returns unparseable JSON, get_question must return 'recall'."""
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import _record_mastery, _TRANSFER_STREAK_THRESHOLD, get_question
+        from orivellum.capabilities.learning import (
+            _TRANSFER_STREAK_THRESHOLD,
+            _record_mastery,
+            get_question,
+        )
+
         for _ in range(_TRANSFER_STREAK_THRESHOLD):
             _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
         with patch("orivellum.capabilities.learning._call", return_value="not json at all {{{"):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="auto")
-        assert result["question_type"] == "recall", \
+        assert result["question_type"] == "recall", (
             "JSON parse failure fallback must be 'recall', never 'transfer'"
+        )
 
     # ── Forged question_type protection ───────────────────────────────────────
 
@@ -620,15 +704,15 @@ class TestTransferQuestions:
         db = _make_db()
         _, cid = _seed(db)
         # Streak is 0 — well below threshold
-        from orivellum.capabilities.learning import assess_answer, _TRANSFER_STREAK_THRESHOLD
+        from orivellum.capabilities.learning import _TRANSFER_STREAK_THRESHOLD, assess_answer
+
         assert _TRANSFER_STREAK_THRESHOLD > 0, "pre-condition: threshold must be > 0"
         # The route re-derives before calling assess_answer, so at the route level
         # a forged 'transfer' body yields 'recall'.  At the capability level the function
         # still honours the passed type for flexibility; the route is the enforcement point.
         # This test just confirms that the route correctly re-derives (tested below in
         # TestTransferRouteSecurity) and that the capability function documents its contract.
-        result = assess_answer(db, cid, "Q?", "A",
-                               base_url="", model="t", question_type="transfer")
+        result = assess_answer(db, cid, "Q?", "A", base_url="", model="t", question_type="transfer")
         # Offline + forged: must still record something without crashing
         assert "score" in result
         assert "question_type" in result
@@ -655,8 +739,21 @@ class TestInterleavedMode:
                        brief_feedback,routed_to,created_at,last_reviewed_at,next_review_at,
                        half_life_days,review_session_count,question_type,session_mode)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (str(uuid.uuid4()), cid, 0.8, 1, "ok", "STAY_HERE",
-                     now, now, None, 2.0, 1, "recall", "blocked"),
+                    (
+                        str(uuid.uuid4()),
+                        cid,
+                        0.8,
+                        1,
+                        "ok",
+                        "STAY_HERE",
+                        now,
+                        now,
+                        None,
+                        2.0,
+                        1,
+                        "recall",
+                        "blocked",
+                    ),
                 )
                 db._conn.commit()
         return cids
@@ -664,6 +761,7 @@ class TestInterleavedMode:
     def test_select_interleaved_returns_none_when_pool_too_small(self):
         """select_interleaved_concept returns None with < 3 in-progress concepts."""
         from orivellum.capabilities.learning import select_interleaved_concept
+
         db = _make_db()
         work = db.create_work("SmallWork", work_type="learning")
         self._seed_in_progress(db, work["id"], 2)
@@ -672,6 +770,7 @@ class TestInterleavedMode:
     def test_select_interleaved_returns_concept_id_when_pool_sufficient(self):
         """select_interleaved_concept returns a valid concept_id with ≥ 3 in-progress concepts."""
         from orivellum.capabilities.learning import select_interleaved_concept
+
         db = _make_db()
         work = db.create_work("BigWork", work_type="learning")
         cids = self._seed_in_progress(db, work["id"], 4)
@@ -681,6 +780,7 @@ class TestInterleavedMode:
     def test_interleaved_sample_covers_multiple_concepts(self):
         """Over 30 draws, select_interleaved_concept returns at least 2 distinct concepts."""
         from orivellum.capabilities.learning import select_interleaved_concept
+
         db = _make_db()
         work = db.create_work("MultiWork", work_type="learning")
         self._seed_in_progress(db, work["id"], 5)
@@ -692,8 +792,9 @@ class TestInterleavedMode:
         db = _make_db()
         work = db.create_work("SmallEndpointWork", work_type="learning")
         work_id = work["id"]
-        db.create_knowledge_item(work_id=work_id, kind="fact",
-                                 text="Only one concept has any mastery yet.")
+        db.create_knowledge_item(
+            work_id=work_id, kind="fact", text="Only one concept has any mastery yet."
+        )
         # Give only 2 concepts an in-progress pass — pool is below threshold
         self._seed_in_progress(db, work_id, 2)
         client = _make_test_client(db)
@@ -707,13 +808,16 @@ class TestInterleavedMode:
         db = _make_db()
         work = db.create_work("InterleavedEndpointWork", work_type="learning")
         work_id = work["id"]
-        db.create_knowledge_item(work_id=work_id, kind="fact",
-                                 text="Concepts cover a range of topics in this work.")
+        db.create_knowledge_item(
+            work_id=work_id, kind="fact", text="Concepts cover a range of topics in this work."
+        )
         self._seed_in_progress(db, work_id, 4)
         client = _make_test_client(db)
         # _call is the internal LLM wrapper in learning.py (used by get_question)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"question":"What is SubjectIL0?","context_snippet":"ctx"}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"question":"What is SubjectIL0?","context_snippet":"ctx"}',
+        ):
             r = client.get(f"/api/works/{work_id}/learning/question?mode=interleaved")
         assert r.status_code == 200, r.text
         data = r.json()
@@ -727,20 +831,25 @@ class TestInterleavedMode:
         work_id, concept_id = _seed(db)
         client = _make_test_client(db)
         # Get a question (LLM mocked)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"question":"Explain?","context_snippet":"ctx"}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"question":"Explain?","context_snippet":"ctx"}',
+        ):
             qr = client.get(f"/api/works/{work_id}/learning/question?concept_id={concept_id}")
         assert qr.status_code == 200, qr.text
         # Submit an answer with session_mode=interleaved (LLM mocked for scoring)
         score_json = '{"score":0.8,"feedback":"Good.","error_type":null,"remediation_hint":null,"deep_review_needed":false}'
         with patch("orivellum.capabilities.learning._call", return_value=score_json):
-            ar = client.post(f"/api/works/{work_id}/learning/assess", json={
-                "concept_id": concept_id,
-                "question": qr.json()["question"],
-                "answer": "A thorough answer demonstrating understanding.",
-                "question_type": "recall",
-                "session_mode": "interleaved",
-            })
+            ar = client.post(
+                f"/api/works/{work_id}/learning/assess",
+                json={
+                    "concept_id": concept_id,
+                    "question": qr.json()["question"],
+                    "answer": "A thorough answer demonstrating understanding.",
+                    "question_type": "recall",
+                    "session_mode": "interleaved",
+                },
+            )
         assert ar.status_code == 200, ar.text
         # Verify session_mode was persisted to work_mastery
         with db._lock:
@@ -760,18 +869,25 @@ class TestTransferRouteSecurity:
         db = _make_db()
         work_id, cid = _seed(db)
         client = _make_test_client(db)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.9,"feedback":"Good.","error_type":"null","remediation_hint":""}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.9,"feedback":"Good.","error_type":"null","remediation_hint":""}',
+        ):
             r = client.post(
                 f"/api/works/{work_id}/learning/assess",
-                json={"concept_id": cid, "question": "Q?", "answer": "A",
-                      "question_type": "transfer"},   # FORGED — streak is 0
+                json={
+                    "concept_id": cid,
+                    "question": "Q?",
+                    "answer": "A",
+                    "question_type": "transfer",
+                },  # FORGED — streak is 0
             )
         assert r.status_code == 200, r.text
         body = r.json()
         # question_type must be 'recall' (server re-derived from streak=0, below threshold)
-        assert body.get("question_type") == "recall", \
+        assert body.get("question_type") == "recall", (
             f"Route must re-derive to 'recall' at low streak; got {body.get('question_type')!r}"
+        )
         # consecutive_passes must be 1, NOT 2 (no forged bonus)
         with db._lock:
             row = db._conn.execute(
@@ -779,29 +895,38 @@ class TestTransferRouteSecurity:
                 "WHERE concept_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 (cid,),
             ).fetchone()
-        assert row["consecutive_passes"] == 1, \
+        assert row["consecutive_passes"] == 1, (
             f"Forged transfer must not award +2 bonus; got {row['consecutive_passes']}"
+        )
 
     def test_route_grants_transfer_bonus_when_streak_at_threshold(self):
         """Route must correctly use 'transfer' (and award +2) when streak ≥ threshold."""
         db = _make_db()
         work_id, cid = _seed(db)
-        from orivellum.capabilities.learning import _record_mastery, _TRANSFER_STREAK_THRESHOLD
+        from orivellum.capabilities.learning import _TRANSFER_STREAK_THRESHOLD, _record_mastery
+
         for _ in range(_TRANSFER_STREAK_THRESHOLD):
             _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
         client = _make_test_client(db)
         # Client sends question_type='recall' — route should IGNORE it and re-derive 'transfer'
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.9,"feedback":"Excellent.","error_type":"null","remediation_hint":""}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.9,"feedback":"Excellent.","error_type":"null","remediation_hint":""}',
+        ):
             r = client.post(
                 f"/api/works/{work_id}/learning/assess",
-                json={"concept_id": cid, "question": "Q?", "answer": "A",
-                      "question_type": "recall"},   # IGNORED — streak is at threshold
+                json={
+                    "concept_id": cid,
+                    "question": "Q?",
+                    "answer": "A",
+                    "question_type": "recall",
+                },  # IGNORED — streak is at threshold
             )
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body.get("question_type") == "transfer", \
+        assert body.get("question_type") == "transfer", (
             f"Route must re-derive to 'transfer' at streak={_TRANSFER_STREAK_THRESHOLD}; got {body.get('question_type')!r}"
+        )
         with db._lock:
             row = db._conn.execute(
                 "SELECT consecutive_passes FROM work_mastery "
@@ -810,11 +935,13 @@ class TestTransferRouteSecurity:
             ).fetchone()
         # Previous streak was _TRANSFER_STREAK_THRESHOLD, +2 bonus applied
         expected = _TRANSFER_STREAK_THRESHOLD + 2
-        assert row["consecutive_passes"] == expected, \
+        assert row["consecutive_passes"] == expected, (
             f"Transfer bonus must add 2; expected {expected}, got {row['consecutive_passes']}"
+        )
 
 
 # ── L3: HTTP route via FastAPI TestClient ─────────────────────────────────────
+
 
 class TestAssessRoute:
     """HTTP-level tests for POST /api/works/{work_id}/learning/assess."""
@@ -823,12 +950,17 @@ class TestAssessRoute:
         db = _make_db()
         work_id, concept_id = _seed(db)
         client = _make_test_client(db)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.85,"feedback":"Well done!"}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.85,"feedback":"Well done!"}',
+        ):
             r = client.post(
                 f"/api/works/{work_id}/learning/assess",
-                json={"concept_id": concept_id, "question": "Why blue sky?",
-                      "answer": "Rayleigh scattering"},
+                json={
+                    "concept_id": concept_id,
+                    "question": "Why blue sky?",
+                    "answer": "Rayleigh scattering",
+                },
             )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -840,12 +972,13 @@ class TestAssessRoute:
         db = _make_db()
         work_id, concept_id = _seed(db)
         client = _make_test_client(db)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.1,"feedback":"Try again."}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.1,"feedback":"Try again."}',
+        ):
             r = client.post(
                 f"/api/works/{work_id}/learning/assess",
-                json={"concept_id": concept_id, "question": "Why blue sky?",
-                      "answer": "magic"},
+                json={"concept_id": concept_id, "question": "Why blue sky?", "answer": "magic"},
             )
         assert r.status_code == 200, r.text
         with db._lock:
@@ -864,8 +997,10 @@ class TestAssessRoute:
         client = _make_test_client(db)
         last_resp = None
         for _ in range(3):
-            with patch("orivellum.capabilities.learning._call",
-                       return_value='{"score":0.9,"feedback":"Correct!"}'):
+            with patch(
+                "orivellum.capabilities.learning._call",
+                return_value='{"score":0.9,"feedback":"Correct!"}',
+            ):
                 last_resp = client.post(
                     f"/api/works/{work_id}/learning/assess",
                     json={"concept_id": concept_id, "question": "Q?", "answer": "A"},
@@ -908,12 +1043,14 @@ class TestAssessRoute:
 
 # ── Migration: v94 backfill ────────────────────────────────────────────────────
 
+
 class TestMigrationV94Backfill:
     """Verify that migration v94 correctly backfills work_concepts.prereq_id into the join table."""
 
     def test_backfill_inserts_existing_prereq_rows(self):
         """Concepts with prereq_id set before v94 must be present in work_concept_prereqs after."""
         import sqlite3
+
         from orivellum.database.schema import MIGRATIONS
 
         # Build an in-memory DB stamped at v93 (immediately before v94)
@@ -929,7 +1066,7 @@ class TestMigrationV94Backfill:
 
         # Simulate pre-v94 data: a work with a concept that has prereq_id set
         now = "2024-01-01T00:00:00+00:00"
-        wid  = str(uuid.uuid4())
+        wid = str(uuid.uuid4())
         cid1 = str(uuid.uuid4())
         cid2 = str(uuid.uuid4())
         conn.execute(
@@ -988,18 +1125,14 @@ class TestMigrationV94Backfill:
         )
 
         # 2. A fresh in-memory DB must contain v93 columns and the v94 table
-        db = _make_db()   # OrivellumDB(":memory:") — applies full migration stack
+        db = _make_db()  # OrivellumDB(":memory:") — applies full migration stack
 
         with db._lock:
             cols = {
-                row[1]
-                for row in db._conn.execute(
-                    "PRAGMA table_info(work_mastery)"
-                ).fetchall()
+                row[1] for row in db._conn.execute("PRAGMA table_info(work_mastery)").fetchall()
             }
             tbl = db._conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='work_concept_prereqs'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='work_concept_prereqs'"
             ).fetchone()
             version = int(
                 db._conn.execute(
@@ -1007,8 +1140,8 @@ class TestMigrationV94Backfill:
                 ).fetchone()[0]
             )
 
-        assert "half_life_days"       in cols, "v93: half_life_days must exist"
-        assert "next_review_at"       in cols, "v93: next_review_at must exist"
+        assert "half_life_days" in cols, "v93: half_life_days must exist"
+        assert "next_review_at" in cols, "v93: next_review_at must exist"
         assert "review_session_count" in cols, "v93: review_session_count must exist"
         assert tbl is not None, "v94: work_concept_prereqs table must exist"
         assert version >= 94, f"schema_version must be ≥ 94, got {version}"
@@ -1016,6 +1149,7 @@ class TestMigrationV94Backfill:
     def test_backfill_skips_concepts_without_prereq(self):
         """Concepts with prereq_id=NULL must not produce any rows in the join table."""
         import sqlite3
+
         from orivellum.database.schema import MIGRATIONS
 
         conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -1055,6 +1189,7 @@ class TestMigrationV94Backfill:
 
 # ── API: learning graph endpoint ───────────────────────────────────────────────
 
+
 class TestLearningGraphRoute:
     """HTTP-level tests for GET /api/works/{id}/learning/graph."""
 
@@ -1072,7 +1207,7 @@ class TestLearningGraphRoute:
         wid = work["id"]
         now = "2024-01-01T00:00:00+00:00"
         cid_root = str(uuid.uuid4())
-        cid_dep  = str(uuid.uuid4())
+        cid_dep = str(uuid.uuid4())
         with db._lock:
             db._conn.execute(
                 "INSERT INTO work_concepts(id,work_id,subject,description,prereq_id,created_at)"
@@ -1121,9 +1256,9 @@ class TestLearningGraphRoute:
         edges = r.json()["edges"]
         assert len(edges) == 1
         edge = edges[0]
-        assert edge["source"] == cid_dep    # the dependent concept
-        assert edge["target"] == cid_root   # the prerequisite
-        assert edge["type"]   == "requires"
+        assert edge["source"] == cid_dep  # the dependent concept
+        assert edge["target"] == cid_root  # the prerequisite
+        assert edge["type"] == "requires"
 
     def test_graph_root_concept_prereqs_met_true(self):
         db = _make_db()
@@ -1151,6 +1286,7 @@ class TestLearningGraphRoute:
 
 
 # ── API: multi-prereq STEP_BACKWARD routing ───────────────────────────────────
+
 
 class TestCrossWorkScopeEnforcement:
     """Verify that prerequisite edges cannot cross Work boundaries.
@@ -1198,10 +1334,9 @@ class TestCrossWorkScopeEnforcement:
         self._insert_prereq_raw(db, cid_a, cid_b)
 
         from orivellum.capabilities.learning import get_prereq_ids
+
         prereqs = get_prereq_ids(db, cid_a)
-        assert cid_b not in prereqs, (
-            "get_prereq_ids must exclude cross-Work prerequisites"
-        )
+        assert cid_b not in prereqs, "get_prereq_ids must exclude cross-Work prerequisites"
 
     def test_list_concepts_excludes_cross_work_prereq_ids(self):
         """list_concepts must not surface cross-Work concept IDs in prereq_ids."""
@@ -1211,6 +1346,7 @@ class TestCrossWorkScopeEnforcement:
         self._insert_prereq_raw(db, cid_a, cid_b)
 
         from orivellum.capabilities.learning import list_concepts
+
         concepts_a = list_concepts(db, wid_a)
         concept_map = {c["id"]: c for c in concepts_a}
 
@@ -1247,6 +1383,7 @@ class TestCrossWorkScopeEnforcement:
         self._insert_prereq_raw(db, cid_a, cid_b)
 
         from orivellum.capabilities.learning import is_concept_eligible
+
         # cid_a has no valid same-Work prereqs, so must be eligible
         assert is_concept_eligible(db, cid_a) is True, (
             "is_concept_eligible must ignore cross-Work prerequisites"
@@ -1268,10 +1405,10 @@ class TestStepBackwardMultiPrereq:
         """When a concept fails and has two prerequisites, STEP_BACKWARD must pick the weaker one."""
         db = _make_db()
         work = db.create_work("Test Work", work_type="learning")
-        wid  = work["id"]
-        now  = "2024-01-01T00:00:00+00:00"
-        cid_a   = str(uuid.uuid4())  # stronger prereq (has 2 passes)
-        cid_b   = str(uuid.uuid4())  # weaker prereq  (has 0 passes)
+        wid = work["id"]
+        now = "2024-01-01T00:00:00+00:00"
+        cid_a = str(uuid.uuid4())  # stronger prereq (has 2 passes)
+        cid_b = str(uuid.uuid4())  # weaker prereq  (has 0 passes)
         cid_top = str(uuid.uuid4())  # concept being assessed
 
         with db._lock:
@@ -1288,12 +1425,15 @@ class TestStepBackwardMultiPrereq:
 
         # Give cid_a 2 passes so it is stronger
         from orivellum.capabilities.learning import _record_mastery
+
         _record_mastery(db, cid_a, 0.9, "STAY_HERE", "Good")
         _record_mastery(db, cid_a, 0.9, "STAY_HERE", "Good")
 
         client = _make_test_client(db)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.1,"feedback":"Wrong!"}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.1,"feedback":"Wrong!"}',
+        ):
             r = client.post(
                 f"/api/works/{wid}/learning/assess",
                 json={"concept_id": cid_top, "question": "Q?", "answer": "A"},
@@ -1316,9 +1456,9 @@ class TestStepBackwardMultiPrereq:
         """
         db = _make_db()
         work = db.create_work("Tied TS Work", work_type="learning")
-        wid  = work["id"]
+        wid = work["id"]
         same_ts = "2024-06-01T12:00:00+00:00"
-        cid_a   = str(uuid.uuid4())
+        cid_a = str(uuid.uuid4())
         cid_top = str(uuid.uuid4())
 
         with db._lock:
@@ -1354,8 +1494,10 @@ class TestStepBackwardMultiPrereq:
 
         # The STEP_BACKWARD routing must see consecutive_passes=0 (the fail record)
         client = _make_test_client(db)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.1,"feedback":"Wrong!"}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.1,"feedback":"Wrong!"}',
+        ):
             r = client.post(
                 f"/api/works/{wid}/learning/assess",
                 json={"concept_id": cid_top, "question": "Q?", "answer": "A"},
@@ -1379,10 +1521,10 @@ class TestStepBackwardMultiPrereq:
         """
         db = _make_db()
         work = db.create_work("Regression Work", work_type="learning")
-        wid  = work["id"]
-        now  = "2024-01-01T00:00:00+00:00"
-        cid_a   = str(uuid.uuid4())  # had high historical passes but failed — current streak 0
-        cid_b   = str(uuid.uuid4())  # steady single pass — current streak 1
+        wid = work["id"]
+        now = "2024-01-01T00:00:00+00:00"
+        cid_a = str(uuid.uuid4())  # had high historical passes but failed — current streak 0
+        cid_b = str(uuid.uuid4())  # steady single pass — current streak 1
         cid_top = str(uuid.uuid4())  # concept being assessed
 
         with db._lock:
@@ -1406,6 +1548,7 @@ class TestStepBackwardMultiPrereq:
             db._conn.commit()
 
         from orivellum.capabilities.learning import _record_mastery
+
         # Give cid_a three historical passes then a failure (streak resets to 0)
         _record_mastery(db, cid_a, 0.9, "STAY_HERE", "Pass 1")
         _record_mastery(db, cid_a, 0.9, "STAY_HERE", "Pass 2")
@@ -1416,8 +1559,10 @@ class TestStepBackwardMultiPrereq:
         _record_mastery(db, cid_b, 0.9, "STAY_HERE", "Pass 1")
 
         client = _make_test_client(db)
-        with patch("orivellum.capabilities.learning._call",
-                   return_value='{"score":0.1,"feedback":"Wrong!"}'):
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.1,"feedback":"Wrong!"}',
+        ):
             r = client.post(
                 f"/api/works/{wid}/learning/assess",
                 json={"concept_id": cid_top, "question": "Q?", "answer": "A"},

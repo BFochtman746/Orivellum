@@ -20,6 +20,7 @@ Safety guards:
   * Either doc has ``lifecycle == 'deleted'`` → skip.
   * Configurable cap: ``auto_dedup_max_pairs`` (default 50/run).
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,11 +34,11 @@ logger = logging.getLogger(__name__)
 # Lifecycle ordering — higher number = higher survivability.
 _LIFECYCLE_PRIORITY: dict[str, int] = {
     "canonical": 4,
-    "reference":  3,
-    "draft":      2,
-    "active":     2,   # legacy alias
+    "reference": 3,
+    "draft": 2,
+    "active": 2,  # legacy alias
     "superseded": 1,
-    "deleted":    0,
+    "deleted": 0,
 }
 
 _DEFAULT_MAX_PAIRS = 50
@@ -125,10 +126,10 @@ def auto_resolve_duplicates(
     counters = {"processed": 0, "superseded": 0, "versioned": 0, "skipped": 0, "errors": 0}
 
     for row in rows:
-        dupe_id   = row[0]
-        doc_a_id  = row[1]
-        doc_b_id  = row[2]
-        kind      = row[4]  # near_duplicate | likely_revision
+        dupe_id = row[0]
+        doc_a_id = row[1]
+        doc_b_id = row[2]
+        kind = row[4]  # near_duplicate | likely_revision
 
         counters["processed"] += 1
         try:
@@ -147,7 +148,8 @@ def auto_resolve_duplicates(
                     counters["skipped"] += 1
                     continue
                 result = db.resolve_near_duplicate(
-                    dupe_id, "mark_superseded",
+                    dupe_id,
+                    "mark_superseded",
                     canonical_doc_id=canonical_id,
                     actor="system",
                 )
@@ -155,7 +157,9 @@ def auto_resolve_duplicates(
                     superseded_id = doc_b_id if canonical_id == doc_a_id else doc_a_id
                     logger.info(
                         "auto_dedup: superseded doc %s (kept %s) — similarity %.2f",
-                        superseded_id[:8], canonical_id[:8], row[3],
+                        superseded_id[:8],
+                        canonical_id[:8],
+                        row[3],
                     )
                     counters["superseded"] += 1
                 else:
@@ -166,7 +170,9 @@ def auto_resolve_duplicates(
                 if result and not result.get("already_resolved"):
                     logger.info(
                         "auto_dedup: version-linked docs %s ↔ %s — similarity %.2f",
-                        doc_a_id[:8], doc_b_id[:8], row[3],
+                        doc_a_id[:8],
+                        doc_b_id[:8],
+                        row[3],
                     )
                     counters["versioned"] += 1
                 else:
@@ -198,7 +204,7 @@ def auto_resolve_import_hits(
     """
     counters = {"superseded": 0, "versioned": 0, "skipped": 0, "errors": 0}
 
-    for (other_id, similarity, kind) in hits:
+    for other_id, similarity, kind in hits:
         try:
             # Look up the dupe row (either ordering).
             with db._lock:
@@ -217,7 +223,7 @@ def auto_resolve_import_hits(
             dupe_id = row[0]
 
             if kind == "near_duplicate":
-                new_doc  = db.get_document(new_doc_id)
+                new_doc = db.get_document(new_doc_id)
                 other_doc = db.get_document(other_id)
                 if not new_doc or not other_doc:
                     counters["skipped"] += 1
@@ -227,7 +233,8 @@ def auto_resolve_import_hits(
                     counters["skipped"] += 1
                     continue
                 result = db.resolve_near_duplicate(
-                    dupe_id, "mark_superseded",
+                    dupe_id,
+                    "mark_superseded",
                     canonical_doc_id=canonical_id,
                     actor="system",
                 )
@@ -246,8 +253,9 @@ def auto_resolve_import_hits(
                 counters["skipped"] += 1
 
         except Exception as exc:
-            logger.warning("auto_dedup import: error for pair (%s, %s): %s",
-                           new_doc_id[:8], other_id[:8], exc)
+            logger.warning(
+                "auto_dedup import: error for pair (%s, %s): %s", new_doc_id[:8], other_id[:8], exc
+            )
             counters["errors"] += 1
 
     return counters

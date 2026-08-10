@@ -9,6 +9,7 @@ Covers:
   5. bench_runs save/list round-trip and telemetry_summary aggregation.
   6. /api/bench routes: run validation, goldens CRUD, eval guard.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,13 +28,14 @@ from tests.conftest import AUTH_HEADERS  # noqa: E402
 
 try:
     from fastapi.testclient import TestClient
-    from orivellum.api.app import create_app
+
     from orivellum.api import _deps
+    from orivellum.api.app import create_app
+    from orivellum.capabilities import bench, evalset
+    from orivellum.capabilities.llm import decode_tok_per_s, record_llm_call
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
     from orivellum.database.db import OrivellumDB
-    from orivellum.capabilities import evalset
-    from orivellum.capabilities import bench
-    from orivellum.capabilities.llm import record_llm_call, decode_tok_per_s
+
     _DEPS_OK = True
     _MISSING = ""
 except Exception as _e:  # pragma: no cover
@@ -41,7 +43,7 @@ except Exception as _e:  # pragma: no cover
     _MISSING = str(_e)
 
 
-def _make_db(tmp: Path) -> "OrivellumDB":
+def _make_db(tmp: Path) -> OrivellumDB:
     return OrivellumDB(str(tmp / "test.db"))
 
 
@@ -49,11 +51,11 @@ def _make_db(tmp: Path) -> "OrivellumDB":
 # 1. Metric math
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @unittest.skipUnless(_DEPS_OK, f"deps unavailable: {_MISSING}")
 class TestMetrics(unittest.TestCase):
     def test_ndcg_perfect_ranking_is_1(self):
-        self.assertAlmostEqual(
-            evalset.ndcg_at_k(["a", "b", "c"], ["a", "b"], k=5), 1.0)
+        self.assertAlmostEqual(evalset.ndcg_at_k(["a", "b", "c"], ["a", "b"], k=5), 1.0)
 
     def test_ndcg_zero_when_nothing_relevant_found(self):
         self.assertEqual(evalset.ndcg_at_k(["x", "y"], ["a"], k=5), 0.0)
@@ -66,14 +68,14 @@ class TestMetrics(unittest.TestCase):
         self.assertAlmostEqual(first, 1.0)
         # DCG@2 for hit at rank 2 = 1/log2(3); IDCG = 1
         import math
+
         self.assertAlmostEqual(second, 1.0 / math.log2(3), places=6)
 
     def test_ndcg_empty_relevant_is_0(self):
         self.assertEqual(evalset.ndcg_at_k(["a"], [], k=5), 0.0)
 
     def test_recall_counts_fraction_of_relevant_found(self):
-        self.assertAlmostEqual(
-            evalset.recall_at_k(["a", "b", "x"], ["a", "b", "c", "d"], k=3), 0.5)
+        self.assertAlmostEqual(evalset.recall_at_k(["a", "b", "x"], ["a", "b", "c", "d"], k=3), 0.5)
 
     def test_recall_respects_k_cutoff(self):
         self.assertEqual(evalset.recall_at_k(["x", "y", "a"], ["a"], k=2), 0.0)
@@ -85,16 +87,17 @@ class TestMetrics(unittest.TestCase):
         self.assertAlmostEqual(decode_tok_per_s(101, 2.0), 50.0)
 
     def test_decode_rate_guards_small_samples(self):
-        self.assertIsNone(decode_tok_per_s(1, 10.0))   # single token: no window
+        self.assertIsNone(decode_tok_per_s(1, 10.0))  # single token: no window
         self.assertIsNone(decode_tok_per_s(None, 5.0))
         self.assertIsNone(decode_tok_per_s(0, 5.0))
-        self.assertIsNone(decode_tok_per_s(50, 0.4))   # window too short
+        self.assertIsNone(decode_tok_per_s(50, 0.4))  # window too short
         self.assertIsNone(decode_tok_per_s(50, 0.0))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 2. Golden CRUD
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @unittest.skipUnless(_DEPS_OK, f"deps unavailable: {_MISSING}")
 class TestGoldenCrud(unittest.TestCase):
@@ -107,8 +110,12 @@ class TestGoldenCrud(unittest.TestCase):
 
     def test_add_list_delete_roundtrip(self):
         g = evalset.add_golden(
-            self.db, query="sling angle rated capacity", kind="chunk",
-            relevant_ids=["doc-1"], notes="test")
+            self.db,
+            query="sling angle rated capacity",
+            kind="chunk",
+            relevant_ids=["doc-1"],
+            notes="test",
+        )
         self.assertEqual(g["kind"], "chunk")
         self.assertEqual(g["relevant_ids"], ["doc-1"])
         listed = evalset.list_goldens(self.db)
@@ -121,24 +128,17 @@ class TestGoldenCrud(unittest.TestCase):
 
     def test_validation_rejects_bad_input(self):
         with self.assertRaises(ValueError):
-            evalset.add_golden(self.db, query="", kind="chunk",
-                               relevant_ids=["d"])
+            evalset.add_golden(self.db, query="", kind="chunk", relevant_ids=["d"])
         with self.assertRaises(ValueError):
-            evalset.add_golden(self.db, query="q", kind="bogus",
-                               relevant_ids=["d"])
+            evalset.add_golden(self.db, query="q", kind="bogus", relevant_ids=["d"])
         with self.assertRaises(ValueError):
-            evalset.add_golden(self.db, query="q", kind="chunk",
-                               relevant_ids=[])
+            evalset.add_golden(self.db, query="q", kind="chunk", relevant_ids=[])
 
     def test_kind_filter(self):
-        evalset.add_golden(self.db, query="alpha beta", kind="chunk",
-                           relevant_ids=["d1"])
-        evalset.add_golden(self.db, query="gamma delta", kind="knowledge",
-                           relevant_ids=["k1"])
+        evalset.add_golden(self.db, query="alpha beta", kind="chunk", relevant_ids=["d1"])
+        evalset.add_golden(self.db, query="gamma delta", kind="knowledge", relevant_ids=["k1"])
         self.assertEqual(len(evalset.list_goldens(self.db, kind="chunk")), 1)
-        self.assertEqual(
-            evalset.list_goldens(self.db, kind="knowledge")[0]["kind"],
-            "knowledge")
+        self.assertEqual(evalset.list_goldens(self.db, kind="knowledge")[0]["kind"], "knowledge")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -159,8 +159,7 @@ class TestEvaluateRetrieval(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.db = _make_db(Path(self._tmp.name))
-        doc = self.db.create_document(
-            title="Rigging Safety Manual", kind="txt", source="test.txt")
+        doc = self.db.create_document(title="Rigging Safety Manual", kind="txt", source="test.txt")
         self.doc_id = doc["id"]
         self.db.add_chunk(self.doc_id, _DOC_TEXT, 0)
 
@@ -177,30 +176,41 @@ class TestEvaluateRetrieval(unittest.TestCase):
 
     def test_fts_channel_scores_seeded_content(self):
         evalset.add_golden(
-            self.db, query="tandem lift operation near powerlines",
-            kind="chunk", relevant_ids=[self.doc_id])
+            self.db,
+            query="tandem lift operation near powerlines",
+            kind="chunk",
+            relevant_ids=[self.doc_id],
+        )
         # Force semantic/hybrid unavailable so the test has no network.
-        with patch("orivellum.capabilities.embeddings.semantic_search",
-                   side_effect=RuntimeError("embeddings down")), \
-             patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                   side_effect=RuntimeError("embeddings down")):
+        with (
+            patch(
+                "orivellum.capabilities.embeddings.semantic_search",
+                side_effect=RuntimeError("embeddings down"),
+            ),
+            patch(
+                "orivellum.capabilities.embeddings.hybrid_search_chunks",
+                side_effect=RuntimeError("embeddings down"),
+            ),
+        ):
             summary = evalset.evaluate_retrieval(self.db, k=5)
         fts = summary["channels"]["fts"]
         self.assertEqual(fts["ndcg"], 1.0, summary)
         self.assertEqual(fts["recall"], 1.0)
         # Unavailable channels report None + error, never 0.
         self.assertIsNone(summary["channels"]["semantic"]["ndcg"])
-        self.assertIn("embeddings down",
-                      summary["channels"]["semantic"]["error"] or "")
+        self.assertIn("embeddings down", summary["channels"]["semantic"]["error"] or "")
 
     def test_eval_persists_bench_run(self):
         evalset.add_golden(
-            self.db, query="rated capacity placards manufacturer chart",
-            kind="chunk", relevant_ids=[self.doc_id])
-        with patch("orivellum.capabilities.embeddings.semantic_search",
-                   return_value=[]), \
-             patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                   return_value=[]):
+            self.db,
+            query="rated capacity placards manufacturer chart",
+            kind="chunk",
+            relevant_ids=[self.doc_id],
+        )
+        with (
+            patch("orivellum.capabilities.embeddings.semantic_search", return_value=[]),
+            patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+        ):
             summary = evalset.evaluate_retrieval(self.db, k=5)
         self.assertIn("run_id", summary)
         runs = bench.list_bench_runs(self.db, kind="retrieval_eval")
@@ -217,6 +227,7 @@ class TestEvaluateRetrieval(unittest.TestCase):
 # 4. Telemetry columns
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @unittest.skipUnless(_DEPS_OK, f"deps unavailable: {_MISSING}")
 class TestTelemetryColumns(unittest.TestCase):
     def setUp(self):
@@ -228,12 +239,19 @@ class TestTelemetryColumns(unittest.TestCase):
 
     def test_record_persists_ttft_and_rate(self):
         record_llm_call(
-            self.db, purpose="chat.stream", model="m", latency_ms=1500,
-            completion_tokens=90, ok=True,
-            ttft_ms=412.34, tok_per_s=61.567, streamed=True)
+            self.db,
+            purpose="chat.stream",
+            model="m",
+            latency_ms=1500,
+            completion_tokens=90,
+            ok=True,
+            ttft_ms=412.34,
+            tok_per_s=61.567,
+            streamed=True,
+        )
         row = self.db._conn.execute(
-            "SELECT ttft_ms, tok_per_s, streamed, completion_tokens "
-            "FROM llm_calls").fetchone()
+            "SELECT ttft_ms, tok_per_s, streamed, completion_tokens FROM llm_calls"
+        ).fetchone()
         self.assertAlmostEqual(row[0], 412.3)
         self.assertAlmostEqual(row[1], 61.57)
         self.assertEqual(row[2], 1)
@@ -241,8 +259,7 @@ class TestTelemetryColumns(unittest.TestCase):
 
     def test_defaults_stay_null_not_zero(self):
         record_llm_call(self.db, purpose="harvest", model="m", latency_ms=10)
-        row = self.db._conn.execute(
-            "SELECT ttft_ms, tok_per_s, streamed FROM llm_calls").fetchone()
+        row = self.db._conn.execute("SELECT ttft_ms, tok_per_s, streamed FROM llm_calls").fetchone()
         self.assertIsNone(row[0])
         self.assertIsNone(row[1])
         self.assertEqual(row[2], 0)
@@ -250,10 +267,17 @@ class TestTelemetryColumns(unittest.TestCase):
     def test_telemetry_summary_aggregates(self):
         for i in range(4):
             record_llm_call(
-                self.db, purpose="chat.stream", model="m",
-                latency_ms=1000 + i * 100, completion_tokens=50,
-                ok=(i != 3), error="boom" if i == 3 else None,
-                ttft_ms=300 + i * 50, tok_per_s=40 + i, streamed=True)
+                self.db,
+                purpose="chat.stream",
+                model="m",
+                latency_ms=1000 + i * 100,
+                completion_tokens=50,
+                ok=(i != 3),
+                error="boom" if i == 3 else None,
+                ttft_ms=300 + i * 50,
+                tok_per_s=40 + i,
+                streamed=True,
+            )
         s = bench.telemetry_summary(self.db, hours=1)
         chat = s["purposes"]["chat.stream"]
         self.assertEqual(chat["calls"], 4)
@@ -267,6 +291,7 @@ class TestTelemetryColumns(unittest.TestCase):
 # 5. bench_runs round-trip
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @unittest.skipUnless(_DEPS_OK, f"deps unavailable: {_MISSING}")
 class TestBenchRuns(unittest.TestCase):
     def setUp(self):
@@ -277,8 +302,7 @@ class TestBenchRuns(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_save_and_list(self):
-        stored = bench.save_bench_run(
-            self.db, "ttft", "baseline", {"points": [1, 2]})
+        stored = bench.save_bench_run(self.db, "ttft", "baseline", {"points": [1, 2]})
         self.assertEqual(stored["kind"], "ttft")
         self.assertEqual(stored["summary"], {"points": [1, 2]})
         runs = bench.list_bench_runs(self.db)
@@ -293,13 +317,11 @@ class TestBenchRuns(unittest.TestCase):
                 base_url = "http://127.0.0.1:1/api/v1"  # nothing listens here
                 workhorse_model = "test-model"
 
-        result = bench.run_ttft_sweep(
-            _Cfg, self.db, sizes_chars=(500,), label="unreachable")
+        result = bench.run_ttft_sweep(_Cfg, self.db, sizes_chars=(500,), label="unreachable")
         self.assertFalse(result["summary"]["all_ok"])
         self.assertEqual(len(result["summary"]["points"]), 1)
         # Probe telemetry recorded with ok=0
-        row = self.db._conn.execute(
-            "SELECT purpose, ok FROM llm_calls").fetchone()
+        row = self.db._conn.execute("SELECT purpose, ok FROM llm_calls").fetchone()
         self.assertEqual(row[0], "bench.ttft")
         self.assertEqual(row[1], 0)
 
@@ -307,6 +329,7 @@ class TestBenchRuns(unittest.TestCase):
 # ──────────────────────────────────────────────────────────────────────────────
 # 6. API routes
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @unittest.skipUnless(_DEPS_OK, f"deps unavailable: {_MISSING}")
 class TestBenchRoutes(unittest.TestCase):
@@ -321,11 +344,11 @@ class TestBenchRoutes(unittest.TestCase):
         )
         _deps.init(db=self.db, cfg=cfg)
         app = create_app()
-        self.client = TestClient(app, raise_server_exceptions=False,
-                                 headers=AUTH_HEADERS)
+        self.client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
     def tearDown(self):
         from orivellum.api import executor as _exec
+
         _exec.shutdown(wait=True)  # drain bench submissions; lazily re-created
         self._tmp.cleanup()
 
@@ -358,6 +381,7 @@ class TestBenchRoutes(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         # Drain the executor so the guarded wrapper's finally runs.
         from orivellum.api import executor as _exec
+
         _exec.shutdown(wait=True)
         s = self.client.get("/api/bench/status")
         self.assertFalse(s.json()["running"])
@@ -367,9 +391,10 @@ class TestBenchRoutes(unittest.TestCase):
         self.assertFalse(runs[0]["summary"]["all_ok"])
 
     def test_goldens_crud_via_api(self):
-        r = self.client.post("/api/bench/goldens", json={
-            "query": "crane load path", "kind": "chunk",
-            "relevant_ids": ["d1"]})
+        r = self.client.post(
+            "/api/bench/goldens",
+            json={"query": "crane load path", "kind": "chunk", "relevant_ids": ["d1"]},
+        )
         self.assertEqual(r.status_code, 200, r.text)
         gid = r.json()["golden"]["id"]
         r = self.client.get("/api/bench/goldens")
@@ -380,8 +405,9 @@ class TestBenchRoutes(unittest.TestCase):
         self.assertEqual(r.status_code, 404)
 
     def test_goldens_post_validates(self):
-        r = self.client.post("/api/bench/goldens", json={
-            "query": "", "kind": "chunk", "relevant_ids": ["d"]})
+        r = self.client.post(
+            "/api/bench/goldens", json={"query": "", "kind": "chunk", "relevant_ids": ["d"]}
+        )
         self.assertEqual(r.status_code, 400)
 
     def test_eval_guard_requires_goldens(self):

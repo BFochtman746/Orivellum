@@ -14,6 +14,7 @@ Usage:
         return abstention_response(decision.abstention_reason)
     # build system prompt using decision.verified_context
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,7 +30,7 @@ logger = logging.getLogger("orivellum.pklos.policy_enforcer")
 
 _resolver = AuthorityResolver()
 _verifier = ClaimVerifier()
-_router   = FactRouter()
+_router = FactRouter()
 
 
 class PolicyFailure(Exception):
@@ -39,6 +40,7 @@ class PolicyFailure(Exception):
 @dataclass
 class EnforcementDecision:
     """The outcome of running enforcement for a single user request."""
+
     request_class: RequestClass
     must_abstain: bool
     abstention_reason: str
@@ -127,6 +129,7 @@ class PolicyEnforcer:
         # Checkable fact: consult claim ledger
         from .authority import SUBJECT_DEVICE_A01
         from .claim_ledger import ClaimLedger
+
         ledger = ClaimLedger(self._db)
         claims = ledger.search_for_context(query, limit=15)
 
@@ -136,16 +139,12 @@ class PolicyEnforcer:
         # surfaced for checkable questions about A-01.
         # Trigger even when FTS returned RETRIEVED claims, if none are usable.
         _has_usable = any(
-            c.get("status") in (
-                ClaimStatus.VERIFIED.value, ClaimStatus.USER_ASSERTED.value
-            )
+            c.get("status") in (ClaimStatus.VERIFIED.value, ClaimStatus.USER_ASSERTED.value)
             for c in claims
         )
         if not _has_usable:
             try:
-                all_device = self._db.list_claims(
-                    subject=SUBJECT_DEVICE_A01, status=None, limit=50
-                )
+                all_device = self._db.list_claims(subject=SUBJECT_DEVICE_A01, status=None, limit=50)
                 live_statuses = {
                     ClaimStatus.VERIFIED.value,
                     ClaimStatus.PARTIALLY_VERIFIED.value,
@@ -154,9 +153,9 @@ class PolicyEnforcer:
                     "CURRENT",
                 }
                 claims = [
-                    c for c in (all_device or [])
-                    if c.get("status") in live_statuses
-                    and c.get("authority_tier") != "A8"
+                    c
+                    for c in (all_device or [])
+                    if c.get("status") in live_statuses and c.get("authority_tier") != "A8"
                 ]
             except Exception:
                 pass  # non-fatal; fall through to abstention
@@ -164,7 +163,7 @@ class PolicyEnforcer:
         # Split verified vs asserted
         verified = [c for c in claims if c.get("status") == ClaimStatus.VERIFIED.value]
         asserted = [c for c in claims if c.get("status") == ClaimStatus.USER_ASSERTED.value]
-        usable   = verified + asserted
+        usable = verified + asserted
 
         if not usable:
             return EnforcementDecision(
@@ -175,17 +174,15 @@ class PolicyEnforcer:
             )
 
         # Build the verified context block
-        context_lines = [
-            "VERIFIED FACTS (from claim ledger — enforce these values):"
-        ]
+        context_lines = ["VERIFIED FACTS (from claim ledger — enforce these values):"]
         for c in usable:
-            status   = c.get("status", "")
-            pred     = c.get("predicate", "")
-            value    = c.get("value", "")
-            unit     = c.get("unit") or ""
-            tier     = c.get("authority_tier", "A7")
-            display  = f"{value} {unit}".strip()
-            qual     = ""
+            status = c.get("status", "")
+            pred = c.get("predicate", "")
+            value = c.get("value", "")
+            unit = c.get("unit") or ""
+            tier = c.get("authority_tier", "A7")
+            display = f"{value} {unit}".strip()
+            qual = ""
             if status == ClaimStatus.USER_ASSERTED.value:
                 qual = " [self-reported, A7, not independently verified]"
             elif status == ClaimStatus.VERIFIED.value:

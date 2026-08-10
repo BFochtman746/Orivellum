@@ -13,6 +13,7 @@ before asserting.
 INV-REQ-001: Win32_VideoController.AdapterRAM must never be used as a VRAM
 source on unified-memory architecture.  This endpoint enforces it at the boundary.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,6 +33,7 @@ logger = logging.getLogger("orivellum.pklos.routes")
 
 # ── Request / Response models ──────────────────────────────────────────────────
 
+
 class InventoryPayload(BaseModel):
     """Structured JSON emitted by scripts/inventory_collector.ps1.
 
@@ -39,6 +41,7 @@ class InventoryPayload(BaseModel):
     top-level keys into the persisted payload. Any additional metadata the
     collector wants to carry goes through the explicit ``meta`` dict.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     collector_version: str = "0.1.0"
@@ -60,6 +63,7 @@ class EnforcementCheck(BaseModel):
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
+
 
 @router.post("/inventory")
 def ingest_inventory(body: InventoryPayload):
@@ -102,11 +106,18 @@ def get_inventory():
     db = get_db()
     raw = db.list_claims(subject=SUBJECT_DEVICE_A01, status=None, limit=200)
     claims = [
-        c for c in raw
+        c
+        for c in raw
         if c.get("authority_tier") != "A8"
-        and c.get("status") in (
-            "VERIFIED", "PARTIALLY_VERIFIED", "USER_ASSERTED",
-            "RETRIEVED", "CONFLICTED", "STALE", "CURRENT",
+        and c.get("status")
+        in (
+            "VERIFIED",
+            "PARTIALLY_VERIFIED",
+            "USER_ASSERTED",
+            "RETRIEVED",
+            "CONFLICTED",
+            "STALE",
+            "CURRENT",
         )
     ]
     claims.sort(key=lambda c: c.get("predicate", ""))
@@ -117,19 +128,22 @@ def get_inventory():
         display = c.get("meta", {}) or {}
         if isinstance(display, str):
             import json
+
             try:
                 display = json.loads(display)
             except Exception:
                 display = {}
-        summary.append({
-            "predicate": c.get("predicate"),
-            "value": c.get("value"),
-            "display_value": display.get("normalized_display_value") or c.get("value"),
-            "status": c.get("status"),
-            "authority": c.get("authority_tier"),
-            "confidence": display.get("confidence"),
-            "observed_at": display.get("observed_at") or c.get("updated_at"),
-        })
+        summary.append(
+            {
+                "predicate": c.get("predicate"),
+                "value": c.get("value"),
+                "display_value": display.get("normalized_display_value") or c.get("value"),
+                "status": c.get("status"),
+                "authority": c.get("authority_tier"),
+                "confidence": display.get("confidence"),
+                "observed_at": display.get("observed_at") or c.get("updated_at"),
+            }
+        )
 
     return {"subject": SUBJECT_DEVICE_A01, "claims": summary, "total": len(summary)}
 
@@ -170,8 +184,8 @@ def get_status():
         "note": (
             "Inventory is USER_ASSERTED until a Windows collector payload "
             "is POSTed to /api/pklos/inventory."
-            if verified_count == 0 else
-            f"{verified_count} claims verified from hardware inventory."
+            if verified_count == 0
+            else f"{verified_count} claims verified from hardware inventory."
         ),
     }
 
@@ -195,5 +209,7 @@ def check_enforcement(body: EnforcementCheck):
         "verified_claims_count": len(decision.verified_claims),
         "unverified_claims_count": len(decision.unverified_claims),
         "verified_context": decision.verified_context,
-        "policy_instruction_preview": decision.policy_instruction[:200] if decision.policy_instruction else "",
+        "policy_instruction_preview": decision.policy_instruction[:200]
+        if decision.policy_instruction
+        else "",
     }

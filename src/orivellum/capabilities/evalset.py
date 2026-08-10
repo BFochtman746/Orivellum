@@ -20,6 +20,7 @@ A channel that is unavailable (e.g. embeddings endpoint down) is reported as
 ``bench.save_bench_run(kind="retrieval_eval")`` so improvements are provable
 run over run.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,6 +37,7 @@ _KINDS = ("chunk", "knowledge")
 # ──────────────────────────────────────────────────────────────────────────────
 # Metrics (pure)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _dcg(gains: list[float]) -> float:
     return sum(g / math.log2(i + 2) for i, g in enumerate(gains))
@@ -63,9 +65,12 @@ def recall_at_k(ranked_ids: list, relevant_ids: list, k: int = 5) -> float:
 # Golden CRUD
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def list_goldens(db: Any, kind: str | None = None) -> list[dict]:
-    q = ("SELECT id, query, kind, relevant_ids, work_id, notes, source, "
-         "created_at FROM golden_queries")
+    q = (
+        "SELECT id, query, kind, relevant_ids, work_id, notes, source, "
+        "created_at FROM golden_queries"
+    )
     args: list = []
     if kind:
         q += " WHERE kind=?"
@@ -98,22 +103,28 @@ def add_golden(
         db._conn.execute(
             "INSERT INTO golden_queries (id, query, kind, relevant_ids,"
             " work_id, notes, source) VALUES (?,?,?,?,?,?,?)",
-            (gid, query, kind, json.dumps([str(r) for r in relevant_ids]),
-             work_id, notes or "", source),
+            (
+                gid,
+                query,
+                kind,
+                json.dumps([str(r) for r in relevant_ids]),
+                work_id,
+                notes or "",
+                source,
+            ),
         )
         db._conn.commit()
         row = db._conn.execute(
             "SELECT id, query, kind, relevant_ids, work_id, notes, source,"
-            " created_at FROM golden_queries WHERE id=?", (gid,),
+            " created_at FROM golden_queries WHERE id=?",
+            (gid,),
         ).fetchone()
     return _golden_dict(row)
 
 
 def delete_golden(db: Any, golden_id: str) -> bool:
     with db._lock:
-        cur = db._conn.execute(
-            "DELETE FROM golden_queries WHERE id=?", (golden_id,)
-        )
+        cur = db._conn.execute("DELETE FROM golden_queries WHERE id=?", (golden_id,))
         db._conn.commit()
     return cur.rowcount > 0
 
@@ -124,8 +135,13 @@ def _golden_dict(row) -> dict:
     except json.JSONDecodeError:
         rel = []
     return {
-        "id": row[0], "query": row[1], "kind": row[2], "relevant_ids": rel,
-        "work_id": row[4], "notes": row[5], "source": row[6],
+        "id": row[0],
+        "query": row[1],
+        "kind": row[2],
+        "relevant_ids": rel,
+        "work_id": row[4],
+        "notes": row[5],
+        "source": row[6],
         "created_at": row[7],
     }
 
@@ -133,6 +149,7 @@ def _golden_dict(row) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 # Auto-seeding — bootstrap goldens from distinctive stored content
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def auto_seed_goldens(db: Any, *, n: int = 20) -> dict:
     """Propose goldens by sampling distinctive phrases from stored chunks.
@@ -149,11 +166,7 @@ def auto_seed_goldens(db: Any, *, n: int = 20) -> dict:
             "WHERE length(c.text) > 300 ORDER BY RANDOM() LIMIT ?",
             (n * 2,),
         ).fetchall()
-        existing = {
-            r[0] for r in db._conn.execute(
-                "SELECT query FROM golden_queries"
-            ).fetchall()
-        }
+        existing = {r[0] for r in db._conn.execute("SELECT query FROM golden_queries").fetchall()}
     created: list[dict] = []
     for doc_id, text in rows:
         if len(created) >= n:
@@ -162,10 +175,16 @@ def auto_seed_goldens(db: Any, *, n: int = 20) -> dict:
         if not phrase or phrase in existing:
             continue
         try:
-            created.append(add_golden(
-                db, query=phrase, kind="chunk", relevant_ids=[doc_id],
-                notes="auto-seeded from chunk sample", source="auto",
-            ))
+            created.append(
+                add_golden(
+                    db,
+                    query=phrase,
+                    kind="chunk",
+                    relevant_ids=[doc_id],
+                    notes="auto-seeded from chunk sample",
+                    source="auto",
+                )
+            )
             existing.add(phrase)
         except ValueError:
             continue
@@ -178,12 +197,13 @@ def _distinctive_phrase(text: str, words: int = 8) -> str:
     if len(toks) < words + 4:
         return ""
     start = len(toks) // 3
-    return " ".join(toks[start:start + words])
+    return " ".join(toks[start : start + words])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Evaluation
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def evaluate_retrieval(db: Any, *, k: int = 5, label: str = "") -> dict:
     """Score every golden across fts / semantic / hybrid channels.
@@ -201,8 +221,7 @@ def evaluate_retrieval(db: Any, *, k: int = 5, label: str = "") -> dict:
     channel_errors: dict[str, str] = {}
 
     for g in goldens:
-        row: dict = {"golden_id": g["id"], "query": g["query"], "kind": g["kind"],
-                     "channels": {}}
+        row: dict = {"golden_id": g["id"], "query": g["query"], "kind": g["kind"], "channels": {}}
         for channel in ("fts", "semantic", "hybrid"):
             if channel in channel_errors:
                 row["channels"][channel] = None
@@ -211,8 +230,7 @@ def evaluate_retrieval(db: Any, *, k: int = 5, label: str = "") -> dict:
                 ranked = _ranked_ids(db, _emb, channel, g, k)
             except Exception as exc:
                 channel_errors[channel] = f"{type(exc).__name__}: {exc}"[:200]
-                logger.warning("eval channel %s failed: %s", channel,
-                               channel_errors[channel])
+                logger.warning("eval channel %s failed: %s", channel, channel_errors[channel])
                 row["channels"][channel] = None
                 continue
             if ranked is None:
@@ -226,8 +244,7 @@ def evaluate_retrieval(db: Any, *, k: int = 5, label: str = "") -> dict:
         rows.append(row)
 
     def _avg(channel: str, metric: str):
-        vals = [r["channels"][channel][metric] for r in rows
-                if r["channels"].get(channel)]
+        vals = [r["channels"][channel][metric] for r in rows if r["channels"].get(channel)]
         return round(sum(vals) / len(vals), 3) if vals else None
 
     summary = {
@@ -251,8 +268,7 @@ def evaluate_retrieval(db: Any, *, k: int = 5, label: str = "") -> dict:
     return summary
 
 
-def _ranked_ids(db: Any, emb_mod: Any, channel: str, golden: dict,
-                k: int) -> list | None:
+def _ranked_ids(db: Any, emb_mod: Any, channel: str, golden: dict, k: int) -> list | None:
     """Ranked candidate ids for one golden on one channel.
 
     chunk goldens are judged at doc level (ids are doc_ids, deduplicated in
@@ -266,20 +282,18 @@ def _ranked_ids(db: Any, emb_mod: Any, channel: str, golden: dict,
         if channel == "fts":
             hits = db.search_chunks(query, limit=fetch)
         elif channel == "semantic":
-            hits = emb_mod.semantic_search(query, db, object_type="chunk",
-                                           limit=fetch)
+            hits = emb_mod.semantic_search(query, db, object_type="chunk", limit=fetch)
         else:
             hits = emb_mod.hybrid_search_chunks(query, db, limit=fetch)
         return _dedup([h.get("doc_id") for h in hits if h.get("doc_id")])
-    else:  # knowledge
-        if channel == "fts":
-            hits = db.search_knowledge(query, limit=fetch)
-        elif channel == "semantic":
-            hits = emb_mod.semantic_search(query, db, object_type="knowledge",
-                                           limit=fetch)
-        else:
-            hits = emb_mod.hybrid_search_knowledge(query, db, limit=fetch)
-        return _dedup([h.get("id") for h in hits if h.get("id")])
+    # knowledge
+    if channel == "fts":
+        hits = db.search_knowledge(query, limit=fetch)
+    elif channel == "semantic":
+        hits = emb_mod.semantic_search(query, db, object_type="knowledge", limit=fetch)
+    else:
+        hits = emb_mod.hybrid_search_knowledge(query, db, limit=fetch)
+    return _dedup([h.get("id") for h in hits if h.get("id")])
 
 
 def _dedup(ids: list) -> list:

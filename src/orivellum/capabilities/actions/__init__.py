@@ -13,6 +13,7 @@ Action lifecycle
    updates status=done or error, writes an audit_log entry
 4. Result includes a download URL served by the existing /studio/outputs/serve endpoint
 """
+
 from __future__ import annotations
 
 import json
@@ -59,6 +60,7 @@ def get_registry() -> dict[str, ActionBase]:
 
 
 # ── DB helpers (raw SQL — avoids touching db.py) ───────────────────────────────
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -124,13 +126,12 @@ def list_runs(db: OrivellumDB, limit: int = 30, work_id: str | None = None) -> l
 
 def get_run(db: OrivellumDB, run_id: str) -> dict | None:
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM action_runs WHERE id=?", (run_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM action_runs WHERE id=?", (run_id,)).fetchone()
     return dict(row) if row else None
 
 
 # ── Base class ─────────────────────────────────────────────────────────────────
+
 
 class ActionBase(ABC):
     """Abstract base for all actions.
@@ -176,7 +177,8 @@ class ActionBase(ABC):
         try:
             result = self._execute_impl(inputs, db, cfg)
             complete_run(
-                db, run_id,
+                db,
+                run_id,
                 output_path=result.get("output_path"),
                 output_label=result.get("output_label"),
                 output_doc_id=result.get("output_doc_id"),

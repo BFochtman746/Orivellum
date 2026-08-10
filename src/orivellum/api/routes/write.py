@@ -4,6 +4,7 @@ Full document drafting workspace with AI assistance.  Supports creating,
 editing, and managing rich-text documents with AI commands: continue, improve,
 expand, summarize, rewrite, fix, shorten, outline, from_knowledge.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,11 +22,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/write", dependencies=[Depends(require_auth)])
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
+
 def _uuid() -> str:
     return str(uuid.uuid4())
+
 
 def _count_words(text: str) -> int:
     return len(text.split()) if text.strip() else 0
@@ -33,11 +37,13 @@ def _count_words(text: str) -> int:
 
 # ── CRUD models ───────────────────────────────────────────────────────────────
 
+
 class CreateDocRequest(BaseModel):
     title: str = "Untitled"
     content_json: dict = Field(default_factory=dict)
     content_text: str = ""
     work_id: str | None = None
+
 
 class UpdateDocRequest(BaseModel):
     title: str | None = None
@@ -46,17 +52,19 @@ class UpdateDocRequest(BaseModel):
     work_id: str | None = None
     is_pinned: bool | None = None
 
+
 class AIAssistRequest(BaseModel):
-    command: str                        # continue|improve|expand|summarize|rewrite|fix|shorten|outline|ask|from_knowledge
-    selection: str = ""                 # selected text to operate on
-    document_text: str = ""            # full doc plain text for context
-    instruction: str = ""              # optional custom instruction (for "ask")
-    voice: str = "default"             # tone/style hint
-    image_b64: str | None = None       # base64-encoded image for vision/analysis
+    command: str  # continue|improve|expand|summarize|rewrite|fix|shorten|outline|ask|from_knowledge
+    selection: str = ""  # selected text to operate on
+    document_text: str = ""  # full doc plain text for context
+    instruction: str = ""  # optional custom instruction (for "ask")
+    voice: str = "default"  # tone/style hint
+    image_b64: str | None = None  # base64-encoded image for vision/analysis
     image_media_type: str = "image/jpeg"
 
 
 # ── Document CRUD ─────────────────────────────────────────────────────────────
+
 
 @router.get("/documents")
 def list_documents():
@@ -73,22 +81,35 @@ def list_documents():
 
 @router.post("/documents")
 def create_document(body: CreateDocRequest):
-    db  = get_db()
+    db = get_db()
     doc_id = _uuid()
-    now    = _now()
-    wc     = _count_words(body.content_text)
+    now = _now()
+    wc = _count_words(body.content_text)
     with db._lock:
         db._conn.execute(
             """INSERT INTO write_documents
                (id, title, content_json, content_text, word_count, work_id,
                 is_pinned, created_at, updated_at)
                VALUES (?,?,?,?,?,?,0,?,?)""",
-            (doc_id, body.title, __import__("json").dumps(body.content_json),
-             body.content_text, wc, body.work_id, now, now),
+            (
+                doc_id,
+                body.title,
+                __import__("json").dumps(body.content_json),
+                body.content_text,
+                wc,
+                body.work_id,
+                now,
+                now,
+            ),
         )
         db._conn.commit()
-    db.audit("write_document.created", object_id=doc_id, object_type="write_document",
-             actor="user", detail=body.title[:120] if body.title else None)
+    db.audit(
+        "write_document.created",
+        object_id=doc_id,
+        object_type="write_document",
+        actor="user",
+        detail=body.title[:120] if body.title else None,
+    )
     return get_document(doc_id)
 
 
@@ -96,9 +117,7 @@ def create_document(body: CreateDocRequest):
 def get_document(doc_id: str):
     db = get_db()
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM write_documents WHERE id=?", (doc_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM write_documents WHERE id=?", (doc_id,)).fetchone()
     if not row:
         raise HTTPException(404, f"Write document {doc_id!r} not found")
     d = dict(row)
@@ -111,39 +130,47 @@ def get_document(doc_id: str):
 
 @router.patch("/documents/{doc_id}")
 def update_document(doc_id: str, body: UpdateDocRequest):
-    db  = get_db()
+    db = get_db()
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM write_documents WHERE id=?", (doc_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM write_documents WHERE id=?", (doc_id,)).fetchone()
     if not row:
         raise HTTPException(404, f"Write document {doc_id!r} not found")
 
     import json as _json
+
     sets: list[str] = ["updated_at=?"]
     args: list[Any] = [_now()]
 
     if body.title is not None:
-        sets.append("title=?");        args.append(body.title)
+        sets.append("title=?")
+        args.append(body.title)
     if body.content_json is not None:
-        sets.append("content_json=?"); args.append(_json.dumps(body.content_json))
+        sets.append("content_json=?")
+        args.append(_json.dumps(body.content_json))
     if body.content_text is not None:
-        sets.append("content_text=?"); args.append(body.content_text)
-        sets.append("word_count=?");   args.append(_count_words(body.content_text))
+        sets.append("content_text=?")
+        args.append(body.content_text)
+        sets.append("word_count=?")
+        args.append(_count_words(body.content_text))
     if body.work_id is not None:
-        sets.append("work_id=?");      args.append(body.work_id if body.work_id != "__none__" else None)
+        sets.append("work_id=?")
+        args.append(body.work_id if body.work_id != "__none__" else None)
     if body.is_pinned is not None:
-        sets.append("is_pinned=?");    args.append(int(body.is_pinned))
+        sets.append("is_pinned=?")
+        args.append(int(body.is_pinned))
 
     args.append(doc_id)
     with db._lock:
-        cur = db._conn.execute(
-            f"UPDATE write_documents SET {', '.join(sets)} WHERE id=?", args
-        )
+        cur = db._conn.execute(f"UPDATE write_documents SET {', '.join(sets)} WHERE id=?", args)
         db._conn.commit()
     if cur.rowcount > 0:
-        db.audit("write_document.updated", object_id=doc_id, object_type="write_document",
-                 actor="user", detail=",".join(s.split("=")[0] for s in sets if s != "updated_at=?"))
+        db.audit(
+            "write_document.updated",
+            object_id=doc_id,
+            object_type="write_document",
+            actor="user",
+            detail=",".join(s.split("=")[0] for s in sets if s != "updated_at=?"),
+        )
     return get_document(doc_id)
 
 
@@ -157,7 +184,9 @@ def delete_document(doc_id: str):
         db._conn.execute("DELETE FROM write_documents WHERE id=?", (doc_id,))
         db._conn.commit()
     if _existed:
-        db.audit("write_document.deleted", object_id=doc_id, object_type="write_document", actor="user")
+        db.audit(
+            "write_document.deleted", object_id=doc_id, object_type="write_document", actor="user"
+        )
     return {"ok": True}
 
 
@@ -216,13 +245,11 @@ _COMMAND_PROMPTS: dict[str, str] = {
 def ai_assist(doc_id: str, body: AIAssistRequest):
     """Run an AI writing command and stream the response."""
     cfg = get_config()
-    db  = get_db()
+    db = get_db()
 
     # Verify document exists
     with db._lock:
-        row = db._conn.execute(
-            "SELECT title FROM write_documents WHERE id=?", (doc_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT title FROM write_documents WHERE id=?", (doc_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Document not found")
 
@@ -230,7 +257,7 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
 
     # ── from_knowledge: inject relevant items from the knowledge base ─────────
     if cmd == "from_knowledge":
-        query  = body.selection or body.instruction or body.document_text[:200]
+        query = body.selection or body.instruction or body.document_text[:200]
         with db._lock:
             items = db._conn.execute(
                 """SELECT k.title, k.description
@@ -240,13 +267,13 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
                    LIMIT 20"""
             ).fetchall()
         if not items:
+
             def _no_knowledge():
-                yield "data: {\"choices\":[{\"delta\":{\"content\":\"No knowledge items found in your knowledge base yet. Upload and extract some documents first.\"}}]}\n\ndata: [DONE]\n\n"
+                yield 'data: {"choices":[{"delta":{"content":"No knowledge items found in your knowledge base yet. Upload and extract some documents first."}}]}\n\ndata: [DONE]\n\n'
+
             return StreamingResponse(_no_knowledge(), media_type="text/event-stream")
 
-        knowledge_block = "\n".join(
-            f"- **{r['title']}**: {r['description'] or ''}" for r in items
-        )
+        knowledge_block = "\n".join(f"- **{r['title']}**: {r['description'] or ''}" for r in items)
         prompt = (
             f"Select the most relevant knowledge items for the following context "
             f"and format them as clean prose that can be inserted into the document.\n\n"
@@ -258,20 +285,25 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
 
     # ── ask / custom instruction ───────────────────────────────────────────────
     elif cmd == "ask":
-        doc_ctx = f"\n\nDocument context:\n{body.document_text[:3000]}" if body.document_text else ""
+        doc_ctx = (
+            f"\n\nDocument context:\n{body.document_text[:3000]}" if body.document_text else ""
+        )
         sel_ctx = f"\n\nSelected text:\n{body.selection}" if body.selection else ""
-        prompt  = f"{body.instruction}{doc_ctx}{sel_ctx}"
+        prompt = f"{body.instruction}{doc_ctx}{sel_ctx}"
 
     # ── standard commands ─────────────────────────────────────────────────────
     else:
         template = _COMMAND_PROMPTS.get(cmd)
         if not template:
-            raise HTTPException(400, f"Unknown AI command: {cmd!r}. Valid commands: "
-                                     f"{', '.join(_COMMAND_PROMPTS)} ask from_knowledge")
+            raise HTTPException(
+                400,
+                f"Unknown AI command: {cmd!r}. Valid commands: "
+                f"{', '.join(_COMMAND_PROMPTS)} ask from_knowledge",
+            )
 
         # Build context: for doc-level commands use full doc; for selection commands use selection
         doc_ctx = body.document_text[:4000] if body.document_text else ""
-        sel_ctx = body.selection[:2000]     if body.selection     else doc_ctx
+        sel_ctx = body.selection[:2000] if body.selection else doc_ctx
 
         prompt = template.format(doc=doc_ctx, sel=sel_ctx or doc_ctx)
 
@@ -312,14 +344,16 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
                 "POST",
                 f"{cfg.serving.base_url}/chat/completions",
                 json={
-                    "model":       cfg.serving.workhorse_model,
-                    "messages":    [
-                        {"role": "system",
-                         "content": "You are an expert writing assistant. Follow instructions precisely. Return only what was requested — no preamble, no meta-commentary."},
+                    "model": cfg.serving.workhorse_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are an expert writing assistant. Follow instructions precisely. Return only what was requested — no preamble, no meta-commentary.",
+                        },
                         {"role": "user", "content": _user_content},
                     ],
-                    "stream":      True,
-                    "max_tokens":  1200,
+                    "stream": True,
+                    "max_tokens": 1200,
                     "temperature": 0.7,
                 },
                 timeout=90,
@@ -337,19 +371,25 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
             _ok = False
             _err = f"{type(exc).__name__}: {exc}"[:500]
             import json as _j
+
             yield f"data: {_j.dumps({'error': str(exc)[:500]})}\n\ndata: [DONE]\n\n"
         finally:
             record_llm_call(
-                db, purpose="write", model=cfg.serving.workhorse_model,
+                db,
+                purpose="write",
+                model=cfg.serving.workhorse_model,
                 latency_ms=int((_time.monotonic() - _started) * 1000),
-                prompt_tokens=None, completion_tokens=None,
-                ok=_ok, error=_err,
+                prompt_tokens=None,
+                completion_tokens=None,
+                ok=_ok,
+                error=_err,
             )
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
 # ── Export ─────────────────────────────────────────────────────────────────────
+
 
 @router.get("/documents/{doc_id}/export/txt")
 def export_txt(doc_id: str):
@@ -359,13 +399,15 @@ def export_txt(doc_id: str):
     from fastapi.responses import PlainTextResponse
 
     with get_db()._lock:
-        row = get_db()._conn.execute(
-            "SELECT title, content_text FROM write_documents WHERE id=?", (doc_id,)
-        ).fetchone()
+        row = (
+            get_db()
+            ._conn.execute("SELECT title, content_text FROM write_documents WHERE id=?", (doc_id,))
+            .fetchone()
+        )
     if not row:
         raise HTTPException(404, "Document not found")
 
-    filename = re.sub(r'[^\w\- ]', '_', row["title"])[:60] + ".txt"
+    filename = re.sub(r"[^\w\- ]", "_", row["title"])[:60] + ".txt"
     return PlainTextResponse(
         row["content_text"] or "",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},

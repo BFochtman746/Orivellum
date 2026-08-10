@@ -7,9 +7,9 @@ Verifies:
   2. The persisted message has meta.incomplete=True and meta.cut_short=True.
   3. A stalled continuation stream emits a {timeout:true} SSE event.
 """
+
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import json
 import threading
@@ -17,13 +17,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ── Minimal stubs ──────────────────────────────────────────────────────────────
+
 
 def _make_conv(conv_id: str = "conv-1") -> dict:
     return {
-        "id": conv_id, "title": "T", "work_id": None,
-        "model": None, "archived": False, "created_at": "2026-01-01",
+        "id": conv_id,
+        "title": "T",
+        "work_id": None,
+        "model": None,
+        "archived": False,
+        "created_at": "2026-01-01",
     }
 
 
@@ -42,8 +46,13 @@ def _make_db(conv: dict) -> MagicMock:
 
     def _add(conv_id, role, text, state=None, meta=None):
         mid = f"msg-{len(_msgs)}"
-        m = {"id": mid, "role": role, "text": text, "state": state,
-             "meta": json.dumps(meta) if meta else None}
+        m = {
+            "id": mid,
+            "role": role,
+            "text": text,
+            "state": state,
+            "meta": json.dumps(meta) if meta else None,
+        }
         _msgs.append(m)
         return m
 
@@ -69,6 +78,7 @@ def _make_cfg() -> MagicMock:
 
 # ── Async iterator that raises TimeoutError mid-stream ────────────────────────
 
+
 class _TimeoutAfterTokens:
     """Yields SSE lines for `tokens`, then raises asyncio.TimeoutError."""
 
@@ -83,11 +93,9 @@ class _TimeoutAfterTokens:
         if self._idx < len(self._tokens):
             tok = self._tokens[self._idx]
             self._idx += 1
-            payload = json.dumps(
-                {"choices": [{"delta": {"content": tok}, "finish_reason": None}]}
-            )
+            payload = json.dumps({"choices": [{"delta": {"content": tok}, "finish_reason": None}]})
             return f"data: {payload}"
-        raise asyncio.TimeoutError("forced stall for test")
+        raise TimeoutError("forced stall for test")
 
 
 class _FinishCleanly:
@@ -117,11 +125,12 @@ class _FinishCleanly:
 
 # ── httpx mock helpers using asynccontextmanager ──────────────────────────────
 
+
 def _make_httpx_mock(line_iter):
     """Return a patch target (the `httpx.AsyncClient` class) that wires up:
-      - async with httpx.AsyncClient(...) as client  → mock_client
-      - async with client.stream(...) as resp         → mock_resp
-      - resp.aiter_lines().__aiter__()               → line_iter
+    - async with httpx.AsyncClient(...) as client  → mock_client
+    - async with client.stream(...) as resp         → mock_resp
+    - resp.aiter_lines().__aiter__()               → line_iter
     """
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
@@ -149,8 +158,8 @@ def _make_httpx_mock(line_iter):
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
-class TestStreamResponseTimeout:
 
+class TestStreamResponseTimeout:
     @pytest.mark.asyncio
     async def test_timeout_event_emitted(self):
         """Stalled initial stream must emit {timeout:true, message_id: ...}."""
@@ -163,11 +172,9 @@ class TestStreamResponseTimeout:
         MockClient = _make_httpx_mock(line_iter)
 
         with (
-            patch.object(cv, "_build_messages",
-                         return_value=[{"role": "user", "content": "hi"}]),
+            patch.object(cv, "_build_messages", return_value=[{"role": "user", "content": "hi"}]),
             patch.object(cv, "_build_system_prompt", return_value=""),
-            patch.object(cv, "_maybe_dispatch_intent",
-                         new=AsyncMock(return_value=None)),
+            patch.object(cv, "_maybe_dispatch_intent", new=AsyncMock(return_value=None)),
             patch.object(cv, "_model_for", return_value="llama3"),
             patch.object(cv, "get_config", return_value=_make_cfg()),
             patch("httpx.AsyncClient", MockClient),
@@ -176,13 +183,9 @@ class TestStreamResponseTimeout:
             async for chunk in cv._stream_response(db, conv, "hi"):
                 events.append(chunk)
 
-        timeout_events = [
-            e for e in events
-            if e.startswith("data: ") and '"timeout"' in e
-        ]
-        assert timeout_events, (
-            f"Expected {{timeout:true}} SSE event.\nAll events:\n" +
-            "\n".join(events)
+        timeout_events = [e for e in events if e.startswith("data: ") and '"timeout"' in e]
+        assert timeout_events, "Expected {timeout:true} SSE event.\nAll events:\n" + "\n".join(
+            events
         )
         data = json.loads(timeout_events[0][6:])
         assert data.get("timeout") is True
@@ -200,11 +203,9 @@ class TestStreamResponseTimeout:
         MockClient = _make_httpx_mock(line_iter)
 
         with (
-            patch.object(cv, "_build_messages",
-                         return_value=[{"role": "user", "content": "hi"}]),
+            patch.object(cv, "_build_messages", return_value=[{"role": "user", "content": "hi"}]),
             patch.object(cv, "_build_system_prompt", return_value=""),
-            patch.object(cv, "_maybe_dispatch_intent",
-                         new=AsyncMock(return_value=None)),
+            patch.object(cv, "_maybe_dispatch_intent", new=AsyncMock(return_value=None)),
             patch.object(cv, "_model_for", return_value="llama3"),
             patch.object(cv, "get_config", return_value=_make_cfg()),
             patch("httpx.AsyncClient", MockClient),
@@ -215,8 +216,7 @@ class TestStreamResponseTimeout:
         # Every UPDATE messages SET meta=? call is captured in db._sql_calls.
         # Find any call where the meta JSON contains both cut_short and incomplete.
         update_meta_calls = [
-            args for sql, args in db._sql_calls
-            if "UPDATE messages SET meta" in sql
+            args for sql, args in db._sql_calls if "UPDATE messages SET meta" in sql
         ]
         assert update_meta_calls, (
             "No 'UPDATE messages SET meta' SQL call found after initial-stream timeout"
@@ -235,7 +235,6 @@ class TestStreamResponseTimeout:
 
 
 class TestStreamContinuationTimeout:
-
     @pytest.mark.asyncio
     async def test_timeout_event_emitted(self):
         """Stalled continuation stream must emit {timeout:true, message_id: orig_id}."""
@@ -263,18 +262,16 @@ class TestStreamContinuationTimeout:
             async for chunk in cv._stream_continuation(db, conv, cut_short_msg):
                 events.append(chunk)
 
-        timeout_events = [
-            e for e in events
-            if e.startswith("data: ") and '"timeout"' in e
-        ]
+        timeout_events = [e for e in events if e.startswith("data: ") and '"timeout"' in e]
         assert timeout_events, (
-            f"Expected {{timeout:true}} SSE event from continuation.\n"
-            f"All events:\n" + "\n".join(events)
+            "Expected {timeout:true} SSE event from continuation.\n"
+            "All events:\n" + "\n".join(events)
         )
         data = json.loads(timeout_events[0][6:])
         assert data.get("timeout") is True
-        assert data.get("message_id") == cut_short_msg["id"], \
+        assert data.get("message_id") == cut_short_msg["id"], (
             f"Expected message_id={cut_short_msg['id']}, got {data.get('message_id')}"
+        )
 
     @pytest.mark.asyncio
     async def test_timed_out_continuation_persists_incomplete_in_meta(self):
@@ -305,7 +302,8 @@ class TestStreamContinuationTimeout:
 
         # Find the UPDATE messages SET text=?, meta=? call
         update_text_calls = [
-            args for sql, args in db._sql_calls
+            args
+            for sql, args in db._sql_calls
             if "UPDATE messages SET text" in sql and "meta" in sql
         ]
         assert update_text_calls, (
@@ -359,7 +357,8 @@ class TestStreamContinuationTimeout:
 
         # Find the UPDATE messages SET text=?, meta=? call
         update_text_calls = [
-            args for sql, args in db._sql_calls
+            args
+            for sql, args in db._sql_calls
             if "UPDATE messages SET text" in sql and "meta" in sql
         ]
         assert update_text_calls, (

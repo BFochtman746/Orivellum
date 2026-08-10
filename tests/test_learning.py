@@ -1,17 +1,19 @@
 """Tests for the adaptive learning module (work_concepts / work_mastery)."""
+
 from __future__ import annotations
 
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
 
 # ─── Minimal in-memory DB fixture ─────────────────────────────────────────────
 
+
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _make_db():
@@ -152,6 +154,7 @@ class _FakeDB:
 
 # ─── Migration-preservation tests ─────────────────────────────────────────────
 
+
 class TestMigrationPreservation:
     """Verify that Projects tables are never destroyed by Works learning operations."""
 
@@ -163,6 +166,7 @@ class TestMigrationPreservation:
         db._insert_concept(wid, "Neural Networks")
 
         from orivellum.capabilities.learning import list_concepts
+
         concepts = list_concepts(db, wid)
         assert len(concepts) == 1
         assert concepts[0]["subject"] == "Neural Networks"
@@ -195,14 +199,13 @@ class TestMigrationPreservation:
         _record_mastery(db, cid, 0.9, "STEP_FORWARD", "Good")
 
         # Legacy mastery row must still be intact
-        row = db._conn.execute(
-            "SELECT score FROM learning_mastery WHERE id=?", (lmid,)
-        ).fetchone()
+        row = db._conn.execute("SELECT score FROM learning_mastery WHERE id=?", (lmid,)).fetchone()
         assert row is not None
         assert row["score"] == 0.8
 
 
 # ─── Cross-Work rejection tests ────────────────────────────────────────────────
+
 
 class TestCrossWorkRejection:
     """Verify that a concept from Work A cannot be accessed via Work B's endpoints."""
@@ -224,7 +227,6 @@ class TestCrossWorkRejection:
 
     def test_get_question_rejects_foreign_concept(self):
         """get_question with a concept_id from another work must not return that concept's data."""
-        from orivellum.capabilities.learning import get_question
 
         db = _FakeDB()
         wid_a = db._insert_work("Work A")
@@ -232,9 +234,7 @@ class TestCrossWorkRejection:
         cid_a = db._insert_concept(wid_a, "Attention Mechanisms")
 
         # Retrieve work_id from concept directly to simulate what the endpoint checks
-        row = db._conn.execute(
-            "SELECT work_id FROM work_concepts WHERE id=?", (cid_a,)
-        ).fetchone()
+        row = db._conn.execute("SELECT work_id FROM work_concepts WHERE id=?", (cid_a,)).fetchone()
         assert row["work_id"] != wid_b, "concept_a must belong to work_a, not work_b"
 
     def test_record_mastery_does_not_bleed_between_works(self):
@@ -259,6 +259,7 @@ class TestCrossWorkRejection:
 
 # ─── Streak / routing logic ────────────────────────────────────────────────────
 
+
 class TestStreakAndRouting:
     """Verify _record_mastery streak mechanics and graduation threshold."""
 
@@ -272,6 +273,7 @@ class TestStreakAndRouting:
         _record_mastery(db, cid, 0.8, "STAY_HERE", "Good")
         # consecutive_passes is stored in work_mastery and surfaced via list_concepts
         from orivellum.capabilities.learning import list_concepts
+
         concepts = list_concepts(db, wid)
         assert concepts[0]["consecutive_passes"] == 1
 
@@ -305,6 +307,7 @@ class TestStreakAndRouting:
 
 # ─── Offline-fallback tests ────────────────────────────────────────────────────
 
+
 class TestOfflineFallback:
     """Verify graceful fallback when AI endpoint is unreachable."""
 
@@ -317,10 +320,11 @@ class TestOfflineFallback:
         cid = db._insert_concept(wid, "Backpropagation")
 
         result = assess_answer(
-            db, cid,
+            db,
+            cid,
             "What is backpropagation?",
             "It computes gradients.",
-            "http://localhost:1",   # unreachable
+            "http://localhost:1",  # unreachable
             "any-model",
         )
         assert result["score"] == pytest.approx(0.5)
@@ -342,12 +346,14 @@ class TestOfflineFallback:
 
 # ─── assess_answer JSON-robustness tests ──────────────────────────────────────
 
+
 class TestAssessAnswerJsonRobustness:
     """Verify Assessment Critic handles unexpected AI JSON gracefully."""
 
     def _mock_call(self, return_text: str):
         """Patch orivellum.capabilities.learning._call to return a fixed string."""
         import orivellum.capabilities.learning as lm
+
         return patch.object(lm, "_call", return_value=return_text)
 
     def test_out_of_range_score_is_clamped(self):
@@ -406,6 +412,7 @@ class TestAssessAnswerJsonRobustness:
 
 # ─── Multi-prerequisite graph tests ───────────────────────────────────────────
 
+
 class TestPrereqGraph:
     """Verify the v94 multi-prerequisite dependency graph helpers."""
 
@@ -425,8 +432,8 @@ class TestPrereqGraph:
 
         db = _FakeDB()
         wid = db._insert_work()
-        algebra  = db._insert_concept(wid, "Algebra")
-        trig     = db._insert_concept(wid, "Trigonometry")
+        algebra = db._insert_concept(wid, "Algebra")
+        trig = db._insert_concept(wid, "Trigonometry")
         calculus = db._insert_concept(wid, "Calculus")
 
         db._insert_prereq(calculus, algebra)
@@ -450,8 +457,8 @@ class TestPrereqGraph:
         from orivellum.capabilities.learning import is_concept_eligible
 
         db = _FakeDB()
-        wid      = db._insert_work()
-        algebra  = db._insert_concept(wid, "Algebra")
+        wid = db._insert_work()
+        algebra = db._insert_concept(wid, "Algebra")
         calculus = db._insert_concept(wid, "Calculus")
         db._insert_prereq(calculus, algebra)
 
@@ -460,30 +467,30 @@ class TestPrereqGraph:
 
     def test_is_concept_eligible_true_when_all_prereqs_started(self):
         """A concept must be eligible when all prerequisites have at least one pass."""
-        from orivellum.capabilities.learning import is_concept_eligible, _record_mastery
+        from orivellum.capabilities.learning import _record_mastery, is_concept_eligible
 
         db = _FakeDB()
-        wid      = db._insert_work()
-        algebra  = db._insert_concept(wid, "Algebra")
-        trig     = db._insert_concept(wid, "Trigonometry")
+        wid = db._insert_work()
+        algebra = db._insert_concept(wid, "Algebra")
+        trig = db._insert_concept(wid, "Trigonometry")
         calculus = db._insert_concept(wid, "Calculus")
         db._insert_prereq(calculus, algebra)
         db._insert_prereq(calculus, trig)
 
         # Start both prerequisites
         _record_mastery(db, algebra, 0.8, "STAY_HERE", "Good")
-        _record_mastery(db, trig,    0.8, "STAY_HERE", "Good")
+        _record_mastery(db, trig, 0.8, "STAY_HERE", "Good")
 
         assert is_concept_eligible(db, calculus) is True
 
     def test_is_concept_eligible_false_when_only_one_prereq_started(self):
         """A concept must be ineligible when at least one prerequisite has zero passes."""
-        from orivellum.capabilities.learning import is_concept_eligible, _record_mastery
+        from orivellum.capabilities.learning import _record_mastery, is_concept_eligible
 
         db = _FakeDB()
-        wid      = db._insert_work()
-        algebra  = db._insert_concept(wid, "Algebra")
-        trig     = db._insert_concept(wid, "Trigonometry")
+        wid = db._insert_work()
+        algebra = db._insert_concept(wid, "Algebra")
+        trig = db._insert_concept(wid, "Trigonometry")
         calculus = db._insert_concept(wid, "Calculus")
         db._insert_prereq(calculus, algebra)
         db._insert_prereq(calculus, trig)
@@ -498,10 +505,10 @@ class TestPrereqGraph:
         from orivellum.capabilities.learning import get_blocking_concepts
 
         db = _FakeDB()
-        wid      = db._insert_work()
-        algebra  = db._insert_concept(wid, "Algebra")
+        wid = db._insert_work()
+        algebra = db._insert_concept(wid, "Algebra")
         calculus = db._insert_concept(wid, "Calculus")
-        diffeq   = db._insert_concept(wid, "Differential Equations")
+        diffeq = db._insert_concept(wid, "Differential Equations")
         db._insert_prereq(calculus, algebra)
         db._insert_prereq(diffeq, algebra)
 
@@ -510,22 +517,22 @@ class TestPrereqGraph:
 
     def test_list_concepts_includes_graph_fields(self):
         """list_concepts must annotate each concept with prereq_ids, prereq_labels, prereqs_met, blocking_count."""
-        from orivellum.capabilities.learning import list_concepts, _record_mastery
+        from orivellum.capabilities.learning import _record_mastery, list_concepts
 
         db = _FakeDB()
-        wid      = db._insert_work()
-        algebra  = db._insert_concept(wid, "Algebra")
+        wid = db._insert_work()
+        algebra = db._insert_concept(wid, "Algebra")
         calculus = db._insert_concept(wid, "Calculus")
         db._insert_prereq(calculus, algebra)
 
         # Initially calculus is locked
         concepts = {c["id"]: c for c in list_concepts(db, wid)}
-        assert concepts[algebra]["prereq_ids"]    == []
-        assert concepts[algebra]["prereqs_met"]   is True
-        assert concepts[algebra]["blocking_count"] == 1       # calculus depends on it
-        assert concepts[calculus]["prereq_ids"]   == [algebra]
+        assert concepts[algebra]["prereq_ids"] == []
+        assert concepts[algebra]["prereqs_met"] is True
+        assert concepts[algebra]["blocking_count"] == 1  # calculus depends on it
+        assert concepts[calculus]["prereq_ids"] == [algebra]
         assert concepts[calculus]["prereq_labels"] == ["Algebra"]
-        assert concepts[calculus]["prereqs_met"]  is False
+        assert concepts[calculus]["prereqs_met"] is False
 
         # Start algebra — calculus should become eligible
         _record_mastery(db, algebra, 0.8, "STAY_HERE", "Good")
@@ -537,8 +544,8 @@ class TestPrereqGraph:
         from orivellum.capabilities.learning import next_concept_id
 
         db = _FakeDB()
-        wid      = db._insert_work()
-        algebra  = db._insert_concept(wid, "Algebra")
+        wid = db._insert_work()
+        algebra = db._insert_concept(wid, "Algebra")
         calculus = db._insert_concept(wid, "Calculus")
         db._insert_prereq(calculus, algebra)
 
@@ -552,8 +559,8 @@ class TestPrereqGraph:
 
         db = _FakeDB()
         wid = db._insert_work()
-        a   = db._insert_concept(wid, "A")
-        b   = db._insert_concept(wid, "B")
+        a = db._insert_concept(wid, "A")
+        b = db._insert_concept(wid, "B")
         # Artificial circular / all-locked scenario
         db._insert_prereq(a, b)
         db._insert_prereq(b, a)
@@ -569,8 +576,8 @@ class TestPrereqGraph:
         that the total number of work_mastery / prereq-table reads is bounded by a
         small constant (3) regardless of the number of concepts.
         """
+
         from orivellum.capabilities.learning import list_concepts
-        import sqlite3
 
         db = _FakeDB()
         wid = db._insert_work()
@@ -581,6 +588,7 @@ class TestPrereqGraph:
 
         class _CountingConn:
             """Thin proxy that counts hot-path execute() calls."""
+
             def __init__(self, conn: sqlite3.Connection):
                 object.__setattr__(self, "_conn", conn)
 
@@ -608,11 +616,11 @@ class TestPrereqGraph:
 
     def test_compute_route_step_backward_picks_weakest_prereq(self):
         """_compute_route must suggest STEP_BACKWARD when any prerequisite is unmastered."""
-        from orivellum.capabilities.learning import _compute_route, _record_mastery
+        from orivellum.capabilities.learning import _compute_route
 
         db = _FakeDB()
-        wid      = db._insert_work()
-        algebra  = db._insert_concept(wid, "Algebra")
+        wid = db._insert_work()
+        algebra = db._insert_concept(wid, "Algebra")
         calculus = db._insert_concept(wid, "Calculus")
         db._insert_prereq(calculus, algebra)
 

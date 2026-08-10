@@ -8,19 +8,20 @@ Covers:
 - retry_job raises on non-failed / missing / no-callable jobs
 - POST /api/system/jobs/{id}/retry returns expected HTTP codes
 """
+
 from __future__ import annotations
 
-import time
 import threading
+import time
 import unittest
-from unittest.mock import patch
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _reset_jobs():
     """Clear the module-level _jobs deque between tests."""
     from orivellum.api.executor import _jobs, _jobs_lock
+
     with _jobs_lock:
         _jobs.clear()
 
@@ -28,11 +29,13 @@ def _reset_jobs():
 def _submit_and_wait(fn, *args, kind="background", label="", timeout=2.0, **kwargs):
     """Submit via _tracked_submit and block until the future completes."""
     from orivellum.api.executor import _tracked_submit
+
     future = _tracked_submit(fn, *args, kind=kind, label=label, **kwargs)
     future.result(timeout=timeout)
 
 
 # ── TestTrackedSubmit ─────────────────────────────────────────────────────────
+
 
 class TestTrackedSubmit(unittest.TestCase):
     """_tracked_submit records jobs and updates state correctly."""
@@ -44,6 +47,7 @@ class TestTrackedSubmit(unittest.TestCase):
         _submit_and_wait(lambda: None, kind="test", label="noop")
 
         from orivellum.api.executor import get_recent_jobs
+
         jobs = get_recent_jobs()
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["state"], "done")
@@ -55,6 +59,7 @@ class TestTrackedSubmit(unittest.TestCase):
             raise ValueError("simulated failure")
 
         from orivellum.api.executor import _tracked_submit
+
         future = _tracked_submit(_bad, kind="test", label="will_fail")
         # consume the exception
         try:
@@ -63,6 +68,7 @@ class TestTrackedSubmit(unittest.TestCase):
             pass
 
         from orivellum.api.executor import get_recent_jobs
+
         jobs = get_recent_jobs()
         failed = [j for j in jobs if j["state"] == "failed"]
         self.assertEqual(len(failed), 1)
@@ -73,6 +79,7 @@ class TestTrackedSubmit(unittest.TestCase):
         _submit_and_wait(lambda: time.sleep(0.05), kind="test", label="timed")
 
         from orivellum.api.executor import get_recent_jobs
+
         jobs = get_recent_jobs()
         j = jobs[0]
         self.assertIsNotNone(j["finished_at"])
@@ -82,6 +89,7 @@ class TestTrackedSubmit(unittest.TestCase):
         _submit_and_wait(lambda: None, kind="test", label="check_private")
 
         from orivellum.api.executor import get_recent_jobs
+
         jobs = get_recent_jobs()
         self.assertGreater(len(jobs), 0)
         for j in jobs:
@@ -97,6 +105,7 @@ class TestTrackedSubmit(unittest.TestCase):
         _submit_and_wait(lambda: None, kind="test", label="has_retry_fn")
 
         from orivellum.api.executor import _jobs, _jobs_lock
+
         with _jobs_lock:
             entries = list(_jobs)
         self.assertEqual(len(entries), 1)
@@ -107,6 +116,7 @@ class TestTrackedSubmit(unittest.TestCase):
 
 # ── TestRetryJob ──────────────────────────────────────────────────────────────
 
+
 class TestRetryJob(unittest.TestCase):
     """retry_job() re-submits a failed job and creates a new entry."""
 
@@ -115,10 +125,12 @@ class TestRetryJob(unittest.TestCase):
 
     def _make_failed_job(self, label="failing_job"):
         """Submit a job that always fails and return its id."""
+
         def _bad():
             raise RuntimeError("intentional test error")
 
         from orivellum.api.executor import _tracked_submit
+
         future = _tracked_submit(_bad, kind="test", label=label)
         try:
             future.result(timeout=2.0)
@@ -126,6 +138,7 @@ class TestRetryJob(unittest.TestCase):
             pass
 
         from orivellum.api.executor import get_recent_jobs
+
         jobs = get_recent_jobs()
         failed = [j for j in jobs if j["state"] == "failed" and j["label"] == label]
         self.assertEqual(len(failed), 1, "Expected exactly one failed job")
@@ -134,7 +147,8 @@ class TestRetryJob(unittest.TestCase):
     def test_retry_creates_new_entry(self):
         job_id = self._make_failed_job()
 
-        from orivellum.api.executor import retry_job, get_recent_jobs
+        from orivellum.api.executor import get_recent_jobs, retry_job
+
         retry_future = retry_job(job_id)
         # The retry itself will also fail (same fn) — consume the exception
         try:
@@ -148,6 +162,7 @@ class TestRetryJob(unittest.TestCase):
 
     def test_retry_raises_key_error_for_unknown_id(self):
         from orivellum.api.executor import retry_job
+
         with self.assertRaises(KeyError):
             retry_job("nonexistent-id-00000000-0000-0000-0000-000000000000")
 
@@ -155,6 +170,7 @@ class TestRetryJob(unittest.TestCase):
         _submit_and_wait(lambda: None, kind="test", label="done_job")
 
         from orivellum.api.executor import get_recent_jobs, retry_job
+
         done = [j for j in get_recent_jobs() if j["state"] == "done"]
         self.assertEqual(len(done), 1)
 
@@ -163,8 +179,9 @@ class TestRetryJob(unittest.TestCase):
 
     def test_retry_raises_runtime_error_when_no_callable_stored(self):
         """Simulates a job entry that predates retry support (no _retry_fn)."""
+        import time as _time
+
         from orivellum.api.executor import _jobs, _jobs_lock, retry_job
-        import uuid, time as _time
 
         entry = {
             "id": "no-callable-id",
@@ -174,7 +191,7 @@ class TestRetryJob(unittest.TestCase):
             "started_at": _time.time(),
             "finished_at": _time.time(),
             "error": "old error",
-            "_retry_fn": None,   # explicitly absent
+            "_retry_fn": None,  # explicitly absent
             "_retry_args": (),
             "_retry_kwargs": {},
         }
@@ -187,7 +204,8 @@ class TestRetryJob(unittest.TestCase):
     def test_retry_preserves_kind(self):
         job_id = self._make_failed_job(label="typed_job")
 
-        from orivellum.api.executor import retry_job, get_recent_jobs, _jobs, _jobs_lock
+        from orivellum.api.executor import _jobs, _jobs_lock, get_recent_jobs, retry_job
+
         # Peek at the internal entry to confirm kind
         with _jobs_lock:
             orig = next(j for j in _jobs if j["id"] == job_id)
@@ -207,6 +225,7 @@ class TestRetryJob(unittest.TestCase):
 
 # ── TestRetryEndpoint ─────────────────────────────────────────────────────────
 
+
 class TestRetryEndpoint(unittest.TestCase):
     """POST /api/system/jobs/{id}/retry returns expected HTTP status codes."""
 
@@ -214,47 +233,55 @@ class TestRetryEndpoint(unittest.TestCase):
         _reset_jobs()
 
     def _client(self):
-        import os, tempfile
+        import tempfile
+
+        from fastapi.testclient import TestClient
+
+        from orivellum.api import _deps
         from orivellum.configuration.config import OrivellumConfig
         from orivellum.database.db import OrivellumDB
-        from orivellum.api import _deps
-        from fastapi.testclient import TestClient
-        from tests.conftest import TEST_API_KEY, AUTH_HEADERS
+        from tests.conftest import AUTH_HEADERS
 
         with tempfile.TemporaryDirectory() as tmp:
             cfg = OrivellumConfig(data_dir=tmp)
             db = OrivellumDB.open(cfg.db_path)
             _deps.init(db=db, cfg=cfg)
             from orivellum.api.app import create_app
+
             app = create_app()
             client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             yield client
 
     def test_retry_unknown_id_returns_404(self):
-        from tests.conftest import AUTH_HEADERS
+        import tempfile
+
         from fastapi.testclient import TestClient
-        import os, tempfile
+
+        from orivellum.api import _deps
         from orivellum.configuration.config import OrivellumConfig
         from orivellum.database.db import OrivellumDB
-        from orivellum.api import _deps
+        from tests.conftest import AUTH_HEADERS
 
         with tempfile.TemporaryDirectory() as tmp:
             cfg = OrivellumConfig(data_dir=tmp)
             db = OrivellumDB.open(cfg.db_path)
             _deps.init(db=db, cfg=cfg)
             from orivellum.api.app import create_app
+
             app = create_app()
             client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
             r = client.post("/api/system/jobs/no-such-id/retry")
             self.assertEqual(r.status_code, 404)
 
     def test_retry_done_job_returns_409(self):
-        from tests.conftest import AUTH_HEADERS
+        import tempfile
+
         from fastapi.testclient import TestClient
-        import os, tempfile
+
+        from orivellum.api import _deps
         from orivellum.configuration.config import OrivellumConfig
         from orivellum.database.db import OrivellumDB
-        from orivellum.api import _deps
+        from tests.conftest import AUTH_HEADERS
 
         with tempfile.TemporaryDirectory() as tmp:
             cfg = OrivellumConfig(data_dir=tmp)
@@ -265,24 +292,28 @@ class TestRetryEndpoint(unittest.TestCase):
             _submit_and_wait(lambda: None, kind="test", label="done_for_endpoint")
 
             from orivellum.api.executor import get_recent_jobs
+
             done = [j for j in get_recent_jobs() if j["state"] == "done"]
             self.assertGreater(len(done), 0)
             done_id = done[0]["id"]
 
             from orivellum.api.app import create_app
+
             app = create_app()
             client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
             r = client.post(f"/api/system/jobs/{done_id}/retry")
             self.assertEqual(r.status_code, 409)
 
     def test_retry_failed_job_returns_200(self):
-        from tests.conftest import AUTH_HEADERS
+        import tempfile
+
         from fastapi.testclient import TestClient
-        import os, tempfile
-        from orivellum.configuration.config import OrivellumConfig
-        from orivellum.database.db import OrivellumDB
+
         from orivellum.api import _deps
         from orivellum.api.executor import _tracked_submit
+        from orivellum.configuration.config import OrivellumConfig
+        from orivellum.database.db import OrivellumDB
+        from tests.conftest import AUTH_HEADERS
 
         with tempfile.TemporaryDirectory() as tmp:
             cfg = OrivellumConfig(data_dir=tmp)
@@ -299,11 +330,13 @@ class TestRetryEndpoint(unittest.TestCase):
                 pass
 
             from orivellum.api.executor import get_recent_jobs
+
             failed = [j for j in get_recent_jobs() if j["state"] == "failed"]
             self.assertGreater(len(failed), 0)
             job_id = failed[0]["id"]
 
             from orivellum.api.app import create_app
+
             app = create_app()
             client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
             r = client.post(f"/api/system/jobs/{job_id}/retry")

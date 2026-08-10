@@ -6,6 +6,7 @@ Runs: extract → chunk → harvest → update document readiness.
 This function is designed to be called in a background thread so the
 HTTP response returns immediately after file storage.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,14 +42,25 @@ def _explode_zip_into_documents(
     lib_root = Path(cfg.data_dir) / "library"
 
     _EXT_KIND = {
-        ".pdf": "pdf", ".docx": "docx", ".doc": "docx",
-        ".xlsx": "excel", ".xls": "excel", ".csv": "csv",
-        ".pptx": "pptx", ".ppt": "pptx",
-        ".txt": "text", ".md": "markdown",
-        ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
-        ".html": "html", ".htm": "html",
+        ".pdf": "pdf",
+        ".docx": "docx",
+        ".doc": "docx",
+        ".xlsx": "excel",
+        ".xls": "excel",
+        ".csv": "csv",
+        ".pptx": "pptx",
+        ".ppt": "pptx",
+        ".txt": "text",
+        ".md": "markdown",
+        ".png": "image",
+        ".jpg": "image",
+        ".jpeg": "image",
+        ".webp": "image",
+        ".html": "html",
+        ".htm": "html",
         ".json": "json",
-        ".rtf": "file", ".epub": "file",
+        ".rtf": "file",
+        ".epub": "file",
     }
 
     children: list[str] = []
@@ -59,7 +71,11 @@ def _explode_zip_into_documents(
             for name in members:
                 basename = Path(name).name
                 # Skip macOS metadata and hidden files
-                if name.startswith("__MACOSX/") or basename.startswith("._") or basename.startswith("."):
+                if (
+                    name.startswith("__MACOSX/")
+                    or basename.startswith("._")
+                    or basename.startswith(".")
+                ):
                     continue
                 # Skip nested ZIPs (only go one level deep)
                 if Path(name).suffix.lower() == ".zip":
@@ -93,6 +109,7 @@ def _explode_zip_into_documents(
                 # Derive clean title from filename (strip leading index digits like "01_")
                 stem = Path(basename).stem
                 import re as _re
+
                 title = _re.sub(r"^(\d+[_\-\s]+)", "", stem).strip() or stem
                 if not title:
                     title = stem
@@ -116,6 +133,7 @@ def _explode_zip_into_documents(
                 from orivellum.capabilities.classify import (
                     classify_object as _classify,
                 )
+
                 _child_clf = _classify(basename, kind=kind, source_path=name)
                 _child_tier = _child_clf.tier.value
 
@@ -140,6 +158,7 @@ def _explode_zip_into_documents(
                 # so it is visible to the recall index ("find everything I've imported").
                 try:
                     from orivellum.capabilities.persist import record_provenance as _rp
+
                     _rp(doc["id"], "zip_extract", db, origin_id=doc_id)
                 except Exception as _prov_exc:
                     logger.warning("ZIP provenance record failed for %s: %s", doc["id"], _prov_exc)
@@ -147,7 +166,9 @@ def _explode_zip_into_documents(
                 # Skip knowledge harvest for ARTIFACT/SYSTEM children — they
                 # must never become knowledge nodes or Works.
                 if _child_clf.tier in _EFW:
-                    logger.debug("ZIP child %s is tier=%s — skipping harvest", basename, _child_tier)
+                    logger.debug(
+                        "ZIP child %s is tier=%s — skipping harvest", basename, _child_tier
+                    )
                     continue
 
                 # Queue processing via the shared tracked executor so work is
@@ -155,9 +176,17 @@ def _explode_zip_into_documents(
                 # unlimited threads.  submit_bg never raises and handles the
                 # executor-not-initialised (tests) fallback internally.
                 from orivellum.api.executor import submit_bg as _submit_zip
+
                 _submit_zip(
-                    process_document, doc["id"], str(file_path), kind, work_id, title, db,
-                    kind="pipeline", label=f"process:{doc['id'][:8]}",
+                    process_document,
+                    doc["id"],
+                    str(file_path),
+                    kind,
+                    work_id,
+                    title,
+                    db,
+                    kind="pipeline",
+                    label=f"process:{doc['id'][:8]}",
                 )
 
     except zipfile.BadZipFile as exc:
@@ -178,6 +207,7 @@ def _explode_zip_into_documents(
     from orivellum.capabilities.classify import (
         classify_object as _clf_arch,
     )
+
     _archive_tier = _clf_arch(zip_title, source_path=zip_title).tier
     if work_id is None and len(children) > 2 and _archive_tier not in _EFW:
         try:
@@ -203,12 +233,14 @@ def _explode_zip_into_documents(
                             "work_assignment",
                             f"Archive \u201c{zip_title}\u201d produced {len(children)} documents. "
                             f"Group them into a new Work \u201c{proposed}\u201d?",
-                            _json.dumps({
-                                "archive_doc_id": doc_id,
-                                "doc_ids": children,
-                                "proposed_title": proposed,
-                                "confidence": 0.6,
-                            }),
+                            _json.dumps(
+                                {
+                                    "archive_doc_id": doc_id,
+                                    "doc_ids": children,
+                                    "proposed_title": proposed,
+                                    "confidence": 0.6,
+                                }
+                            ),
                             _dt.now(UTC).isoformat(),
                         ),
                     )
@@ -275,26 +307,32 @@ def _suggest_version_relationships(
                                 f"share {round(sim * 100)}\u202f% of content. "
                                 "Is one derived from the other?"
                             ),
-                            _json.dumps({
-                                "doc_a_id": doc_id,
-                                "doc_b_id": other_id,
-                                "doc_a_title": title_a,
-                                "doc_b_title": title_b,
-                                "confidence": round(sim, 4),
-                                "similarity": round(sim, 4),
-                            }),
+                            _json.dumps(
+                                {
+                                    "doc_a_id": doc_id,
+                                    "doc_b_id": other_id,
+                                    "doc_a_title": title_a,
+                                    "doc_b_title": title_b,
+                                    "confidence": round(sim, 4),
+                                    "similarity": round(sim, 4),
+                                }
+                            ),
                             _dt.now(UTC).isoformat(),
                         ),
                     )
                     db._conn.commit()
                     logger.info(
                         "version_relationship suggestion created: %s \u2194 %s  sim=%.2f",
-                        doc_id[:8], other_id[:8], sim,
+                        doc_id[:8],
+                        other_id[:8],
+                        sim,
                     )
         except Exception as exc:  # noqa: BLE001 — suggestion is best-effort
             logger.debug(
                 "version_relationship suggestion failed %s\u2194%s: %s",
-                doc_id[:8], other_id[:8], exc,
+                doc_id[:8],
+                other_id[:8],
+                exc,
             )
 
 
@@ -319,6 +357,7 @@ def resolve_file_path(file_path: str, doc_id: str, db: OrivellumDB) -> Path | No
     # content_path is relative to data_dir/library
     try:
         from orivellum.api._deps import get_config
+
         cfg = get_config()
         lib_root = Path(cfg.data_dir) / "library"
         fallback = lib_root / content_path
@@ -330,9 +369,9 @@ def resolve_file_path(file_path: str, doc_id: str, db: OrivellumDB) -> Path | No
     return None
 
 
-def process_document(doc_id: str, file_path: str, kind: str,
-                     work_id: str | None, title: str,
-                     db: OrivellumDB) -> None:
+def process_document(
+    doc_id: str, file_path: str, kind: str, work_id: str | None, title: str, db: OrivellumDB
+) -> None:
     """Extract, chunk, and harvest a single document.
 
     Safe to call from a daemon thread — catches and logs all exceptions.
@@ -346,9 +385,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
             msg = f"File not found: {file_path}"
             logger.warning("Doc %s — %s", doc_id, msg)
             db.add_extraction_warning(doc_id, kind="file_not_found", detail=msg)
-            db.update_document_extracted(doc_id, "", 0,
-                                         readiness="error",
-                                         error_message=msg)
+            db.update_document_extracted(doc_id, "", 0, readiness="error", error_message=msg)
             return
 
         # ZIP archives: explode into individual child documents instead of
@@ -367,6 +404,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
             # _explode_zip_into_documents; this row covers the archive doc_id.)
             try:
                 from orivellum.capabilities.persist import record_provenance as _rp_zip
+
                 _zip_rec = db.get_document(doc_id)
                 _zip_sha = (_zip_rec or {}).get("sha256")
                 _rp_zip(doc_id, "upload", db, origin_id=_zip_sha, work_id=work_id)
@@ -374,20 +412,30 @@ def process_document(doc_id: str, file_path: str, kind: str,
                 logger.debug("ZIP upload provenance non-fatal for %s: %s", doc_id, _prov_exc)
             try:
                 import json as _jz
+
                 with db._lock:
                     db._conn.execute(
                         "UPDATE documents SET meta=? WHERE id=?",
-                        (_jz.dumps({
-                            "zip_exploded": True,
-                            "zip_child_count": len(children),
-                            "zip_children": children,
-                        }), doc_id),
+                        (
+                            _jz.dumps(
+                                {
+                                    "zip_exploded": True,
+                                    "zip_child_count": len(children),
+                                    "zip_children": children,
+                                }
+                            ),
+                            doc_id,
+                        ),
                     )
                     db._conn.commit()
                 try:
-                    db.audit("document.meta_updated", object_id=doc_id,
-                             object_type="document", actor="system",
-                             detail=f"zip meta {len(children)} children")
+                    db.audit(
+                        "document.meta_updated",
+                        object_id=doc_id,
+                        object_type="document",
+                        actor="system",
+                        detail=f"zip meta {len(children)} children",
+                    )
                 except Exception:
                     pass
             except Exception:
@@ -411,26 +459,32 @@ def process_document(doc_id: str, file_path: str, kind: str,
             # Guard against test mocks: ensure meta is a real dict before calling .get()
             _meta = result.meta if isinstance(result.meta, dict) else {}
             meta_msg = _meta.get("user_message") or ""
-            msg = str(meta_msg) if meta_msg else f"Extraction produced no readable text (kind={kind})"
+            msg = (
+                str(meta_msg) if meta_msg else f"Extraction produced no readable text (kind={kind})"
+            )
             logger.warning("Doc %s — %s", doc_id, msg)
             db.add_extraction_warning(doc_id, kind="no_readable_text", detail=msg)
-            db.update_document_extracted(doc_id, "", 0,
-                                         readiness="no_text",
-                                         error_message=msg)
+            db.update_document_extracted(doc_id, "", 0, readiness="no_text", error_message=msg)
             return
 
         # Store ZIP manifest / extractor meta so the UI can show per-member status
         if result.meta:
             try:
                 import json as _json
+
                 with db._lock:
                     db._conn.execute(
                         "UPDATE documents SET meta=? WHERE id=?",
                         (_json.dumps(result.meta), doc_id),
                     )
                     db._conn.commit()
-                db.audit("document.meta_updated", object_id=doc_id, object_type="document",
-                         actor="system", detail="extraction meta")
+                db.audit(
+                    "document.meta_updated",
+                    object_id=doc_id,
+                    object_type="document",
+                    actor="system",
+                    detail="extraction meta",
+                )
             except Exception as meta_exc:
                 logger.debug("Could not persist extraction meta for %s: %s", doc_id, meta_exc)
 
@@ -443,10 +497,12 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # released document is never re-quarantined on reprocess.
         try:
             from orivellum.capabilities import shield as _shield
+
             _prev = db.get_document(doc_id) or {}
             _prev_meta = _prev.get("meta") or {}
             if isinstance(_prev_meta, str):
                 import json as _json2
+
                 try:
                     _prev_meta = _json2.loads(_prev_meta or "{}")
                 except Exception:
@@ -457,7 +513,8 @@ def process_document(doc_id: str, file_path: str, kind: str,
                 if not _scr.clean:
                     logger.warning(
                         "Doc %s QUARANTINED — %d injection screen finding(s)",
-                        doc_id, len(_scr.findings),
+                        doc_id,
+                        len(_scr.findings),
                     )
                     db.set_document_quarantine(doc_id, 1, findings=_scr.findings)
                     try:
@@ -470,20 +527,22 @@ def process_document(doc_id: str, file_path: str, kind: str,
                             db._conn.execute(
                                 "DELETE FROM vectors WHERE object_type='chunk' "
                                 "AND object_id IN (SELECT id FROM chunks WHERE doc_id=?)",
-                                (doc_id,))
+                                (doc_id,),
+                            )
                             db._conn.execute(
                                 "DELETE FROM vectors WHERE object_type='knowledge' "
                                 "AND object_id IN "
                                 "(SELECT id FROM knowledge WHERE source_doc_id=?)",
-                                (doc_id,))
+                                (doc_id,),
+                            )
                             db._conn.commit()
                         db.delete_chunks(doc_id)
                     except Exception as _cleanup_exc:
                         # Retrieval-side quarantined filters still exclude this
                         # doc even if cleanup fails — but make it visible.
                         logger.warning(
-                            "Quarantine cleanup for doc %s incomplete: %s",
-                            doc_id, _cleanup_exc)
+                            "Quarantine cleanup for doc %s incomplete: %s", doc_id, _cleanup_exc
+                        )
                     db.update_document_extracted(
                         doc_id,
                         extracted_text=result.full_text,
@@ -493,15 +552,15 @@ def process_document(doc_id: str, file_path: str, kind: str,
                     return  # isolated: no chunks, no harvest, no embeddings
         except Exception as _shield_exc:
             # The shield must never break ingestion of legitimate documents.
-            logger.warning("Ingestion shield failed for doc %s (non-fatal): %s",
-                           doc_id, _shield_exc)
+            logger.warning(
+                "Ingestion shield failed for doc %s (non-fatal): %s", doc_id, _shield_exc
+            )
 
         # Step 2: chunk and index
         chunk_and_store(result, doc_id, db)
 
         # Step 3: harvest knowledge (rule-based, always runs)
-        harvest(result, doc_id=doc_id, work_id=work_id,
-                doc_title=title, db=db)
+        harvest(result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db)
 
         # Step 4: mark document ready — happens BEFORE the optional LLM step so
         # the document is usable even if the AI service is slow or unavailable.
@@ -516,6 +575,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # Browser notification: the PWA polls this feed and alerts the user
         # even when the tab is backgrounded (replaces retired mobile push).
         from orivellum.api import notifications as _notif
+
         _notif.emit(
             "document_ready",
             "Document ready",
@@ -528,6 +588,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # sha256 — the most stable identifier for the physical file.
         try:
             from orivellum.capabilities.persist import record_provenance as _rp
+
             _doc_rec = db.get_document(doc_id)
             _sha = (_doc_rec or {}).get("sha256")
             _rp(doc_id, "upload", db, origin_id=_sha, work_id=work_id)
@@ -545,26 +606,28 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # endpoint is down), generate_context_prefixes_for_doc() returns 0
         # silently and embed_chunks_for_doc() falls through to bare-text
         # embedding — preserving the pre-existing behaviour.
-        def _enrich_and_embed(doc_id: str, db: OrivellumDB,
-                              title: str, text_excerpt: str) -> None:
+        def _enrich_and_embed(doc_id: str, db: OrivellumDB, title: str, text_excerpt: str) -> None:
             try:
                 from orivellum.capabilities.chunking import generate_context_prefixes_for_doc
+
                 generate_context_prefixes_for_doc(
-                    doc_id, db,
+                    doc_id,
+                    db,
                     doc_title=title,
                     doc_text_excerpt=text_excerpt,
                 )
             except Exception as _pfx_exc:
-                logger.debug("Context-prefix generation non-fatal for %s: %s",
-                             doc_id, _pfx_exc)
+                logger.debug("Context-prefix generation non-fatal for %s: %s", doc_id, _pfx_exc)
             try:
                 from orivellum.capabilities.embeddings import embed_chunks_for_doc
+
                 embed_chunks_for_doc(doc_id, db)
             except Exception as _emb_exc:
                 logger.debug("Embedding non-fatal for %s: %s", doc_id, _emb_exc)
 
         try:
             from orivellum.api.executor import get_executor as _gex_emb
+
             _text_excerpt = result.full_text[:2000] if result.full_text else ""
             _gex_emb().submit(_enrich_and_embed, doc_id, db, title, _text_excerpt)
         except Exception as _emb_exc:
@@ -578,14 +641,19 @@ def process_document(doc_id: str, file_path: str, kind: str,
         _has_chapters = False
         try:
             from orivellum.capabilities.chapters import extract_chapters
+
             _text_for_chapters = result.full_text
             if _text_for_chapters:
                 _chapters = extract_chapters(_text_for_chapters)
                 if _chapters:
                     _chapter_dicts = [
-                        {"seq": c.seq, "level": c.level,
-                         "title": c.title, "text": c.text,
-                         "meta": {"scene_count": c.scene_count}}
+                        {
+                            "seq": c.seq,
+                            "level": c.level,
+                            "title": c.title,
+                            "text": c.text,
+                            "meta": {"scene_count": c.scene_count},
+                        }
                         for c in _chapters
                     ]
                     _n = db.upsert_book_chapters(doc_id, work_id, _chapter_dicts)
@@ -605,6 +673,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
                 compute_and_store,
                 find_and_record_near_duplicates,
             )
+
             _text_for_dedup = result.full_text
             if _text_for_dedup:
                 _sig = compute_and_store(doc_id, _text_for_dedup, db)
@@ -619,11 +688,14 @@ def process_document(doc_id: str, file_path: str, kind: str,
                                 from orivellum.capabilities.auto_dedup import (
                                     auto_resolve_import_hits,
                                 )
+
                                 _ar = auto_resolve_import_hits(doc_id, _hits, db)
                                 if _ar["superseded"] or _ar["versioned"]:
                                     logger.info(
                                         "auto_dedup (import): %d superseded, %d versioned for doc %s",
-                                        _ar["superseded"], _ar["versioned"], doc_id,
+                                        _ar["superseded"],
+                                        _ar["versioned"],
+                                        doc_id,
                                     )
                             except Exception as _ar_exc:
                                 logger.debug("auto_dedup inline non-fatal: %s", _ar_exc)
@@ -632,9 +704,14 @@ def process_document(doc_id: str, file_path: str, kind: str,
 
         # Audit: document became ready
         try:
-            db.audit("document.ready", object_id=doc_id, object_type="document",
-                     actor="pipeline", result="ok",
-                     detail=f"words={result.word_count}")
+            db.audit(
+                "document.ready",
+                object_id=doc_id,
+                object_type="document",
+                actor="pipeline",
+                result="ok",
+                detail=f"words={result.word_count}",
+            )
         except Exception:
             pass
 
@@ -646,30 +723,34 @@ def process_document(doc_id: str, file_path: str, kind: str,
         if db.get_setting("ai_extraction_enabled", "false").lower() == "true":
             if _has_chapters:
                 logger.info(
-                    "AI extraction enabled — chapter-aware harvest for doc %s "
-                    "(%d chapters)", doc_id, len(_chapter_dicts),
+                    "AI extraction enabled — chapter-aware harvest for doc %s (%d chapters)",
+                    doc_id,
+                    len(_chapter_dicts),
                 )
                 try:
                     from orivellum.capabilities.knowledge_harvest import llm_harvest_by_chapters
+
                     llm_harvest_by_chapters(
-                        doc_id=doc_id, work_id=work_id,
-                        doc_title=title, db=db,
+                        doc_id=doc_id,
+                        work_id=work_id,
+                        doc_title=title,
+                        db=db,
                     )
                 except Exception as llm_exc:
                     logger.warning(
                         "llm_harvest_by_chapters failed for doc %s (non-fatal): %s",
-                        doc_id, llm_exc,
+                        doc_id,
+                        llm_exc,
                     )
             else:
                 logger.info("AI extraction enabled — running llm_harvest for doc %s", doc_id)
                 try:
-                    llm_harvest(result, doc_id=doc_id, work_id=work_id,
-                                doc_title=title, db=db, kind=kind)
+                    llm_harvest(
+                        result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db, kind=kind
+                    )
                 except Exception as llm_exc:
                     # Never let an LLM failure touch the ready document
-                    logger.warning(
-                        "llm_harvest failed for doc %s (non-fatal): %s", doc_id, llm_exc
-                    )
+                    logger.warning("llm_harvest failed for doc %s (non-fatal): %s", doc_id, llm_exc)
 
     except Exception as exc:
         msg = f"{type(exc).__name__}: {exc}"
@@ -679,8 +760,6 @@ def process_document(doc_id: str, file_path: str, kind: str,
         except Exception:
             pass
         try:
-            db.update_document_extracted(doc_id, "", 0,
-                                         readiness="error",
-                                         error_message=msg)
+            db.update_document_extracted(doc_id, "", 0, readiness="error", error_message=msg)
         except Exception:
             pass

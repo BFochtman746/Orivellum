@@ -1,4 +1,5 @@
 """Orivellum CLI entry point."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,6 +9,7 @@ import sys
 
 def cmd_start(args: argparse.Namespace) -> None:
     import uvicorn
+
     port = int(os.environ.get("PORT", args.port))
     uvicorn.run(
         "orivellum.api.app:app",
@@ -20,12 +22,14 @@ def cmd_start(args: argparse.Namespace) -> None:
 
 def cmd_version(_: argparse.Namespace) -> None:
     from orivellum import __version__
+
     print(f"Orivellum {__version__}")
 
 
 def cmd_doctor(_: argparse.Namespace) -> None:
     from orivellum.configuration.config import load_config
     from orivellum.database.db import OrivellumDB
+
     cfg = load_config()
     print(f"Config loaded — data_dir={cfg.data_dir}")
     db = OrivellumDB.open(cfg.db_path)
@@ -38,6 +42,7 @@ def cmd_doctor(_: argparse.Namespace) -> None:
 def cmd_migrate(_: argparse.Namespace) -> None:
     from orivellum.configuration.config import load_config
     from orivellum.database.db import OrivellumDB
+
     cfg = load_config()
     print(f"Running migrations on {cfg.db_path}...")
     db = OrivellumDB.open(cfg.db_path)

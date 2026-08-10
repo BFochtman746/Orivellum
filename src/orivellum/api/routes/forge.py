@@ -6,6 +6,7 @@ Jobs run on the shared thread executor (same as other background tasks).
 Events stream from the forge_events table via SSE so the UI can tail them
 in real-time without a websocket.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,27 +26,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/forge", dependencies=[Depends(require_auth)])
 # ── Request bodies ─────────────────────────────────────────────────────────────
 
+
 class ProjectCreate(BaseModel):
     name: str
     brief: str = ""
     work_id: str | None = None
 
+
 class JobCreate(BaseModel):
-    type: str                          # PLAN | DESIGN | BUILD | VERIFY | REPAIR
+    type: str  # PLAN | DESIGN | BUILD | VERIFY | REPAIR
     instruction: str | None = None
     plan_job_id: str | None = None
     design_job_id: str | None = None
     target_job_id: str | None = None
 
+
 class ApproveBody(BaseModel):
     selected_concept_id: str | None = None  # for DESIGN jobs
 
+
 # ── Background runner ──────────────────────────────────────────────────────────
+
 
 def _run_job_bg(project_id: str, job_id: str) -> None:
     """Called in background thread — imports lazily to avoid circular deps."""
     try:
         from orivellum.capabilities.forge import run_forge_job
+
         db = get_db()
         cfg = get_config()
         run_forge_job(db, cfg, project_id, job_id)
@@ -54,6 +61,7 @@ def _run_job_bg(project_id: str, job_id: str) -> None:
 
 
 # ── Projects ───────────────────────────────────────────────────────────────────
+
 
 @router.get("/projects")
 def list_forge_projects(
@@ -92,7 +100,7 @@ def delete_forge_project(project_id: str):
     if not db.get_forge_project(project_id):
         raise HTTPException(404, "Project not found")
     db.delete_forge_project(project_id)
-    return None
+    return
 
 
 # ── Jobs ───────────────────────────────────────────────────────────────────────
@@ -122,7 +130,7 @@ def start_forge_job(project_id: str, body: JobCreate, background_tasks: Backgrou
 
     # Guard: BUILD requires approved PLAN + DESIGN
     if jtype == "BUILD":
-        plan_job_id   = body.plan_job_id   or project.get("config_data", {}).get("plan_job_id")
+        plan_job_id = body.plan_job_id or project.get("config_data", {}).get("plan_job_id")
         design_job_id = body.design_job_id or project.get("config_data", {}).get("design_job_id")
         if not plan_job_id or not design_job_id:
             raise HTTPException(400, "BUILD requires plan_job_id and design_job_id.")
@@ -149,6 +157,7 @@ def get_forge_job(project_id: str, job_id: str):
     # Attach artifact list
     try:
         from orivellum.database.db import Database as _DB  # noqa
+
         with db._lock:
             arts = db._conn.execute(
                 "SELECT id, artifact_type, sha256, created_at FROM forge_artifacts WHERE job_id=?",
@@ -208,6 +217,7 @@ def reject_forge_job(project_id: str, job_id: str):
 
 # ── SSE event stream ───────────────────────────────────────────────────────────
 
+
 @router.get("/projects/{project_id}/jobs/{job_id}/events")
 async def stream_forge_events(
     project_id: str,
@@ -241,11 +251,11 @@ async def stream_forge_events(
             for ev in events:
                 last_id = ev["id"]
                 payload = {
-                    "id":      ev["id"],
-                    "phase":   ev["phase"],
+                    "id": ev["id"],
+                    "phase": ev["phase"],
                     "message": ev["message"],
-                    "data":    ev.get("data"),
-                    "ts":      ev["created_at"],
+                    "data": ev.get("data"),
+                    "ts": ev["created_at"],
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
 
@@ -273,12 +283,16 @@ async def stream_forge_events(
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 
 # ── Artifact retrieval ─────────────────────────────────────────────────────────
+
 
 @router.get("/projects/{project_id}/jobs/{job_id}/artifact/{artifact_type}")
 def get_forge_artifact(project_id: str, job_id: str, artifact_type: str):
@@ -297,6 +311,7 @@ def get_forge_artifact(project_id: str, job_id: str, artifact_type: str):
 
 
 # ── Build preview ──────────────────────────────────────────────────────────────
+
 
 @router.get("/projects/{project_id}/jobs/{job_id}/preview/{file_path:path}")
 def preview_build_file(project_id: str, job_id: str, file_path: str):

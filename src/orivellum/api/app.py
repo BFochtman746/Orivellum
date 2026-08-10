@@ -10,6 +10,7 @@ Startup order (enforced here — no shortcuts):
 
 A clean boot must create ONLY orivellum.db — no monarch.db, no legacy stores.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,13 +42,20 @@ logging.basicConfig(
 logger = logging.getLogger("orivellum")
 
 
-def _write_access_log(db_fn, method: str, path: str, status: int,
-                      latency_ms: int, ip: str | None, user_agent: str) -> None:
+def _write_access_log(
+    db_fn, method: str, path: str, status: int, latency_ms: int, ip: str | None, user_agent: str
+) -> None:
     """Write one row to the access_log table.  Called from the background executor."""
     try:
         db = db_fn()
-        db.log_access(method=method, path=path, status=status,
-                      latency_ms=latency_ms, ip=ip, user_agent=user_agent)
+        db.log_access(
+            method=method,
+            path=path,
+            status=status,
+            latency_ms=latency_ms,
+            ip=ip,
+            user_agent=user_agent,
+        )
     except Exception:
         pass  # access log writes are always best-effort
 
@@ -121,6 +129,7 @@ def _apply_pending_restore(cfg) -> None:
         return
 
     from orivellum.configuration.config import ROOT as _root
+
     cfg_dst = _root / "config.yaml"
 
     ts = _dt.now(_UTC).strftime("%Y%m%d_%H%M%S")
@@ -137,19 +146,25 @@ def _apply_pending_restore(cfg) -> None:
             # Only known-safe members to known-safe destinations — never a
             # blind extractall (zip-slip).
             members = ["orivellum.db"]
-            members += [s for s in ("atelier.db", "press.db", "config.yaml")
-                        if s in names]
-            members += [n for n in names
-                        if n.startswith("library/") and ".." not in n
-                        and not n.startswith("/")]
+            members += [s for s in ("atelier.db", "press.db", "config.yaml") if s in names]
+            members += [
+                n
+                for n in names
+                if n.startswith("library/") and ".." not in n and not n.startswith("/")
+            ]
             for m in members:
                 zf.extract(m, staging)
 
         # ── Phase 2: swap (renames only) ───────────────────────────────────
         swap_started = True
         safety.mkdir(parents=True, exist_ok=True)
-        for fname in ("orivellum.db", "orivellum.db-wal", "orivellum.db-shm",
-                      "atelier.db", "press.db"):
+        for fname in (
+            "orivellum.db",
+            "orivellum.db-wal",
+            "orivellum.db-shm",
+            "atelier.db",
+            "press.db",
+        ):
             p = data_dir / fname
             if p.exists():
                 shutil.move(str(p), str(safety / fname))
@@ -224,8 +239,9 @@ async def lifespan(app: FastAPI):
 
     # Step 3-4: Open DB and run migrations
     db = OrivellumDB.open(cfg.db_path)
-    logger.info("Database ready: %s (schema v%s)", cfg.db_path,
-                db.get_setting("schema_version", "0"))
+    logger.info(
+        "Database ready: %s (schema v%s)", cfg.db_path, db.get_setting("schema_version", "0")
+    )
 
     # Step 4b: Ensure an API key is configured.
     # Priority: SESSION_SECRET env var > DB-stored key > newly generated key.
@@ -276,9 +292,12 @@ async def lifespan(app: FastAPI):
         from orivellum.capabilities.pklos.adapters.windows_inventory import (
             WindowsInventoryAdapter as _WinInvAdapter,
         )
+
         _pklos_registry.register(_WinInvAdapter(db))
         _pklos_registry.register(_RecollectionAdapter(db))
-        logger.info("PKLOS adapters registered: %s", list(_pklos_registry.all_capabilities().keys()))
+        logger.info(
+            "PKLOS adapters registered: %s", list(_pklos_registry.all_capabilities().keys())
+        )
     except Exception as _pklos_exc:
         logger.warning("PKLOS adapter registration failed (non-fatal): %s", _pklos_exc)
 
@@ -286,13 +305,16 @@ async def lifespan(app: FastAPI):
     # All fire-and-forget work (document processing, embeddings, Studio
     # registration) submits here instead of spawning unlimited daemon threads.
     import os as _os
+
     _max_workers = int(_os.environ.get("ORIVELLUM_WORKERS", "8"))
     from orivellum.api.executor import init as _init_executor
+
     _init_executor(max_workers=_max_workers)
 
     # Step 6: Start background daemons
     try:
         from orivellum.capabilities.nightshift import start_nightshift_daemon
+
         start_nightshift_daemon(db=db, cfg=cfg)
         logger.info("Nightshift daemon started")
 
@@ -300,6 +322,7 @@ async def lifespan(app: FastAPI):
         # Non-fatal: any error here must never prevent the API from starting.
         try:
             from orivellum.capabilities.folder_watch import start_watcher as _fw_start
+
             _fw_start(_deps.get_db())
             logger.info("Folder watch daemon started")
         except Exception as _fw_exc:
@@ -313,6 +336,7 @@ async def lifespan(app: FastAPI):
     # Shutdown: close DB and executor
     logger.info("Shutting down...")
     from orivellum.api.executor import shutdown as _shutdown_executor
+
     # Bounded drain (FA-06): give in-flight work a few seconds to finish and
     # cancel still-queued futures, rather than abandoning writes mid-flight with
     # wait=False.  The watchdog inside shutdown() guarantees we never hang.
@@ -361,14 +385,16 @@ def create_app() -> FastAPI:
     # The web UI uses session cookies (set via POST /api/auth/login).
     # API / mobile clients may supply: Authorization: Bearer <key>
     # or X-Api-Key: <key>.
-    _AUTH_EXEMPT = frozenset({
-        "/api/healthz",
-        "/api/version",
-        # Auth endpoints — the login and status checks must be reachable
-        # before a session is established.
-        "/api/auth/login",
-        "/api/auth/me",
-    })
+    _AUTH_EXEMPT = frozenset(
+        {
+            "/api/healthz",
+            "/api/version",
+            # Auth endpoints — the login and status checks must be reachable
+            # before a session is established.
+            "/api/auth/login",
+            "/api/auth/me",
+        }
+    )
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
@@ -391,7 +417,7 @@ def create_app() -> FastAPI:
         # PWA API calls arrive with BASE_URL prefix (/orivellum-ui/api/…).
         # Strip it so the exempt-list and API-path checks both work correctly.
         effective_path = (
-            path[len("/orivellum-ui"):] if path.startswith("/orivellum-ui/api/") else path
+            path[len("/orivellum-ui") :] if path.startswith("/orivellum-ui/api/") else path
         )
 
         # CORS preflight and explicitly exempt paths skip auth.
@@ -411,6 +437,7 @@ def create_app() -> FastAPI:
 
         # ── Bearer token (API clients / mobile) ───────────────────────────
         from orivellum.api.auth_keys import key_matches, resolve_login_key
+
         expected_key = resolve_login_key()
 
         if not expected_key:
@@ -419,11 +446,14 @@ def create_app() -> FastAPI:
             # Fail CLOSED: return 503 rather than opening the API to anyone.
             # Health/auth exempt paths are already handled above.
             import logging as _log
+
             _log.getLogger(__name__).error(
                 "auth_middleware: no API key found after startup — request denied (503). "
                 "Set SESSION_SECRET or check database accessibility."
             )
-            return JSONResponse({"detail": "Service not ready — no API key configured"}, status_code=503)
+            return JSONResponse(
+                {"detail": "Service not ready — no API key configured"}, status_code=503
+            )
 
         token: str = ""
         auth_header = request.headers.get("authorization", "")
@@ -444,7 +474,7 @@ def create_app() -> FastAPI:
     # direct API client.
     def _canonical_path(raw: str) -> str:
         if raw.startswith("/orivellum-ui/api/"):
-            return raw[len("/orivellum-ui"):]
+            return raw[len("/orivellum-ui") :]
         return raw
 
     # ── In-memory sliding-window rate limiter ─────────────────────────────────
@@ -454,11 +484,11 @@ def create_app() -> FastAPI:
 
     _RATE_LIMITS: dict[str, tuple[int, int]] = {
         # path prefix           max_requests  window_seconds
-        "/api/studio/tts":      (20,  60),   # 20 TTS per minute
-        "/api/studio/ocr":      (30,  60),   # 30 OCR per minute
-        "/api/studio/image":    (10,  60),   # 10 image gen per minute
+        "/api/studio/tts": (20, 60),  # 20 TTS per minute
+        "/api/studio/ocr": (30, 60),  # 30 OCR per minute
+        "/api/studio/image": (10, 60),  # 10 image gen per minute
         # chat send is /api/conversations/<id>/messages
-        "/api/conversations":   (60,  60),   # 60 chat messages per minute
+        "/api/conversations": (60, 60),  # 60 chat messages per minute
     }
 
     @app.middleware("http")
@@ -516,25 +546,37 @@ def create_app() -> FastAPI:
             try:
                 if request.session.get("authenticated"):
                     _actor = "session"
-                elif (request.headers.get("authorization", "").lower().startswith("bearer ")
-                      or request.headers.get("x-api-key")):
+                elif request.headers.get("authorization", "").lower().startswith(
+                    "bearer "
+                ) or request.headers.get("x-api-key"):
                     _actor = "apikey"
             except Exception:
                 pass  # session middleware may be absent in some contexts
 
             logger.info(
                 "access rid=%s actor=%s %s %s -> %s %dms ip=%s",
-                _req_id, _actor, request.method, _path,
-                response.status_code, _latency_ms, _ip or "-",
+                _req_id,
+                _actor,
+                request.method,
+                _path,
+                response.status_code,
+                _latency_ms,
+                _ip or "-",
             )
 
             try:
                 from orivellum.api.executor import get_executor as _gex_al
+
                 _db_ref = _deps.get_db
                 _gex_al().submit(
                     _write_access_log,
-                    _db_ref, request.method, _path,
-                    response.status_code, _latency_ms, _ip, _ua,
+                    _db_ref,
+                    request.method,
+                    _path,
+                    response.status_code,
+                    _latency_ms,
+                    _ip,
+                    _ua,
                 )
             except Exception:
                 pass  # access log writes are always best-effort
@@ -547,8 +589,10 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next):
-        if (request.headers.get("content-length")
-                and _canonical_path(request.url.path) not in _BODY_LIMIT_EXEMPT):
+        if (
+            request.headers.get("content-length")
+            and _canonical_path(request.url.path) not in _BODY_LIMIT_EXEMPT
+        ):
             try:
                 cfg = _deps.get_config()
                 size = int(request.headers["content-length"])
@@ -609,11 +653,39 @@ def create_app() -> FastAPI:
         works,
         write,
     )
+
     _route_modules = [
-        auth, health, works, conversations, library, knowledge,
-        projects, backups, studio, files, system, dashboard, learning, write,
-        mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
-        genesis, finishing, forge, mail, bench, music, notes, workbench,
+        auth,
+        health,
+        works,
+        conversations,
+        library,
+        knowledge,
+        projects,
+        backups,
+        studio,
+        files,
+        system,
+        dashboard,
+        learning,
+        write,
+        mcos,
+        review,
+        claims,
+        pklos,
+        intake,
+        generate,
+        topics,
+        actions,
+        mcp,
+        genesis,
+        finishing,
+        forge,
+        mail,
+        bench,
+        music,
+        notes,
+        workbench,
     ]
     for module in _route_modules:
         app.include_router(module.router)
@@ -647,8 +719,7 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(InvalidTransitionError)
-    async def invalid_transition_handler(request: Request,
-                                         exc: InvalidTransitionError):
+    async def invalid_transition_handler(request: Request, exc: InvalidTransitionError):
         """Return 422 Unprocessable Entity for undeclared state-machine transitions.
 
         The response tells the client the current state, the disallowed target,
@@ -668,8 +739,7 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(BlockedTransitionError)
-    async def blocked_transition_handler(request: Request,
-                                          exc: BlockedTransitionError):
+    async def blocked_transition_handler(request: Request, exc: BlockedTransitionError):
         """Return 409 Conflict when open findings block a forward transition.
 
         Names every blocking finding so the client can link directly to the
@@ -696,8 +766,7 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(TransitionConflictError)
-    async def transition_conflict_handler(request: Request,
-                                          exc: TransitionConflictError):
+    async def transition_conflict_handler(request: Request, exc: TransitionConflictError):
         """Return 409 Conflict when a compare-and-set transition loses a race.
 
         The row was no longer in the claimed from_state at write time — the
@@ -726,7 +795,9 @@ def create_app() -> FastAPI:
     # SPAStaticFiles serves index.html for any path that doesn't match a real
     # file, which is required for client-side routing (wouter deep links).
     # Falls back gracefully when dist/public doesn't exist (Replit dev mode).
-    _ui_dist = Path(__file__).resolve().parents[3] / "artifacts" / "orivellum-ui" / "dist" / "public"
+    _ui_dist = (
+        Path(__file__).resolve().parents[3] / "artifacts" / "orivellum-ui" / "dist" / "public"
+    )
     if _ui_dist.exists():
         app.mount("/orivellum-ui", SPAStaticFiles(directory=str(_ui_dist), html=True), name="ui")
         logger.info("Serving built UI from %s", _ui_dist)
@@ -735,12 +806,13 @@ def create_app() -> FastAPI:
     # Added LAST so it ends up OUTERMOST in the chain (processes requests
     # first), ensuring request.session is populated when auth_middleware runs.
     from starlette.middleware.sessions import SessionMiddleware
+
     app.add_middleware(
         SessionMiddleware,
         secret_key=_init_session_secret(),
         session_cookie="orivellum_session",
         max_age=86400 * 365,  # 365 days — single-user private deployment
-        https_only=False,     # Allow HTTP in local development
+        https_only=False,  # Allow HTTP in local development
         same_site="lax",
     )
 
@@ -779,7 +851,7 @@ def _init_session_secret() -> str:
                 f"minimum is {_MIN_SECRET_LEN}). "
                 "A weak secret compromises all user session cookies. "
                 "Generate a strong one with:\n"
-                "  python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+                '  python -c "import secrets; print(secrets.token_hex(32))"\n'
                 "then set it as SESSION_SECRET in your environment / Replit Secrets."
             )
         return env_secret
@@ -803,7 +875,9 @@ def _init_session_secret() -> str:
                 logger.warning(
                     "Session secret in %s is too short (%d chars; minimum %d) — "
                     "generating a new one.",
-                    secret_file, len(existing), _MIN_SECRET_LEN,
+                    secret_file,
+                    len(existing),
+                    _MIN_SECRET_LEN,
                 )
         except FileNotFoundError:
             pass
@@ -821,8 +895,8 @@ def _init_session_secret() -> str:
             except OSError:
                 pass  # Windows: chmod is best-effort
             logger.info(
-                "Session secret generated and persisted to %s — sessions will "
-                "survive restarts.", secret_file,
+                "Session secret generated and persisted to %s — sessions will survive restarts.",
+                secret_file,
             )
             return generated
         except OSError as e:

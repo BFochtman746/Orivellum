@@ -1,4 +1,5 @@
 """Creative Studio routes — /api/studio/*"""
+
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +28,7 @@ _MAX_OUTPUTS = 50  # keep the newest N files; delete the rest
 
 # ── Amendment-1 registration helpers ─────────────────────────────────────────
 
+
 def _link_output_sync(file_path: Path) -> str:
     """Create a durable library hard-link SYNCHRONOUSLY before rotation.
 
@@ -41,6 +43,7 @@ def _link_output_sync(file_path: Path) -> str:
     """
     try:
         from orivellum.capabilities.persist import _ensure_lib_symlink
+
         cfg = get_config()
         lib_root = Path(cfg.data_dir) / "library"
         return _ensure_lib_symlink(file_path, lib_root)
@@ -68,8 +71,9 @@ def _register_output_bg(
     """
     try:
         from orivellum.capabilities.persist import register_and_index
+
         cfg = get_config()
-        db  = get_db()
+        db = get_db()
         register_and_index(
             doc_path=file_path,
             text_content=text_content,
@@ -122,9 +126,13 @@ def _probe_duration(path: Path) -> float | None:
     try:
         r = subprocess.run(
             [
-                "ffprobe", "-v", "quiet",
-                "-print_format", "json",
-                "-show_entries", "format=duration",
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_entries",
+                "format=duration",
                 str(path),
             ],
             capture_output=True,
@@ -133,6 +141,7 @@ def _probe_duration(path: Path) -> float | None:
         dur: float | None = None
         if r.returncode == 0:
             import json as _jmod
+
             data = _jmod.loads(r.stdout)
             raw = data.get("format", {}).get("duration")
             if raw is not None:
@@ -162,6 +171,7 @@ def _get_kokoro():
             return _kokoro_instance
         try:
             from kokoro_onnx import Kokoro  # type: ignore[import]
+
             logger.info("Loading Kokoro ONNX model (first-run download may take a moment)…")
             _kokoro_instance = Kokoro("kokoro-v0_19.onnx", "voices.bin")
             logger.info("Kokoro ONNX ready.")
@@ -183,6 +193,7 @@ def _kokoro_probably_available() -> bool:
         return True
     try:
         import importlib.util
+
         if importlib.util.find_spec("kokoro_onnx") is None:
             return False
         if importlib.util.find_spec("soundfile") is None:
@@ -223,20 +234,37 @@ _NEURAL_TTS_UNAVAILABLE_MSG = (
 # to the six OpenAI voice names.  Used when routing to an /audio/speech endpoint.
 _OPENAI_VOICE_MAP: dict[str, str] = {
     # American Female
-    "af_heart": "nova",    "af_bella": "nova",    "af_nova": "nova",
-    "af_alloy": "alloy",   "af_sarah": "nova",    "af_sky": "shimmer",
-    "af_jessica": "alloy", "af_kore": "shimmer",  "af_nicole": "nova",
-    "af_aoede": "shimmer", "af_river": "alloy",
+    "af_heart": "nova",
+    "af_bella": "nova",
+    "af_nova": "nova",
+    "af_alloy": "alloy",
+    "af_sarah": "nova",
+    "af_sky": "shimmer",
+    "af_jessica": "alloy",
+    "af_kore": "shimmer",
+    "af_nicole": "nova",
+    "af_aoede": "shimmer",
+    "af_river": "alloy",
     # American Male
-    "am_adam": "onyx",   "am_echo": "echo",   "am_eric": "echo",
-    "am_fenrir": "onyx", "am_liam": "fable",  "am_michael": "echo",
-    "am_onyx": "onyx",   "am_puck": "fable",  "am_santa": "echo",
+    "am_adam": "onyx",
+    "am_echo": "echo",
+    "am_eric": "echo",
+    "am_fenrir": "onyx",
+    "am_liam": "fable",
+    "am_michael": "echo",
+    "am_onyx": "onyx",
+    "am_puck": "fable",
+    "am_santa": "echo",
     # British Female
-    "bf_emma": "shimmer", "bf_alice": "shimmer",
-    "bf_isabella": "nova", "bf_lily": "shimmer",
+    "bf_emma": "shimmer",
+    "bf_alice": "shimmer",
+    "bf_isabella": "nova",
+    "bf_lily": "shimmer",
     # British Male
-    "bm_george": "fable", "bm_daniel": "fable",
-    "bm_fable": "fable",  "bm_lewis": "fable",
+    "bm_george": "fable",
+    "bm_daniel": "fable",
+    "bm_fable": "fable",
+    "bm_lewis": "fable",
 }
 
 # Standard sample sentence — tests prosody, pacing, and emotional register
@@ -257,287 +285,595 @@ _SAMPLE_SENTENCE = (
 _VOICE_CATALOG: list[dict] = [
     # ── American Female ───────────────────────────────────────────────────────
     {
-        "id": "af_heart", "name": "Heart", "accent": "american", "gender": "feminine",
+        "id": "af_heart",
+        "name": "Heart",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Warm and intimate — feels like a close friend telling a personal story. "
             "Natural pauses and conversational rhythm that draws listeners in."
         ),
-        "dimensions": {"warmth": 9, "authority": 5, "gravitas": 4, "pace": 5, "brightness": 7, "age": 5},
+        "dimensions": {
+            "warmth": 9,
+            "authority": 5,
+            "gravitas": 4,
+            "pace": 5,
+            "brightness": 7,
+            "age": 5,
+        },
         "tags": ["literary fiction", "memoir", "spiritual", "romance"],
-        "builtin": True, "engine": "kokoro",
+        "builtin": True,
+        "engine": "kokoro",
     },
     {
-        "id": "af_bella", "name": "Bella", "accent": "american", "gender": "feminine",
+        "id": "af_bella",
+        "name": "Bella",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Bright and engaging with clear diction. Suits energetic prose "
             "and stories with forward momentum and optimistic energy."
         ),
-        "dimensions": {"warmth": 7, "authority": 6, "gravitas": 3, "pace": 7, "brightness": 9, "age": 4},
+        "dimensions": {
+            "warmth": 7,
+            "authority": 6,
+            "gravitas": 3,
+            "pace": 7,
+            "brightness": 9,
+            "age": 4,
+        },
         "tags": ["thriller", "young adult", "adventure", "commercial"],
-        "builtin": True, "engine": "kokoro",
+        "builtin": True,
+        "engine": "kokoro",
     },
     {
-        "id": "af_nova", "name": "Nova", "accent": "american", "gender": "feminine",
+        "id": "af_nova",
+        "name": "Nova",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Smooth and professional with natural warmth. The go-to for non-fiction, "
             "documentary narration, and authoritative storytelling."
         ),
-        "dimensions": {"warmth": 6, "authority": 8, "gravitas": 6, "pace": 5, "brightness": 6, "age": 6},
+        "dimensions": {
+            "warmth": 6,
+            "authority": 8,
+            "gravitas": 6,
+            "pace": 5,
+            "brightness": 6,
+            "age": 6,
+        },
         "tags": ["non-fiction", "documentary", "academic", "thriller"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "af_alloy", "name": "Alloy", "accent": "american", "gender": "feminine",
+        "id": "af_alloy",
+        "name": "Alloy",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Neutral, clean, and precise. Excellent for texts requiring clarity "
             "above all else — instructional, academic, or technical content."
         ),
-        "dimensions": {"warmth": 5, "authority": 7, "gravitas": 5, "pace": 6, "brightness": 6, "age": 5},
+        "dimensions": {
+            "warmth": 5,
+            "authority": 7,
+            "gravitas": 5,
+            "pace": 6,
+            "brightness": 6,
+            "age": 5,
+        },
         "tags": ["academic", "news", "instructional", "documentary"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "af_sarah", "name": "Sarah", "accent": "american", "gender": "feminine",
+        "id": "af_sarah",
+        "name": "Sarah",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Natural and unhurried storytelling voice with genuine warmth. "
             "Sounds like a gifted author reading their own work aloud."
         ),
-        "dimensions": {"warmth": 8, "authority": 5, "gravitas": 5, "pace": 4, "brightness": 6, "age": 6},
+        "dimensions": {
+            "warmth": 8,
+            "authority": 5,
+            "gravitas": 5,
+            "pace": 4,
+            "brightness": 6,
+            "age": 6,
+        },
         "tags": ["literary fiction", "memoir", "spiritual", "romance"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "af_sky", "name": "Sky", "accent": "american", "gender": "feminine",
+        "id": "af_sky",
+        "name": "Sky",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Light and youthful with crystalline clarity. Perfect for whimsical prose "
             "and stories with an optimistic or magical tone."
         ),
-        "dimensions": {"warmth": 7, "authority": 3, "gravitas": 2, "pace": 6, "brightness": 10, "age": 2},
+        "dimensions": {
+            "warmth": 7,
+            "authority": 3,
+            "gravitas": 2,
+            "pace": 6,
+            "brightness": 10,
+            "age": 2,
+        },
         "tags": ["children", "young adult", "fantasy", "romance"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "af_jessica", "name": "Jessica", "accent": "american", "gender": "feminine",
+        "id": "af_jessica",
+        "name": "Jessica",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Confident and measured — projects quiet authority without sounding remote. "
             "Ideal for mystery, suspense, and literary fiction with dark themes."
         ),
-        "dimensions": {"warmth": 6, "authority": 8, "gravitas": 7, "pace": 4, "brightness": 5, "age": 7},
+        "dimensions": {
+            "warmth": 6,
+            "authority": 8,
+            "gravitas": 7,
+            "pace": 4,
+            "brightness": 5,
+            "age": 7,
+        },
         "tags": ["mystery", "literary fiction", "thriller", "historical"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "af_kore", "name": "Kore", "accent": "american", "gender": "feminine",
+        "id": "af_kore",
+        "name": "Kore",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Rich and theatrical with expressive emotional range. "
             "Handles dramatic peaks, mythological weight, and tense scenes with natural intensity."
         ),
-        "dimensions": {"warmth": 7, "authority": 7, "gravitas": 7, "pace": 4, "brightness": 6, "age": 6},
+        "dimensions": {
+            "warmth": 7,
+            "authority": 7,
+            "gravitas": 7,
+            "pace": 4,
+            "brightness": 6,
+            "age": 6,
+        },
         "tags": ["epic", "literary fiction", "mythology", "drama"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "af_nicole", "name": "Nicole", "accent": "american", "gender": "feminine",
+        "id": "af_nicole",
+        "name": "Nicole",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Warm and engaging with a natural conversational quality. "
             "Listeners feel spoken to, not read at — excellent for personal narratives."
         ),
-        "dimensions": {"warmth": 9, "authority": 4, "gravitas": 4, "pace": 5, "brightness": 7, "age": 5},
+        "dimensions": {
+            "warmth": 9,
+            "authority": 4,
+            "gravitas": 4,
+            "pace": 5,
+            "brightness": 7,
+            "age": 5,
+        },
         "tags": ["memoir", "self-help", "romance", "literary fiction"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "af_aoede", "name": "Aoede", "accent": "american", "gender": "feminine",
+        "id": "af_aoede",
+        "name": "Aoede",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Poetic and expressive with natural musicality — named after the muse of song. "
             "Suited for language-forward, lyrical, or spiritual prose."
         ),
-        "dimensions": {"warmth": 8, "authority": 5, "gravitas": 6, "pace": 3, "brightness": 7, "age": 5},
+        "dimensions": {
+            "warmth": 8,
+            "authority": 5,
+            "gravitas": 6,
+            "pace": 3,
+            "brightness": 7,
+            "age": 5,
+        },
         "tags": ["literary fiction", "poetry", "spiritual", "mythology"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "af_river", "name": "River", "accent": "american", "gender": "feminine",
+        "id": "af_river",
+        "name": "River",
+        "accent": "american",
+        "gender": "feminine",
         "description": (
             "Calm and unhurried — flows steadily through long passages without losing "
             "the listener's attention. Perfect for contemplative or meditative content."
         ),
-        "dimensions": {"warmth": 7, "authority": 5, "gravitas": 6, "pace": 3, "brightness": 5, "age": 6},
+        "dimensions": {
+            "warmth": 7,
+            "authority": 5,
+            "gravitas": 6,
+            "pace": 3,
+            "brightness": 5,
+            "age": 6,
+        },
         "tags": ["meditation", "spiritual", "literary fiction", "nature"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     # ── American Male ─────────────────────────────────────────────────────────
     {
-        "id": "am_adam", "name": "Adam", "accent": "american", "gender": "masculine",
+        "id": "am_adam",
+        "name": "Adam",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Deep and authoritative with natural gravitas. The voice of a historian, "
             "a prophet, or a general — serious, commanding, and completely trustworthy."
         ),
-        "dimensions": {"warmth": 5, "authority": 9, "gravitas": 8, "pace": 4, "brightness": 3, "age": 7},
+        "dimensions": {
+            "warmth": 5,
+            "authority": 9,
+            "gravitas": 8,
+            "pace": 4,
+            "brightness": 3,
+            "age": 7,
+        },
         "tags": ["epic", "historical", "thriller", "non-fiction", "spiritual"],
-        "builtin": True, "engine": "kokoro",
+        "builtin": True,
+        "engine": "kokoro",
     },
     {
-        "id": "am_echo", "name": "Echo", "accent": "american", "gender": "masculine",
+        "id": "am_echo",
+        "name": "Echo",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Broadcast-quality clarity with neutral authority. Clean, dependable, "
             "and never intrusive — the professional narrator."
         ),
-        "dimensions": {"warmth": 5, "authority": 8, "gravitas": 6, "pace": 5, "brightness": 5, "age": 6},
+        "dimensions": {
+            "warmth": 5,
+            "authority": 8,
+            "gravitas": 6,
+            "pace": 5,
+            "brightness": 5,
+            "age": 6,
+        },
         "tags": ["non-fiction", "documentary", "news", "academic"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "am_eric", "name": "Eric", "accent": "american", "gender": "masculine",
+        "id": "am_eric",
+        "name": "Eric",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Warm and conversational with a natural storytelling cadence. "
             "Approachable authority — thinks out loud in a way that sounds genuine."
         ),
-        "dimensions": {"warmth": 8, "authority": 6, "gravitas": 5, "pace": 5, "brightness": 5, "age": 5},
+        "dimensions": {
+            "warmth": 8,
+            "authority": 6,
+            "gravitas": 5,
+            "pace": 5,
+            "brightness": 5,
+            "age": 5,
+        },
         "tags": ["memoir", "literary fiction", "thriller", "self-help"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "am_fenrir", "name": "Fenrir", "accent": "american", "gender": "masculine",
+        "id": "am_fenrir",
+        "name": "Fenrir",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Deeply resonant with dramatic gravitas — named after the great wolf. "
             "Powerful, ancient, and absolutely commanding. Best for mythological or epic material."
         ),
-        "dimensions": {"warmth": 3, "authority": 10, "gravitas": 10, "pace": 3, "brightness": 1, "age": 9},
+        "dimensions": {
+            "warmth": 3,
+            "authority": 10,
+            "gravitas": 10,
+            "pace": 3,
+            "brightness": 1,
+            "age": 9,
+        },
         "tags": ["epic", "mythology", "thriller", "horror", "spiritual"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "am_liam", "name": "Liam", "accent": "american", "gender": "masculine",
+        "id": "am_liam",
+        "name": "Liam",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Youthful and energetic — narrates with forward momentum and genuine "
             "enthusiasm for the story. Ideal for adventure and action-driven prose."
         ),
-        "dimensions": {"warmth": 7, "authority": 4, "gravitas": 2, "pace": 8, "brightness": 7, "age": 2},
+        "dimensions": {
+            "warmth": 7,
+            "authority": 4,
+            "gravitas": 2,
+            "pace": 8,
+            "brightness": 7,
+            "age": 2,
+        },
         "tags": ["young adult", "adventure", "thriller", "science fiction"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "am_michael", "name": "Michael", "accent": "american", "gender": "masculine",
+        "id": "am_michael",
+        "name": "Michael",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Authoritative and neutral — sounds like a seasoned professional. "
             "Clear pronunciation, consistent pacing, never draws attention to itself."
         ),
-        "dimensions": {"warmth": 5, "authority": 8, "gravitas": 7, "pace": 5, "brightness": 4, "age": 7},
+        "dimensions": {
+            "warmth": 5,
+            "authority": 8,
+            "gravitas": 7,
+            "pace": 5,
+            "brightness": 4,
+            "age": 7,
+        },
         "tags": ["non-fiction", "historical", "documentary", "academic"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "am_onyx", "name": "Onyx", "accent": "american", "gender": "masculine",
+        "id": "am_onyx",
+        "name": "Onyx",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Deep, rich, and powerful — the richest bass register in the catalog. "
             "Commands attention the moment it speaks. Built for gravitas."
         ),
-        "dimensions": {"warmth": 4, "authority": 10, "gravitas": 10, "pace": 3, "brightness": 1, "age": 8},
+        "dimensions": {
+            "warmth": 4,
+            "authority": 10,
+            "gravitas": 10,
+            "pace": 3,
+            "brightness": 1,
+            "age": 8,
+        },
         "tags": ["epic", "thriller", "historical", "mystery", "spiritual"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "am_puck", "name": "Puck", "accent": "american", "gender": "masculine",
+        "id": "am_puck",
+        "name": "Puck",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Energetic and playful with surprising depth — moves between comedy "
             "and earnestness naturally. Perfect for young adult, adventure, and wit-driven stories."
         ),
-        "dimensions": {"warmth": 8, "authority": 4, "gravitas": 3, "pace": 7, "brightness": 8, "age": 3},
+        "dimensions": {
+            "warmth": 8,
+            "authority": 4,
+            "gravitas": 3,
+            "pace": 7,
+            "brightness": 8,
+            "age": 3,
+        },
         "tags": ["young adult", "adventure", "comedy", "fantasy"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     # ── British Female ────────────────────────────────────────────────────────
     {
-        "id": "bf_emma", "name": "Emma", "accent": "british", "gender": "feminine",
+        "id": "bf_emma",
+        "name": "Emma",
+        "accent": "british",
+        "gender": "feminine",
         "description": (
             "Refined, authoritative, and precise — the literary narrator par excellence. "
             "Crisp vowels and measured delivery give every sentence weight."
         ),
-        "dimensions": {"warmth": 6, "authority": 8, "gravitas": 7, "pace": 4, "brightness": 5, "age": 6},
+        "dimensions": {
+            "warmth": 6,
+            "authority": 8,
+            "gravitas": 7,
+            "pace": 4,
+            "brightness": 5,
+            "age": 6,
+        },
         "tags": ["literary fiction", "historical", "mystery", "non-fiction"],
-        "builtin": True, "engine": "kokoro",
+        "builtin": True,
+        "engine": "kokoro",
     },
     {
-        "id": "bf_alice", "name": "Alice", "accent": "british", "gender": "feminine",
+        "id": "bf_alice",
+        "name": "Alice",
+        "accent": "british",
+        "gender": "feminine",
         "description": (
             "Clear, crisp, and professional — cuts through complex text with "
             "effortless legibility. Trusted, dependable, never theatrical."
         ),
-        "dimensions": {"warmth": 5, "authority": 8, "gravitas": 6, "pace": 5, "brightness": 7, "age": 5},
+        "dimensions": {
+            "warmth": 5,
+            "authority": 8,
+            "gravitas": 6,
+            "pace": 5,
+            "brightness": 7,
+            "age": 5,
+        },
         "tags": ["academic", "documentary", "historical", "mystery"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "am_santa", "name": "Santa", "accent": "american", "gender": "masculine",
+        "id": "am_santa",
+        "name": "Santa",
+        "accent": "american",
+        "gender": "masculine",
         "description": (
             "Jovial and rich with natural warmth — commanding without sternness. "
             "Suited for celebratory, family, and feel-good storytelling."
         ),
-        "dimensions": {"warmth": 10, "authority": 6, "gravitas": 4, "pace": 4, "brightness": 6, "age": 9},
+        "dimensions": {
+            "warmth": 10,
+            "authority": 6,
+            "gravitas": 4,
+            "pace": 4,
+            "brightness": 6,
+            "age": 9,
+        },
         "tags": ["children", "family", "holiday", "feel-good"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "bf_isabella", "name": "Isabella", "accent": "british", "gender": "feminine",
+        "id": "bf_isabella",
+        "name": "Isabella",
+        "accent": "british",
+        "gender": "feminine",
         "description": (
             "Warm and sophisticated — warmth contained within elegance. "
             "Brings aristocratic grace to lyrical prose without coldness."
         ),
-        "dimensions": {"warmth": 8, "authority": 6, "gravitas": 6, "pace": 4, "brightness": 6, "age": 6},
+        "dimensions": {
+            "warmth": 8,
+            "authority": 6,
+            "gravitas": 6,
+            "pace": 4,
+            "brightness": 6,
+            "age": 6,
+        },
         "tags": ["literary fiction", "romance", "historical", "memoir"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "bf_lily", "name": "Lily", "accent": "british", "gender": "feminine",
+        "id": "bf_lily",
+        "name": "Lily",
+        "accent": "british",
+        "gender": "feminine",
         "description": (
             "Bright and charming with crystal-clear diction. Brings warmth and light "
             "to stories without losing credibility — ideal for uplifting content."
         ),
-        "dimensions": {"warmth": 8, "authority": 4, "gravitas": 3, "pace": 6, "brightness": 9, "age": 3},
+        "dimensions": {
+            "warmth": 8,
+            "authority": 4,
+            "gravitas": 3,
+            "pace": 6,
+            "brightness": 9,
+            "age": 3,
+        },
         "tags": ["children", "young adult", "romance", "comedy"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     # ── British Male ──────────────────────────────────────────────────────────
     {
-        "id": "bm_george", "name": "George", "accent": "british", "gender": "masculine",
+        "id": "bm_george",
+        "name": "George",
+        "accent": "british",
+        "gender": "masculine",
         "description": (
             "Deep, distinguished, and authoritative. The voice of a scholar who has "
             "lived every page — measured, resonant, completely trustworthy."
         ),
-        "dimensions": {"warmth": 6, "authority": 9, "gravitas": 9, "pace": 3, "brightness": 3, "age": 8},
+        "dimensions": {
+            "warmth": 6,
+            "authority": 9,
+            "gravitas": 9,
+            "pace": 3,
+            "brightness": 3,
+            "age": 8,
+        },
         "tags": ["historical", "literary fiction", "epic", "spiritual", "non-fiction"],
-        "builtin": True, "engine": "kokoro",
+        "builtin": True,
+        "engine": "kokoro",
     },
     {
-        "id": "bm_daniel", "name": "Daniel", "accent": "british", "gender": "masculine",
+        "id": "bm_daniel",
+        "name": "Daniel",
+        "accent": "british",
+        "gender": "masculine",
         "description": (
             "Warm and storytelling-focused with natural, unhurried quality. "
             "Sounds like someone who genuinely loves the story they are telling."
         ),
-        "dimensions": {"warmth": 8, "authority": 6, "gravitas": 7, "pace": 4, "brightness": 4, "age": 6},
+        "dimensions": {
+            "warmth": 8,
+            "authority": 6,
+            "gravitas": 7,
+            "pace": 4,
+            "brightness": 4,
+            "age": 6,
+        },
         "tags": ["literary fiction", "memoir", "mystery", "historical"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "bm_fable", "name": "Fable", "accent": "british", "gender": "masculine",
+        "id": "bm_fable",
+        "name": "Fable",
+        "accent": "british",
+        "gender": "masculine",
         "description": (
             "Theatrical and expressive — built for dramatic stories. Handles character "
             "voices, emotional peaks, and mythological tension with natural skill."
         ),
-        "dimensions": {"warmth": 6, "authority": 7, "gravitas": 8, "pace": 4, "brightness": 5, "age": 7},
+        "dimensions": {
+            "warmth": 6,
+            "authority": 7,
+            "gravitas": 8,
+            "pace": 4,
+            "brightness": 5,
+            "age": 7,
+        },
         "tags": ["epic", "mythology", "literary fiction", "fantasy", "drama"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
     {
-        "id": "bm_lewis", "name": "Lewis", "accent": "british", "gender": "masculine",
+        "id": "bm_lewis",
+        "name": "Lewis",
+        "accent": "british",
+        "gender": "masculine",
         "description": (
             "Clear, professional, and confident. Brings intellectual authority "
             "to dense text without sounding stiff — ideal for non-fiction."
         ),
-        "dimensions": {"warmth": 5, "authority": 8, "gravitas": 7, "pace": 5, "brightness": 5, "age": 6},
+        "dimensions": {
+            "warmth": 5,
+            "authority": 8,
+            "gravitas": 7,
+            "pace": 5,
+            "brightness": 5,
+            "age": 6,
+        },
         "tags": ["non-fiction", "academic", "historical", "documentary"],
-        "builtin": False, "engine": "kokoro",
+        "builtin": False,
+        "engine": "kokoro",
     },
 ]
 
@@ -561,9 +897,9 @@ def _resolve_kokoro_voice(voice_id: str) -> str:
 # ── ACX audio mastering ───────────────────────────────────────────────────────
 
 # ── Mastering: two-pass loudnorm to the audiobook standard ───────────────────
-_MASTER_I   = -23.0  # integrated loudness target (LUFS, EBU R128 audiobook std)
-_MASTER_TP  = -3.0   # true-peak ceiling (dBTP)
-_MASTER_LRA = 7.0    # loudness range (LU)
+_MASTER_I = -23.0  # integrated loudness target (LUFS, EBU R128 audiobook std)
+_MASTER_TP = -3.0  # true-peak ceiling (dBTP)
+_MASTER_LRA = 7.0  # loudness range (LU)
 
 
 def _measure_loudness(input_path: str) -> dict | None:
@@ -574,17 +910,27 @@ def _measure_loudness(input_path: str) -> dict | None:
     """
     try:
         r = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-i", input_path,
-             "-af", f"loudnorm=I={_MASTER_I}:TP={_MASTER_TP}:LRA={_MASTER_LRA}"
-                    ":print_format=json",
-             "-f", "null", "-"],
-            capture_output=True, text=True, timeout=300,
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-i",
+                input_path,
+                "-af",
+                f"loudnorm=I={_MASTER_I}:TP={_MASTER_TP}:LRA={_MASTER_LRA}:print_format=json",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         if r.returncode != 0:
             return None
         # The loudnorm stats are the last {...} block in stderr (ffmpeg keeps
         # logging after it, so don't anchor to end-of-output).
         import json as _jm
+
         blocks = re.findall(r"\{[^{}]*\}", r.stderr, re.DOTALL)
         if not blocks:
             return None
@@ -620,13 +966,24 @@ def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
     try:
         result = subprocess.run(
             [
-                "ffmpeg", "-y", "-i", input_path,
-                "-af", filt + ":print_format=none",
-                "-codec:a", "libmp3lame", "-b:a", "192k",
-                "-ar", "44100", "-ac", "2",
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_path,
+                "-af",
+                filt + ":print_format=none",
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                "192k",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
                 output_path,
             ],
-            capture_output=True, timeout=300,
+            capture_output=True,
+            timeout=300,
         )
         return result.returncode == 0
     except Exception as exc:
@@ -635,6 +992,7 @@ def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
 
 
 # ── QA gate: per-segment audio checks before the merge ───────────────────────
+
 
 def _qa_measure_audio(path: Path) -> tuple[str | None, dict | None]:
     """Inspect one synthesized segment with ffmpeg volumedetect.
@@ -649,19 +1007,20 @@ def _qa_measure_audio(path: Path) -> tuple[str | None, dict | None]:
     """
     try:
         r = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-i", str(path),
-             "-af", "volumedetect", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=60,
+            ["ffmpeg", "-hide_banner", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
     except Exception as exc:
         return f"unreadable audio ({exc})", None
     if r.returncode != 0:
         return "unreadable audio (ffmpeg could not decode the segment)", None
     mean_m = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", r.stderr)
-    max_m  = re.search(r"max_volume:\s*(-?[\d.]+)\s*dB", r.stderr)
+    max_m = re.search(r"max_volume:\s*(-?[\d.]+)\s*dB", r.stderr)
     if not mean_m or not max_m:
         return "unreadable audio (no volume stats)", None
-    max_db  = float(max_m.group(1))
+    max_db = float(max_m.group(1))
     mean_db = float(mean_m.group(1))
     metrics = {"mean_db": mean_db, "max_db": max_db}
     if max_db > -0.1:
@@ -692,19 +1051,26 @@ def _seg_cache_dir(cfg) -> Path:
     return d
 
 
-def _seg_cache_path(cfg, text: str, engine: str, voice: str, speed: float,
-                    suffix: str = ".wav") -> Path:
+def _seg_cache_path(
+    cfg, text: str, engine: str, voice: str, speed: float, suffix: str = ".wav"
+) -> Path:
     import hashlib
+
     key = hashlib.sha256(
-        f"{_SEG_CACHE_VERSION}\x1f{text}\x1f{engine}\x1f{voice}\x1f{speed:.2f}"
-        .encode()
+        f"{_SEG_CACHE_VERSION}\x1f{text}\x1f{engine}\x1f{voice}\x1f{speed:.2f}".encode()
     ).hexdigest()[:40]
     return _seg_cache_dir(cfg) / f"{key}{suffix}"
 
 
-def _seg_cache_get(cfg, text: str, voice: str, speed: float,
-                   engines: list[str], suffix: str = ".wav",
-                   metrics_out: dict | None = None) -> Path | None:
+def _seg_cache_get(
+    cfg,
+    text: str,
+    voice: str,
+    speed: float,
+    engines: list[str],
+    suffix: str = ".wav",
+    metrics_out: dict | None = None,
+) -> Path | None:
     """Return the cached segment for the FIRST engine in priority order.
 
     The cache is treated as UNTRUSTED: every hit is re-validated through the
@@ -731,8 +1097,7 @@ def _seg_cache_get(cfg, text: str, voice: str, speed: float,
     return None
 
 
-def _seg_cache_put(cfg, text: str, engine: str, voice: str, speed: float,
-                   src: Path) -> None:
+def _seg_cache_put(cfg, text: str, engine: str, voice: str, speed: float, src: Path) -> None:
     """Store a QA-passing segment in the cache (best-effort, never fatal).
 
     Written atomically (unique temp file + os.replace) so concurrent renders
@@ -745,6 +1110,7 @@ def _seg_cache_put(cfg, text: str, engine: str, voice: str, speed: float,
         import os
         import shutil
         import uuid as _u
+
         tmp = dst.with_name(f".{dst.stem}.{_u.uuid4().hex[:8]}.tmp")
         shutil.copyfile(src, tmp)
         os.replace(tmp, dst)
@@ -752,8 +1118,7 @@ def _seg_cache_put(cfg, text: str, engine: str, voice: str, speed: float,
         logger.debug("Segment cache write failed (non-fatal): %s", exc)
 
 
-def _work_engine_priority(seg_voice: str, premium_ok: bool,
-                          kokoro_ready: bool) -> list[str]:
+def _work_engine_priority(seg_voice: str, premium_ok: bool, kokoro_ready: bool) -> list[str]:
     """Engine priority order for one work-render segment.
 
     Shared by the render worker and the resume-info endpoint so that
@@ -762,8 +1127,7 @@ def _work_engine_priority(seg_voice: str, premium_ok: bool,
     """
     if _is_clone_voice(seg_voice):
         return ["premium"]
-    return ((["premium"] if premium_ok else [])
-            + (["kokoro"] if kokoro_ready else []))
+    return (["premium"] if premium_ok else []) + (["kokoro"] if kokoro_ready else [])
 
 
 def _chapter_segment_texts(doc_title: str, doc_text: str) -> list[str]:
@@ -783,10 +1147,7 @@ def _work_credits_texts(work_title: str, voice_name: str) -> tuple[str, str]:
         f"{work_title}. Narrated by {voice_name}. "
         "This is an AI-generated audiobook produced with Orivellum."
     )
-    closing = (
-        f"You have been listening to {work_title}. "
-        f"Narrated by {voice_name}. The end."
-    )
+    closing = f"You have been listening to {work_title}. Narrated by {voice_name}. The end."
     return opening, closing
 
 
@@ -795,7 +1156,8 @@ def _prune_seg_cache(cfg) -> None:
     try:
         files = sorted(
             (f for f in _seg_cache_dir(cfg).iterdir() if f.is_file()),
-            key=lambda f: f.stat().st_mtime, reverse=True,
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
         )
         for old in files[_SEG_CACHE_MAX_FILES:]:
             old.unlink(missing_ok=True)
@@ -803,9 +1165,9 @@ def _prune_seg_cache(cfg) -> None:
         pass
 
 
-def _finalize_segment(cfg, text: str, voice: str, speed: float,
-                      attempt_fn, seg_label: str,
-                      on_result=None) -> Path | None:
+def _finalize_segment(
+    cfg, text: str, voice: str, speed: float, attempt_fn, seg_label: str, on_result=None
+) -> Path | None:
     """QA-gate + cache one synthesized segment.
 
     ``attempt_fn() -> (Path | None, engine_name | None)`` runs the caller's
@@ -834,15 +1196,16 @@ def _finalize_segment(cfg, text: str, voice: str, speed: float,
         _seg_cache_put(cfg, text, engine, voice, speed, path)
     if on_result is not None:
         try:
-            on_result({
-                "retried": first_reason is not None,
-                "retry_reason": first_reason,
-                "engine": engine,
-                **(metrics or {}),
-            })
+            on_result(
+                {
+                    "retried": first_reason is not None,
+                    "retry_reason": first_reason,
+                    "engine": engine,
+                    **(metrics or {}),
+                }
+            )
         except Exception:  # the report must never break a render
-            logger.debug("Quality-report callback failed for %s", seg_label,
-                         exc_info=True)
+            logger.debug("Quality-report callback failed for %s", seg_label, exc_info=True)
     return path
 
 
@@ -861,9 +1224,7 @@ def list_voices():
             "SELECT * FROM voice_profiles ORDER BY is_default DESC, name"
         ).fetchall()
         # Batch-fetch sample engine for every known voice in one query
-        sample_rows = db._conn.execute(
-            "SELECT voice_id, engine FROM voice_samples"
-        ).fetchall()
+        sample_rows = db._conn.execute("SELECT voice_id, engine FROM voice_samples").fetchall()
 
     engine_map: dict[str, str] = {r["voice_id"]: r["engine"] for r in sample_rows}
 
@@ -881,9 +1242,7 @@ def list_voices():
 
     # Return catalog copies annotated with sample_engine (avoids mutating the
     # module-level _VOICE_CATALOG list)
-    catalog_with_engine = [
-        {**v, "sample_engine": engine_map.get(v["id"])} for v in _VOICE_CATALOG
-    ]
+    catalog_with_engine = [{**v, "sample_engine": engine_map.get(v["id"])} for v in _VOICE_CATALOG]
 
     return {
         "voices": catalog_with_engine + profiles,
@@ -893,6 +1252,7 @@ def list_voices():
 
 
 # ── Voice sample generation and caching ───────────────────────────────────────
+
 
 def _get_sample_cache_path(cfg, voice_id: str) -> Path:
     p = Path(cfg.data_dir) / "voice_samples"
@@ -907,6 +1267,7 @@ def _get_sample_cache_path(cfg, voice_id: str) -> Path:
 def _drop_voice_sample(voice_id: str) -> None:
     """Remove a cached sample (DB row + file), e.g. when a clone is deleted."""
     from orivellum.api._deps import get_config as _cfg
+
     try:
         db = get_db()
         with db._lock:
@@ -920,6 +1281,7 @@ def _drop_voice_sample(voice_id: str) -> None:
 def _upsert_voice_sample_db(db, voice_id: str, sample_path: str, engine: str) -> None:
     """Upsert a voice_samples row — records which file backs this voice's sample."""
     from datetime import datetime
+
     now = datetime.now(UTC).isoformat()
     with db._lock:
         db._conn.execute(
@@ -969,8 +1331,9 @@ def _synthesize_sample_sync(voice_id: str) -> Path | None:
     call inside a thread when needed from async routes.
     """
     from orivellum.api._deps import get_config as _cfg
+
     cfg = _cfg()
-    db  = get_db()
+    db = get_db()
 
     # ── DB-backed cache check ────────────────────────────────────────────────
     # Legacy samples generated by the old espeak fallback are never served —
@@ -998,18 +1361,30 @@ def _synthesize_sample_sync(voice_id: str) -> Path | None:
         if kokoro is not None:
             try:
                 import soundfile as sf
+
                 samples, sr = kokoro.create(
                     _SAMPLE_SENTENCE,
                     voice=_resolve_kokoro_voice(voice_id),
-                    speed=1.0, lang="en-us",
+                    speed=1.0,
+                    lang="en-us",
                 )
                 sf.write(str(tmp_wav), samples, sr)
                 result = subprocess.run(
-                    ["ffmpeg", "-y", "-i", str(tmp_wav),
-                     "-af", "loudnorm=I=-20:TP=-3:LRA=7:print_format=none",
-                     "-codec:a", "libmp3lame", "-b:a", "128k",
-                     str(out_path)],
-                    capture_output=True, timeout=60,
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        str(tmp_wav),
+                        "-af",
+                        "loudnorm=I=-20:TP=-3:LRA=7:print_format=none",
+                        "-codec:a",
+                        "libmp3lame",
+                        "-b:a",
+                        "128k",
+                        str(out_path),
+                    ],
+                    capture_output=True,
+                    timeout=60,
                 )
                 if result.returncode == 0:
                     _upsert_voice_sample_db(db, voice_id, str(out_path), "kokoro")
@@ -1032,6 +1407,7 @@ def _synthesize_clone_sample_sync(voice_id: str) -> Path | None:
     the MP3 is cached to disk + the voice_samples table (engine "premium").
     """
     from orivellum.api._deps import get_config as _cfg
+
     cfg = _cfg()
     db = get_db()
     audio = _call_premium_tts_sync(_SAMPLE_SENTENCE, voice_id, 1.0, cfg)
@@ -1085,12 +1461,15 @@ async def get_voice_sample(voice_id: str):
     if cached_path and cache_ok:
         p = Path(cached_path)
         if p.exists() and p.stat().st_size > 1000:
-            return FileResponse(str(p), media_type="audio/mpeg",
-                                filename=f"sample_{voice_id}.mp3",
-                                headers={
-                                    "X-TTS-Engine": engine,
-                                    "Cache-Control": "public, max-age=86400",
-                                })
+            return FileResponse(
+                str(p),
+                media_type="audio/mpeg",
+                filename=f"sample_{voice_id}.mp3",
+                headers={
+                    "X-TTS-Engine": engine,
+                    "Cache-Control": "public, max-age=86400",
+                },
+            )
 
     # Generate (also writes to DB on success)
     if is_clone:
@@ -1113,17 +1492,22 @@ async def get_voice_sample(voice_id: str):
         if result is None:
             raise HTTPException(503, _NEURAL_TTS_UNAVAILABLE_MSG)
 
-    engine = (await asyncio.to_thread(_lookup_voice_sample_engine, db, voice_id)
-              or ("premium" if is_clone else "kokoro"))
-    return FileResponse(str(result), media_type="audio/mpeg",
-                        filename=f"sample_{voice_id}.mp3",
-                        headers={
-                            "X-TTS-Engine": engine,
-                            "Cache-Control": "public, max-age=86400",
-                        })
+    engine = await asyncio.to_thread(_lookup_voice_sample_engine, db, voice_id) or (
+        "premium" if is_clone else "kokoro"
+    )
+    return FileResponse(
+        str(result),
+        media_type="audio/mpeg",
+        filename=f"sample_{voice_id}.mp3",
+        headers={
+            "X-TTS-Engine": engine,
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
 
 
 # ── AI Narrator Recommender ────────────────────────────────────────────────────
+
 
 class VoiceRecommendRequest(BaseModel):
     work_id: str
@@ -1150,7 +1534,7 @@ async def recommend_voices(body: VoiceRecommendRequest):
 
     from orivellum.capabilities.llm import llm_call
 
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
 
     # ── Fetch work context ─────────────────────────────────────────────────────
@@ -1164,7 +1548,7 @@ async def recommend_voices(body: VoiceRecommendRequest):
 
     work = dict(work_row)
     work_title = work.get("title") or "Untitled"
-    work_desc  = work.get("description") or ""
+    work_desc = work.get("description") or ""
 
     # Fetch top knowledge items for richer context
     with db._lock:
@@ -1198,9 +1582,10 @@ async def recommend_voices(body: VoiceRecommendRequest):
     if not has_content:
         return _fallback_recommendation(work_title, body.top_n, no_content=True)
 
-    knowledge_text = "\n".join(
-        f"- {r['subject']}: {(r['text'] or '')[:200]}" for r in ki_rows
-    ) or "(no knowledge items yet)"
+    knowledge_text = (
+        "\n".join(f"- {r['subject']}: {(r['text'] or '')[:200]}" for r in ki_rows)
+        or "(no knowledge items yet)"
+    )
 
     sample_text = " ".join(r["text"][:300] for r in chunk_rows)[:800] or "(no document text)"
 
@@ -1217,8 +1602,8 @@ async def recommend_voices(body: VoiceRecommendRequest):
 
 ## Work
 Title: {work_title}
-Type: {work.get('work_type', 'unknown')}
-Description: {work_desc or '(no description)'}
+Type: {work.get("work_type", "unknown")}
+Description: {work_desc or "(no description)"}
 
 ## Sample Knowledge Items
 {knowledge_text}
@@ -1251,11 +1636,12 @@ Return exactly {body.top_n} recommendations, ranked best first."""
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user",   "content": user_prompt},
+        {"role": "user", "content": user_prompt},
     ]
 
     result = await run_in_threadpool(
-        llm_call, messages,
+        llm_call,
+        messages,
         base_url=cfg.serving.base_url,
         model=cfg.serving.workhorse_model,
         timeout=45.0,
@@ -1272,6 +1658,7 @@ Return exactly {body.top_n} recommendations, ranked best first."""
     # Parse JSON response
     try:
         import json as _json
+
         raw = result.text.strip()
         # Strip markdown code fences if present
         if raw.startswith("```"):
@@ -1280,15 +1667,17 @@ Return exactly {body.top_n} recommendations, ranked best first."""
         recs = data.get("recommendations", [])
         # Validate and enrich each recommendation
         enriched = []
-        for r in recs[:body.top_n]:
+        for r in recs[: body.top_n]:
             vid = r.get("voice_id", "")
             if vid not in _VOICE_BY_ID:
                 continue
             voice = _VOICE_BY_ID[vid]
-            enriched.append({
-                **r,
-                "voice": voice,
-            })
+            enriched.append(
+                {
+                    **r,
+                    "voice": voice,
+                }
+            )
         return {
             "work_id": body.work_id,
             "work_title": work_title,
@@ -1302,9 +1691,7 @@ Return exactly {body.top_n} recommendations, ranked best first."""
         return _fallback_recommendation(work_title, body.top_n, no_content=False)
 
 
-def _fallback_recommendation(
-    work_title: str, top_n: int, *, no_content: bool = False
-) -> dict:
+def _fallback_recommendation(work_title: str, top_n: int, *, no_content: bool = False) -> dict:
     """Return sensible defaults when the LLM is unavailable or content is sparse.
 
     ``no_content=True`` signals to the client that the Work has no analysable
@@ -1316,14 +1703,16 @@ def _fallback_recommendation(
     for vid in defaults[:top_n]:
         if vid in _VOICE_BY_ID:
             v = _VOICE_BY_ID[vid]
-            recs.append({
-                "voice_id": vid,
-                "score": 80,
-                "headline": f"{v['name']} suits a wide range of narrative content",
-                "rationale": v["description"],
-                "dimension_match": "Well-rounded dimensions suitable for most audiobook narration",
-                "voice": v,
-            })
+            recs.append(
+                {
+                    "voice_id": vid,
+                    "score": 80,
+                    "headline": f"{v['name']} suits a wide range of narrative content",
+                    "rationale": v["description"],
+                    "dimension_match": "Well-rounded dimensions suitable for most audiobook narration",
+                    "voice": v,
+                }
+            )
     genre_analysis = (
         "No document content yet — add documents to this Work for a personalised analysis."
         if no_content
@@ -1340,6 +1729,7 @@ def _fallback_recommendation(
 
 
 # ── Voice Designer ─────────────────────────────────────────────────────────────
+
 
 class VoiceDesignRequest(BaseModel):
     description: str  # e.g. "deep, ancient male voice with gravitas and reverence"
@@ -1358,7 +1748,7 @@ async def design_voice(body: VoiceDesignRequest):
         raise HTTPException(400, "description too long (max 500 chars)")
 
     cfg = get_config()
-    db  = get_db()
+    db = get_db()
 
     voice_table = _build_voice_catalog_summary()
 
@@ -1392,11 +1782,12 @@ Return this JSON structure exactly:
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user",   "content": user_prompt},
+        {"role": "user", "content": user_prompt},
     ]
 
     result = await run_in_threadpool(
-        llm_call, messages,
+        llm_call,
+        messages,
         base_url=cfg.serving.base_url,
         model=cfg.serving.workhorse_model,
         timeout=30.0,
@@ -1409,6 +1800,7 @@ Return this JSON structure exactly:
     if result.ok and result.text:
         try:
             import json as _json
+
             raw = result.text.strip()
             if raw.startswith("```"):
                 raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("` \n")
@@ -1445,21 +1837,44 @@ Return this JSON structure exactly:
         if any(w in desc_lower for w in ("warm", "intimate", "personal", "friendly")):
             score += d["warmth"]
         # Authority keywords
-        if any(w in desc_lower for w in ("authority", "command", "authoritative", "strong", "powerful")):
+        if any(
+            w in desc_lower for w in ("authority", "command", "authoritative", "strong", "powerful")
+        ):
             score += d["authority"]
         # Gravitas keywords
-        if any(w in desc_lower for w in ("gravitas", "solemn", "serious", "weight", "deep", "ancient", "prophet", "biblical")):
+        if any(
+            w in desc_lower
+            for w in (
+                "gravitas",
+                "solemn",
+                "serious",
+                "weight",
+                "deep",
+                "ancient",
+                "prophet",
+                "biblical",
+            )
+        ):
             score += d["gravitas"]
         # Age/wisdom keywords
         if any(w in desc_lower for w in ("old", "elder", "wise", "ancient", "mature", "seasoned")):
             score += d["age"]
         # Gender keywords
-        if any(w in desc_lower for w in ("male", "man", "masculine")) and voice["gender"] == "masculine":
+        if (
+            any(w in desc_lower for w in ("male", "man", "masculine"))
+            and voice["gender"] == "masculine"
+        ):
             score += 5
-        if any(w in desc_lower for w in ("female", "woman", "feminine")) and voice["gender"] == "feminine":
+        if (
+            any(w in desc_lower for w in ("female", "woman", "feminine"))
+            and voice["gender"] == "feminine"
+        ):
             score += 5
         # Accent keywords
-        if any(w in desc_lower for w in ("british", "english", "uk")) and voice["accent"] == "british":
+        if (
+            any(w in desc_lower for w in ("british", "english", "uk"))
+            and voice["accent"] == "british"
+        ):
             score += 4
         if any(w in desc_lower for w in ("american", "us")) and voice["accent"] == "american":
             score += 4
@@ -1489,6 +1904,7 @@ Return this JSON structure exactly:
 # Stored in works.meta["voice_casting"] as {doc_id: voice_id}. Chapters mapped
 # here are narrated in their cast voice; everything else uses the narrator
 # voice supplied with the render request.
+
 
 def _get_voice_casting(db, work_id: str) -> dict[str, str]:
     work = db.get_work(work_id)
@@ -1522,9 +1938,11 @@ def get_work_voice_casting(work_id: str):
         "work_id": work_id,
         "sections": casting,
         "documents": [
-            {"id": r["id"],
-             "title": r["title"] or (r["source"].split("/")[-1] if r["source"] else "Chapter"),
-             "voice": casting.get(r["id"])}
+            {
+                "id": r["id"],
+                "title": r["title"] or (r["source"].split("/")[-1] if r["source"] else "Chapter"),
+                "voice": casting.get(r["id"]),
+            }
             for r in doc_rows
         ],
     }
@@ -1539,8 +1957,12 @@ def put_work_voice_casting(work_id: str, body: VoiceCastingUpdate):
         raise HTTPException(404, f"Work {work_id!r} not found")
 
     with db._lock:
-        valid_docs = {r["id"] for r in db._conn.execute(
-            "SELECT id FROM documents WHERE work_id=?", (work_id,)).fetchall()}
+        valid_docs = {
+            r["id"]
+            for r in db._conn.execute(
+                "SELECT id FROM documents WHERE work_id=?", (work_id,)
+            ).fetchall()
+        }
 
     cleaned: dict[str, str] = {}
     for doc_id, voice in body.sections.items():
@@ -1573,6 +1995,7 @@ def _get_spatial_settings(db, work_id: str) -> dict:
     work = db.get_work(work_id)
     saved = ((work or {}).get("meta") or {}).get("spatial_audio") or {}
     from orivellum.capabilities.spatial import SPATIAL_MODES
+
     mode = saved.get("mode")
     return {
         "enabled": bool(saved.get("enabled")),
@@ -1583,7 +2006,7 @@ def _get_spatial_settings(db, work_id: str) -> dict:
 
 class SpatialSettingsUpdate(BaseModel):
     enabled: bool = False
-    mode: str = "subtle"              # "subtle" (stereo placement) | "wide" (headphone)
+    mode: str = "subtle"  # "subtle" (stereo placement) | "wide" (headphone)
     ambience_doc_id: str | None = None  # library audio doc used as the bed
 
 
@@ -1604,9 +2027,11 @@ def put_work_spatial_settings(work_id: str, body: SpatialSettingsUpdate):
     if not work:
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.spatial import SPATIAL_MODES
+
     if body.mode not in SPATIAL_MODES:
-        raise HTTPException(422, f"Unknown spatial mode {body.mode!r} — "
-                                 f"expected one of {list(SPATIAL_MODES)}")
+        raise HTTPException(
+            422, f"Unknown spatial mode {body.mode!r} — expected one of {list(SPATIAL_MODES)}"
+        )
     amb = body.ambience_doc_id or None
     if amb:
         with db._lock:
@@ -1619,8 +2044,10 @@ def put_work_spatial_settings(work_id: str, body: SpatialSettingsUpdate):
         ext = Path(row["content_path"] or "").suffix.lstrip(".").lower()
         if kind not in _AUDIO_DOC_KINDS and ext not in _AUDIO_DOC_KINDS:
             raise HTTPException(
-                422, f"Ambience document {amb!r} is not an audio file "
-                     f"(kind={kind!r}) — pick an audio doc from the Library")
+                422,
+                f"Ambience document {amb!r} is not an audio file "
+                f"(kind={kind!r}) — pick an audio doc from the Library",
+            )
     meta = dict(work.get("meta") or {})
     settings = {"enabled": body.enabled, "mode": body.mode, "ambience_doc_id": amb}
     if body.enabled or amb or body.mode != "subtle":
@@ -1632,7 +2059,9 @@ def put_work_spatial_settings(work_id: str, body: SpatialSettingsUpdate):
 
 
 def _resolve_spatial_cfg(
-    db, cfg, work_id: str,
+    db,
+    cfg,
+    work_id: str,
     override_enabled: bool | None,
     override_mode: str | None,
     override_ambience: str | None,
@@ -1644,6 +2073,7 @@ def _resolve_spatial_cfg(
     no bed rather than failing the render.
     """
     from orivellum.capabilities.spatial import SPATIAL_MODES, ambience_path_for_doc
+
     saved = _get_spatial_settings(db, work_id)
     enabled = override_enabled if override_enabled is not None else saved["enabled"]
     if not enabled:
@@ -1651,8 +2081,7 @@ def _resolve_spatial_cfg(
     mode = override_mode or saved["mode"]
     if mode not in SPATIAL_MODES:
         mode = "subtle"
-    amb_doc = (override_ambience if override_ambience is not None
-               else saved["ambience_doc_id"])
+    amb_doc = override_ambience if override_ambience is not None else saved["ambience_doc_id"]
     amb_path = None
     if amb_doc:
         amb_path = ambience_path_for_doc(db, cfg, amb_doc)
@@ -1671,14 +2100,17 @@ def _apply_spatial_finish(mp3_path: Path, spatial_cfg: dict, out_dir: Path) -> P
     the mastered input file is kept unchanged.  Returns the path to serve.
     """
     from orivellum.capabilities.spatial import finish_spatial, needs_finish_pass
+
     if not needs_finish_pass(spatial_cfg["mode"], spatial_cfg["ambience_path"]):
         return mp3_path
     polished = out_dir / f".{mp3_path.stem}.spatial.tmp.mp3"
     try:
-        ok = finish_spatial(str(mp3_path), str(polished),
-                            spatial_cfg["mode"], spatial_cfg["ambience_path"])
+        ok = finish_spatial(
+            str(mp3_path), str(polished), spatial_cfg["mode"], spatial_cfg["ambience_path"]
+        )
         if ok and _qa_check_audio(polished) is None:
             import os as _os
+
             _os.replace(polished, mp3_path)
         else:
             logger.warning(
@@ -1694,9 +2126,9 @@ class WorkAudiobookRequest(BaseModel):
     work_id: str
     voice: str = "bm_george"
     speed: float = 1.0
-    include_credits: bool = True   # opening + closing ACX-style credits
-    acx_mastering: bool = True     # apply loudnorm ACX mastering
-    return_url: bool = False       # for mobile: return JSON path instead of FileResponse
+    include_credits: bool = True  # opening + closing ACX-style credits
+    acx_mastering: bool = True  # apply loudnorm ACX mastering
+    return_url: bool = False  # for mobile: return JSON path instead of FileResponse
     # Spatial overrides — None means "use the Work's saved spatial settings"
     spatial: bool | None = None
     spatial_mode: str | None = None
@@ -1710,7 +2142,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
     Produces a single concatenated MP3 with optional opening/closing credits
     and ACX-compliant loudness mastering.
     """
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
 
     # ── Validate work ──────────────────────────────────────────────────────────
@@ -1752,8 +2184,9 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
         ).fetchall()
 
     if not doc_rows:
-        raise HTTPException(422, "No ready documents found in this Work. "
-                                 "Process documents in the Library first.")
+        raise HTTPException(
+            422, "No ready documents found in this Work. Process documents in the Library first."
+        )
 
     # ── Fetch text chunks per document ─────────────────────────────────────────
     doc_texts: list[tuple[str, str, str]] = []  # (doc_id, title, full_text)
@@ -1765,7 +2198,9 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             ).fetchall()
             if chunks:
                 text = "\n\n".join(r["text"] for r in chunks)
-                doc_title = doc["title"] or doc["source"].split("/")[-1] if doc["source"] else "Chapter"
+                doc_title = (
+                    doc["title"] or doc["source"].split("/")[-1] if doc["source"] else "Chapter"
+                )
                 doc_texts.append((doc["id"], doc_title, text))
 
     if not doc_texts:
@@ -1775,7 +2210,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir = Path(tempfile.mkdtemp())
 
-    kokoro_eng  = _get_kokoro()
+    kokoro_eng = _get_kokoro()
     _prune_seg_cache(cfg)
 
     try:
@@ -1790,14 +2225,18 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
         """Synthesise one segment to WAV (cache → engines → QA gate)."""
         seg_voice = seg_voice or body.voice
         # Neural engines only — no robotic fallback by owner policy.
-        engines = (["premium"] if _is_clone_voice(seg_voice) else
-                   (["premium"] if premium_ok else []) +
-                   (["kokoro"] if (kokoro_eng is not None and _sf is not None) else []))
+        engines = (
+            ["premium"]
+            if _is_clone_voice(seg_voice)
+            else (["premium"] if premium_ok else [])
+            + (["kokoro"] if (kokoro_eng is not None and _sf is not None) else [])
+        )
 
         wav = tmp_dir / f"seg_{idx:06d}.wav"
         cached = _seg_cache_get(cfg, text, seg_voice, body.speed, engines)
         if cached is not None:
             import shutil
+
             shutil.copyfile(cached, wav)
             return wav
 
@@ -1811,9 +2250,21 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
                         mp3 = tmp_dir / f"seg_{idx:06d}.mp3"
                         mp3.write_bytes(audio)
                         r = subprocess.run(
-                            ["ffmpeg", "-y", "-v", "error", "-i", str(mp3),
-                             "-ar", "22050", "-ac", "1", str(wav)],
-                            capture_output=True, timeout=60,
+                            [
+                                "ffmpeg",
+                                "-y",
+                                "-v",
+                                "error",
+                                "-i",
+                                str(mp3),
+                                "-ar",
+                                "22050",
+                                "-ac",
+                                "1",
+                                str(wav),
+                            ],
+                            capture_output=True,
+                            timeout=60,
                         )
                         mp3.unlink(missing_ok=True)
                         if r.returncode == 0 and wav.exists():
@@ -1831,8 +2282,8 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             if kokoro_eng is not None and _sf is not None:
                 try:
                     samples, sr = kokoro_eng.create(
-                        text, voice=_resolve_kokoro_voice(seg_voice),
-                        speed=body.speed, lang="en-us")
+                        text, voice=_resolve_kokoro_voice(seg_voice), speed=body.speed, lang="en-us"
+                    )
                     _sf.write(str(wav), samples, sr)
                     return wav, "kokoro"
                 except Exception as ke:
@@ -1840,14 +2291,12 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             # No robotic fallback — segment fails clearly instead (owner policy).
             return None, None
 
-        out = _finalize_segment(cfg, text, seg_voice, body.speed, _attempt,
-                                f"segment {idx}")
+        out = _finalize_segment(cfg, text, seg_voice, body.speed, _attempt, f"segment {idx}")
         if out is None:
             # Fail the whole render instead of silently skipping speech —
             # otherwise a book with no working engine renders as silence.
             raise RuntimeError(
-                f"Segment {idx} could not be synthesized — "
-                + _NEURAL_TTS_UNAVAILABLE_MSG
+                f"Segment {idx} could not be synthesized — " + _NEURAL_TTS_UNAVAILABLE_MSG
             )
         return out
 
@@ -1868,9 +2317,19 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             # 1-second silence between credits and content
             sil = tmp_dir / f"seg_{seg_idx:06d}.wav"
             subprocess.run(
-                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
-                 "-t", "1", str(sil)],
-                capture_output=True, timeout=10,
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=22050:cl=mono",
+                    "-t",
+                    "1",
+                    str(sil),
+                ],
+                capture_output=True,
+                timeout=10,
             )
             if sil.exists():
                 wav_parts.append(sil)
@@ -1900,9 +2359,19 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             # Short silence between chapters
             sil = tmp_dir / f"seg_{seg_idx:06d}.wav"
             subprocess.run(
-                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
-                 "-t", "1.5", str(sil)],
-                capture_output=True, timeout=10,
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=22050:cl=mono",
+                    "-t",
+                    "1.5",
+                    str(sil),
+                ],
+                capture_output=True,
+                timeout=10,
             )
             if sil.exists():
                 wav_parts.append(sil)
@@ -1911,10 +2380,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
 
         # ── Closing credits ────────────────────────────────────────────────────
         if body.include_credits:
-            closing = (
-                f"You have been listening to {work_title}. "
-                f"Narrated by {voice_name}. The end."
-            )
+            closing = f"You have been listening to {work_title}. Narrated by {voice_name}. The end."
             p = _synth_segment(closing, seg_idx)
             if p:
                 wav_parts.append(p)
@@ -1928,13 +2394,18 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
         # a spatial hiccup can never break the render.  The segment cache is
         # untouched — panned copies are per-render temp files.
         spatial_cfg = _resolve_spatial_cfg(
-            db, cfg, body.work_id, body.spatial, body.spatial_mode,
+            db,
+            cfg,
+            body.work_id,
+            body.spatial,
+            body.spatial_mode,
             body.ambience_doc_id,
         )
         concat_parts = wav_parts
         spatial_applied = False
         if spatial_cfg is not None:
             from orivellum.capabilities.spatial import spatialize_parts
+
             panned = spatialize_parts(wav_parts, part_voices, body.voice, tmp_dir)
             if panned is not None:
                 concat_parts = panned
@@ -1944,21 +2415,31 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
 
         # ── Concatenate all WAVs ───────────────────────────────────────────────
         safe_title = re.sub(r"[^\w\-]", "_", work_title)[:50]
-        tag        = "_spatial" if spatial_applied else ""
-        raw_mp3    = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}_raw.mp3"
-        final_mp3  = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}.mp3"
+        tag = "_spatial" if spatial_applied else ""
+        raw_mp3 = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}_raw.mp3"
+        final_mp3 = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}.mp3"
 
         concat_list = tmp_dir / "concat.txt"
-        concat_list.write_text(
-            "\n".join(f"file '{p}'" for p in concat_parts), encoding="utf-8"
-        )
+        concat_list.write_text("\n".join(f"file '{p}'" for p in concat_parts), encoding="utf-8")
 
         ff = subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", str(concat_list),
-             "-codec:a", "libmp3lame", "-q:a", "2",
-             str(raw_mp3)],
-            capture_output=True, timeout=600,
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-codec:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                str(raw_mp3),
+            ],
+            capture_output=True,
+            timeout=600,
         )
         if ff.returncode != 0:
             raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:400]}")
@@ -1983,9 +2464,14 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
         all_text = "\n\n".join(t for _, _, t in doc_texts)
         reg_title = f"Audiobook: {work_title}" + (" (spatial)" if spatial_applied else "")
         from orivellum.api.executor import get_executor as _gex
+
         _gex().submit(
-            _register_output_bg, mp3_path, all_text[:8000], "mp3",
-            reg_title, prelinked_rel=_ab_rel,
+            _register_output_bg,
+            mp3_path,
+            all_text[:8000],
+            "mp3",
+            reg_title,
+            prelinked_rel=_ab_rel,
         )
 
         if body.return_url:
@@ -2045,7 +2531,7 @@ def _run_work_tts_job(
 
     voice_meta = _VOICE_BY_ID.get(voice, {})
     voice_name = voice_meta.get("name", voice)
-    casting    = casting or {}
+    casting = casting or {}
 
     tmp_dir = Path(tempfile.mkdtemp())
     wav_parts: list[Path] = []
@@ -2061,10 +2547,18 @@ def _run_work_tts_job(
     cur_report: dict | None = None
 
     def _new_report(doc_id: str | None, title: str, kind: str = "chapter") -> dict:
-        rep = {"doc_id": doc_id, "title": title, "kind": kind,
-               "segments": 0, "cached_segments": 0, "retries": 0,
-               "flagged": [], "peak_db": None,
-               "_mean_sum": 0.0, "_mean_n": 0}
+        rep = {
+            "doc_id": doc_id,
+            "title": title,
+            "kind": kind,
+            "segments": 0,
+            "cached_segments": 0,
+            "retries": 0,
+            "flagged": [],
+            "peak_db": None,
+            "_mean_sum": 0.0,
+            "_mean_n": 0,
+        }
         chapter_reports.append(rep)
         return rep
 
@@ -2077,10 +2571,12 @@ def _run_work_tts_job(
             rep["cached_segments"] += 1
         if info.get("retried"):
             rep["retries"] += 1
-            rep["flagged"].append({
-                "segment": rep["segments"],
-                "reason": info.get("retry_reason") or "flagged by QA gate",
-            })
+            rep["flagged"].append(
+                {
+                    "segment": rep["segments"],
+                    "reason": info.get("retry_reason") or "flagged by QA gate",
+                }
+            )
         mean_db = info.get("mean_db")
         if mean_db is not None:
             rep["_mean_sum"] += float(mean_db)
@@ -2088,27 +2584,28 @@ def _run_work_tts_job(
         max_db = info.get("max_db")
         if max_db is not None:
             max_db = float(max_db)
-            rep["peak_db"] = (max_db if rep["peak_db"] is None
-                              else max(rep["peak_db"], max_db))
+            rep["peak_db"] = max_db if rep["peak_db"] is None else max(rep["peak_db"], max_db)
 
     def _final_quality_report() -> dict:
         chapters = []
-        totals = {"segments": 0, "cached_segments": 0, "retries": 0,
-                  "flagged_segments": 0}
+        totals = {"segments": 0, "cached_segments": 0, "retries": 0, "flagged_segments": 0}
         mean_sum, mean_n, peak = 0.0, 0, None
         # Credits rows (if any) sort after the chapter rows
         for rep in sorted(chapter_reports, key=lambda r: r["kind"] == "credits"):
-            mean_db = (round(rep["_mean_sum"] / rep["_mean_n"], 1)
-                       if rep["_mean_n"] else None)
-            chapters.append({
-                "doc_id": rep["doc_id"], "title": rep["title"],
-                "kind": rep["kind"], "segments": rep["segments"],
-                "cached_segments": rep["cached_segments"],
-                "retries": rep["retries"], "flagged": rep["flagged"],
-                "mean_db": mean_db,
-                "peak_db": (round(rep["peak_db"], 1)
-                            if rep["peak_db"] is not None else None),
-            })
+            mean_db = round(rep["_mean_sum"] / rep["_mean_n"], 1) if rep["_mean_n"] else None
+            chapters.append(
+                {
+                    "doc_id": rep["doc_id"],
+                    "title": rep["title"],
+                    "kind": rep["kind"],
+                    "segments": rep["segments"],
+                    "cached_segments": rep["cached_segments"],
+                    "retries": rep["retries"],
+                    "flagged": rep["flagged"],
+                    "mean_db": mean_db,
+                    "peak_db": (round(rep["peak_db"], 1) if rep["peak_db"] is not None else None),
+                }
+            )
             totals["segments"] += rep["segments"]
             totals["cached_segments"] += rep["cached_segments"]
             totals["retries"] += rep["retries"]
@@ -2137,14 +2634,15 @@ def _run_work_tts_job(
         seg_idx += 1
 
         engines = _work_engine_priority(
-            seg_voice, premium_ok,
+            seg_voice,
+            premium_ok,
             kokoro_ready=(kokoro_eng is not None and _sf2 is not None),
         )
         cache_metrics: dict = {}
-        cached = _seg_cache_get(cfg, text, seg_voice, speed, engines,
-                                metrics_out=cache_metrics)
+        cached = _seg_cache_get(cfg, text, seg_voice, speed, engines, metrics_out=cache_metrics)
         if cached is not None:
             import shutil
+
             shutil.copyfile(cached, wav)
             _note_segment(from_cache=True)
             _note_quality(cache_metrics, from_cache=True)
@@ -2159,9 +2657,21 @@ def _run_work_tts_job(
                         mp3 = wav.with_suffix(".mp3")
                         mp3.write_bytes(audio)
                         r = subprocess.run(
-                            ["ffmpeg", "-y", "-v", "error", "-i", str(mp3),
-                             "-ar", "22050", "-ac", "1", str(wav)],
-                            capture_output=True, timeout=60,
+                            [
+                                "ffmpeg",
+                                "-y",
+                                "-v",
+                                "error",
+                                "-i",
+                                str(mp3),
+                                "-ar",
+                                "22050",
+                                "-ac",
+                                "1",
+                                str(wav),
+                            ],
+                            capture_output=True,
+                            timeout=60,
                         )
                         mp3.unlink(missing_ok=True)
                         if r.returncode == 0 and wav.exists():
@@ -2177,8 +2687,8 @@ def _run_work_tts_job(
             if kokoro_eng is not None and _sf2 is not None:
                 try:
                     samples, sr = kokoro_eng.create(
-                        text, voice=_resolve_kokoro_voice(seg_voice),
-                        speed=speed, lang="en-us")
+                        text, voice=_resolve_kokoro_voice(seg_voice), speed=speed, lang="en-us"
+                    )
                     _sf2.write(str(wav), samples, sr)
                     return wav, "kokoro"
                 except Exception as ke:
@@ -2186,16 +2696,20 @@ def _run_work_tts_job(
             # No robotic fallback — segment fails clearly instead (owner policy).
             return None, None
 
-        out = _finalize_segment(cfg, text, seg_voice, speed, _attempt,
-                                f"segment {seg_idx - 1}",
-                                on_result=lambda info: _note_quality(
-                                    info, from_cache=False))
+        out = _finalize_segment(
+            cfg,
+            text,
+            seg_voice,
+            speed,
+            _attempt,
+            f"segment {seg_idx - 1}",
+            on_result=lambda info: _note_quality(info, from_cache=False),
+        )
         if out is None:
             # Fail the whole job instead of silently skipping speech —
             # otherwise a book with no working engine renders as silence.
             raise RuntimeError(
-                f"Segment {seg_idx - 1} could not be synthesized — "
-                + _NEURAL_TTS_UNAVAILABLE_MSG
+                f"Segment {seg_idx - 1} could not be synthesized — " + _NEURAL_TTS_UNAVAILABLE_MSG
             )
         _note_segment(from_cache=False)
         return out
@@ -2205,9 +2719,19 @@ def _run_work_tts_job(
         sil = tmp_dir / f"seg_{seg_idx:06d}.wav"
         seg_idx += 1
         subprocess.run(
-            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
-             "-t", str(dur), str(sil)],
-            capture_output=True, timeout=10,
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=22050:cl=mono",
+                "-t",
+                str(dur),
+                str(sil),
+            ],
+            capture_output=True,
+            timeout=10,
         )
         if sil.exists():
             wav_parts.append(sil)
@@ -2223,8 +2747,7 @@ def _run_work_tts_job(
 
         opening_credits, closing_credits = _work_credits_texts(work_title, voice_name)
 
-        credits_report = (_new_report(None, "Credits", kind="credits")
-                          if include_credits else None)
+        credits_report = _new_report(None, "Credits", kind="credits") if include_credits else None
 
         # Opening credits
         if include_credits:
@@ -2246,10 +2769,12 @@ def _run_work_tts_job(
             cur_report = _new_report(chap_doc_id, doc_title)
 
             with _work_tts_jobs_lock:
-                _work_tts_jobs[job_id].update({
-                    "chapter_idx": idx,
-                    "chapter_title": doc_title,
-                })
+                _work_tts_jobs[job_id].update(
+                    {
+                        "chapter_idx": idx,
+                        "chapter_title": doc_title,
+                    }
+                )
 
             # Segment plan MUST come from _chapter_segment_texts so cache keys
             # line up with what the resume-info endpoint reports as done.
@@ -2290,29 +2815,43 @@ def _run_work_tts_job(
         spatial_applied = False
         if spatial_cfg is not None:
             from orivellum.capabilities.spatial import spatialize_parts
+
             panned = spatialize_parts(wav_parts, part_voices, voice, tmp_dir)
             if panned is not None:
                 concat_parts = panned
                 spatial_applied = True
             else:
-                logger.warning("Work TTS job %s: spatial pan stage failed — "
-                               "rendering non-spatial output", job_id)
+                logger.warning(
+                    "Work TTS job %s: spatial pan stage failed — rendering non-spatial output",
+                    job_id,
+                )
 
         # Concatenate all WAV parts to MP3
         safe_title = re.sub(r"[^\w\-]", "_", work_title)[:50]
-        tag        = "_spatial" if spatial_applied else ""
-        raw_mp3    = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}_raw.mp3"
-        final_mp3  = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}.mp3"
+        tag = "_spatial" if spatial_applied else ""
+        raw_mp3 = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}_raw.mp3"
+        final_mp3 = out_dir / f"{safe_title}{tag}_{uuid.uuid4().hex[:6]}.mp3"
 
         concat_list = tmp_dir / "concat.txt"
-        concat_list.write_text(
-            "\n".join(f"file '{p}'" for p in concat_parts), encoding="utf-8"
-        )
+        concat_list.write_text("\n".join(f"file '{p}'" for p in concat_parts), encoding="utf-8")
         ff = subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", str(concat_list),
-             "-codec:a", "libmp3lame", "-q:a", "2", str(raw_mp3)],
-            capture_output=True, timeout=600,
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-codec:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                str(raw_mp3),
+            ],
+            capture_output=True,
+            timeout=600,
         )
         if ff.returncode != 0:
             raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:400]}")
@@ -2346,28 +2885,36 @@ def _run_work_tts_job(
         all_text = "\n\n".join(t for _, _, t in doc_texts)
         reg_title = f"Audiobook: {work_title}" + (" (spatial)" if spatial_applied else "")
         from orivellum.api.executor import get_executor as _gex_wj
+
         _gex_wj().submit(
-            _register_output_bg, mp3_path, all_text[:8000], "mp3",
-            reg_title, prelinked_rel=_ab_rel,
+            _register_output_bg,
+            mp3_path,
+            all_text[:8000],
+            "mp3",
+            reg_title,
+            prelinked_rel=_ab_rel,
         )
 
         rel = str(mp3_path.relative_to(out_dir))
         with _work_tts_jobs_lock:
-            _work_tts_jobs[job_id].update({
-                "state": "done",
-                "chapter_idx": len(doc_texts),
-                "chapter_title": "",
-                "quality_report": _final_quality_report(),
-                "result": {
-                    "path": rel,
-                    "filename": mp3_path.name,
-                    "work_title": work_title,
-                },
-            })
+            _work_tts_jobs[job_id].update(
+                {
+                    "state": "done",
+                    "chapter_idx": len(doc_texts),
+                    "chapter_title": "",
+                    "quality_report": _final_quality_report(),
+                    "result": {
+                        "path": rel,
+                        "filename": mp3_path.name,
+                        "work_title": work_title,
+                    },
+                }
+            )
 
         # Notify only AFTER the durable done transition — a failure between
         # render and state update must never produce a false "ready" alert.
         from orivellum.api import notifications as _notif_wj
+
         _notif_wj.emit(
             "audiobook_ready",
             "Audiobook ready",
@@ -2399,9 +2946,7 @@ def _collect_work_doc_texts(db, work_id: str) -> tuple[str, list[tuple[str, str,
     missing Work / no ready documents / no extracted text.
     """
     with db._lock:
-        work_row = db._conn.execute(
-            "SELECT id, title FROM works WHERE id=?", (work_id,)
-        ).fetchone()
+        work_row = db._conn.execute("SELECT id, title FROM works WHERE id=?", (work_id,)).fetchone()
     if not work_row:
         raise HTTPException(404, f"Work {work_id!r} not found")
     work_title = work_row["title"] or "Untitled Work"
@@ -2415,8 +2960,9 @@ def _collect_work_doc_texts(db, work_id: str) -> tuple[str, list[tuple[str, str,
             (work_id,),
         ).fetchall()
     if not doc_rows:
-        raise HTTPException(422, "No ready documents found in this Work. "
-                                 "Process documents in the Library first.")
+        raise HTTPException(
+            422, "No ready documents found in this Work. Process documents in the Library first."
+        )
 
     doc_texts: list[tuple[str, str, str]] = []
     with db._lock:
@@ -2456,11 +3002,11 @@ def work_tts_resume_info(body: WorkResumeInfoRequest):
     Existence-only check by design — the render worker still QA-gates every
     cache hit before it can reach the final audio.
     """
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
 
     work_title, doc_texts = _collect_work_doc_texts(db, body.work_id)
-    casting    = _get_voice_casting(db, body.work_id)
+    casting = _get_voice_casting(db, body.work_id)
     premium_ok = _is_premium_tts_enabled(cfg)
     voice_name = _VOICE_BY_ID.get(body.voice, {}).get("name", body.voice)
 
@@ -2484,15 +3030,17 @@ def work_tts_resume_info(body: WorkResumeInfoRequest):
     for doc_id, doc_title, doc_text in doc_texts:
         seg_voice = casting.get(doc_id) or body.voice
         segs = _chapter_segment_texts(doc_title, doc_text)
-        hit  = sum(1 for s in segs if _is_cached(s, seg_voice))
-        chapters.append({
-            "doc_id": doc_id,
-            "title": doc_title,
-            "segments": len(segs),
-            "cached_segments": hit,
-            "complete": hit == len(segs),
-        })
-        total_segments  += len(segs)
+        hit = sum(1 for s in segs if _is_cached(s, seg_voice))
+        chapters.append(
+            {
+                "doc_id": doc_id,
+                "title": doc_title,
+                "segments": len(segs),
+                "cached_segments": hit,
+                "complete": hit == len(segs),
+            }
+        )
+        total_segments += len(segs)
         cached_segments += hit
 
     if body.include_credits:
@@ -2531,7 +3079,7 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
     Poll GET /studio/tts/work/{job_id}/status for chapter-level progress.
     Send DELETE /studio/tts/work/{job_id} to cancel.
     """
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
 
     work_title, doc_texts = _collect_work_doc_texts(db, body.work_id)
@@ -2550,16 +3098,20 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
 
     # Total planned speech segments (chapters + credits) — lets the UI show
     # fine-grained progress and how far a resumed render fast-forwards.
-    total_segments = sum(
-        len(_chapter_segment_texts(t, x)) for _, t, x in doc_texts
-    ) + (2 if body.include_credits else 0)
+    total_segments = sum(len(_chapter_segment_texts(t, x)) for _, t, x in doc_texts) + (
+        2 if body.include_credits else 0
+    )
 
-    job_id  = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
     out_dir = Path(cfg.data_dir) / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     spatial_cfg = _resolve_spatial_cfg(
-        db, cfg, body.work_id, body.spatial, body.spatial_mode,
+        db,
+        cfg,
+        body.work_id,
+        body.spatial,
+        body.spatial_mode,
         body.ambience_doc_id,
     )
 
@@ -2578,12 +3130,22 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
         }
 
     from orivellum.api.executor import submit_bg as _submit_bg_tts
+
     _submit_bg_tts(
         _run_work_tts_job,
-        job_id, body.voice, body.speed, body.include_credits,
-        body.acx_mastering, work_title, doc_texts, out_dir, cfg, casting,
+        job_id,
+        body.voice,
+        body.speed,
+        body.include_credits,
+        body.acx_mastering,
+        work_title,
+        doc_texts,
+        out_dir,
+        cfg,
+        casting,
         spatial_cfg,
-        kind="studio", label=f"work_tts:{job_id[:8]}",
+        kind="studio",
+        label=f"work_tts:{job_id[:8]}",
     )
 
     return {"job_id": job_id, "total_chapters": len(doc_texts)}
@@ -2618,10 +3180,11 @@ def cancel_work_tts(job_id: str):
 
 # ── TTS synthesis ─────────────────────────────────────────────────────────────
 
+
 class TTSRequest(BaseModel):
     text: str
     voice: str = "af_heart"
-    speed: float = 1.0   # 0.5 – 2.0
+    speed: float = 1.0  # 0.5 – 2.0
     stream: bool = False  # True → SSE per-segment streaming; False → full-file (legacy)
     return_url: bool = False  # mobile: return JSON {ok,path,filename} instead of FileResponse
     # "final" (default) tries the premium sidecar first for studio-grade audio.
@@ -2678,8 +3241,11 @@ async def synthesize_speech(body: TTSRequest):
     _clone = _is_clone_voice(body.voice)
     premium_audio = None
     try:
-        premium_audio = (None if (body.quality == "draft" and not _clone)
-                         else await _call_premium_tts(body.text, body.voice, body.speed, cfg))
+        premium_audio = (
+            None
+            if (body.quality == "draft" and not _clone)
+            else await _call_premium_tts(body.text, body.voice, body.speed, cfg)
+        )
         if premium_audio is not None:
             out_dir = Path(cfg.data_dir) / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -2689,15 +3255,23 @@ async def synthesize_speech(body: TTSRequest):
             _prem_rel = _link_output_sync(Path(tmp.name))
             await asyncio.to_thread(_rotate_outputs, out_dir)
             from orivellum.api.executor import get_executor as _gex
+
             _gex().submit(
-                _register_output_bg, Path(tmp.name), body.text, "mp3",
-                f"TTS clip: {body.text[:60]}", prelinked_rel=_prem_rel,
+                _register_output_bg,
+                Path(tmp.name),
+                body.text,
+                "mp3",
+                f"TTS clip: {body.text[:60]}",
+                prelinked_rel=_prem_rel,
             )
             if body.return_url:
                 return {"ok": True, "path": str(_prem_rel), "filename": "speech.mp3"}
-            return FileResponse(tmp.name, media_type="audio/mpeg",
-                                filename="speech.mp3",
-                                headers={"X-TTS-Engine": "premium"})
+            return FileResponse(
+                tmp.name,
+                media_type="audio/mpeg",
+                filename="speech.mp3",
+                headers={"X-TTS-Engine": "premium"},
+            )
     except Exception as exc:
         logger.info("Premium TTS failed (%s) — trying AI server", exc)
 
@@ -2713,13 +3287,14 @@ async def synthesize_speech(body: TTSRequest):
     # --- Strategy 1: AI server /audio/speech ---
     try:
         import httpx
+
         openai_voice = _OPENAI_VOICE_MAP.get(body.voice, "alloy")
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{cfg.serving.base_url}/audio/speech",
                 json={
-                    "model": cfg.serving.tts_model,   # configurable: tts-1-hd / tts-1 / etc.
+                    "model": cfg.serving.tts_model,  # configurable: tts-1-hd / tts-1 / etc.
                     "input": body.text,
                     "voice": openai_voice,
                     "response_format": "mp3",
@@ -2730,22 +3305,24 @@ async def synthesize_speech(body: TTSRequest):
                 # Save to temp file and serve
                 out_dir = Path(cfg.data_dir) / "outputs"
                 out_dir.mkdir(parents=True, exist_ok=True)
-                tmp = tempfile.NamedTemporaryFile(
-                    delete=False, dir=out_dir, suffix=".mp3"
-                )
+                tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp3")
                 tmp.write(resp.content)
                 tmp.close()
                 _tts_rel = _link_output_sync(Path(tmp.name))
                 await asyncio.to_thread(_rotate_outputs, out_dir)
                 from orivellum.api.executor import get_executor as _gex
+
                 _gex().submit(
-                    _register_output_bg, Path(tmp.name), body.text, "mp3",
-                    f"TTS clip: {body.text[:60]}", prelinked_rel=_tts_rel,
+                    _register_output_bg,
+                    Path(tmp.name),
+                    body.text,
+                    "mp3",
+                    f"TTS clip: {body.text[:60]}",
+                    prelinked_rel=_tts_rel,
                 )
                 if body.return_url:
                     return {"ok": True, "path": str(_tts_rel), "filename": "speech.mp3"}
-                return FileResponse(tmp.name, media_type="audio/mpeg",
-                                    filename="speech.mp3")
+                return FileResponse(tmp.name, media_type="audio/mpeg", filename="speech.mp3")
     except Exception as exc:
         logger.info("AI server TTS unavailable (%s) — trying Kokoro ONNX", exc)
 
@@ -2770,23 +3347,29 @@ async def synthesize_speech(body: TTSRequest):
             out_dir = Path(cfg.data_dir) / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
 
-            wav_tmp = tempfile.NamedTemporaryFile(
-                delete=False, dir=out_dir, suffix=".wav"
-            )
+            wav_tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".wav")
             await asyncio.to_thread(sf.write, wav_tmp.name, samples, sample_rate)
             wav_tmp.close()
 
-            mp3_tmp = tempfile.NamedTemporaryFile(
-                delete=False, dir=out_dir, suffix=".mp3"
-            )
+            mp3_tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp3")
             mp3_path = mp3_tmp.name
             mp3_tmp.close()
 
             ff = await asyncio.to_thread(
                 subprocess.run,
-                ["ffmpeg", "-y", "-i", wav_tmp.name,
-                 "-codec:a", "libmp3lame", "-q:a", "2", mp3_path],
-                capture_output=True, timeout=60,
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    wav_tmp.name,
+                    "-codec:a",
+                    "libmp3lame",
+                    "-q:a",
+                    "2",
+                    mp3_path,
+                ],
+                capture_output=True,
+                timeout=60,
             )
             Path(wav_tmp.name).unlink(missing_ok=True)
 
@@ -2794,29 +3377,37 @@ async def synthesize_speech(body: TTSRequest):
                 _kok_rel = _link_output_sync(Path(mp3_path))
                 await asyncio.to_thread(_rotate_outputs, out_dir)
                 from orivellum.api.executor import get_executor as _gex
+
                 _gex().submit(
-                    _register_output_bg, Path(mp3_path), body.text, "mp3",
-                    f"TTS clip: {body.text[:60]}", prelinked_rel=_kok_rel,
+                    _register_output_bg,
+                    Path(mp3_path),
+                    body.text,
+                    "mp3",
+                    f"TTS clip: {body.text[:60]}",
+                    prelinked_rel=_kok_rel,
                 )
                 if body.return_url:
                     return {"ok": True, "path": str(_kok_rel), "filename": "speech.mp3"}
-                return FileResponse(mp3_path, media_type="audio/mpeg",
-                                    filename="speech.mp3")
+                return FileResponse(mp3_path, media_type="audio/mpeg", filename="speech.mp3")
     except Exception as exc:
         logger.warning("Kokoro ONNX TTS failed: %s", exc)
 
     # --- No robotic fallback (owner policy) ----------------------------------
     # Every neural engine is unavailable. Fail with a clear 503 so clients can
     # pause and retry instead of ever hearing the espeak robot voice.
-    raise HTTPException(503, {
-        "detail": "Neural voice engine unavailable",
-        "service": "tts",
-        "strategies_tried": ["premium", "ai_server", "kokoro_onnx"],
-        "reason": _NEURAL_TTS_UNAVAILABLE_MSG,
-    })
+    raise HTTPException(
+        503,
+        {
+            "detail": "Neural voice engine unavailable",
+            "service": "tts",
+            "strategies_tried": ["premium", "ai_server", "kokoro_onnx"],
+            "reason": _NEURAL_TTS_UNAVAILABLE_MSG,
+        },
+    )
 
 
 # ── Text segmentation helper ──────────────────────────────────────────────────
+
 
 def _hard_split_at_words(text: str, max_chars: int) -> list[str]:
     """Force-split *text* at word boundaries — and at character boundaries for
@@ -2827,6 +3418,7 @@ def _hard_split_at_words(text: str, max_chars: int) -> list[str]:
     Used as a last resort so the streaming TTS latency cap holds regardless of
     punctuation density or token length.
     """
+
     def _chop(token: str) -> list[str]:
         """Split a single token that is longer than max_chars at char boundaries."""
         return [token[i : i + max_chars] for i in range(0, len(token), max_chars)]
@@ -2863,8 +3455,8 @@ def _split_text_into_segments(text: str, max_chars: int = 1500) -> list[str]:
     3. Word boundaries — used when a single sentence exceeds *max_chars*
        (e.g. unpunctuated or very long input) so the latency cap is always met.
     """
-    text = re.sub(r'\n{3,}', '\n\n', text.strip())
-    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    text = re.sub(r"\n{3,}", "\n\n", text.strip())
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     segments: list[str] = []
     current = ""
 
@@ -2877,7 +3469,7 @@ def _split_text_into_segments(text: str, max_chars: int = 1500) -> list[str]:
     for para in paragraphs:
         if len(para) > max_chars:
             # Tier 2: split at sentence boundaries
-            sentences = re.split(r'(?<=[.!?])\s+', para)
+            sentences = re.split(r"(?<=[.!?])\s+", para)
             for sent in sentences:
                 if len(sent) > max_chars:
                     # Tier 3: force-split at word boundaries
@@ -2901,6 +3493,7 @@ def _split_text_into_segments(text: str, max_chars: int = 1500) -> list[str]:
 
 # ── Per-segment synthesis helper (streaming TTS) ─────────────────────────────
 
+
 async def _synthesize_text_to_mp3(
     text: str,
     voice: str,
@@ -2922,8 +3515,11 @@ async def _synthesize_text_to_mp3(
     # voices always try premium and fail closed — see _is_clone_voice) ------
     _clone = _is_clone_voice(voice)
     try:
-        premium_audio = (None if (quality == "draft" and not _clone)
-                         else await _call_premium_tts(text, voice, speed, cfg))
+        premium_audio = (
+            None
+            if (quality == "draft" and not _clone)
+            else await _call_premium_tts(text, voice, speed, cfg)
+        )
         if _clone and premium_audio is None:
             return None  # fail closed: segment reported as error, no fallback
         if premium_audio is not None:
@@ -2937,6 +3533,7 @@ async def _synthesize_text_to_mp3(
     # Strategy 1: AI-server /audio/speech ---------------------------------
     try:
         import httpx
+
         openai_voice = _OPENAI_VOICE_MAP.get(voice, "alloy")
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
@@ -2950,9 +3547,7 @@ async def _synthesize_text_to_mp3(
                 },
             )
             if resp.status_code == 200:
-                tmp = tempfile.NamedTemporaryFile(
-                    delete=False, dir=out_dir, suffix=".mp3"
-                )
+                tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp3")
                 tmp.write(resp.content)
                 tmp.close()
                 return Path(tmp.name)
@@ -2964,25 +3559,35 @@ async def _synthesize_text_to_mp3(
         kokoro = _get_kokoro()
         if kokoro is not None:
             import soundfile as sf  # type: ignore[import]
+
             samples, sample_rate = await asyncio.to_thread(
-                kokoro.create, text,
-                voice=kokoro_voice, speed=speed, lang="en-us",
+                kokoro.create,
+                text,
+                voice=kokoro_voice,
+                speed=speed,
+                lang="en-us",
             )
-            wav_tmp = tempfile.NamedTemporaryFile(
-                delete=False, dir=out_dir, suffix=".wav"
-            )
+            wav_tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".wav")
             await asyncio.to_thread(sf.write, wav_tmp.name, samples, sample_rate)
             wav_tmp.close()
-            mp3_tmp = tempfile.NamedTemporaryFile(
-                delete=False, dir=out_dir, suffix=".mp3"
-            )
+            mp3_tmp = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp3")
             mp3_path = mp3_tmp.name
             mp3_tmp.close()
             ff = await asyncio.to_thread(
                 subprocess.run,
-                ["ffmpeg", "-y", "-i", wav_tmp.name,
-                 "-codec:a", "libmp3lame", "-q:a", "2", mp3_path],
-                capture_output=True, timeout=60,
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    wav_tmp.name,
+                    "-codec:a",
+                    "libmp3lame",
+                    "-q:a",
+                    "2",
+                    mp3_path,
+                ],
+                capture_output=True,
+                timeout=60,
             )
             Path(wav_tmp.name).unlink(missing_ok=True)
             if ff.returncode == 0:
@@ -3027,8 +3632,8 @@ async def _stream_tts_events(body: TTSRequest):
 
     # ~150-word segments keep synthesis latency below ~2 s for the first chunk
     segments = _split_text_into_segments(body.text, max_chars=900)
-    total     = len(segments)
-    ok_count  = 0
+    total = len(segments)
+    ok_count = 0
     err_count = 0
     # Accumulate successful segment paths for the post-loop concat step
     ok_paths: list[Path] = []
@@ -3036,7 +3641,11 @@ async def _stream_tts_events(body: TTSRequest):
     for idx, seg_text in enumerate(segments):
         try:
             mp3_path = await _synthesize_text_to_mp3(
-                seg_text, body.voice, body.speed, out_dir, cfg,
+                seg_text,
+                body.voice,
+                body.speed,
+                out_dir,
+                cfg,
                 quality=body.quality,
             )
             if mp3_path:
@@ -3045,30 +3654,42 @@ async def _stream_tts_events(body: TTSRequest):
                 # Register as a searchable Studio clip (best-effort background)
                 seg_title = f"TTS clip ({idx + 1}/{total}): {body.text[:50]}"
                 _gex().submit(
-                    _register_output_bg, mp3_path, seg_text, "mp3",
-                    seg_title, prelinked_rel=seg_rel,
+                    _register_output_bg,
+                    mp3_path,
+                    seg_text,
+                    "mp3",
+                    seg_title,
+                    prelinked_rel=seg_rel,
                 )
                 # Emit the output-relative path (e.g. "tmpXXXX.mp3") so the
                 # /studio/outputs/serve endpoint can safely resolve it within
                 # out_dir — the same format as list_outputs uses.
                 rel_path = mp3_path.relative_to(out_dir)
                 event: dict = {
-                    "type": "segment", "idx": idx, "total": total,
-                    "path": str(rel_path), "ok": True,
+                    "type": "segment",
+                    "idx": idx,
+                    "total": total,
+                    "path": str(rel_path),
+                    "ok": True,
                 }
                 ok_count += 1
                 ok_paths.append(mp3_path)
             else:
                 event = {
-                    "type": "segment_error", "idx": idx, "total": total,
+                    "type": "segment_error",
+                    "idx": idx,
+                    "total": total,
                     "message": "All TTS backends failed for this segment",
                     "ok": False,
                 }
                 err_count += 1
         except Exception as exc:
             event = {
-                "type": "segment_error", "idx": idx, "total": total,
-                "message": str(exc)[:200], "ok": False,
+                "type": "segment_error",
+                "idx": idx,
+                "total": total,
+                "message": str(exc)[:200],
+                "ok": False,
             }
             err_count += 1
         yield f"data: {_json.dumps(event)}\n\n"
@@ -3086,20 +3707,30 @@ async def _stream_tts_events(body: TTSRequest):
         else:
             try:
                 import tempfile as _tmpmod
+
                 concat_mp3 = out_dir / f"tts_full_{uuid.uuid4().hex[:8]}.mp3"
-                list_file  = _tmpmod.NamedTemporaryFile(
-                    mode="w", suffix=".txt", delete=False
-                )
-                list_file.write(
-                    "\n".join(f"file '{p}'" for p in ok_paths)
-                )
+                list_file = _tmpmod.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+                list_file.write("\n".join(f"file '{p}'" for p in ok_paths))
                 list_file.close()
                 ff = await asyncio.to_thread(
                     subprocess.run,
-                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                     "-i", list_file.name,
-                     "-codec:a", "libmp3lame", "-q:a", "2", str(concat_mp3)],
-                    capture_output=True, timeout=180,
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-f",
+                        "concat",
+                        "-safe",
+                        "0",
+                        "-i",
+                        list_file.name,
+                        "-codec:a",
+                        "libmp3lame",
+                        "-q:a",
+                        "2",
+                        str(concat_mp3),
+                    ],
+                    capture_output=True,
+                    timeout=180,
                 )
                 Path(list_file.name).unlink(missing_ok=True)
                 if ff.returncode == 0:
@@ -3113,8 +3744,11 @@ async def _stream_tts_events(body: TTSRequest):
                         concat_lib_rel = _link_output_sync(concat_mp3)
                         full_title = f"TTS narration: {body.text[:60]}"
                         _gex().submit(
-                            _register_output_bg, concat_mp3,
-                            body.text[:4000], "mp3", full_title,
+                            _register_output_bg,
+                            concat_mp3,
+                            body.text[:4000],
+                            "mp3",
+                            full_title,
                             prelinked_rel=concat_lib_rel,
                         )
                         concat_rel = str(concat_mp3.relative_to(out_dir))
@@ -3136,17 +3770,20 @@ async def _stream_tts_events(body: TTSRequest):
     # back to the last-segment URI tracked via lastSegPath.
     if concat_rel:
         from urllib.parse import quote as _quote
+
         concat_uri = f"/api/studio/outputs/serve?path={_quote(concat_rel, safe='')}"
         yield f"data: {_json.dumps({'type': 'concat', 'path': concat_rel, 'uri': concat_uri, 'ok': True})}\n\n"
 
     # Rotate after all links are written
     await asyncio.to_thread(_rotate_outputs, out_dir)
     done_evt: dict = {
-        "type": "done", "total": total,
-        "ok_count": ok_count, "error_count": err_count,
+        "type": "done",
+        "total": total,
+        "ok_count": ok_count,
+        "error_count": err_count,
     }
     if concat_rel:
-        done_evt["concat_path"] = concat_rel   # kept for backward compat
+        done_evt["concat_path"] = concat_rel  # kept for backward compat
     yield f"data: {_json.dumps(done_evt)}\n\n"
 
 
@@ -3197,6 +3834,7 @@ def _run_doc_tts_job(
     if not premium_ok:
         try:
             import httpx
+
             probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
             ai_ok = probe.status_code == 200
         except Exception:
@@ -3224,18 +3862,22 @@ def _run_doc_tts_job(
 
             # ── Deterministic cache lookup (premium=mp3, local engines=wav) ──
             import shutil as _shutil
+
             cached_out: Path | None = None
             if premium_ok:
-                c = _seg_cache_get(cfg, seg, body.voice, body.speed,
-                                   ["premium"], suffix=".mp3")
+                c = _seg_cache_get(cfg, seg, body.voice, body.speed, ["premium"], suffix=".mp3")
                 if c is not None:
                     mp3_path = tmp_dir / f"seg_{idx:04d}.mp3"
                     _shutil.copyfile(c, mp3_path)
                     cached_out = mp3_path
             elif not ai_ok:  # AI-server output is never cached
                 c = _seg_cache_get(
-                    cfg, seg, body.voice, body.speed,
-                    ["kokoro"] if (kokoro_engine is not None and _sf is not None) else [])
+                    cfg,
+                    seg,
+                    body.voice,
+                    body.speed,
+                    ["kokoro"] if (kokoro_engine is not None and _sf is not None) else [],
+                )
                 if c is not None:
                     _shutil.copyfile(c, wav_path)
                     cached_out = wav_path
@@ -3270,11 +3912,16 @@ def _run_doc_tts_job(
                 if ai_ok:
                     try:
                         import httpx as _hx
+
                         r = _hx.post(
                             f"{cfg.serving.base_url}/audio/speech",
-                            json={"model": cfg.serving.tts_model,
-                                  "input": seg, "voice": body.voice,
-                                  "response_format": "wav", "speed": body.speed},
+                            json={
+                                "model": cfg.serving.tts_model,
+                                "input": seg,
+                                "voice": body.voice,
+                                "response_format": "wav",
+                                "speed": body.speed,
+                            },
                             timeout=60,
                         )
                         if r.status_code == 200:
@@ -3287,7 +3934,10 @@ def _run_doc_tts_job(
                 if kokoro_engine is not None and _sf is not None:
                     try:
                         samples, sample_rate = kokoro_engine.create(
-                            seg, voice=kokoro_voice, speed=body.speed, lang="en-us",
+                            seg,
+                            voice=kokoro_voice,
+                            speed=body.speed,
+                            lang="en-us",
                         )
                         _sf.write(str(wav_path), samples, sample_rate)
                         return wav_path, "kokoro"
@@ -3300,8 +3950,7 @@ def _run_doc_tts_job(
                     "robotic fallback is disabled. " + _NEURAL_TTS_UNAVAILABLE_MSG
                 )
 
-            out = _finalize_segment(cfg, seg, body.voice, body.speed, _attempt,
-                                    f"segment {idx}")
+            out = _finalize_segment(cfg, seg, body.voice, body.speed, _attempt, f"segment {idx}")
             if out is None:
                 raise RuntimeError(f"All TTS engines failed on segment {idx}")
             wav_paths.append(out)
@@ -3316,20 +3965,30 @@ def _run_doc_tts_job(
 
         # ── Concatenate all WAVs → single high-quality MP3 ───────────────────
         concat_list = tmp_dir / "concat.txt"
-        concat_list.write_text(
-            "\n".join(f"file '{p}'" for p in wav_paths), encoding="utf-8"
-        )
+        concat_list.write_text("\n".join(f"file '{p}'" for p in wav_paths), encoding="utf-8")
 
-        safe_title = re.sub(r'[^\w\-]', '_', (doc.get("title") or "audiobook"))[:60]
-        mp3_name   = f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
-        mp3_path   = out_dir / mp3_name
+        safe_title = re.sub(r"[^\w\-]", "_", (doc.get("title") or "audiobook"))[:60]
+        mp3_name = f"{safe_title}_{uuid.uuid4().hex[:6]}.mp3"
+        mp3_path = out_dir / mp3_name
 
         ff = subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", str(concat_list),
-             "-codec:a", "libmp3lame", "-q:a", "2",
-             str(mp3_path)],
-            capture_output=True, timeout=300,
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-codec:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                str(mp3_path),
+            ],
+            capture_output=True,
+            timeout=300,
         )
         if ff.returncode != 0:
             raise RuntimeError(f"ffmpeg concat failed: {ff.stderr.decode()[:300]}")
@@ -3352,23 +4011,31 @@ def _run_doc_tts_job(
         # Amendment-1: register as searchable library document in background.
         doc_title = doc.get("title") or "audiobook"
         from orivellum.api.executor import get_executor as _gex
+
         _gex().submit(
-            _register_output_bg, mp3_path, full_text[:8000], "mp3",
-            f"Audiobook: {doc_title}", prelinked_rel=_ab_rel,
+            _register_output_bg,
+            mp3_path,
+            full_text[:8000],
+            "mp3",
+            f"Audiobook: {doc_title}",
+            prelinked_rel=_ab_rel,
             origin_id=body.doc_id,
         )
 
         # ── Mark job done ─────────────────────────────────────────────────────
         rel_path = str(mp3_path.relative_to(out_dir))
         with _doc_tts_jobs_lock:
-            _doc_tts_jobs[job_id].update({
-                "state":    "done",
-                "mp3_path": rel_path,
-                "filename": mp3_name,
-            })
+            _doc_tts_jobs[job_id].update(
+                {
+                    "state": "done",
+                    "mp3_path": rel_path,
+                    "filename": mp3_name,
+                }
+            )
         # Notify only AFTER the durable done transition — a failure between
         # render and state update must never produce a false "ready" alert.
         from orivellum.api import notifications as _notif_dt
+
         _notif_dt.emit(
             "audiobook_ready",
             "Audiobook ready",
@@ -3379,10 +4046,12 @@ def _run_doc_tts_job(
     except Exception as exc:
         logger.exception("Document TTS job %s failed", job_id)
         with _doc_tts_jobs_lock:
-            _doc_tts_jobs[job_id].update({
-                "state": "failed",
-                "error": str(exc)[:300],
-            })
+            _doc_tts_jobs[job_id].update(
+                {
+                    "state": "failed",
+                    "error": str(exc)[:300],
+                }
+            )
 
     finally:
         # Clean up temp WAVs regardless of outcome.
@@ -3413,7 +4082,7 @@ def synthesize_document(body: DocumentTTSRequest):
     GET  /studio/tts/document/{job_id}/status  for progress.
     Send DELETE /studio/tts/document/{job_id}  to cancel.
     """
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
 
     # ── Validate document ──────────────────────────────────────────────────────
@@ -3421,8 +4090,11 @@ def synthesize_document(body: DocumentTTSRequest):
     if not doc:
         raise HTTPException(404, f"Document {body.doc_id!r} not found")
     if doc.get("readiness") not in ("ready", "error"):
-        raise HTTPException(422, "Document has not been fully processed yet. "
-                                  "Wait until it shows as 'ready' in the Library.")
+        raise HTTPException(
+            422,
+            "Document has not been fully processed yet. "
+            "Wait until it shows as 'ready' in the Library.",
+        )
 
     # ── Fetch full text from chunks ───────────────────────────────────────────
     with db._lock:
@@ -3432,34 +4104,44 @@ def synthesize_document(body: DocumentTTSRequest):
         ).fetchall()
 
     if not rows:
-        raise HTTPException(422, "No extracted text found for this document. "
-                                  "The document may not have been processed yet.")
+        raise HTTPException(
+            422,
+            "No extracted text found for this document. "
+            "The document may not have been processed yet.",
+        )
 
     full_text = "\n\n".join(r["text"] for r in rows)
-    segments  = _split_text_into_segments(full_text)[:body.max_segments]
+    segments = _split_text_into_segments(full_text)[: body.max_segments]
 
     if not segments:
         raise HTTPException(422, "Could not extract readable text from this document.")
 
     # ── Create job entry ──────────────────────────────────────────────────────
-    job_id       = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
     cancel_event = threading.Event()
 
     with _doc_tts_jobs_lock:
         _doc_tts_jobs[job_id] = {
-            "state":          "running",
-            "segments_done":  0,
+            "state": "running",
+            "segments_done": 0,
             "total_segments": len(segments),
-            "cancel":         cancel_event,
-            "mp3_path":       None,
-            "filename":       None,
-            "error":          None,
+            "cancel": cancel_event,
+            "mp3_path": None,
+            "filename": None,
+            "error": None,
         }
 
     from orivellum.api.executor import _tracked_submit
+
     _tracked_submit(
         _run_doc_tts_job,
-        job_id, body, segments, full_text, doc, db, cfg,
+        job_id,
+        body,
+        segments,
+        full_text,
+        doc,
+        db,
+        cfg,
         kind="tts",
         label=f"audiobook:{(doc.get('title') or body.doc_id)[:30]}",
     )
@@ -3548,6 +4230,7 @@ def _run_transcribe_job(
             job["stage"] = "transcribing"
 
         from orivellum.capabilities.extraction import extract
+
         result = extract(tmp_path, "audio", db=db)
 
         engine = (result.meta or {}).get("transcription")
@@ -3556,7 +4239,8 @@ def _run_transcribe_job(
             with _transcribe_jobs_lock:
                 if job_id in _transcribe_jobs:
                     _transcribe_jobs[job_id].update(
-                        {"state": "error", "error": str(reason)[:300], "finished_at": time.time()})
+                        {"state": "error", "error": str(reason)[:300], "finished_at": time.time()}
+                    )
             return
 
         # Clean transcript text — pages carry the raw transcript without the
@@ -3586,6 +4270,7 @@ def _run_transcribe_job(
             prelinked = _link_output_sync(out_path)
             _rotate_outputs(out_dir)
             from orivellum.capabilities.persist import register_and_index
+
             doc_id = register_and_index(
                 doc_path=out_path,
                 text_content=text,
@@ -3601,13 +4286,15 @@ def _run_transcribe_job(
         with _transcribe_jobs_lock:
             if job_id in _transcribe_jobs:
                 _transcribe_jobs[job_id].update(
-                    {"state": "done", "doc_id": doc_id, "stage": "done", "finished_at": time.time()})
+                    {"state": "done", "doc_id": doc_id, "stage": "done", "finished_at": time.time()}
+                )
     except Exception as exc:
         logger.exception("Transcription job %s failed", job_id)
         with _transcribe_jobs_lock:
             if job_id in _transcribe_jobs:
                 _transcribe_jobs[job_id].update(
-                    {"state": "error", "error": str(exc)[:300], "finished_at": time.time()})
+                    {"state": "error", "error": str(exc)[:300], "finished_at": time.time()}
+                )
     finally:
         tmp_path.unlink(missing_ok=True)
         try:
@@ -3659,8 +4346,7 @@ async def start_transcription(
                 if size > _MAX_TRANSCRIBE_BYTES:
                     raise HTTPException(
                         413,
-                        f"Audio file too large (limit "
-                        f"{_MAX_TRANSCRIBE_BYTES // (1024 * 1024)} MB)",
+                        f"Audio file too large (limit {_MAX_TRANSCRIBE_BYTES // (1024 * 1024)} MB)",
                     )
                 fh.write(chunk)
     except HTTPException:
@@ -3675,6 +4361,7 @@ async def start_transcription(
 
     # Magic-byte check: reject files whose content doesn't match the extension.
     from orivellum.api.routes.library import _validate_mime_signature
+
     try:
         _validate_mime_signature(tmp_path, orig_name)
     except HTTPException:
@@ -3697,9 +4384,15 @@ async def start_transcription(
         }
 
     from orivellum.api.executor import _tracked_submit
+
     _tracked_submit(
         _run_transcribe_job,
-        job_id, tmp_path, orig_name, save_to_library, db, cfg,
+        job_id,
+        tmp_path,
+        orig_name,
+        save_to_library,
+        db,
+        cfg,
         kind="transcribe",
         label=f"transcribe:{orig_name[:30]}",
     )
@@ -3722,7 +4415,7 @@ def _strip_transcript_header(text: str) -> str:
     text = (text or "").strip()
     if text.startswith("[Audio transcript"):
         nl = text.find("\n")
-        text = text[nl + 1:].lstrip() if nl != -1 else ""
+        text = text[nl + 1 :].lstrip() if nl != -1 else ""
     return text
 
 
@@ -3767,9 +4460,9 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
         # marker (>10 min) and re-drive reprocessing.  It is cleared on success
         # and on the error paths below.
         from datetime import datetime as _dt
+
         try:
-            db.set_reset_marker(doc_id, started_at=_dt.now(UTC).isoformat(),
-                                kind="retranscribe")
+            db.set_reset_marker(doc_id, started_at=_dt.now(UTC).isoformat(), kind="retranscribe")
         except Exception as _mk_exc:  # marker is best-effort; never abort on it
             logger.warning("Could not set reset marker for %s: %s", doc_id, _mk_exc)
 
@@ -3785,26 +4478,29 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
         db.delete_extraction_warnings(doc_id)
         removed = db.delete_document_knowledge(doc_id)
         if removed:
-            logger.info("Re-transcribe %s: removed %d stale knowledge items",
-                        doc_id, removed)
-        db.update_document_extracted(doc_id, "", 0, readiness="imported",
-                                     error_message=None)
+            logger.info("Re-transcribe %s: removed %d stale knowledge items", doc_id, removed)
+        db.update_document_extracted(doc_id, "", 0, readiness="imported", error_message=None)
 
         from orivellum.capabilities.pipeline import process_document
-        process_document(doc_id=doc_id, file_path=file_path, kind="audio",
-                         work_id=doc.get("work_id"),
-                         title=doc.get("title", ""), db=db)
+
+        process_document(
+            doc_id=doc_id,
+            file_path=file_path,
+            kind="audio",
+            work_id=doc.get("work_id"),
+            title=doc.get("title", ""),
+            db=db,
+        )
 
         fresh = db.get_document(doc_id) or {}
         readiness = fresh.get("readiness")
         if readiness != "ready":
-            err = (fresh.get("error_message")
-                   or f"Re-extraction finished in state {readiness!r}")
+            err = fresh.get("error_message") or f"Re-extraction finished in state {readiness!r}"
             with _transcribe_jobs_lock:
                 if job_id in _transcribe_jobs:
                     _transcribe_jobs[job_id].update(
-                        {"state": "error", "error": str(err)[:300],
-                         "finished_at": time.time()})
+                        {"state": "error", "error": str(err)[:300], "finished_at": time.time()}
+                    )
             return
 
         meta = fresh.get("meta") or {}
@@ -3815,31 +4511,32 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
             with _transcribe_jobs_lock:
                 if job_id in _transcribe_jobs:
                     _transcribe_jobs[job_id].update(
-                        {"state": "error", "error": str(reason)[:300],
-                         "finished_at": time.time()})
+                        {"state": "error", "error": str(reason)[:300], "finished_at": time.time()}
+                    )
             return
 
         with _transcribe_jobs_lock:
             job = _transcribe_jobs.get(job_id)
             if job is None:
                 return
-            job.update({
-                "state": "done",
-                "stage": "done",
-                "text": _strip_transcript_header(fresh.get("extracted_text") or ""),
-                "engine": meta.get("transcription"),
-                "word_count": fresh.get("word_count"),
-                "doc_id": doc_id,
-                "finished_at": time.time(),
-            })
+            job.update(
+                {
+                    "state": "done",
+                    "stage": "done",
+                    "text": _strip_transcript_header(fresh.get("extracted_text") or ""),
+                    "engine": meta.get("transcription"),
+                    "word_count": fresh.get("word_count"),
+                    "doc_id": doc_id,
+                    "finished_at": time.time(),
+                }
+            )
     except Exception as exc:
-        logger.exception("Re-transcription job %s (doc %s) failed",
-                         job_id, doc_id)
+        logger.exception("Re-transcription job %s (doc %s) failed", job_id, doc_id)
         with _transcribe_jobs_lock:
             if job_id in _transcribe_jobs:
                 _transcribe_jobs[job_id].update(
-                    {"state": "error", "error": str(exc)[:300],
-                     "finished_at": time.time()})
+                    {"state": "error", "error": str(exc)[:300], "finished_at": time.time()}
+                )
     finally:
         # FA-07 — clear the reset marker on every path that reaches the end of
         # this worker (success OR any handled terminal error): the document now
@@ -3849,8 +4546,7 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
         try:
             db.clear_reset_marker(doc_id)
         except Exception as _clr_exc:
-            logger.warning("Could not clear reset marker for %s: %s",
-                           doc_id, _clr_exc)
+            logger.warning("Could not clear reset marker for %s: %s", doc_id, _clr_exc)
 
 
 @router.post("/studio/transcribe/library/{doc_id}")
@@ -3867,17 +4563,18 @@ def start_library_retranscribe(doc_id: str):
         raise HTTPException(404, f"Document {doc_id!r} not found")
     if (doc.get("kind") or "") != "audio":
         raise HTTPException(
-            422, f"Document is kind {doc.get('kind')!r} — only audio "
-                 f"documents can be re-transcribed")
+            422,
+            f"Document is kind {doc.get('kind')!r} — only audio documents can be re-transcribed",
+        )
     content_path = doc.get("content_path")
     if not content_path:
         raise HTTPException(400, "Document has no stored file (content_path is empty)")
 
     from orivellum.api.routes.library import _library_root
+
     file_path = _library_root() / content_path
     if not file_path.exists():
-        raise HTTPException(
-            404, "Stored audio file not found — it may have been moved or deleted")
+        raise HTTPException(404, "Stored audio file not found — it may have been moved or deleted")
 
     # Cheap collision guard: "imported" means an extraction is already in
     # flight for this document (Library reprocess, bulk reprocess, nightshift
@@ -3885,14 +4582,13 @@ def start_library_retranscribe(doc_id: str):
     # would race on chunks and readiness.
     if doc.get("readiness") == "imported":
         raise HTTPException(
-            409, "This document is already being processed — "
-                 "wait for it to finish, then try again")
+            409, "This document is already being processed — wait for it to finish, then try again"
+        )
 
     with _transcribe_jobs_lock:
         for j in _transcribe_jobs.values():
             if j.get("doc_id") == doc_id and j["state"] not in _TRANSCRIBE_TERMINAL:
-                raise HTTPException(
-                    409, "A re-transcription for this document is already running")
+                raise HTTPException(409, "A re-transcription for this document is already running")
         _prune_transcribe_jobs()
         job_id = str(uuid.uuid4())
         _transcribe_jobs[job_id] = {
@@ -3908,9 +4604,13 @@ def start_library_retranscribe(doc_id: str):
         }
 
     from orivellum.api.executor import _tracked_submit
+
     _tracked_submit(
         _run_retranscribe_job,
-        job_id, doc_id, str(file_path), db,
+        job_id,
+        doc_id,
+        str(file_path),
+        db,
         kind="transcribe",
         label=f"retranscribe:{(doc.get('title') or '')[:30]}",
     )
@@ -3995,6 +4695,7 @@ async def voice_transcribe(file: UploadFile = File(...)):
         raise HTTPException(422, "Uploaded clip is empty")
 
     from orivellum.api.routes.library import _validate_mime_signature
+
     try:
         _validate_mime_signature(tmp_path, orig_name)
     except HTTPException:
@@ -4005,6 +4706,7 @@ async def voice_transcribe(file: UploadFile = File(...)):
         from starlette.concurrency import run_in_threadpool
 
         from orivellum.capabilities.extraction import extract
+
         result = await run_in_threadpool(extract, tmp_path, "audio", db=db)
 
         meta = result.meta or {}
@@ -4028,6 +4730,7 @@ async def voice_transcribe(file: UploadFile = File(...)):
 
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
+
 
 @router.get("/studio/outputs")
 def list_outputs():
@@ -4082,15 +4785,17 @@ def list_outputs():
                 probe_budget -= 1
 
         rel = str(f.relative_to(out_dir))
-        result.append({
-            "name": f.name,
-            "path": rel,
-            "size_bytes": sz,
-            "kind": kind,
-            "label": label,
-            "duration_sec": duration_sec,
-            "mtime": f.stat().st_mtime,
-        })
+        result.append(
+            {
+                "name": f.name,
+                "path": rel,
+                "size_bytes": sz,
+                "kind": kind,
+                "label": label,
+                "duration_sec": duration_sec,
+                "mtime": f.stat().st_mtime,
+            }
+        )
         if len(result) >= 100:
             break
     return {"outputs": result, "count": len(result)}
@@ -4111,16 +4816,26 @@ def serve_output(path: str):
         raise HTTPException(status_code=404, detail="Output not found")
     suffix = target.suffix.lower()
     mime_map = {
-        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
-        ".m4a": "audio/mp4", ".m4b": "audio/mp4",
-        ".mp4": "video/mp4", ".webm": "video/webm",
-        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".webp": "image/webp", ".gif": "image/gif",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".ogg": "audio/ogg",
+        ".m4a": "audio/mp4",
+        ".m4b": "audio/mp4",
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
     }
     media_type = mime_map.get(suffix, "application/octet-stream")
-    return FileResponse(str(target), media_type=media_type,
-                        filename=target.name,
-                        headers={"Content-Disposition": f'attachment; filename="{target.name}"'})
+    return FileResponse(
+        str(target),
+        media_type=media_type,
+        filename=target.name,
+        headers={"Content-Disposition": f'attachment; filename="{target.name}"'},
+    )
 
 
 @router.delete("/studio/outputs/archive")
@@ -4155,6 +4870,7 @@ def archive_output(path: str):
 #   4. OpenAI-compatible endpoint (same base_url as chat, /images/generations)
 # Each strategy is tried; first 200 wins. Errors are logged at DEBUG level.
 
+
 class ImageGenRequest(BaseModel):
     prompt: str
     width: int = 512
@@ -4168,9 +4884,12 @@ async def _try_openai_compat(client, base_url: str, body: ImageGenRequest) -> di
     try:
         r = await client.post(
             f"{base_url.rstrip('/')}/images/generations",
-            json={"prompt": body.prompt, "n": 1,
-                  "size": f"{body.width}x{body.height}",
-                  "response_format": "b64_json"},
+            json={
+                "prompt": body.prompt,
+                "n": 1,
+                "size": f"{body.width}x{body.height}",
+                "response_format": "b64_json",
+            },
             timeout=90,
         )
         if r.status_code == 200:
@@ -4185,10 +4904,14 @@ async def _try_a1111(client, body: ImageGenRequest) -> dict | None:
     try:
         r = await client.post(
             "http://localhost:7860/sdapi/v1/txt2img",
-            json={"prompt": body.prompt,
-                  "negative_prompt": body.negative_prompt or "",
-                  "width": body.width, "height": body.height,
-                  "steps": body.steps, "sampler_name": "Euler a"},
+            json={
+                "prompt": body.prompt,
+                "negative_prompt": body.negative_prompt or "",
+                "width": body.width,
+                "height": body.height,
+                "steps": body.steps,
+                "sampler_name": "Euler a",
+            },
             timeout=120,
         )
         if r.status_code == 200:
@@ -4213,8 +4936,9 @@ def _is_comfyui_url(url: str) -> bool:
     return ":8188" in low or "comfyui" in low
 
 
-async def _try_comfyui(client, body: ImageGenRequest,
-                       base_url: str = "http://localhost:8188") -> dict | None:
+async def _try_comfyui(
+    client, body: ImageGenRequest, base_url: str = "http://localhost:8188"
+) -> dict | None:
     """ComfyUI — txt2img via the /prompt API.
 
     Works with any ComfyUI instance; ``base_url`` defaults to localhost but
@@ -4234,19 +4958,22 @@ async def _try_comfyui(client, body: ImageGenRequest,
         checkpoint = "v1-5-pruned-emaonly.ckpt"
         try:
             from orivellum.api._deps import get_db as _get_db
+
             _db = _get_db()
             ckpt_setting = _db.get_setting("comfyui_checkpoint", "")
             if ckpt_setting:
                 checkpoint = ckpt_setting
             else:
                 # Auto-detect: ask ComfyUI which checkpoints are installed
-                obj_resp = await client.get(f"{base}/object_info/CheckpointLoaderSimple",
-                                            timeout=3)
+                obj_resp = await client.get(f"{base}/object_info/CheckpointLoaderSimple", timeout=3)
                 if obj_resp.status_code == 200:
                     info = obj_resp.json()
-                    avail = (info.get("CheckpointLoaderSimple", {})
-                             .get("input", {}).get("required", {})
-                             .get("ckpt_name", [[]])[0])
+                    avail = (
+                        info.get("CheckpointLoaderSimple", {})
+                        .get("input", {})
+                        .get("required", {})
+                        .get("ckpt_name", [[]])[0]
+                    )
                     if avail:
                         checkpoint = avail[0]
         except Exception:
@@ -4254,24 +4981,39 @@ async def _try_comfyui(client, body: ImageGenRequest,
 
         client_id = str(_uuid.uuid4())
         workflow = {
-            "3": {"class_type": "KSampler", "inputs": {
-                "seed": 0, "steps": body.steps, "cfg": 7,
-                "sampler_name": "euler", "scheduler": "normal",
-                "denoise": 1, "model": ["4", 0],
-                "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
-            "4": {"class_type": "CheckpointLoaderSimple",
-                  "inputs": {"ckpt_name": checkpoint}},
-            "5": {"class_type": "EmptyLatentImage",
-                  "inputs": {"width": body.width, "height": body.height, "batch_size": 1}},
-            "6": {"class_type": "CLIPTextEncode",
-                  "inputs": {"text": body.prompt, "clip": ["4", 1]}},
-            "7": {"class_type": "CLIPTextEncode",
-                  "inputs": {"text": body.negative_prompt or "blurry, low quality",
-                             "clip": ["4", 1]}},
-            "8": {"class_type": "VAEDecode",
-                  "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
-            "9": {"class_type": "SaveImage",
-                  "inputs": {"filename_prefix": "orivellum", "images": ["8", 0]}},
+            "3": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": 0,
+                    "steps": body.steps,
+                    "cfg": 7,
+                    "sampler_name": "euler",
+                    "scheduler": "normal",
+                    "denoise": 1,
+                    "model": ["4", 0],
+                    "positive": ["6", 0],
+                    "negative": ["7", 0],
+                    "latent_image": ["5", 0],
+                },
+            },
+            "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": checkpoint}},
+            "5": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {"width": body.width, "height": body.height, "batch_size": 1},
+            },
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": body.prompt, "clip": ["4", 1]},
+            },
+            "7": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": body.negative_prompt or "blurry, low quality", "clip": ["4", 1]},
+            },
+            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+            "9": {
+                "class_type": "SaveImage",
+                "inputs": {"filename_prefix": "orivellum", "images": ["8", 0]},
+            },
         }
         r = await client.post(
             f"{base}/prompt",
@@ -4295,10 +5037,12 @@ async def _try_comfyui(client, body: ImageGenRequest,
                     for img in node_out.get("images", []):
                         ir = await client.get(
                             f"{base}/view?filename={img['filename']}"
-                            f"&subfolder={img.get('subfolder','')}&type={img.get('type','output')}",
-                            timeout=15)
+                            f"&subfolder={img.get('subfolder', '')}&type={img.get('type', 'output')}",
+                            timeout=15,
+                        )
                         if ir.status_code == 200:
                             import base64 as _b64
+
                             b64 = _b64.b64encode(ir.content).decode()
                             return {"data": [{"b64_json": b64}]}
     except Exception as exc:
@@ -4317,6 +5061,7 @@ def _persist_generated_image(result: dict, cfg, prompt: str = "") -> dict:
         if not b64:
             return result
         import base64 as _b64
+
         out_dir = Path(cfg.data_dir) / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
         name = f"image_{uuid.uuid4().hex[:8]}.png"
@@ -4331,9 +5076,14 @@ def _persist_generated_image(result: dict, cfg, prompt: str = "") -> dict:
         # "find the image I made of X" resolves via semantic / keyword search.
         caption = prompt or item.get("revised_prompt") or "generated image"
         from orivellum.api.executor import get_executor as _gex
+
         _gex().submit(
-            _register_output_bg, img_path, caption, "png",
-            f"Image: {caption[:60]}", prelinked_rel=_img_rel,
+            _register_output_bg,
+            img_path,
+            caption,
+            "png",
+            f"Image: {caption[:60]}",
+            prelinked_rel=_img_rel,
         )
     except Exception as exc:
         logger.warning("Could not persist generated image to outputs: %s", exc)
@@ -4349,6 +5099,7 @@ def _is_ssrf_url(url: str) -> bool:
     """
     import ipaddress as _ip
     import urllib.parse as _up
+
     try:
         parsed = _up.urlparse(url)
         host = parsed.hostname or ""
@@ -4384,7 +5135,7 @@ async def generate_image(body: ImageGenRequest):
                 raise HTTPException(
                     400,
                     "Image generation URL points to a private/loopback address. "
-                    "Enter a publicly-reachable URL (e.g. http://192.168.1.x:8188 for LAN use)."
+                    "Enter a publicly-reachable URL (e.g. http://192.168.1.x:8188 for LAN use).",
                 )
             if _is_comfyui_url(custom_url):
                 result = await _try_comfyui(client, body, base_url=custom_url)
@@ -4394,22 +5145,30 @@ async def generate_image(body: ImageGenRequest):
                     # Could be A1111 with its own API format
                     result = await _try_a1111(client, body)
             if result:
-                return await asyncio.to_thread(_persist_generated_image, result, cfg, prompt=body.prompt)
+                return await asyncio.to_thread(
+                    _persist_generated_image, result, cfg, prompt=body.prompt
+                )
 
         # 2. Automatic1111 (SD WebUI) — localhost:7860
         result = await _try_a1111(client, body)
         if result:
-            return await asyncio.to_thread(_persist_generated_image, result, cfg, prompt=body.prompt)
+            return await asyncio.to_thread(
+                _persist_generated_image, result, cfg, prompt=body.prompt
+            )
 
         # 3. ComfyUI — localhost:8188
         result = await _try_comfyui(client, body, base_url="http://localhost:8188")
         if result:
-            return await asyncio.to_thread(_persist_generated_image, result, cfg, prompt=body.prompt)
+            return await asyncio.to_thread(
+                _persist_generated_image, result, cfg, prompt=body.prompt
+            )
 
         # 4. OpenAI-compatible endpoint on the chat AI server
         result = await _try_openai_compat(client, cfg.serving.base_url, body)
         if result:
-            return await asyncio.to_thread(_persist_generated_image, result, cfg, prompt=body.prompt)
+            return await asyncio.to_thread(
+                _persist_generated_image, result, cfg, prompt=body.prompt
+            )
 
     raise HTTPException(
         503,
@@ -4419,7 +5178,7 @@ async def generate_image(body: ImageGenRequest):
     )
 
 
-_STATUS_PROBE_TIMEOUT = 2.0   # per-URL connect timeout (seconds)
+_STATUS_PROBE_TIMEOUT = 2.0  # per-URL connect timeout (seconds)
 _STATUS_GLOBAL_TIMEOUT = 5.0  # hard wall-clock deadline for the entire status check
 
 
@@ -4462,6 +5221,7 @@ def _url_probe(url: str) -> tuple[bool, int | None]:
     """Probe a single URL; return (reachable, latency_ms). Never raises."""
     import time
     import urllib.request as _ur
+
     t0 = time.monotonic()
     try:
         _ur.urlopen(url, timeout=_STATUS_PROBE_TIMEOUT).close()
@@ -4565,6 +5325,7 @@ async def _call_premium_tts(text: str, voice: str, speed: float, cfg) -> bytes |
     premium_url = cfg.serving.tts_premium_url.rstrip("/")
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{premium_url}/v1/tts",
@@ -4599,6 +5360,7 @@ def _call_premium_tts_sync(text: str, voice: str, speed: float, cfg) -> bytes | 
     premium_url = cfg.serving.tts_premium_url.rstrip("/")
     try:
         import httpx
+
         resp = httpx.post(
             f"{premium_url}/v1/tts",
             json={
@@ -4630,6 +5392,7 @@ def _call_premium_tts_sync(text: str, voice: str, speed: float, cfg) -> bytes | 
 # ENFORCED sidecar-side (synthesis returns 403 until acknowledged); these
 # routes only manage the records.
 
+
 def _premium_base_url() -> str | None:
     cfg = get_config()
     url = getattr(cfg.serving, "tts_premium_url", "").strip()
@@ -4641,20 +5404,22 @@ def list_voice_clones():
     """List cloned voices from the premium sidecar (empty when unconfigured)."""
     base = _premium_base_url()
     if not base:
-        return {"configured": False, "reachable": False, "voices": [],
-                "consent_statement": None}
+        return {"configured": False, "reachable": False, "voices": [], "consent_statement": None}
     try:
         import httpx
+
         resp = httpx.get(f"{base}/v1/voices", timeout=5)
         resp.raise_for_status()
         data = resp.json()
-        return {"configured": True, "reachable": True,
-                "voices": data.get("voices", []),
-                "consent_statement": data.get("consent_statement")}
+        return {
+            "configured": True,
+            "reachable": True,
+            "voices": data.get("voices", []),
+            "consent_statement": data.get("consent_statement"),
+        }
     except Exception as exc:
         logger.debug("voice-clones list failed: %s", exc)
-        return {"configured": True, "reachable": False, "voices": [],
-                "consent_statement": None}
+        return {"configured": True, "reachable": False, "voices": [], "consent_statement": None}
 
 
 @router.post("/studio/voice-clones")
@@ -4675,10 +5440,16 @@ async def create_voice_clone(
         raise HTTPException(413, "Reference clip too large (max 25 MB)")
     try:
         import httpx
+
         resp = httpx.post(
             f"{base}/v1/voices",
-            files={"file": (file.filename or "reference.wav", audio,
-                            file.content_type or "application/octet-stream")},
+            files={
+                "file": (
+                    file.filename or "reference.wav",
+                    audio,
+                    file.content_type or "application/octet-stream",
+                )
+            },
             data={"name": name, "consent_ack": str(bool(consent_ack)).lower()},
             timeout=30,
         )
@@ -4697,11 +5468,16 @@ def acknowledge_voice_clone_consent(vid: str):
         raise HTTPException(503, "Premium voice engine is not configured")
     try:
         import httpx
+
         resp = httpx.post(f"{base}/v1/voices/{vid}/consent", timeout=10)
     except Exception:
         raise HTTPException(503, "Premium voice engine is not reachable")
     if resp.status_code >= 400:
-        detail = resp.json().get("detail", "consent update failed") if resp.content else "consent update failed"
+        detail = (
+            resp.json().get("detail", "consent update failed")
+            if resp.content
+            else "consent update failed"
+        )
         raise HTTPException(resp.status_code, detail)
     return resp.json()
 
@@ -4713,6 +5489,7 @@ def delete_voice_clone(vid: str):
         raise HTTPException(503, "Premium voice engine is not configured")
     try:
         import httpx
+
         resp = httpx.delete(f"{base}/v1/voices/{vid}", timeout=10)
     except Exception:
         raise HTTPException(503, "Premium voice engine is not reachable")
@@ -4754,20 +5531,19 @@ def studio_status():
     results: dict[str, object] = {}
 
     # Resolve vision model for OCR probe (done before pool so the lambda captures it)
-    _vision_model_for_probe = (db.get_setting("vision_model", "").strip()
-                               or cfg.serving.vision_model)
+    _vision_model_for_probe = db.get_setting("vision_model", "").strip() or cfg.serving.vision_model
 
     pool = _cf.ThreadPoolExecutor(max_workers=16, thread_name_prefix="studio-probe")
     try:
         # Resolve premium TTS URL for the probe (empty string = feature off)
         _premium_tts_url = getattr(cfg.serving, "tts_premium_url", "").strip()
-        _premium_ack     = getattr(cfg.serving, "tts_premium_ack_license", False)
+        _premium_ack = getattr(cfg.serving, "tts_premium_ack_license", False)
 
         futs: dict[str, _cf.Future] = {
-            "ai_tts":    pool.submit(_url_probe, ai_tts_url),
-            "ai_img":    pool.submit(_url_probe, ai_img_url),
-            "a1111":     pool.submit(_url_probe, "http://localhost:7860"),
-            "comfy":     pool.submit(_url_probe, "http://localhost:8188"),
+            "ai_tts": pool.submit(_url_probe, ai_tts_url),
+            "ai_img": pool.submit(_url_probe, ai_img_url),
+            "a1111": pool.submit(_url_probe, "http://localhost:7860"),
+            "comfy": pool.submit(_url_probe, "http://localhost:8188"),
             "tesseract": pool.submit(_probe_tesseract_ok),
             # Vision model probe: checks /models list, not just server reachability.
             # Returns False when vision_model is unset (no inference call made).
@@ -4781,8 +5557,7 @@ def studio_status():
         if _premium_tts_url:
             # The sidecar's canonical liveness route is /health (its root may
             # 404, which _url_probe would misread as unreachable).
-            futs["premium_tts"] = pool.submit(
-                _url_probe, f"{_premium_tts_url.rstrip('/')}/health")
+            futs["premium_tts"] = pool.submit(_url_probe, f"{_premium_tts_url.rstrip('/')}/health")
         if custom_url:
             futs["custom"] = pool.submit(_url_probe, custom_url)
             if _is_comfyui_url(custom_url):
@@ -4795,7 +5570,9 @@ def studio_status():
             except Exception:
                 # Scalar probes (tesseract, vision_model_listed) default to False;
                 # URL probes default to (False, None).
-                results[key] = False if key in ("tesseract", "vision_model_listed") else (False, None)
+                results[key] = (
+                    False if key in ("tesseract", "vision_model_listed") else (False, None)
+                )
     finally:
         # Do NOT wait for threads still blocked on their TCP connect timeout.
         # Threads will finish within _STATUS_PROBE_TIMEOUT (2 s) on their own.
@@ -4810,12 +5587,13 @@ def studio_status():
     # find_spec only tells us whether the wheel is present; _is_kokoro_loaded()
     # tells us whether the ONNX model was successfully opened and is ready to use.
     kokoro_pkg_ok = importlib.util.find_spec("kokoro_onnx") is not None
-    kokoro_ok     = _is_kokoro_loaded()   # True only when neural synthesis is live
+    kokoro_ok = _is_kokoro_loaded()  # True only when neural synthesis is live
 
     # Premium TTS probe result
-    _prem_probe   = _get("premium_tts", (False, None)) if _premium_tts_url else (False, None)
-    premium_tts_reachable, prem_ms = (_prem_probe if isinstance(_prem_probe, tuple)
-                                      else (bool(_prem_probe), None))
+    _prem_probe = _get("premium_tts", (False, None)) if _premium_tts_url else (False, None)
+    premium_tts_reachable, prem_ms = (
+        _prem_probe if isinstance(_prem_probe, tuple) else (bool(_prem_probe), None)
+    )
     premium_tts_active = bool(_premium_tts_url and _premium_ack and premium_tts_reachable)
 
     # Engine identity from the sidecar's /health (e.g. "chatterbox") so the
@@ -4824,6 +5602,7 @@ def studio_status():
     if premium_tts_reachable:
         try:
             import httpx as _hx_prem
+
             _h = _hx_prem.get(f"{_premium_tts_url.rstrip('/')}/health", timeout=2)
             if _h.status_code == 200:
                 premium_engine = (_h.json() or {}).get("engine")
@@ -4832,14 +5611,16 @@ def studio_status():
 
     tts_strategies = [
         {
-            "name": "Premium TTS", "key": "premium_tts",
-            "available": premium_tts_active, "latency_ms": prem_ms,
+            "name": "Premium TTS",
+            "key": "premium_tts",
+            "available": premium_tts_active,
+            "latency_ms": prem_ms,
             "url": _premium_tts_url or None,
             "license_ack": _premium_ack,
             "engine": premium_engine,
         },
-        {"name": "AI Server",   "key": "ai_server",   "available": ai_tts_ok, "latency_ms": ai_ms},
-        {"name": "Kokoro ONNX", "key": "kokoro_onnx",  "available": kokoro_ok, "latency_ms": None},
+        {"name": "AI Server", "key": "ai_server", "available": ai_tts_ok, "latency_ms": ai_ms},
+        {"name": "Kokoro ONNX", "key": "kokoro_onnx", "available": kokoro_ok, "latency_ms": None},
         # espeak-ng is no longer an audible strategy (no-robot-voice policy) —
         # it is intentionally absent from this list.
     ]
@@ -4856,31 +5637,46 @@ def studio_status():
     img_backends: list[dict] = []
     if custom_url:
         if _is_comfyui_url(custom_url):
-            custom_ok = bool(_get("custom_stats", (False, None))[0] or  # type: ignore[index]
-                              _get("custom", (False, None))[0])            # type: ignore[index]
-            img_backends.append({"name": "ComfyUI (custom)", "url": custom_url, "online": custom_ok})
+            custom_ok = bool(
+                _get("custom_stats", (False, None))[0]  # type: ignore[index]
+                or _get("custom", (False, None))[0]
+            )  # type: ignore[index]
+            img_backends.append(
+                {"name": "ComfyUI (custom)", "url": custom_url, "online": custom_ok}
+            )
         else:
-            img_backends.append({"name": "Custom", "url": custom_url,
-                                  "online": bool(_get("custom", (False, None))[0])})  # type: ignore[index]
+            img_backends.append(
+                {
+                    "name": "Custom",
+                    "url": custom_url,
+                    "online": bool(_get("custom", (False, None))[0]),
+                }
+            )  # type: ignore[index]
 
     a1111_ok, _ = _get("a1111", (False, None))
     comfy_ok, _ = _get("comfy", (False, None))
     ai_img_ok, _ = _get("ai_img", (False, None))
 
     if a1111_ok:
-        img_backends.append({"name": "Automatic1111", "url": "http://localhost:7860", "online": True})
+        img_backends.append(
+            {"name": "Automatic1111", "url": "http://localhost:7860", "online": True}
+        )
     if comfy_ok:
         img_backends.append({"name": "ComfyUI", "url": "http://localhost:8188", "online": True})
-    img_backends.append({"name": "AI Server", "url": cfg.serving.base_url, "online": bool(ai_img_ok)})
+    img_backends.append(
+        {"name": "AI Server", "url": cfg.serving.base_url, "online": bool(ai_img_ok)}
+    )
     img_any = any(b["online"] for b in img_backends)
 
     # ── OCR ───────────────────────────────────────────────────────────────────
     tess_ok = bool(_get("tesseract", False))
     pillow_ok = importlib.util.find_spec("PIL") is not None
     pytesseract_ok = importlib.util.find_spec("pytesseract") is not None
-    ocr_missing = ([] if tess_ok else ["tesseract binary"]) + \
-                  ([] if pillow_ok else ["Pillow"]) + \
-                  ([] if pytesseract_ok else ["pytesseract"])
+    ocr_missing = (
+        ([] if tess_ok else ["tesseract binary"])
+        + ([] if pillow_ok else ["Pillow"])
+        + ([] if pytesseract_ok else ["pytesseract"])
+    )
 
     # VLM-based OCR — active when vision_model is set AND the /models probe confirmed
     # the model is loaded.  _vision_model_for_probe was resolved before the thread pool
@@ -4911,14 +5707,16 @@ def studio_status():
     from orivellum.capabilities.extraction import (
         faster_whisper_status as _fw_status,
     )
-    ai_asr_server_ok = bool(ai_tts_ok)   # same server; proxy from TTS probe
+
+    ai_asr_server_ok = bool(ai_tts_ok)  # same server; proxy from TTS probe
     fw_installed = importlib.util.find_spec("faster_whisper") is not None
     fw_loaded = _fw_loaded_check()
     _fw_stat = _fw_status()
     # Effective size = DB override → config default; when a model is actually
     # loaded, report THAT size (it may differ after a low-memory fallback).
     asr_local_model_sz = _fw_stat["loaded_size"] or _fw_resolve_size(
-        db, getattr(cfg.serving, "asr_local_model", "large-v3-turbo"))
+        db, getattr(cfg.serving, "asr_local_model", "large-v3-turbo")
+    )
 
     # Active ASR engine: AI server first, then faster-whisper, then none.
     if ai_asr_server_ok:
@@ -5005,6 +5803,7 @@ def studio_status():
 def image_gen_status():
     """Quick probe to tell the UI which image backend (if any) is reachable."""
     import urllib.request as _ur
+
     db = get_db()
     cfg = get_config()
 
@@ -5029,10 +5828,13 @@ def image_gen_status():
         backends.append({"name": "Automatic1111", "url": "http://localhost:7860", "online": True})
     if _probe("http://localhost:8188"):
         backends.append({"name": "ComfyUI", "url": "http://localhost:8188", "online": True})
-    backends.append({
-        "name": "AI Server", "url": cfg.serving.base_url,
-        "online": _probe(cfg.serving.base_url.replace("/api/v1", "")),
-    })
+    backends.append(
+        {
+            "name": "AI Server",
+            "url": cfg.serving.base_url,
+            "online": _probe(cfg.serving.base_url.replace("/api/v1", "")),
+        }
+    )
     return {"backends": backends, "any_online": any(b["online"] for b in backends)}
 
 
@@ -5057,13 +5859,16 @@ def _probe_tesseract_ok() -> bool:
         return True
     if _sys.platform == "win32":
         import pathlib as _pl
+
         win_default = _pl.Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
         return win_default.is_file()
     # Unix/NixOS: ask the login shell first (cheap)
     try:
         r = __import__("subprocess").run(
             ["bash", "-lc", "which tesseract"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
         if r.stdout.strip():
             return True
@@ -5071,6 +5876,7 @@ def _probe_tesseract_ok() -> bool:
         pass
     # Bounded /nix/store scan — stop after _NIX_STORE_SCAN_MAX entries
     import pathlib as _pl
+
     nix = _pl.Path("/nix/store")
     if nix.exists():
         for _i, d in enumerate(nix.iterdir()):
@@ -5098,11 +5904,13 @@ def _probe_tesseract_cmd() -> None:
         return
 
     import sys as _sys
+
     if _sys.platform != "win32":
         # On Unix/NixOS ask the login shell — it has a broader PATH than the API process
         try:
-            r = _sp.run(["bash", "-lc", "which tesseract"],
-                        capture_output=True, text=True, timeout=5)
+            r = _sp.run(
+                ["bash", "-lc", "which tesseract"], capture_output=True, text=True, timeout=5
+            )
             c = r.stdout.strip()
             if c and _P(c).is_file():
                 _pt.pytesseract.tesseract_cmd = c
@@ -5164,8 +5972,10 @@ async def run_ocr(body: OCRRequest):
             )
         except TimeoutError:
             logger.warning("OCR timed out after %ds", _OCR_TIMEOUT)
-            raise HTTPException(504, f"OCR timed out after {_OCR_TIMEOUT} s — "
-                                     "try a smaller or lower-resolution image")
+            raise HTTPException(
+                504,
+                f"OCR timed out after {_OCR_TIMEOUT} s — try a smaller or lower-resolution image",
+            )
 
         return {"text": text, "ok": True}
     except HTTPException:

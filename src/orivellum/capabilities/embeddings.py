@@ -35,6 +35,7 @@ Performance strategy
    type; work_id filtering happens in the scoring loop so a single cache
    entry serves every query scope for that DB+type pair.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,15 +51,15 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger("orivellum.embeddings")
 
-_EMBED_TIMEOUT = 30         # batch/backfill calls (background, latency-tolerant)
-_QUERY_TIMEOUT = 4          # interactive query-time embedding (search, chat)
-_MAX_TEXT_LEN = 6000        # chars per embedded text
-_BACKFILL_BATCH = 16        # texts per API call
+_EMBED_TIMEOUT = 30  # batch/backfill calls (background, latency-tolerant)
+_QUERY_TIMEOUT = 4  # interactive query-time embedding (search, chat)
+_MAX_TEXT_LEN = 6000  # chars per embedded text
+_BACKFILL_BATCH = 16  # texts per API call
 
 # Circuit breaker: after a failed embeddings call, skip further attempts for a
 # short window so a down/unconfigured endpoint never adds per-request latency
 # to search or chat (they fall back to BM25 instantly during the cooldown).
-_FAIL_COOLDOWN = 60.0       # seconds
+_FAIL_COOLDOWN = 60.0  # seconds
 _unavailable_until = 0.0
 
 # ── Vector cache ──────────────────────────────────────────────────────────────
@@ -128,8 +129,7 @@ def invalidate_vector_cache() -> None:
         _version_counters.clear()
 
 
-def _load_vecs(db: OrivellumDB, object_type: str,
-               all_sql: str, all_params: tuple) -> list:
+def _load_vecs(db: OrivellumDB, object_type: str, all_sql: str, all_params: tuple) -> list:
     """Return cached vector entries, rebuilding when the write version changed.
 
     *all_sql* must fetch ALL rows for the object_type (no work_id filter) so
@@ -160,7 +160,7 @@ def _load_vecs(db: OrivellumDB, object_type: str,
     for r in rows:
         try:
             raw = unpack_vector(r["embedding"], r["dim"])
-            nv  = _norm_vec(raw)
+            nv = _norm_vec(raw)
         except Exception:
             continue
         field = {k: r[k] for k in r.keys() if k not in ("embedding", "dim")}
@@ -169,8 +169,7 @@ def _load_vecs(db: OrivellumDB, object_type: str,
     with _cache_lock:
         _vec_cache[key] = (entries, ver_before)
 
-    logger.debug("Vector cache rebuilt: db=%s type=%s n=%d",
-                 db._path, object_type, len(entries))
+    logger.debug("Vector cache rebuilt: db=%s type=%s n=%d", db._path, object_type, len(entries))
     return entries
 
 
@@ -181,6 +180,7 @@ def _reset_circuit_breaker() -> None:
 
 
 # ── Dimensionality mismatch detection ─────────────────────────────────────────
+
 
 def get_stored_vector_dim(db: OrivellumDB) -> int | None:
     """Return the dimensionality of currently stored vectors, or None if empty.
@@ -208,13 +208,17 @@ def get_live_embedder_dim(timeout: float = 8.0) -> int | None:
     """
     try:
         base_url, model = _serving()
-        payload = json.dumps({
-            "model": model,
-            "input": ["dim probe"],
-        }).encode()
+        payload = json.dumps(
+            {
+                "model": model,
+                "input": ["dim probe"],
+            }
+        ).encode()
         req = urllib.request.Request(
-            f"{base_url}/embeddings", data=payload,
-            headers={"Content-Type": "application/json"}, method="POST",
+            f"{base_url}/embeddings",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
@@ -268,11 +272,14 @@ def count_embeddable_items(db: OrivellumDB) -> dict[str, int]:
                 " WHERE v.object_type='conv_chunk' AND length(cc.text) > 30"
             ).fetchone()[0]
         return {
-            "chunk_total": chunk_total, "chunk_done": chunk_done,
-            "knowledge_total": know_total, "knowledge_done": know_done,
-            "conv_chunk_total": cc_total, "conv_chunk_done": cc_done,
+            "chunk_total": chunk_total,
+            "chunk_done": chunk_done,
+            "knowledge_total": know_total,
+            "knowledge_done": know_done,
+            "conv_chunk_total": cc_total,
+            "conv_chunk_done": cc_done,
             "total": chunk_total + know_total + cc_total,
-            "done":  chunk_done + know_done + cc_done,
+            "done": chunk_done + know_done + cc_done,
         }
     except Exception:
         return {"total": 0, "done": 0}
@@ -307,7 +314,7 @@ def run_full_reindex(db: OrivellumDB, *, batch_size: int = 64) -> int:
         while True:
             n = backfill_embeddings(db, max_items=batch_size)
             if n == 0:
-                break   # endpoint down or nothing left
+                break  # endpoint down or nothing left
             embedded_total += n
             db.set_setting("reindex_done", str(embedded_total))
             logger.debug("Reindex progress: %d / %d", embedded_total, total)
@@ -318,13 +325,16 @@ def run_full_reindex(db: OrivellumDB, *, batch_size: int = 64) -> int:
         remaining = count_embeddable_items(db)
         missing = remaining["total"] - remaining["done"]
         if missing > 0:
-            msg = (f"Re-index stopped early — {missing} of {remaining['total']} items "
-                   "could not be embedded because the embeddings endpoint stopped "
-                   "returning vectors. Check the AI server, then run Re-index All again "
-                   "(already-embedded items are kept).")
+            msg = (
+                f"Re-index stopped early — {missing} of {remaining['total']} items "
+                "could not be embedded because the embeddings endpoint stopped "
+                "returning vectors. Check the AI server, then run Re-index All again "
+                "(already-embedded items are kept)."
+            )
             db.set_setting("reindex_error", msg)
-            logger.warning("Reindex incomplete: %d vectors written, %d missing",
-                           embedded_total, missing)
+            logger.warning(
+                "Reindex incomplete: %d vectors written, %d missing", embedded_total, missing
+            )
         else:
             db.set_setting("reindex_error", "")
             logger.info("Reindex complete: %d vectors written", embedded_total)
@@ -349,14 +359,16 @@ def run_full_reindex(db: OrivellumDB, *, batch_size: int = 64) -> int:
 
 def _serving():
     from orivellum.api._deps import get_config
+
     cfg = get_config()
-    return cfg.serving.base_url.rstrip("/"), getattr(cfg.serving, "embedder_model",
-                                                     "Qwen3-Embedding-0.6B")
+    return cfg.serving.base_url.rstrip("/"), getattr(
+        cfg.serving, "embedder_model", "Qwen3-Embedding-0.6B"
+    )
 
 
-def embed_texts(texts: list[str],
-                timeout: float = _EMBED_TIMEOUT,
-                bypass_cooldown: bool = False) -> list[list[float]] | None:
+def embed_texts(
+    texts: list[str], timeout: float = _EMBED_TIMEOUT, bypass_cooldown: bool = False
+) -> list[list[float]] | None:
     """Embed a batch of texts. Returns None when the endpoint is unavailable.
 
     A failed call opens a short cooldown during which subsequent calls return
@@ -373,28 +385,31 @@ def embed_texts(texts: list[str],
     if not bypass_cooldown and time.monotonic() < _unavailable_until:
         return None
     base_url, model = _serving()
-    payload = json.dumps({
-        "model": model,
-        "input": [t[:_MAX_TEXT_LEN] for t in texts],
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": model,
+            "input": [t[:_MAX_TEXT_LEN] for t in texts],
+        }
+    ).encode()
     req = urllib.request.Request(
-        f"{base_url}/embeddings", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST")
+        f"{base_url}/embeddings",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
         items = sorted(data.get("data", []), key=lambda d: d.get("index", 0))
         vecs = [d.get("embedding") for d in items]
         if len(vecs) != len(texts) or any(not v for v in vecs):
-            logger.warning("Embeddings response malformed (%d/%d vectors)",
-                           len(vecs), len(texts))
+            logger.warning("Embeddings response malformed (%d/%d vectors)", len(vecs), len(texts))
             return None
         _unavailable_until = 0.0
         return vecs
     except Exception as exc:
         _unavailable_until = time.monotonic() + _FAIL_COOLDOWN
-        logger.debug("Embeddings unavailable (cooldown %.0fs): %s",
-                     _FAIL_COOLDOWN, exc)
+        logger.debug("Embeddings unavailable (cooldown %.0fs): %s", _FAIL_COOLDOWN, exc)
         return None
 
 
@@ -422,7 +437,7 @@ def cosine(a: list[float], b: list[float]) -> float:
         nb += y * y
     if na == 0.0 or nb == 0.0:
         return 0.0
-    return dot / ((na ** 0.5) * (nb ** 0.5))
+    return dot / ((na**0.5) * (nb**0.5))
 
 
 # Known-safe canary text: never derived from batch content, so a pathological
@@ -434,8 +449,9 @@ _CANARY_TEXT = "embedding health canary"
 _RESILIENT_FAIL_BUDGET = 6
 
 
-def _embed_batch_resilient(texts: list[str],
-                           _budget: dict | None = None) -> list[list[float]] | None:
+def _embed_batch_resilient(
+    texts: list[str], _budget: dict | None = None
+) -> list[list[float]] | None:
     """Embed a batch with a size-scaled timeout and adaptive splitting.
 
     A fixed 30 s timeout is fine for one text but not for a batch of 16 long
@@ -466,30 +482,29 @@ def _embed_batch_resilient(texts: list[str],
 
     _budget["fails"] -= 1
     if _budget["fails"] < 0:
-        logger.warning("Embedding failure budget exhausted — stopping backfill "
-                       "attempt (endpoint flaky?)")
+        logger.warning(
+            "Embedding failure budget exhausted — stopping backfill attempt (endpoint flaky?)"
+        )
         return None
 
     # Health check with a fixed safe string — batch content must never be the
     # canary, or a pathological text would masquerade as an endpoint outage.
-    canary = embed_texts([_CANARY_TEXT],
-                         timeout=_EMBED_TIMEOUT + 30, bypass_cooldown=True)
+    canary = embed_texts([_CANARY_TEXT], timeout=_EMBED_TIMEOUT + 30, bypass_cooldown=True)
     if canary is None:
-        return None                         # endpoint genuinely down
+        return None  # endpoint genuinely down
 
     if len(texts) == 1:
         # Endpoint alive but this one text fails — try it hard-truncated.
-        retry = embed_texts([texts[0][:1500]],
-                            timeout=_EMBED_TIMEOUT, bypass_cooldown=True)
+        retry = embed_texts([texts[0][:1500]], timeout=_EMBED_TIMEOUT, bypass_cooldown=True)
         if retry is not None:
-            logger.warning("Embedded one text only after hard truncation "
-                           "(len %d -> 1500)", len(texts[0]))
+            logger.warning(
+                "Embedded one text only after hard truncation (len %d -> 1500)", len(texts[0])
+            )
         else:
             _budget["fails"] -= 1
         return retry
 
-    logger.info("Embedding batch of %d failed but endpoint is alive — "
-                "splitting batch", len(texts))
+    logger.info("Embedding batch of %d failed but endpoint is alive — splitting batch", len(texts))
     mid = len(texts) // 2
     left = _embed_batch_resilient(texts[:mid], _budget)
     if left is None:
@@ -512,34 +527,43 @@ def backfill_embeddings(db: OrivellumDB, max_items: int = 200) -> int:
     embedded = 0
     for object_type, sql, _use_prefix in (
         # Chunks: fetch context_prefix so we embed prefix+text when available.
-        ("chunk",
-         """SELECT c.id, c.text, c.context_prefix FROM chunks c
+        (
+            "chunk",
+            """SELECT c.id, c.text, c.context_prefix FROM chunks c
             LEFT JOIN vectors v ON v.object_id = c.id AND v.object_type='chunk'
             WHERE v.id IS NULL AND length(c.text) > 40 LIMIT ?""",
-         True),
-        ("knowledge",
-         """SELECT k.id, k.text, NULL as context_prefix FROM knowledge k
+            True,
+        ),
+        (
+            "knowledge",
+            """SELECT k.id, k.text, NULL as context_prefix FROM knowledge k
             LEFT JOIN vectors v ON v.object_id = k.id AND v.object_type='knowledge'
             WHERE v.id IS NULL
               AND k.review_status NOT IN ('rejected','superseded_duplicate')
               AND length(k.text) > 20 LIMIT ?""",
-         False),
-        ("conv_chunk",
-         """SELECT cc.id, cc.text, NULL as context_prefix FROM conversation_chunks cc
+            False,
+        ),
+        (
+            "conv_chunk",
+            """SELECT cc.id, cc.text, NULL as context_prefix FROM conversation_chunks cc
             LEFT JOIN vectors v ON v.object_id = cc.id AND v.object_type='conv_chunk'
             WHERE v.id IS NULL AND length(cc.text) > 30 LIMIT ?""",
-         False),
+            False,
+        ),
     ):
         with db._lock:
             rows = db._conn.execute(sql, (max_items,)).fetchall()
         for i in range(0, len(rows), _BACKFILL_BATCH):
-            batch = rows[i:i + _BACKFILL_BATCH]
+            batch = rows[i : i + _BACKFILL_BATCH]
             # For chunks: prepend any stored context prefix to the embedded text
             # so the vector reflects the enriched representation used at query time.
             if _use_prefix:
                 texts = [
-                    ((r["context_prefix"] + "\n\n" + r["text"])
-                     if r["context_prefix"] else r["text"])
+                    (
+                        (r["context_prefix"] + "\n\n" + r["text"])
+                        if r["context_prefix"]
+                        else r["text"]
+                    )
                     for r in batch
                 ]
             else:
@@ -559,9 +583,7 @@ def _mark_chunk_embedding_method(db: OrivellumDB, chunk_id: str, method: str) ->
     """Mark a chunk's embedding_method column.  Non-fatal — never raises."""
     try:
         with db._lock:
-            db._conn.execute(
-                "UPDATE chunks SET embedding_method=? WHERE id=?", (method, chunk_id)
-            )
+            db._conn.execute("UPDATE chunks SET embedding_method=? WHERE id=?", (method, chunk_id))
             db._conn.commit()
     except Exception:
         pass
@@ -587,6 +609,7 @@ def embed_chunks_for_doc(doc_id: str, db: OrivellumDB) -> int:
     unhandled exception during app shutdown or test teardown.
     """
     import sqlite3 as _sqlite3
+
     try:
         # ── Late-chunking path (gated) ─────────────────────────────────────
         # Runs first when the setting is on and the endpoint is probed as
@@ -613,12 +636,11 @@ def embed_chunks_for_doc(doc_id: str, db: OrivellumDB) -> int:
             ).fetchall()
         embedded = 0
         for i in range(0, len(rows), _BACKFILL_BATCH):
-            batch = rows[i:i + _BACKFILL_BATCH]
+            batch = rows[i : i + _BACKFILL_BATCH]
             # Prepend context_prefix when available so the vector reflects the
             # enriched representation used at retrieval time.
             texts = [
-                ((r["context_prefix"] + "\n\n" + r["text"])
-                 if r["context_prefix"] else r["text"])
+                ((r["context_prefix"] + "\n\n" + r["text"]) if r["context_prefix"] else r["text"])
                 for r in batch
             ]
             vecs = embed_texts(texts)
@@ -634,7 +656,9 @@ def embed_chunks_for_doc(doc_id: str, db: OrivellumDB) -> int:
         if total:
             logger.info(
                 "Embedded doc %s — %d late + %d standard chunk(s)",
-                doc_id[:8], late_stored, embedded,
+                doc_id[:8],
+                late_stored,
+                embedded,
             )
         return total
     except _sqlite3.ProgrammingError:
@@ -688,8 +712,13 @@ def _embed_chunks_late(doc_id: str, db: OrivellumDB) -> int:
     return embed_with_late_chunking(full_text, chunk_infos, db)
 
 
-def semantic_search(query: str, db: OrivellumDB, object_type: str = "knowledge",
-                    limit: int = 10, work_id: str | None = None) -> list[dict]:
+def semantic_search(
+    query: str,
+    db: OrivellumDB,
+    object_type: str = "knowledge",
+    limit: int = 10,
+    work_id: str | None = None,
+) -> list[dict]:
     """Cosine-rank stored vectors against the query embedding.
 
     Returns [] when embeddings are unavailable so callers can fall back to FTS.
@@ -773,7 +802,8 @@ def semantic_search(query: str, db: OrivellumDB, object_type: str = "knowledge",
         logger.debug(
             "semantic_search: skipped %d vector(s) with mismatched dim "
             "(stored ≠ %d) — re-index required",
-            skipped_dim, query_dim,
+            skipped_dim,
+            query_dim,
         )
     scored.sort(key=lambda d: d["score"], reverse=True)
     return scored[:limit]
@@ -782,10 +812,14 @@ def semantic_search(query: str, db: OrivellumDB, object_type: str = "knowledge",
 _RRF_K = 60  # standard reciprocal-rank-fusion constant
 
 
-def hybrid_search_chunks(query: str, db: OrivellumDB, limit: int = 10,
-                         work_id: str | None = None,
-                         fts_weight: float = 0.5,
-                         semantic_weight: float = 0.5) -> list[dict]:
+def hybrid_search_chunks(
+    query: str,
+    db: OrivellumDB,
+    limit: int = 10,
+    work_id: str | None = None,
+    fts_weight: float = 0.5,
+    semantic_weight: float = 0.5,
+) -> list[dict]:
     """Hybrid chunk retrieval: FTS5 BM25 + semantic cosine, fused with weighted RRF.
 
     Each result carries ``rrf_score`` and ``match_type`` ("keyword",
@@ -924,14 +958,18 @@ def _run_late_chunking_probe() -> bool:
         return False
     try:
         base_url, model = _serving()
-        payload = json.dumps({
-            "model": model,
-            "input": "Late chunking probe.",
-            "return_token_embeddings": True,
-        }).encode()
+        payload = json.dumps(
+            {
+                "model": model,
+                "input": "Late chunking probe.",
+                "return_token_embeddings": True,
+            }
+        ).encode()
         req = urllib.request.Request(
-            f"{base_url}/embeddings", data=payload,
-            headers={"Content-Type": "application/json"}, method="POST",
+            f"{base_url}/embeddings",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
@@ -941,11 +979,7 @@ def _run_late_chunking_probe() -> bool:
         emb = items[0].get("embedding")
         # Per-token: embedding is a list of lists — shape (seq_len, dim).
         # Standard: embedding is a flat list — shape (dim,).
-        return (
-            isinstance(emb, list)
-            and len(emb) > 0
-            and isinstance(emb[0], list)
-        )
+        return isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], list)
     except Exception as exc:
         logger.debug("Late-chunking probe failed: %s", exc)
         return False
@@ -995,14 +1029,18 @@ def embed_with_late_chunking(
         return 0
 
     base_url, model = _serving()
-    payload = json.dumps({
-        "model": model,
-        "input": text,
-        "return_token_embeddings": True,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": model,
+            "input": text,
+            "return_token_embeddings": True,
+        }
+    ).encode()
     req = urllib.request.Request(
-        f"{base_url}/embeddings", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST",
+        f"{base_url}/embeddings",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=_EMBED_TIMEOUT) as resp:
@@ -1055,8 +1093,7 @@ def embed_with_late_chunking(
         # Mean-pool the token embeddings within the span.
         span = token_embs[t_start:t_end]
         n_tokens = len(span)
-        pooled = [sum(span[i][j] for i in range(n_tokens)) / n_tokens
-                  for j in range(dim)]
+        pooled = [sum(span[i][j] for i in range(n_tokens)) / n_tokens for j in range(dim)]
 
         # Store vector and mark the chunk's embedding method.
         db.store_vector(chunk_id, "chunk", pack_vector(pooled), dim)
@@ -1088,10 +1125,14 @@ def semantic_search_conversations(
     return semantic_search(query, db, object_type="conv_chunk", limit=limit)
 
 
-def hybrid_search_knowledge(query: str, db: OrivellumDB, limit: int = 10,
-                            work_id: str | None = None,
-                            fts_weight: float = 0.5,
-                            semantic_weight: float = 0.5) -> list[dict]:
+def hybrid_search_knowledge(
+    query: str,
+    db: OrivellumDB,
+    limit: int = 10,
+    work_id: str | None = None,
+    fts_weight: float = 0.5,
+    semantic_weight: float = 0.5,
+) -> list[dict]:
     """Merge FTS (keyword) and semantic hits via weighted RRF, deduplicated.
 
     Falls back to pure FTS when embeddings are unavailable, and to pure

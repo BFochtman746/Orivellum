@@ -20,6 +20,7 @@ Security decisions (Aug 2026 hardening):
    working unchanged; setting ``ORIVELLUM_LOGIN_KEY`` (or the ``login_key``
    DB setting) migrates them off the shared secret with zero downtime.
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,8 +39,7 @@ def key_matches(provided: str, expected: str) -> bool:
         return False
     if not provided or not expected:
         return False
-    return secrets.compare_digest(provided.encode("utf-8"),
-                                  expected.encode("utf-8"))
+    return secrets.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
 
 
 def resolve_login_key() -> str:
@@ -79,6 +79,7 @@ def _db_setting(name: str) -> str:
     """Read a settings row, returning '' when the DB is not ready."""
     try:
         from orivellum.api import _deps
+
         db = _deps.get_db()
         return db.get_setting(name, "") or ""
     except Exception:

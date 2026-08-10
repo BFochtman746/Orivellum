@@ -19,19 +19,19 @@ These tests confirm:
 8. The adapter registry (base.registry) exposes windows-inventory@0.1.0
    with vram predicates listed as capabilities.
 """
+
 from __future__ import annotations
 
 import os
 import sys
-import tempfile
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
 from orivellum.capabilities.pklos.adapters.base import AdapterRegistry
-from orivellum.capabilities.pklos.authority import ClaimStatus, SUBJECT_DEVICE_A01
+from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
+from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01, ClaimStatus
 from orivellum.capabilities.pklos.authority_resolver import AuthorityResolver
 from orivellum.capabilities.pklos.claim_verifier import ClaimVerifier
 
@@ -39,12 +39,13 @@ _resolver = AuthorityResolver()
 _verifier = ClaimVerifier()
 
 # The 32-bit saturation value AdapterRAM returns on unified-memory hardware
-_ADAPTER_RAM_32BIT_CAP = 4_294_967_295   # 4 GiB – 1
+_ADAPTER_RAM_32BIT_CAP = 4_294_967_295  # 4 GiB – 1
 
 
 @pytest.fixture
 def db(tmp_path):
     from orivellum.database.db import OrivellumDB
+
     d = OrivellumDB(str(tmp_path / "test.db"))
     yield d
     try:
@@ -55,8 +56,8 @@ def db(tmp_path):
 
 # ── 1. AuthorityResolver: AdapterRAM is prohibited for all vram_* ─────────────
 
-class TestResolverProhibition:
 
+class TestResolverProhibition:
     @pytest.mark.parametrize("predicate", ["vram_usable_bytes", "vram_gb", "vram_total"])
     def test_adapterram_prohibited_for_vram_predicates(self, predicate):
         """is_prohibited_source returns True for AdapterRAM on any vram_* predicate."""
@@ -65,13 +66,16 @@ class TestResolverProhibition:
             "Win32_VideoController.AdapterRAM",
         ), f"AdapterRAM must be prohibited for {predicate}"
 
-    @pytest.mark.parametrize("locator", [
-        "Win32_VideoController.AdapterRAM",
-        "win32_videocontroller.adapterram",           # all-lowercase
-        "WIN32_VIDEOCONTROLLER.ADAPTERRAM",           # all-uppercase
-        "windows_cim:Win32_VideoController.AdapterRAM",  # prefixed
-        "some_namespace:adapterram",                  # substring match
-    ])
+    @pytest.mark.parametrize(
+        "locator",
+        [
+            "Win32_VideoController.AdapterRAM",
+            "win32_videocontroller.adapterram",  # all-lowercase
+            "WIN32_VIDEOCONTROLLER.ADAPTERRAM",  # all-uppercase
+            "windows_cim:Win32_VideoController.AdapterRAM",  # prefixed
+            "some_namespace:adapterram",  # substring match
+        ],
+    )
     def test_adapterram_case_insensitive_match(self, locator):
         """Any casing or prefix variant of 'AdapterRAM' is caught (substring match)."""
         assert _resolver.is_prohibited_source("vram_usable_bytes", locator), (
@@ -95,16 +99,18 @@ class TestResolverProhibition:
 
 # ── 2. ClaimVerifier: AdapterRAM evidence never reaches VERIFIED ──────────────
 
-class TestVerifierFiltering:
 
+class TestVerifierFiltering:
     def test_32bit_cap_via_adapterram_yields_unavailable(self):
         """4 294 967 295 bytes via AdapterRAM → UNAVAILABLE (filtered before scoring)."""
-        evidence = [{
-            "source_type": "windows_cim",
-            "source_locator": "Win32_VideoController.AdapterRAM",
-            "authority": "A0",
-            "raw_value": str(_ADAPTER_RAM_32BIT_CAP),
-        }]
+        evidence = [
+            {
+                "source_type": "windows_cim",
+                "source_locator": "Win32_VideoController.AdapterRAM",
+                "authority": "A0",
+                "raw_value": str(_ADAPTER_RAM_32BIT_CAP),
+            }
+        ]
         result = _verifier.verify("vram_usable_bytes", evidence)
         assert result.status == ClaimStatus.UNAVAILABLE, (
             f"32-bit AdapterRAM cap must yield UNAVAILABLE; got {result.status}"
@@ -117,17 +123,17 @@ class TestVerifierFiltering:
     def test_adapterram_mixed_with_real_source_is_filtered(self):
         """When AdapterRAM is mixed with a valid Lemonade source, AdapterRAM is dropped."""
         evidence = [
-            {   # AdapterRAM — should be filtered out
+            {  # AdapterRAM — should be filtered out
                 "source_type": "windows_cim",
                 "source_locator": "Win32_VideoController.AdapterRAM",
                 "authority": "A0",
                 "raw_value": str(_ADAPTER_RAM_32BIT_CAP),
             },
-            {   # Lemonade API — the real source, should survive
+            {  # Lemonade API — the real source, should survive
                 "source_type": "lemonade_api",
                 "source_locator": "lemonade_api:memory.total",
                 "authority": "A0",
-                "raw_value": "103079215104",   # ~96 GiB
+                "raw_value": "103079215104",  # ~96 GiB
             },
         ]
         result = _verifier.verify("vram_usable_bytes", evidence)
@@ -141,25 +147,27 @@ class TestVerifierFiltering:
 
     def test_adapterram_filtered_evidence_list_excludes_cap(self):
         """all_evidence in the result must not include AdapterRAM when it is filtered."""
-        evidence = [{
-            "source_type": "windows_cim",
-            "source_locator": "Win32_VideoController.AdapterRAM",
-            "authority": "A0",
-            "raw_value": str(_ADAPTER_RAM_32BIT_CAP),
-        }]
+        evidence = [
+            {
+                "source_type": "windows_cim",
+                "source_locator": "Win32_VideoController.AdapterRAM",
+                "authority": "A0",
+                "raw_value": str(_ADAPTER_RAM_32BIT_CAP),
+            }
+        ]
         result = _verifier.verify("vram_usable_bytes", evidence)
         # all_evidence stores the original (prohibited) items in the UNAVAILABLE case
         for e in result.all_evidence:
             locator = e.get("source_locator", "")
-            assert "adapterram" not in locator.lower() or result.status == ClaimStatus.UNAVAILABLE, (
-                "AdapterRAM must not appear in the safe_evidence list used for scoring"
-            )
+            assert (
+                "adapterram" not in locator.lower() or result.status == ClaimStatus.UNAVAILABLE
+            ), "AdapterRAM must not appear in the safe_evidence list used for scoring"
 
 
 # ── 3. Adapter ingestion: payload with AdapterRAM triggers INV-REQ-001 ────────
 
-class TestAdapterIngestionViolation:
 
+class TestAdapterIngestionViolation:
     def test_payload_with_adapterram_logs_violation(self, db):
         """A GPU payload that accidentally includes AdapterRAM must record a violation."""
         adapter = WindowsInventoryAdapter(db)
@@ -167,7 +175,7 @@ class TestAdapterIngestionViolation:
             "subject": SUBJECT_DEVICE_A01,
             "gpu": {
                 "Name": "AMD Radeon 890M",
-                "AdapterRAM": _ADAPTER_RAM_32BIT_CAP,   # attacker/bug supplies this
+                "AdapterRAM": _ADAPTER_RAM_32BIT_CAP,  # attacker/bug supplies this
             },
         }
         result = adapter.ingest_inventory(payload)
@@ -219,8 +227,8 @@ class TestAdapterIngestionViolation:
 
 # ── 4. End-to-end: real VRAM from Lemonade is stored and retrievable ──────────
 
-class TestLemonadeVRAMStorage:
 
+class TestLemonadeVRAMStorage:
     def test_lemonade_vram_stored_in_bytes(self, db):
         """VRAM from Lemonade API is stored as bytes, not GiB or any other unit."""
         adapter = WindowsInventoryAdapter(db)
@@ -228,7 +236,7 @@ class TestLemonadeVRAMStorage:
             "subject": SUBJECT_DEVICE_A01,
             "vram": {
                 "source": "lemonade_api:13305",
-                "total_bytes": 103_079_215_104,   # ~96 GiB
+                "total_bytes": 103_079_215_104,  # ~96 GiB
             },
         }
         adapter.ingest_inventory(payload)
@@ -285,8 +293,8 @@ class TestLemonadeVRAMStorage:
 
 # ── 5. AdapterRegistry: windows-inventory@0.1.0 exposes vram capabilities ─────
 
-class TestRegistryCapabilities:
 
+class TestRegistryCapabilities:
     def test_windows_inventory_capabilities_include_vram_predicates(self):
         """WindowsInventoryAdapter.capabilities() lists vram_usable_bytes and vram_gb."""
         adapter = WindowsInventoryAdapter(None)  # registry-only check, no db needed

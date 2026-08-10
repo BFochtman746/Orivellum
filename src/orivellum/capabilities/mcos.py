@@ -12,6 +12,7 @@ Public API:
   * score_response(case, text)           — the scoring rule engine
   * is_ai_reachable(cfg)                 — tiny LLM reachability probe
 """
+
 from __future__ import annotations
 
 import json
@@ -51,18 +52,92 @@ def _jload(s: Any, default: Any = None) -> Any:
 
 
 # Small stopword set for distinctive-word extraction from dynamic content.
-_STOPWORDS = frozenset({
-    "about", "above", "after", "again", "against", "along", "among", "around",
-    "because", "before", "being", "below", "between", "beyond", "could",
-    "doing", "during", "every", "found", "from", "further", "having", "however",
-    "into", "itself", "might", "more", "most", "much", "other", "over", "should",
-    "since", "some", "such", "than", "that", "their", "them", "then", "there",
-    "these", "they", "thing", "things", "this", "those", "through", "under",
-    "until", "very", "were", "what", "when", "where", "which", "while", "with",
-    "would", "your", "yours", "also", "been", "does", "each", "here", "just",
-    "like", "many", "only", "same", "will", "well", "them", "used", "using",
-    "within", "without", "based", "known", "given", "shall", "must",
-})
+_STOPWORDS = frozenset(
+    {
+        "about",
+        "above",
+        "after",
+        "again",
+        "against",
+        "along",
+        "among",
+        "around",
+        "because",
+        "before",
+        "being",
+        "below",
+        "between",
+        "beyond",
+        "could",
+        "doing",
+        "during",
+        "every",
+        "found",
+        "from",
+        "further",
+        "having",
+        "however",
+        "into",
+        "itself",
+        "might",
+        "more",
+        "most",
+        "much",
+        "other",
+        "over",
+        "should",
+        "since",
+        "some",
+        "such",
+        "than",
+        "that",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "thing",
+        "things",
+        "this",
+        "those",
+        "through",
+        "under",
+        "until",
+        "very",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "with",
+        "would",
+        "your",
+        "yours",
+        "also",
+        "been",
+        "does",
+        "each",
+        "here",
+        "just",
+        "like",
+        "many",
+        "only",
+        "same",
+        "will",
+        "well",
+        "used",
+        "using",
+        "within",
+        "without",
+        "based",
+        "known",
+        "given",
+        "shall",
+        "must",
+    }
+)
 
 
 # ── Static suite definitions ─────────────────────────────────────────────────
@@ -70,8 +145,8 @@ _STOPWORDS = frozenset({
 _REASONING_CASES: list[dict] = [
     {
         "question": "A basket holds 3 red apples and 4 green apples. If you add 2 more red "
-                    "apples and then remove 1 green apple, how many apples are in the "
-                    "basket? Answer with the number only.",
+        "apples and then remove 1 green apple, how many apples are in the "
+        "basket? Answer with the number only.",
         "scoring": {"type": "regex", "pattern": r"\b8\b"},
         "difficulty": "easy",
     },
@@ -82,37 +157,37 @@ _REASONING_CASES: list[dict] = [
     },
     {
         "question": "Tom is twice as old as Sarah. Sarah is 9 years old. How old is Tom? "
-                    "Answer with the number only.",
+        "Answer with the number only.",
         "scoring": {"type": "regex", "pattern": r"\b18\b"},
         "difficulty": "easy",
     },
     {
         "question": "If today is Wednesday, what day of the week will it be in 3 days? "
-                    "Answer with the day name.",
+        "Answer with the day name.",
         "scoring": {"type": "regex", "pattern": r"(?i)\bsaturday\b"},
         "difficulty": "easy",
     },
     {
         "question": "All roses are flowers. Some flowers fade quickly. A red rose is a rose. "
-                    "Is the red rose a flower? Answer yes or no.",
+        "Is the red rose a flower? Answer yes or no.",
         "scoring": {"type": "regex", "pattern": r"(?i)\byes\b"},
         "difficulty": "medium",
     },
     {
         "question": "A train leaves at 2:15 PM and arrives 90 minutes later. What time does "
-                    "it arrive? Answer in H:MM AM/PM format.",
+        "it arrive? Answer in H:MM AM/PM format.",
         "scoring": {"type": "regex", "pattern": r"(?i)3:45\s*pm"},
         "difficulty": "medium",
     },
     {
         "question": "You have 12 cookies to share equally among 4 children. How many cookies "
-                    "does each child get? Answer with the number only.",
+        "does each child get? Answer with the number only.",
         "scoring": {"type": "regex", "pattern": r"\b3\b"},
         "difficulty": "easy",
     },
     {
         "question": "January 1st, 2024 was a Monday. What day of the week was January 8th, "
-                    "2024? Answer with the day name.",
+        "2024? Answer with the day name.",
         "scoring": {"type": "regex", "pattern": r"(?i)\bmonday\b"},
         "difficulty": "medium",
     },
@@ -121,13 +196,13 @@ _REASONING_CASES: list[dict] = [
 _INSTRUCTION_CASES: list[dict] = [
     {
         "question": "List exactly three colors of the rainbow. Answer with exactly three "
-                    "bullet points, each starting with '- '.",
+        "bullet points, each starting with '- '.",
         "scoring": {"type": "regex", "pattern": r"(?s)^(?:.*\n)?-\s.+\n-\s.+\n-\s.+\s*$"},
         "difficulty": "medium",
     },
     {
-        "question": "Reply with valid JSON containing exactly the keys \"a\" and \"b\", where "
-                    "a is 1 and b is 2. Output only the JSON.",
+        "question": 'Reply with valid JSON containing exactly the keys "a" and "b", where '
+        "a is 1 and b is 2. Output only the JSON.",
         "scoring": {"type": "json_keys", "keys": ["a", "b"]},
         "difficulty": "medium",
     },
@@ -137,20 +212,20 @@ _INSTRUCTION_CASES: list[dict] = [
         "difficulty": "easy",
     },
     {
-        "question": "Reply with a JSON object that has the keys \"name\" and \"age\". Output "
-                    "only JSON.",
+        "question": 'Reply with a JSON object that has the keys "name" and "age". Output '
+        "only JSON.",
         "scoring": {"type": "json_keys", "keys": ["name", "age"]},
         "difficulty": "medium",
     },
     {
         "question": "Write the word 'hello' exactly five times, separated by single spaces, "
-                    "on one line.",
+        "on one line.",
         "scoring": {"type": "regex", "pattern": r"(?i)\bhello\b(?:\s+hello\b){4}"},
         "difficulty": "medium",
     },
     {
         "question": "Answer using exactly two numbered list items: 1. and 2. — describe two "
-                    "primary colors.",
+        "primary colors.",
         "scoring": {"type": "regex", "pattern": r"(?s)1\.\s.+2\.\s.+"},
         "difficulty": "medium",
     },
@@ -159,16 +234,16 @@ _INSTRUCTION_CASES: list[dict] = [
 
 # ── Seeding ──────────────────────────────────────────────────────────────────
 
+
 def _get_benchmark(db: Any, benchmark_id: str) -> dict | None:
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM benchmarks WHERE id=?", (benchmark_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM benchmarks WHERE id=?", (benchmark_id,)).fetchone()
     return dict(row) if row else None
 
 
-def _insert_static_benchmark(db: Any, bid: str, name: str, description: str,
-                             category: str, kind: str, cases: list[dict]) -> int:
+def _insert_static_benchmark(
+    db: Any, bid: str, name: str, description: str, category: str, kind: str, cases: list[dict]
+) -> int:
     """Insert a static suite once (INSERT OR IGNORE style). Returns cases added.
 
     Repair path: when the benchmark row exists but has ZERO cases (e.g. the
@@ -178,9 +253,7 @@ def _insert_static_benchmark(db: Any, bid: str, name: str, description: str,
     now = _now()
     added = 0
     with db._lock:
-        existing = db._conn.execute(
-            "SELECT id FROM benchmarks WHERE id=?", (bid,)
-        ).fetchone()
+        existing = db._conn.execute("SELECT id FROM benchmarks WHERE id=?", (bid,)).fetchone()
         if existing:
             n_cases = db._conn.execute(
                 "SELECT COUNT(*) FROM benchmark_cases WHERE benchmark_id=?",
@@ -200,20 +273,27 @@ def _insert_static_benchmark(db: Any, bid: str, name: str, description: str,
                 "INSERT INTO benchmark_cases(id,benchmark_id,question,context,"
                 "expected_output,expected_concepts,scoring,difficulty,tags,created_at)"
                 " VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (_uuid(), bid, case["question"], case.get("context", ""),
-                 case.get("expected_output", ""),
-                 _jdump(case.get("expected_concepts", [])),
-                 _jdump(case.get("scoring", {})),
-                 case.get("difficulty", "medium"),
-                 _jdump(case.get("tags", [])), now),
+                (
+                    _uuid(),
+                    bid,
+                    case["question"],
+                    case.get("context", ""),
+                    case.get("expected_output", ""),
+                    _jdump(case.get("expected_concepts", [])),
+                    _jdump(case.get("scoring", {})),
+                    case.get("difficulty", "medium"),
+                    _jdump(case.get("tags", [])),
+                    now,
+                ),
             )
             added += 1
         db._conn.commit()
     return added
 
 
-def _upsert_dynamic_benchmark(db: Any, bid: str, name: str, description: str,
-                              category: str, kind: str, cases: list[dict]) -> int:
+def _upsert_dynamic_benchmark(
+    db: Any, bid: str, name: str, description: str, category: str, kind: str, cases: list[dict]
+) -> int:
     """Create/refresh a dynamic suite's cases.
 
     Deletes existing cases and regenerates them; bumps ``version`` only when the
@@ -222,9 +302,7 @@ def _upsert_dynamic_benchmark(db: Any, bid: str, name: str, description: str,
     """
     now = _now()
     with db._lock:
-        row = db._conn.execute(
-            "SELECT id, version FROM benchmarks WHERE id=?", (bid,)
-        ).fetchone()
+        row = db._conn.execute("SELECT id, version FROM benchmarks WHERE id=?", (bid,)).fetchone()
         if row is None:
             db._conn.execute(
                 "INSERT INTO benchmarks(id,name,description,category,kind,version,"
@@ -246,8 +324,12 @@ def _upsert_dynamic_benchmark(db: Any, bid: str, name: str, description: str,
             ]
 
         new_sig = sorted(
-            (c["question"], c.get("expected_output", ""),
-             _jdump(c.get("expected_concepts", [])), _jdump(c.get("scoring", {})))
+            (
+                c["question"],
+                c.get("expected_output", ""),
+                _jdump(c.get("expected_concepts", [])),
+                _jdump(c.get("scoring", {})),
+            )
             for c in cases
         )
         changed = sorted(old_sig) != new_sig
@@ -259,12 +341,18 @@ def _upsert_dynamic_benchmark(db: Any, bid: str, name: str, description: str,
                 "INSERT INTO benchmark_cases(id,benchmark_id,question,context,"
                 "expected_output,expected_concepts,scoring,difficulty,tags,created_at)"
                 " VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (_uuid(), bid, case["question"], case.get("context", ""),
-                 case.get("expected_output", ""),
-                 _jdump(case.get("expected_concepts", [])),
-                 _jdump(case.get("scoring", {})),
-                 case.get("difficulty", "medium"),
-                 _jdump(case.get("tags", [])), now),
+                (
+                    _uuid(),
+                    bid,
+                    case["question"],
+                    case.get("context", ""),
+                    case.get("expected_output", ""),
+                    _jdump(case.get("expected_concepts", [])),
+                    _jdump(case.get("scoring", {})),
+                    case.get("difficulty", "medium"),
+                    _jdump(case.get("tags", [])),
+                    now,
+                ),
             )
         if changed and old_version:
             db._conn.execute(
@@ -313,13 +401,15 @@ def _build_knowledge_cases(db: Any, limit: int = 10) -> list[dict]:
         concepts = _distinctive_words(content, want=5)
         if len(concepts) < 3:
             continue
-        cases.append({
-            "question": f"Based on your knowledge, what do you know about: {title}?",
-            "context": content,
-            "expected_concepts": concepts[:6],
-            "scoring": {"type": "concepts"},
-            "difficulty": "medium",
-        })
+        cases.append(
+            {
+                "question": f"Based on your knowledge, what do you know about: {title}?",
+                "context": content,
+                "expected_concepts": concepts[:6],
+                "scoring": {"type": "concepts"},
+                "difficulty": "medium",
+            }
+        )
     return cases
 
 
@@ -352,13 +442,15 @@ def _build_retrieval_cases(db: Any, limit: int = 10) -> list[dict]:
         if not query:
             query = text[:120].strip()
         query = query[:200]
-        cases.append({
-            "question": query,
-            "context": "",
-            "expected_output": doc_id,
-            "scoring": {"type": "retrieval"},
-            "difficulty": "medium",
-        })
+        cases.append(
+            {
+                "question": query,
+                "context": "",
+                "expected_output": doc_id,
+                "scoring": {"type": "retrieval"},
+                "difficulty": "medium",
+            }
+        )
     return cases
 
 
@@ -373,31 +465,45 @@ def seed_default_benchmarks(db: Any) -> dict:
     present after seeding.
     """
     _insert_static_benchmark(
-        db, "reasoning", "Reasoning",
-        "Arithmetic word problems, logic puzzles and date math with "
-        "deterministic answers.",
-        "reasoning", "llm", _REASONING_CASES,
+        db,
+        "reasoning",
+        "Reasoning",
+        "Arithmetic word problems, logic puzzles and date math with deterministic answers.",
+        "reasoning",
+        "llm",
+        _REASONING_CASES,
     )
     _insert_static_benchmark(
-        db, "instruction_following", "Instruction Following",
-        "Format-compliance checks: bullet counts, JSON key presence, exact "
-        "output.",
-        "instruction", "llm", _INSTRUCTION_CASES,
+        db,
+        "instruction_following",
+        "Instruction Following",
+        "Format-compliance checks: bullet counts, JSON key presence, exact output.",
+        "instruction",
+        "llm",
+        _INSTRUCTION_CASES,
     )
 
     knowledge_cases = _build_knowledge_cases(db, limit=10)
     _upsert_dynamic_benchmark(
-        db, "knowledge_qa", "Knowledge QA",
+        db,
+        "knowledge_qa",
+        "Knowledge QA",
         "Recall of distinctive concepts from high-confidence knowledge items.",
-        "knowledge", "llm", knowledge_cases,
+        "knowledge",
+        "llm",
+        knowledge_cases,
     )
 
     retrieval_cases = _build_retrieval_cases(db, limit=10)
     _upsert_dynamic_benchmark(
-        db, "rag_retrieval", "RAG Retrieval",
+        db,
+        "rag_retrieval",
+        "RAG Retrieval",
         "Chunk search recall: does the source document rank in the top results "
         "for a distinctive phrase from it.",
-        "retrieval", "retrieval", retrieval_cases,
+        "retrieval",
+        "retrieval",
+        retrieval_cases,
     )
 
     seed_default_prompts(db)
@@ -435,8 +541,7 @@ PROMPT_SLOTS: dict[str, dict] = {
 }
 
 
-def _seed_prompt_slot(db: Any, slot: str, name: str, content: str,
-                      notes: str) -> None:
+def _seed_prompt_slot(db: Any, slot: str, name: str, content: str, notes: str) -> None:
     """Idempotently seed one slot with a v1 active prompt (skips if any rows)."""
     with db._lock:
         existing = db._conn.execute(
@@ -464,48 +569,68 @@ def seed_default_prompts(db: Any) -> None:
         # chat.base — imported lazily to avoid a hard route-module dependency.
         try:
             from orivellum.api.routes.conversations import _CHAT_BASE_PROMPT
+
             _seed_prompt_slot(
-                db, "chat.base", "Default chat persona", _CHAT_BASE_PROMPT,
-                "Seeded from the hardcoded chat base persona.")
+                db,
+                "chat.base",
+                "Default chat persona",
+                _CHAT_BASE_PROMPT,
+                "Seeded from the hardcoded chat base persona.",
+            )
         except Exception as exc:  # route module may be unavailable in some ctx
             logger.warning("seed chat.base failed: %s", exc)
 
         # harvest.extract — the LLM knowledge-extraction template.
         try:
             from orivellum.capabilities.knowledge_harvest import _EXTRACT_PROMPT
+
             _seed_prompt_slot(
-                db, "harvest.extract", "Knowledge extraction prompt", _EXTRACT_PROMPT,
+                db,
+                "harvest.extract",
+                "Knowledge extraction prompt",
+                _EXTRACT_PROMPT,
                 "Must keep the {title} and {chunk} placeholders and its literal "
-                "JSON braces doubled as {{ }} — it is filled via str.format().")
+                "JSON braces doubled as {{ }} — it is filled via str.format().",
+            )
         except Exception as exc:
             logger.warning("seed harvest.extract failed: %s", exc)
 
         # mcos.judge — the judge rubric (used verbatim, no placeholders).
         try:
             _seed_prompt_slot(
-                db, "mcos.judge", "Evaluation judge rubric", _JUDGE_RUBRIC,
-                "Used verbatim as the judge system prompt; no placeholders.")
+                db,
+                "mcos.judge",
+                "Evaluation judge rubric",
+                _JUDGE_RUBRIC,
+                "Used verbatim as the judge system prompt; no placeholders.",
+            )
         except Exception as exc:
             logger.warning("seed mcos.judge failed: %s", exc)
 
         # write.draft — prose drafting persona (creative / narrative output).
         try:
             _seed_prompt_slot(
-                db, "write.draft", "Prose drafter",
+                db,
+                "write.draft",
+                "Prose drafter",
                 _WRITE_DRAFT_PROMPT,
                 "Voice-fidelity prompt for narrative/chapter drafting. "
                 "Supports {beat_objective}, {word_target}, {theological_anchor}, "
-                "{previous_beat_text}, and {voice_sample} placeholders.")
+                "{previous_beat_text}, and {voice_sample} placeholders.",
+            )
         except Exception as exc:
             logger.warning("seed write.draft failed: %s", exc)
 
         # write.critic — adversarial editing pass.
         try:
             _seed_prompt_slot(
-                db, "write.critic", "Adversarial editor",
+                db,
+                "write.critic",
+                "Adversarial editor",
                 _WRITE_CRITIC_PROMPT,
                 "Critic pass for prose review: checks voice, pacing, filler, "
-                "and factual precision. Used after drafting before delivery.")
+                "and factual precision. Used after drafting before delivery.",
+            )
         except Exception as exc:
             logger.warning("seed write.critic failed: %s", exc)
 
@@ -514,6 +639,7 @@ def seed_default_prompts(db: Any) -> None:
 
 
 # ── Scoring rule engine ──────────────────────────────────────────────────────
+
 
 def _normalize(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
@@ -539,7 +665,7 @@ def _extract_json(text: str) -> Any:
                 elif text[i] == close_ch:
                     depth -= 1
                     if depth == 0:
-                        candidate = text[start:i + 1]
+                        candidate = text[start : i + 1]
                         try:
                             return json.loads(candidate)
                         except Exception:
@@ -682,10 +808,9 @@ _JUDGE_RUBRIC = (
     "answer criteria, and a candidate response, rate how well the response "
     "satisfies the criteria.\n"
     "Reply with ONLY a JSON object of the form "
-    '{\"score\": <number 0.0-1.0>, \"reason\": \"<one sentence>\"}. '
+    '{"score": <number 0.0-1.0>, "reason": "<one sentence>"}. '
     "Do not include any other text."
 )
-
 
 
 # ── Writing-specific prompt constants ─────────────────────────────────────────
@@ -742,7 +867,8 @@ def _llm_judge(case: dict, response: str, cfg: Any, db: Any) -> tuple[float | No
     expectation_lines = []
     if expected_concepts:
         expectation_lines.append(
-            "Expected concepts: " + ", ".join(str(c) for c in expected_concepts))
+            "Expected concepts: " + ", ".join(str(c) for c in expected_concepts)
+        )
     if expected_output:
         expectation_lines.append("Expected output: " + str(expected_output))
     expectation = "\n".join(expectation_lines) or "(no explicit expectation)"
@@ -757,15 +883,15 @@ def _llm_judge(case: dict, response: str, cfg: Any, db: Any) -> tuple[float | No
     except Exception:
         rubric = _JUDGE_RUBRIC
     user = (
-        f"Question:\n{case.get('question', '')}\n\n"
-        f"{expectation}\n\n"
-        f"Candidate response:\n{response}"
+        f"Question:\n{case.get('question', '')}\n\n{expectation}\n\nCandidate response:\n{response}"
     )
     try:
         result = llm_call(
-            messages=[{"role": "system", "content": rubric},
-                      {"role": "user", "content": user}],
-            cfg=cfg, db=db, purpose="mcos.judge", timeout=45,
+            messages=[{"role": "system", "content": rubric}, {"role": "user", "content": user}],
+            cfg=cfg,
+            db=db,
+            purpose="mcos.judge",
+            timeout=45,
         )
     except Exception as exc:
         logger.debug("llm judge call raised: %s", exc)
@@ -795,20 +921,21 @@ def _consensus(judges: dict[str, float]) -> float:
     Defensively skips any non-finite judge value (NaN/inf) so a single bad
     judge can never poison the consensus, avg_score or JSON serialization.
     """
-    clean = {name: val for name, val in judges.items()
-             if isinstance(val, (int, float)) and math.isfinite(val)}
+    clean = {
+        name: val
+        for name, val in judges.items()
+        if isinstance(val, (int, float)) and math.isfinite(val)
+    }
     if not clean:
         return 0.0
     total_w = sum(_JUDGE_WEIGHTS.get(name, 0.0) for name in clean)
     if total_w <= 0:
         # Fallback: plain mean if none of the names carry a weight.
         return sum(clean.values()) / len(clean)
-    return sum(_JUDGE_WEIGHTS.get(name, 0.0) * val
-               for name, val in clean.items()) / total_w
+    return sum(_JUDGE_WEIGHTS.get(name, 0.0) * val for name, val in clean.items()) / total_w
 
 
-def _judge_case(case: dict, response: str, cfg: Any, db: Any,
-                *, ai_reachable: bool) -> dict:
+def _judge_case(case: dict, response: str, cfg: Any, db: Any, *, ai_reachable: bool) -> dict:
     """Run all applicable judges and build the judge_scores blob.
 
     Always includes ``rule``; adds ``grounding`` when the case has context and
@@ -842,6 +969,7 @@ def _judge_case(case: dict, response: str, cfg: Any, db: Any,
 
 # ── Run execution ────────────────────────────────────────────────────────────
 
+
 def _prev_finished_avg(db: Any, benchmark_id: str, exclude_run_id: str) -> float | None:
     """Return the avg_score of the most recent previously-finished NORMAL run.
 
@@ -859,8 +987,9 @@ def _prev_finished_avg(db: Any, benchmark_id: str, exclude_run_id: str) -> float
     return float(row["avg_score"]) if row and row["avg_score"] is not None else None
 
 
-def _create_run_row(db: Any, cfg: Any, benchmark_id: str,
-                    *, initial_meta: dict | None = None) -> str:
+def _create_run_row(
+    db: Any, cfg: Any, benchmark_id: str, *, initial_meta: dict | None = None
+) -> str:
     """Insert a fresh ``eval_runs`` row (status='running') and return its id.
 
     ``initial_meta`` seeds the meta blob (e.g. prompt attribution) so a run is
@@ -880,8 +1009,7 @@ def _create_run_row(db: Any, cfg: Any, benchmark_id: str,
         db._conn.execute(
             "INSERT INTO eval_runs(id,benchmark_id,started_at,model,status,total_cases,"
             "meta) VALUES(?,?,?,?,'running',?,?)",
-            (run_id, benchmark_id, _now(), model, int(n_cases),
-             _jdump(initial_meta or {})),
+            (run_id, benchmark_id, _now(), model, int(n_cases), _jdump(initial_meta or {})),
         )
         db._conn.commit()
     return run_id
@@ -905,8 +1033,7 @@ def _enabled_llm_benchmarks(db: Any) -> list[dict]:
     """Return enabled kind='llm' benchmarks (prompt benchmarks skip retrieval)."""
     with db._lock:
         rows = db._conn.execute(
-            "SELECT id, name FROM benchmarks WHERE enabled=1 AND kind='llm' "
-            "ORDER BY category, name"
+            "SELECT id, name FROM benchmarks WHERE enabled=1 AND kind='llm' ORDER BY category, name"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -942,28 +1069,33 @@ def run_prompt_benchmark(db: Any, cfg: Any, prompt_id: str) -> dict:
     for suite in suites:
         bid = suite["id"]
         # Candidate run.
-        c_meta = {"prompt_id": prompt_id, "prompt_version": cand["version"],
-                  "prompt_role": "candidate", "prompt_slot": slot}
+        c_meta = {
+            "prompt_id": prompt_id,
+            "prompt_version": cand["version"],
+            "prompt_role": "candidate",
+            "prompt_slot": slot,
+        }
         c_run = _create_run_row(db, cfg, bid, initial_meta=c_meta)
         candidate_runs.append(c_run)
-        _execute_run(db, cfg, bid, c_run,
-                     system_prompt=cand["content"], run_meta=c_meta)
+        _execute_run(db, cfg, bid, c_run, system_prompt=cand["content"], run_meta=c_meta)
 
         # Active run (only if there is an active prompt to compare against).
         if active:
-            a_meta = {"prompt_id": prompt_id, "prompt_version": active["version"],
-                      "prompt_role": "active", "prompt_slot": slot,
-                      "active_prompt_id": active["id"]}
+            a_meta = {
+                "prompt_id": prompt_id,
+                "prompt_version": active["version"],
+                "prompt_role": "active",
+                "prompt_slot": slot,
+                "active_prompt_id": active["id"],
+            }
             a_run = _create_run_row(db, cfg, bid, initial_meta=a_meta)
             active_runs.append(a_run)
-            _execute_run(db, cfg, bid, a_run,
-                         system_prompt=active["content"], run_meta=a_meta)
+            _execute_run(db, cfg, bid, a_run, system_prompt=active["content"], run_meta=a_meta)
 
     return {"candidate_runs": candidate_runs, "active_runs": active_runs}
 
 
-def _prev_prompt_health_aggregate(db: Any, slot: str,
-                                  before_session: str) -> float | None:
+def _prev_prompt_health_aggregate(db: Any, slot: str, before_session: str) -> float | None:
     """Mean avg_score of the most recent PRIOR prompt-health session for a slot.
 
     Sessions are identified by ``meta.prompt_health_session`` (an ISO timestamp
@@ -1047,20 +1179,28 @@ def _run_prompt_health_for_slot(db: Any, cfg: Any, slot: str) -> dict:
 
     with db._lock:
         active = db._conn.execute(
-            "SELECT id, name, content, version FROM prompts "
-            "WHERE slot=? AND active=1 LIMIT 1", (slot,),
+            "SELECT id, name, content, version FROM prompts WHERE slot=? AND active=1 LIMIT 1",
+            (slot,),
         ).fetchone()
     if active is None:
-        return {"ok": False, "slot": slot, "slot_label": slot_label,
-                "reason": f"no active {slot} prompt", "runs": []}
+        return {
+            "ok": False,
+            "slot": slot,
+            "slot_label": slot_label,
+            "reason": f"no active {slot} prompt",
+            "runs": [],
+        }
     active = dict(active)
 
     # ── Non-benchmarkable: structural validation only ─────────────────────────
     if not slot_info.get("benchmarkable"):
         ok, reason = _validate_nonbenchmarkable_slot(slot, active["content"])
         return {
-            "ok": ok, "slot": slot, "slot_label": slot_label,
-            "prompt_name": active["name"], "prompt_version": active["version"],
+            "ok": ok,
+            "slot": slot,
+            "slot_label": slot_label,
+            "prompt_name": active["name"],
+            "prompt_version": active["version"],
             "skipped": True,
             "reason": reason,
             "runs": [],
@@ -1069,25 +1209,31 @@ def _run_prompt_health_for_slot(db: Any, cfg: Any, slot: str) -> dict:
     # ── Benchmarkable: run suites ────────────────────────────────────────────
     suites = _enabled_llm_benchmarks(db)
     if not suites:
-        return {"ok": False, "slot": slot, "slot_label": slot_label,
-                "reason": "no enabled llm suites", "runs": []}
+        return {
+            "ok": False,
+            "slot": slot,
+            "slot_label": slot_label,
+            "reason": "no enabled llm suites",
+            "runs": [],
+        }
 
     session = _now()
     run_ids: list[str] = []
     scores: list[float] = []
     for suite in suites:
         bid = suite["id"]
-        meta = {"prompt_health": True, "prompt_id": active["id"],
-                "prompt_version": active["version"], "prompt_slot": slot,
-                "prompt_health_session": session}
+        meta = {
+            "prompt_health": True,
+            "prompt_id": active["id"],
+            "prompt_version": active["version"],
+            "prompt_slot": slot,
+            "prompt_health_session": session,
+        }
         rid = _create_run_row(db, cfg, bid, initial_meta=meta)
         run_ids.append(rid)
-        _execute_run(db, cfg, bid, rid,
-                     system_prompt=active["content"], run_meta=meta)
+        _execute_run(db, cfg, bid, rid, system_prompt=active["content"], run_meta=meta)
         with db._lock:
-            row = db._conn.execute(
-                "SELECT avg_score FROM eval_runs WHERE id=?", (rid,)
-            ).fetchone()
+            row = db._conn.execute("SELECT avg_score FROM eval_runs WHERE id=?", (rid,)).fetchone()
         if row and row["avg_score"] is not None:
             scores.append(float(row["avg_score"]))
 
@@ -1129,25 +1275,33 @@ def _run_prompt_health_for_slot(db: Any, cfg: Any, slot: str) -> dict:
                 "prompt_regression",
                 object_id=flagged_id or run_ids[-1],
                 object_type="eval_run",
-                actor="mcos", result="warn",
-                detail=(f"slot={slot} prompt='{active['name']}' v{active['version']} "
-                        f"nightly avg {current_agg:.4f} vs prev {prev_agg:.4f} "
-                        f"(delta={delta}, dropped > 0.15){note}"),
+                actor="mcos",
+                result="warn",
+                detail=(
+                    f"slot={slot} prompt='{active['name']}' v{active['version']} "
+                    f"nightly avg {current_agg:.4f} vs prev {prev_agg:.4f} "
+                    f"(delta={delta}, dropped > 0.15){note}"
+                ),
             )
         except Exception as exc:  # never let governance logging strand the pass
             logger.warning("prompt_regression audit failed: %s", exc)
 
     return {
-        "ok": True, "slot": slot, "slot_label": slot_label,
-        "runs": run_ids, "current_agg": current_agg,
-        "prev_agg": prev_agg, "delta": delta, "regressed": regressed,
+        "ok": True,
+        "slot": slot,
+        "slot_label": slot_label,
+        "runs": run_ids,
+        "current_agg": current_agg,
+        "prev_agg": prev_agg,
+        "delta": delta,
+        "regressed": regressed,
         "flagged_run_id": flagged_id,
-        "prompt_name": active["name"], "prompt_version": active["version"],
+        "prompt_name": active["name"],
+        "prompt_version": active["version"],
     }
 
 
-def run_prompt_health(db: Any, cfg: Any,
-                      slot: str | None = None) -> dict | list[dict]:
+def run_prompt_health(db: Any, cfg: Any, slot: str | None = None) -> dict | list[dict]:
     """Nightly health check for active prompts.
 
     When ``slot`` is given, runs the health check for that single slot and
@@ -1174,16 +1328,21 @@ def run_prompt_health(db: Any, cfg: Any,
             results.append(_run_prompt_health_for_slot(db, cfg, s))
         except Exception as exc:
             logger.warning("prompt health check failed for slot %s: %s", s, exc)
-            results.append({
-                "ok": False, "slot": s,
-                "slot_label": PROMPT_SLOTS[s]["label"],
-                "reason": f"error: {exc}", "runs": [],
-            })
+            results.append(
+                {
+                    "ok": False,
+                    "slot": s,
+                    "slot_label": PROMPT_SLOTS[s]["label"],
+                    "reason": f"error: {exc}",
+                    "runs": [],
+                }
+            )
     return results
 
 
-def _finalize_run(db: Any, run_id: str, *, status: str, avg_score: float | None,
-                  meta: dict) -> None:
+def _finalize_run(
+    db: Any, run_id: str, *, status: str, avg_score: float | None, meta: dict
+) -> None:
     """Best-effort, retried final status write for a run.
 
     A background worker must never leave a row stuck at ``running``; if the
@@ -1193,21 +1352,25 @@ def _finalize_run(db: Any, run_id: str, *, status: str, avg_score: float | None,
         try:
             with db._lock:
                 db._conn.execute(
-                    "UPDATE eval_runs SET status=?, avg_score=?, finished_at=?, "
-                    "meta=? WHERE id=?",
+                    "UPDATE eval_runs SET status=?, avg_score=?, finished_at=?, meta=? WHERE id=?",
                     (status, avg_score, _now(), _jdump(meta), run_id),
                 )
                 db._conn.commit()
             return
         except Exception as exc:  # pragma: no cover — retry path
-            logger.warning("finalize run %s attempt %d failed: %s",
-                           run_id[:8], attempt + 1, exc)
+            logger.warning("finalize run %s attempt %d failed: %s", run_id[:8], attempt + 1, exc)
     logger.error("finalize run %s permanently failed — row may be stuck", run_id[:8])
 
 
-def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str,
-                 *, system_prompt: str | None = None,
-                 run_meta: dict | None = None) -> str:
+def _execute_run(
+    db: Any,
+    cfg: Any,
+    benchmark_id: str,
+    run_id: str,
+    *,
+    system_prompt: str | None = None,
+    run_meta: dict | None = None,
+) -> str:
     """Run every case for an already-created ``eval_runs`` row and finalize it.
 
     The ENTIRE worker body — benchmark lookup, case loading and the case loop —
@@ -1232,11 +1395,13 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str,
         kind = bench.get("kind", "llm")
 
         with db._lock:
-            cases = [dict(r) for r in db._conn.execute(
-                "SELECT * FROM benchmark_cases WHERE benchmark_id=? "
-                "ORDER BY created_at, id",
-                (benchmark_id,),
-            ).fetchall()]
+            cases = [
+                dict(r)
+                for r in db._conn.execute(
+                    "SELECT * FROM benchmark_cases WHERE benchmark_id=? ORDER BY created_at, id",
+                    (benchmark_id,),
+                ).fetchall()
+            ]
 
         # AI-reachability is learned from the eval calls themselves — no
         # per-case probe.  Once an eval call succeeds we know the LLM judge is
@@ -1263,14 +1428,19 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str,
                     # context into a SINGLE system message.
                     sys_parts = [p for p in (system_prompt, ctx_block) if p]
                     if sys_parts:
-                        messages.append({
-                            "role": "system",
-                            "content": "\n\n".join(sys_parts),
-                        })
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": "\n\n".join(sys_parts),
+                            }
+                        )
                     messages.append({"role": "user", "content": case.get("question", "")})
                     result = llm_call(
-                        messages=messages, cfg=cfg, db=db,
-                        purpose="mcos.eval", timeout=60,
+                        messages=messages,
+                        cfg=cfg,
+                        db=db,
+                        purpose="mcos.eval",
+                        timeout=60,
                     )
                     latency_ms = result.latency_ms
                     if not result.ok:
@@ -1282,7 +1452,8 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str,
                         ai_reachable = True
                         response = result.text or ""
                         judge_scores = _judge_case(
-                            case, response, cfg, db, ai_reachable=ai_reachable)
+                            case, response, cfg, db, ai_reachable=ai_reachable
+                        )
                         score = judge_scores["consensus"]
             except Exception as exc:  # per-case guard
                 err = f"{type(exc).__name__}: {exc}"[:500]
@@ -1296,8 +1467,15 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str,
                 db._conn.execute(
                     "INSERT INTO eval_results(run_id,case_id,score,judge_scores,response,"
                     "latency_ms,error) VALUES(?,?,?,?,?,?,?)",
-                    (run_id, case_id, score, _jdump(judge_scores),
-                     response[:8000], latency_ms, err),
+                    (
+                        run_id,
+                        case_id,
+                        score,
+                        _jdump(judge_scores),
+                        response[:8000],
+                        latency_ms,
+                        err,
+                    ),
                 )
                 db._conn.commit()
     except Exception as exc:  # run-level guard (setup or loop failure)
@@ -1336,14 +1514,22 @@ def _execute_run(db: Any, cfg: Any, benchmark_id: str, run_id: str,
                 object_type="eval_run",
                 actor="mcos",
                 result="warn",
-                detail=(f"benchmark={benchmark_id} avg={avg_score} delta={delta} "
-                        f"(dropped > 0.15 vs previous run)"),
+                detail=(
+                    f"benchmark={benchmark_id} avg={avg_score} delta={delta} "
+                    f"(dropped > 0.15 vs previous run)"
+                ),
             )
         except Exception as exc:  # never let governance logging strand the run
             logger.warning("regression audit for run %s failed: %s", run_id[:8], exc)
 
-    logger.info("benchmark %s run %s: status=%s avg=%s delta=%s",
-                benchmark_id, run_id[:8], run_status, avg_score, delta)
+    logger.info(
+        "benchmark %s run %s: status=%s avg=%s delta=%s",
+        benchmark_id,
+        run_id[:8],
+        run_status,
+        avg_score,
+        delta,
+    )
     return run_id
 
 
@@ -1370,8 +1556,7 @@ def _sample_sweep_docs(db: Any, limit: int = _SWEEP_MAX_DOCS) -> list[dict]:
     """
     with db._lock:
         doc_rows = db._conn.execute(
-            "SELECT doc_id FROM chunks GROUP BY doc_id "
-            "HAVING COUNT(*) > 0 ORDER BY doc_id LIMIT ?",
+            "SELECT doc_id FROM chunks GROUP BY doc_id HAVING COUNT(*) > 0 ORDER BY doc_id LIMIT ?",
             (limit,),
         ).fetchall()
     docs: list[dict] = []
@@ -1404,8 +1589,9 @@ def _sweep_queries(docs: list[dict]) -> list[dict]:
     return queries
 
 
-def _score_combo(docs: list[dict], queries: list[dict],
-                 target: int, overlap: int) -> tuple[float, int]:
+def _score_combo(
+    docs: list[dict], queries: list[dict], target: int, overlap: int
+) -> tuple[float, int]:
     """Re-chunk every doc in memory, build a chunk→doc index, rank chunks per
     query by shared meaningful-word count, and score retrieval.
 
@@ -1449,8 +1635,9 @@ def _score_combo(docs: list[dict], queries: list[dict],
     return mean, chunk_count
 
 
-def _finalize_sweep(db: Any, sweep_id: str, *, status: str,
-                    results: list[dict], docs_sampled: int, meta: dict) -> None:
+def _finalize_sweep(
+    db: Any, sweep_id: str, *, status: str, results: list[dict], docs_sampled: int, meta: dict
+) -> None:
     """Best-effort, retried final write for a sweep (never leaves it running)."""
     for attempt in range(3):
         try:
@@ -1458,16 +1645,15 @@ def _finalize_sweep(db: Any, sweep_id: str, *, status: str,
                 db._conn.execute(
                     "UPDATE rag_sweeps SET status=?, finished_at=?, results=?, "
                     "docs_sampled=?, meta=? WHERE id=?",
-                    (status, _now(), _jdump(results), int(docs_sampled),
-                     _jdump(meta), sweep_id),
+                    (status, _now(), _jdump(results), int(docs_sampled), _jdump(meta), sweep_id),
                 )
                 db._conn.commit()
             return
         except Exception as exc:  # pragma: no cover — retry path
-            logger.warning("finalize sweep %s attempt %d failed: %s",
-                           sweep_id[:8], attempt + 1, exc)
-    logger.error("finalize sweep %s permanently failed — row may be stuck",
-                 sweep_id[:8])
+            logger.warning(
+                "finalize sweep %s attempt %d failed: %s", sweep_id[:8], attempt + 1, exc
+            )
+    logger.error("finalize sweep %s permanently failed — row may be stuck", sweep_id[:8])
 
 
 def rag_sweep(db: Any, sweep_id: str) -> str:
@@ -1488,22 +1674,31 @@ def rag_sweep(db: Any, sweep_id: str) -> str:
         best: dict | None = None
         for target, overlap in _sweep_grid():
             score, chunk_count = _score_combo(docs, queries, target, overlap)
-            row = {"target_words": target, "overlap_words": overlap,
-                   "score": round(score, 6), "chunk_count": chunk_count}
+            row = {
+                "target_words": target,
+                "overlap_words": overlap,
+                "score": round(score, 6),
+                "chunk_count": chunk_count,
+            }
             results.append(row)
             if best is None or score > best["score"]:
-                best = {"target_words": target, "overlap_words": overlap,
-                        "score": round(score, 6)}
+                best = {"target_words": target, "overlap_words": overlap, "score": round(score, 6)}
         meta = {"best": best, "queries": len(queries)}
     except Exception as exc:
         status = "failed"
         meta = {"error": f"{type(exc).__name__}: {exc}"[:500]}
         logger.error("rag sweep %s crashed: %s", sweep_id[:8], exc, exc_info=True)
 
-    _finalize_sweep(db, sweep_id, status=status, results=results,
-                    docs_sampled=docs_sampled, meta=meta)
-    logger.info("rag sweep %s: status=%s docs=%d combos=%d",
-                sweep_id[:8], status, docs_sampled, len(results))
+    _finalize_sweep(
+        db, sweep_id, status=status, results=results, docs_sampled=docs_sampled, meta=meta
+    )
+    logger.info(
+        "rag sweep %s: status=%s docs=%d combos=%d",
+        sweep_id[:8],
+        status,
+        docs_sampled,
+        len(results),
+    )
     return sweep_id
 
 
@@ -1525,7 +1720,10 @@ def is_ai_reachable(cfg: Any) -> bool:
     try:
         result = llm_call(
             messages=[{"role": "user", "content": "Reply with OK"}],
-            cfg=cfg, purpose="mcos.probe", timeout=10, max_tokens=5,
+            cfg=cfg,
+            purpose="mcos.probe",
+            timeout=10,
+            max_tokens=5,
         )
         return bool(result.ok)
     except Exception:

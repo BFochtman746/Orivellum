@@ -6,6 +6,7 @@ Enforced standards:
   - Epigraphs are ORIGINAL only; gateway abstains rather than fabricate.
   - Immutable style lock, hash-chained ledger, author sign-off on seals.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -27,13 +28,24 @@ GENESIS_HASH = "0" * 64
 WORDS_PER_PAGE = 300
 
 CHAPTER_STYLES = ("words", "arabic", "roman")
-STYLE_KEYS = ["trim", "body_font", "heading_font", "body_size", "leading",
-              "chapter_style", "epigraphs"]
+STYLE_KEYS = [
+    "trim",
+    "body_font",
+    "heading_font",
+    "body_size",
+    "leading",
+    "chapter_style",
+    "epigraphs",
+]
 
 SUBMISSION_SPEC = {
-    "font": "Times New Roman", "size_pt": 12, "spacing": "double",
-    "margins_in": 1.0, "indent_in": 0.5,
-    "header": "Surname / TITLE / page#", "scene_break": "#",
+    "font": "Times New Roman",
+    "size_pt": 12,
+    "spacing": "double",
+    "margins_in": 1.0,
+    "indent_in": 0.5,
+    "header": "Surname / TITLE / page#",
+    "scene_break": "#",
     "title_page": "title + author contact + rounded word count",
     "chapter_start": "new page",
 }
@@ -79,6 +91,7 @@ def _db_path() -> str:
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -97,14 +110,34 @@ def _slug(s: str) -> str:
 
 # ── number rendering ──────────────────────────────────────────────────────────
 
-_ONES = ["zero","one","two","three","four","five","six","seven","eight",
-         "nine","ten","eleven","twelve","thirteen","fourteen","fifteen",
-         "sixteen","seventeen","eighteen","nineteen"]
-_TENS = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"]
+_ONES = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
 
 
 def _to_words(n: int) -> str:
-    if n < 20: return _ONES[n]
+    if n < 20:
+        return _ONES[n]
     if n < 100:
         return _TENS[n // 10] + ("" if n % 10 == 0 else "-" + _ONES[n % 10])
     if n < 1000:
@@ -114,22 +147,39 @@ def _to_words(n: int) -> str:
 
 
 def _to_roman(n: int) -> str:
-    vals = [(1000,"M"),(900,"CM"),(500,"D"),(400,"CD"),(100,"C"),
-            (90,"XC"),(50,"L"),(40,"XL"),(10,"X"),(9,"IX"),(5,"V"),(4,"IV"),(1,"I")]
+    vals = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ]
     out = ""
     for v, s in vals:
         while n >= v:
-            out += s; n -= v
+            out += s
+            n -= v
     return out
 
 
 def chapter_header(style: str, n: int) -> str:
-    if style == "arabic": return f"Chapter {n}"
-    if style == "roman":  return f"Chapter {_to_roman(n)}"
+    if style == "arabic":
+        return f"Chapter {n}"
+    if style == "roman":
+        return f"Chapter {_to_roman(n)}"
     return f"Chapter {_to_words(n).title()}"
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
+
 
 def _connect() -> sqlite3.Connection:
     c = sqlite3.connect(_db_path())
@@ -154,6 +204,7 @@ def _ledger_append(conn: sqlite3.Connection, scope: str, kind: str, payload: Any
 
 # ── public API ────────────────────────────────────────────────────────────────
 
+
 def cmd_init(_a: Any = None) -> int:
     conn = _connect()
     conn.executescript(SCHEMA)
@@ -164,7 +215,9 @@ def cmd_init(_a: Any = None) -> int:
 def list_books(work_id: str | None = None) -> list[dict]:
     conn = _connect()
     if work_id:
-        rows = conn.execute("SELECT * FROM press_book WHERE work_id=? ORDER BY created_at DESC", (work_id,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM press_book WHERE work_id=? ORDER BY created_at DESC", (work_id,)
+        ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM press_book ORDER BY created_at DESC").fetchall()
     return [dict(r) for r in rows]
@@ -194,7 +247,9 @@ def create_book(title: str, author_name: str, series: str = "", work_id: str = "
         "INSERT INTO press_book (slug,title,series,author_name,work_id,created_at) VALUES (?,?,?,?,?,?)",
         (s, title, series, author_name, work_id, _now()),
     )
-    _ledger_append(conn, f"book:{s}", "book.created", {"title": title, "series": series, "work_id": work_id})
+    _ledger_append(
+        conn, f"book:{s}", "book.created", {"title": title, "series": series, "work_id": work_id}
+    )
     conn.commit()
     return get_book(s)  # type: ignore[return-value]
 
@@ -235,7 +290,9 @@ def lock_style(slug: str, author: str) -> None:
     conn.commit()
 
 
-def add_chapter(slug: str, number: int, title: str, words: int = 0, has_epigraph: bool = False) -> dict:
+def add_chapter(
+    slug: str, number: int, title: str, words: int = 0, has_epigraph: bool = False
+) -> dict:
     conn = _connect()
     row = conn.execute("SELECT * FROM press_book WHERE slug=?", (slug,)).fetchone()
     if not row:
@@ -243,31 +300,52 @@ def add_chapter(slug: str, number: int, title: str, words: int = 0, has_epigraph
     style = json.loads(row["style"])
     if has_epigraph and style.get("epigraphs") == "off":
         raise ValueError("Style epigraph policy is OFF; cannot add an epigraph slot.")
-    if conn.execute("SELECT 1 FROM press_chapter WHERE book=? AND number=?", (slug, number)).fetchone():
+    if conn.execute(
+        "SELECT 1 FROM press_chapter WHERE book=? AND number=?", (slug, number)
+    ).fetchone():
         raise ValueError(f"Chapter {number} already exists.")
     conn.execute(
         "INSERT INTO press_chapter (book,number,title,words,has_epigraph) VALUES (?,?,?,?,?)",
         (slug, number, title, words, 1 if has_epigraph else 0),
     )
     conn.commit()
-    return {"number": number, "title": title, "words": words, "has_epigraph": has_epigraph,
-            "header": chapter_header(style.get("chapter_style", "arabic"), number)}
+    return {
+        "number": number,
+        "title": title,
+        "words": words,
+        "has_epigraph": has_epigraph,
+        "header": chapter_header(style.get("chapter_style", "arabic"), number),
+    }
 
 
-def draft_epigraph(slug: str, number: int, soul: str = "", in_world: str = "",
-                   gateway_name: str = "mock", want_quote: bool = False) -> dict:
+def draft_epigraph(
+    slug: str,
+    number: int,
+    soul: str = "",
+    in_world: str = "",
+    gateway_name: str = "mock",
+    want_quote: bool = False,
+) -> dict:
     conn = _connect()
     row = conn.execute("SELECT 1 FROM press_book WHERE slug=?", (slug,)).fetchone()
     if not row:
         raise KeyError(f"Book '{slug}' not found.")
-    ch = conn.execute("SELECT * FROM press_chapter WHERE book=? AND number=?", (slug, number)).fetchone()
+    ch = conn.execute(
+        "SELECT * FROM press_chapter WHERE book=? AND number=?", (slug, number)
+    ).fetchone()
     if not ch:
         raise KeyError(f"Chapter {number} not found.")
     if not ch["has_epigraph"]:
         raise ValueError("This chapter has no epigraph slot.")
     engine = gw.get_gateway(gateway_name)
-    res = engine.original_epigraph({"soul": soul, "in_world_source": in_world,
-                                    "chapter": ch["title"], "want_quote": want_quote})
+    res = engine.original_epigraph(
+        {
+            "soul": soul,
+            "in_world_source": in_world,
+            "chapter": ch["title"],
+            "want_quote": want_quote,
+        }
+    )
     if res.status == "ABSTAINED":
         return {"status": "ABSTAINED", "reason": res.reason}
     text = res.text + (f"\n— {res.attribution}" if res.attribution else "")
@@ -275,19 +353,23 @@ def draft_epigraph(slug: str, number: int, soul: str = "", in_world: str = "",
         "UPDATE press_chapter SET epigraph_text=?, epigraph_status=? WHERE book=? AND number=?",
         (text, res.status, slug, number),
     )
-    _ledger_append(conn, f"book:{slug}", "epigraph.drafted",
-                   {"chapter": number, "status": res.status})
+    _ledger_append(
+        conn, f"book:{slug}", "epigraph.drafted", {"chapter": number, "status": res.status}
+    )
     conn.commit()
     return {"status": res.status, "text": text, "attribution": res.attribution}
 
 
 def approve_epigraph(slug: str, number: int, author: str) -> None:
     conn = _connect()
-    ch = conn.execute("SELECT * FROM press_chapter WHERE book=? AND number=?", (slug, number)).fetchone()
+    ch = conn.execute(
+        "SELECT * FROM press_chapter WHERE book=? AND number=?", (slug, number)
+    ).fetchone()
     if not ch or not ch["epigraph_text"]:
         raise ValueError("No drafted epigraph to approve.")
     conn.execute(
-        "UPDATE press_chapter SET epigraph_status='APPROVED' WHERE book=? AND number=?", (slug, number)
+        "UPDATE press_chapter SET epigraph_status='APPROVED' WHERE book=? AND number=?",
+        (slug, number),
     )
     _ledger_append(conn, f"book:{slug}", "epigraph.approved", {"chapter": number, "author": author})
     conn.commit()
@@ -297,12 +379,16 @@ def set_matter(slug: str, front: bool, back: bool) -> None:
     conn = _connect()
     if not conn.execute("SELECT 1 FROM press_book WHERE slug=?", (slug,)).fetchone():
         raise KeyError(f"Book '{slug}' not found.")
-    conn.execute("UPDATE press_book SET has_front=?, has_back=? WHERE slug=?",
-                 (1 if front else 0, 1 if back else 0, slug))
+    conn.execute(
+        "UPDATE press_book SET has_front=?, has_back=? WHERE slug=?",
+        (1 if front else 0, 1 if back else 0, slug),
+    )
     conn.commit()
 
 
-def _page_estimate(conn: sqlite3.Connection, slug: str, has_front: bool, has_back: bool) -> tuple[int, int]:
+def _page_estimate(
+    conn: sqlite3.Connection, slug: str, has_front: bool, has_back: bool
+) -> tuple[int, int]:
     total = conn.execute(
         "SELECT COALESCE(SUM(words),0) w FROM press_chapter WHERE book=?", (slug,)
     ).fetchone()["w"]
@@ -320,7 +406,9 @@ def verify(slug: str) -> dict:
         raise KeyError(f"Book '{slug}' not found.")
     b = dict(row)
     style = json.loads(b["style"])
-    chs = conn.execute("SELECT * FROM press_chapter WHERE book=? ORDER BY number", (slug,)).fetchall()
+    chs = conn.execute(
+        "SELECT * FROM press_chapter WHERE book=? ORDER BY number", (slug,)
+    ).fetchall()
     nums = [c["number"] for c in chs]
     checks = {
         "style_locked": bool(b["style_locked"]),
@@ -351,18 +439,30 @@ def build_package(slug: str, pkg_type: str = "publisher", target: str = "product
     style = json.loads(b["style"])
     vr = verify(slug)
     if not vr["passed"] and not (pkg_type == "publisher" and target == "submission"):
-        raise ValueError("Pre-flight failed — package blocked. (Only submission MS format is allowed pre-typeset.)")
+        raise ValueError(
+            "Pre-flight failed — package blocked. (Only submission MS format is allowed pre-typeset.)"
+        )
     total, pages = _page_estimate(conn, slug, bool(b["has_front"]), bool(b["has_back"]))
     if pkg_type == "publisher" and target == "submission":
-        spec = {"format": "standard-manuscript-format", **SUBMISSION_SPEC,
-                "word_count_rounded": int(round(total, -2))}
+        spec = {
+            "format": "standard-manuscript-format",
+            **SUBMISSION_SPEC,
+            "word_count_rounded": int(round(total, -2)),
+        }
     elif pkg_type == "publisher":
-        spec = {"format": "typeset-production", **{k: style.get(k) for k in STYLE_KEYS},
-                "estimated_pages": pages}
+        spec = {
+            "format": "typeset-production",
+            **{k: style.get(k) for k in STYLE_KEYS},
+            "estimated_pages": pages,
+        }
     else:
-        spec = {"format": "advance-reader-copy", "stamp": "ADVANCE READER COPY — NOT FOR RESALE",
-                "based_on": {k: style.get(k) for k in STYLE_KEYS},
-                "estimated_pages": pages, "delivery": "PDF/EPUB"}
+        spec = {
+            "format": "advance-reader-copy",
+            "stamp": "ADVANCE READER COPY — NOT FOR RESALE",
+            "based_on": {k: style.get(k) for k in STYLE_KEYS},
+            "estimated_pages": pages,
+            "delivery": "PDF/EPUB",
+        }
     return {"package_type": pkg_type, "target": target, "spec": spec, "preflight": vr}
 
 
@@ -378,19 +478,34 @@ def seal_package(slug: str, pkg_type: str, target: str, author: str, recipient: 
         raise ValueError("Pre-flight failed — cannot seal.")
     total, pages = _page_estimate(conn, slug, bool(b["has_front"]), bool(b["has_back"]))
     if pkg_type == "publisher" and target == "submission":
-        spec = {"format": "standard-manuscript-format", **SUBMISSION_SPEC,
-                "word_count_rounded": int(round(total, -2))}
+        spec = {
+            "format": "standard-manuscript-format",
+            **SUBMISSION_SPEC,
+            "word_count_rounded": int(round(total, -2)),
+        }
     elif pkg_type == "publisher":
-        spec = {"format": "typeset-production", **{k: style.get(k) for k in STYLE_KEYS},
-                "estimated_pages": pages}
+        spec = {
+            "format": "typeset-production",
+            **{k: style.get(k) for k in STYLE_KEYS},
+            "estimated_pages": pages,
+        }
     else:
-        spec = {"format": "advance-reader-copy", "stamp": "ADVANCE READER COPY — NOT FOR RESALE",
-                "based_on": {k: style.get(k) for k in STYLE_KEYS},
-                "estimated_pages": pages, "delivery": "PDF/EPUB"}
+        spec = {
+            "format": "advance-reader-copy",
+            "stamp": "ADVANCE READER COPY — NOT FOR RESALE",
+            "based_on": {k: style.get(k) for k in STYLE_KEYS},
+            "estimated_pages": pages,
+            "delivery": "PDF/EPUB",
+        }
     manifest: dict = {
-        "book": b["title"], "series": b["series"], "author": b["author_name"],
-        "package_type": pkg_type, "target": target if pkg_type == "publisher" else None,
-        "spec": spec, "signoff": author, "sealed_at": _now(),
+        "book": b["title"],
+        "series": b["series"],
+        "author": b["author_name"],
+        "package_type": pkg_type,
+        "target": target if pkg_type == "publisher" else None,
+        "spec": spec,
+        "signoff": author,
+        "sealed_at": _now(),
     }
     if pkg_type == "test-reader":
         if not recipient:
@@ -402,11 +517,17 @@ def seal_package(slug: str, pkg_type: str, target: str, author: str, recipient: 
         )
         manifest["recipient"] = recipient
         manifest["watermark"] = wm
-        _ledger_append(conn, f"book:{slug}", "arc.distributed", {"recipient": recipient, "watermark": wm})
+        _ledger_append(
+            conn, f"book:{slug}", "arc.distributed", {"recipient": recipient, "watermark": wm}
+        )
     ph = _sha(_canon(manifest))
     manifest["package_sha256"] = ph
-    _ledger_append(conn, f"book:{slug}", "package.sealed",
-                   {"type": pkg_type, "target": manifest["target"], "sha256": ph, "author": author})
+    _ledger_append(
+        conn,
+        f"book:{slug}",
+        "package.sealed",
+        {"type": pkg_type, "target": manifest["target"], "sha256": ph, "author": author},
+    )
     conn.commit()
     return manifest
 

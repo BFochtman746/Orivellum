@@ -1,4 +1,5 @@
 """Forge PLAN phase — generate a governed site plan via llm_call()."""
+
 from __future__ import annotations
 
 import json
@@ -46,7 +47,7 @@ def create_plan(
     result = llm_call(
         [
             {"role": "system", "content": PLAN_SYSTEM},
-            {"role": "user",   "content": user_msg},
+            {"role": "user", "content": user_msg},
         ],
         cfg=cfg,
         db=db,

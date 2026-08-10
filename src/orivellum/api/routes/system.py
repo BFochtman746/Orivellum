@@ -1,4 +1,5 @@
 """System routes — /api/system/*"""
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,8 @@ from orivellum.api.errors import internal_error
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+
+
 @router.get("/system/notifications")
 def system_notifications(after: int = 0):
     """Poll feed for browser notifications (document ready, audiobook ready).
@@ -26,6 +29,7 @@ def system_notifications(after: int = 0):
     replaying stale alerts.
     """
     from orivellum.api import notifications as notif
+
     events, latest = notif.list_after(after)
     return {"boot_id": notif.BOOT_ID, "latest_id": latest, "notifications": events}
 
@@ -40,6 +44,7 @@ def system_health():
     ai_status = "unknown"
     try:
         import httpx
+
         r = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
         ai_status = "ok" if r.status_code == 200 else "degraded"
     except Exception:
@@ -49,8 +54,11 @@ def system_health():
     if ai_status == "unavailable":
         overall = "degraded"  # AI unavailable = degraded, not down
 
+    from orivellum.version import code_version
+
     return {
         "status": overall,
+        "code_version": code_version(),
         "services": {
             "database": db_health,
             "ai": {"status": ai_status, "endpoint": cfg.serving.base_url},
@@ -77,8 +85,8 @@ def system_models():
     role_meta: dict[str, dict] = {}
     for role, model_id in [
         ("workhorse", cfg.serving.workhorse_model),
-        ("reasoner",  cfg.serving.reasoner_model),
-        ("coder",     cfg.serving.coder_model),
+        ("reasoner", cfg.serving.reasoner_model),
+        ("coder", cfg.serving.coder_model),
     ]:
         if model_id and model_id not in role_meta:
             role_meta[model_id] = {
@@ -86,8 +94,8 @@ def system_models():
                 "label": role.capitalize(),
                 "description": {
                     "workhorse": "Default · fast, capable",
-                    "reasoner":  "Deeper reasoning · slower",
-                    "coder":     "Code generation · analysis",
+                    "reasoner": "Deeper reasoning · slower",
+                    "coder": "Code generation · analysis",
                 }.get(role, ""),
             }
 
@@ -95,15 +103,14 @@ def system_models():
     live_model_ids: list[str] = []
     try:
         import httpx
+
         r = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
         if r.status_code == 200:
             data = r.json()
             # OpenAI format: {"data": [{"id": "...", ...}, ...]}
             # Some servers return {"models": [...]} or a plain list
             raw_list = (
-                data.get("data")
-                or data.get("models")
-                or (data if isinstance(data, list) else [])
+                data.get("data") or data.get("models") or (data if isinstance(data, list) else [])
             )
             for entry in raw_list:
                 mid = entry.get("id") or entry.get("name") or str(entry)
@@ -121,12 +128,14 @@ def system_models():
                 continue
             seen.add(mid)
             meta = role_meta.get(mid, {})
-            models.append({
-                "id": mid,
-                "role": meta.get("role", "available"),
-                "label": meta.get("label", mid.split("/")[-1]),
-                "description": meta.get("description", ""),
-            })
+            models.append(
+                {
+                    "id": mid,
+                    "role": meta.get("role", "available"),
+                    "label": meta.get("label", mid.split("/")[-1]),
+                    "description": meta.get("description", ""),
+                }
+            )
         return {"models": models, "default": cfg.serving.workhorse_model}
 
     # Fall back to config-declared models when AI endpoint is unavailable
@@ -148,6 +157,7 @@ def system_tools():
     ``status`` field that reflects whether required dependencies are reachable.
     """
     from orivellum.capabilities import CAPABILITY_REGISTRY
+
     cfg = get_config()
     lemonade_up = bool(getattr(getattr(cfg, "serving", None), "base_url", None))
     tavily_up = bool(os.getenv("TAVILY_API_KEY"))
@@ -164,10 +174,7 @@ def system_tools():
             return "available"
         return "available"
 
-    tools = [
-        {**cap, "status": _status(cap)}
-        for cap in CAPABILITY_REGISTRY
-    ]
+    tools = [{**cap, "status": _status(cap)} for cap in CAPABILITY_REGISTRY]
     return {"tools": tools, "count": len(tools)}
 
 
@@ -179,6 +186,7 @@ def system_capabilities():
     ``CAPABILITY_REGISTRY`` as ``/system/tools``.
     """
     from orivellum.capabilities import CAPABILITY_REGISTRY
+
     cfg = get_config()
     lemonade_up = bool(getattr(getattr(cfg, "serving", None), "base_url", None))
     tavily_up = bool(os.getenv("TAVILY_API_KEY"))
@@ -193,10 +201,7 @@ def system_capabilities():
             return "requires_api_key"
         return "available"
 
-    capabilities = [
-        {**cap, "status": _status(cap)}
-        for cap in CAPABILITY_REGISTRY
-    ]
+    capabilities = [{**cap, "status": _status(cap)} for cap in CAPABILITY_REGISTRY]
     return {"capabilities": capabilities, "count": len(capabilities)}
 
 
@@ -224,7 +229,7 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
     to a deterministic algorithm when the AI endpoint is unavailable.
     Clears suggestions older than 7 days before writing new ones.
     """
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
     now = datetime.now(UTC).isoformat()
 
@@ -245,12 +250,14 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
         ).fetchall()
 
     if not k_rows:
-        return {"suggestions": [], "generated": 0,
-                "message": "Upload and process some documents first — your library is empty."}
+        return {
+            "suggestions": [],
+            "generated": 0,
+            "message": "Upload and process some documents first — your library is empty.",
+        }
 
     knowledge_lines = [
-        f"[{r['kind']}] ({r['work_title'] or 'Library'}) {r['text'][:200]}"
-        for r in k_rows
+        f"[{r['kind']}] ({r['work_title'] or 'Library'}) {r['text'][:200]}" for r in k_rows
     ]
     works_list = ", ".join(r["title"] for r in work_rows) or "none yet"
     knowledge_block = "\n".join(knowledge_lines)
@@ -261,6 +268,7 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
         import httpx
 
         from orivellum.capabilities.llm import llm_call
+
         probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
         if probe.status_code == 200:
             messages = [
@@ -288,9 +296,13 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
             ]
             result = llm_call(
                 messages,
-                base_url=cfg.serving.base_url, model=cfg.serving.workhorse_model,
-                temperature=0.7, max_tokens=1200,
-                timeout=30, purpose="system", db=db,
+                base_url=cfg.serving.base_url,
+                model=cfg.serving.workhorse_model,
+                temperature=0.7,
+                max_tokens=1200,
+                timeout=30,
+                purpose="system",
+                db=db,
             )
             if result.ok and result.text is not None:
                 raw = result.text.strip()
@@ -304,9 +316,8 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
     if not llm_suggestions:
         # Group by work/topic and propose exploration of less-covered areas
         from collections import Counter
-        Counter(
-            r["work_title"] or "Library" for r in k_rows
-        )
+
+        Counter(r["work_title"] or "Library" for r in k_rows)
         Counter(r["kind"] for r in k_rows)
         seen_topics = set()
         fallback = []
@@ -314,15 +325,17 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
             topic = (r["text"][:80]).split(".")[0].strip()
             if topic not in seen_topics and len(fallback) < limit:
                 seen_topics.add(topic)
-                fallback.append({
-                    "title": f"Explore: {topic[:55]}",
-                    "rationale": (
-                        f"From your {r['work_title'] or 'Library'} documents — "
-                        f"this concept appears in your knowledge base and has connections worth exploring."
-                    ),
-                    "effort": "1-2 hours",
-                    "kind": "explore",
-                })
+                fallback.append(
+                    {
+                        "title": f"Explore: {topic[:55]}",
+                        "rationale": (
+                            f"From your {r['work_title'] or 'Library'} documents — "
+                            f"this concept appears in your knowledge base and has connections worth exploring."
+                        ),
+                        "effort": "1-2 hours",
+                        "kind": "explore",
+                    }
+                )
         llm_suggestions = fallback
 
     # ── Prune stale suggestions ───────────────────────────────────────────────
@@ -333,31 +346,49 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
         _pruned = _prune_cur.rowcount
         db._conn.commit()
     if _pruned > 0:
-        db.audit("system.suggestions_pruned", object_id=None, object_type="suggestion",
-                 actor="system", detail=f"{_pruned} stale suggestions removed")
+        db.audit(
+            "system.suggestions_pruned",
+            object_id=None,
+            object_type="suggestion",
+            actor="system",
+            detail=f"{_pruned} stale suggestions removed",
+        )
 
     # ── Persist new suggestions ───────────────────────────────────────────────
     new_rows: list[dict] = []
     with db._lock:
         for item in (llm_suggestions or [])[:limit]:
             sid = str(uuid.uuid4())
-            meta = json.dumps({
-                "rationale": item.get("rationale", ""),
-                "effort":    item.get("effort", ""),
-                "kind":      item.get("kind", "explore"),
-            })
+            meta = json.dumps(
+                {
+                    "rationale": item.get("rationale", ""),
+                    "effort": item.get("effort", ""),
+                    "kind": item.get("kind", "explore"),
+                }
+            )
             db._conn.execute(
                 "INSERT INTO suggestions(id,work_id,kind,text,meta,created_at) VALUES(?,?,?,?,?,?)",
-                (sid, work_id, item.get("kind","explore"), item.get("title",""), meta, now),
+                (sid, work_id, item.get("kind", "explore"), item.get("title", ""), meta, now),
             )
-            new_rows.append({
-                "id": sid, "work_id": work_id, "kind": item.get("kind","explore"),
-                "text": item.get("title",""), "meta": json.loads(meta), "created_at": now,
-            })
+            new_rows.append(
+                {
+                    "id": sid,
+                    "work_id": work_id,
+                    "kind": item.get("kind", "explore"),
+                    "text": item.get("title", ""),
+                    "meta": json.loads(meta),
+                    "created_at": now,
+                }
+            )
         db._conn.commit()
     if new_rows:
-        db.audit("system.suggestions_generated", object_id=None, object_type="suggestion",
-                 actor="system", detail=f"{len(new_rows)} suggestions")
+        db.audit(
+            "system.suggestions_generated",
+            object_id=None,
+            object_type="suggestion",
+            actor="system",
+            detail=f"{len(new_rows)} suggestions",
+        )
 
     return {"suggestions": new_rows, "generated": len(new_rows)}
 
@@ -366,6 +397,7 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
 async def trigger_nightshift(background_tasks: BackgroundTasks):
     """Manually trigger a nightshift pass in the background."""
     from orivellum.capabilities.nightshift import run_nightshift
+
     db = get_db()
     cfg = get_config()
     background_tasks.add_task(run_nightshift, db, cfg)
@@ -407,6 +439,7 @@ def nightshift_run_now():
             logger.exception("Nightshift run-now worker crashed")
 
     from orivellum.api.executor import submit_bg as _submit_bg_ns
+
     _submit_bg_ns(_worker, kind="nightshift", label="nightshift_run_now")
     return {"started": True}
 
@@ -428,6 +461,7 @@ def auto_dedup_run_now():
     db = get_db()
     try:
         from orivellum.capabilities.auto_dedup import auto_resolve_duplicates
+
         result = auto_resolve_duplicates(db)
         return result
     except Exception as exc:
@@ -450,11 +484,11 @@ def auto_dedup_stats():
                    FROM doc_dupes"""
             ).fetchone()
         return {
-            "pending":    row[0] or 0,
+            "pending": row[0] or 0,
             "superseded": row[1] or 0,
-            "versioned":  row[2] or 0,
-            "dismissed":  row[3] or 0,
-            "total":      row[4] or 0,
+            "versioned": row[2] or 0,
+            "dismissed": row[3] or 0,
+            "total": row[4] or 0,
         }
     except Exception as exc:
         raise internal_error(logger, exc, "auto-dedup stats") from exc
@@ -495,6 +529,7 @@ def nightshift_last_report():
     if report_path:
         try:
             from pathlib import Path
+
             p = Path(report_path)
             if p.exists():
                 report_markdown = p.read_text(encoding="utf-8")
@@ -644,8 +679,13 @@ def clear_all_user_memory():
             db._conn.execute("DELETE FROM user_memory")
             db._conn.commit()
         if count:
-            db.audit("user_memory.cleared", object_id=None, object_type="user_memory",
-                     actor="user", detail=f"{count} memories deleted")
+            db.audit(
+                "user_memory.cleared",
+                object_id=None,
+                object_type="user_memory",
+                actor="user",
+                detail=f"{count} memories deleted",
+            )
         return {"deleted": count}
     except Exception as exc:
         raise internal_error(logger, exc, "clear user memories") from exc
@@ -657,12 +697,16 @@ def delete_user_memory(memory_id: str):
     try:
         _existed = False
         with db._lock:
-            _row = db._conn.execute("SELECT id FROM user_memory WHERE id=?", (memory_id,)).fetchone()
+            _row = db._conn.execute(
+                "SELECT id FROM user_memory WHERE id=?", (memory_id,)
+            ).fetchone()
             _existed = _row is not None
             db._conn.execute("DELETE FROM user_memory WHERE id=?", (memory_id,))
             db._conn.commit()
         if _existed:
-            db.audit("user_memory.deleted", object_id=memory_id, object_type="user_memory", actor="user")
+            db.audit(
+                "user_memory.deleted", object_id=memory_id, object_type="user_memory", actor="user"
+            )
         return {"deleted": memory_id}
     except Exception as exc:
         raise internal_error(logger, exc, "delete user memory") from exc
@@ -687,9 +731,13 @@ def patch_user_memory(memory_id: str, body: _MemoryFactUpdate):
     updated = db.update_memory_fact(memory_id, value)
     if not updated:
         raise HTTPException(404, f"Memory {memory_id!r} not found")
-    db.audit("user_memory.updated", object_id=memory_id,
-             object_type="user_memory", actor="user",
-             detail=f"value updated to: {value[:80]}")
+    db.audit(
+        "user_memory.updated",
+        object_id=memory_id,
+        object_type="user_memory",
+        actor="user",
+        detail=f"value updated to: {value[:80]}",
+    )
     return {"updated": memory_id, "value": value}
 
 
@@ -700,10 +748,17 @@ def get_audio_enhance_setting():
     enabled = db.get_setting("audio_enhance_enabled", "false").lower() == "true"
     try:
         from orivellum.capabilities.enhancement import probe as _dfn_probe
+
         pr = _dfn_probe(force=False)
     except Exception as exc:
-        pr = {"available": False, "error": str(exc), "python": None,
-              "install_hint": None, "mode": None, "setting_up": False}
+        pr = {
+            "available": False,
+            "error": str(exc),
+            "python": None,
+            "install_hint": None,
+            "mode": None,
+            "setting_up": False,
+        }
     return {
         "enabled": enabled,
         "installed": pr["available"],
@@ -728,6 +783,7 @@ def probe_audio_enhance():
     until it settles to installed or an error.
     """
     from orivellum.capabilities.enhancement import start_setup
+
     result = start_setup()
     return {
         "installed": result["available"],
@@ -760,6 +816,7 @@ def set_audio_enhance_setting(body: AudioEnhanceUpdate):
             # Passive check only — never run the multi-minute setup inline
             # (the "Check again" button / probe endpoint handles setup).
             from orivellum.capabilities.enhancement import probe as _dfn_probe
+
             installed = _dfn_probe(force=False)["available"]
         except Exception:
             installed = False
@@ -788,6 +845,7 @@ def set_ai_extraction_setting(body: AiExtractionUpdate):
 
 # ── AI Re-ranking setting ──────────────────────────────────────────────────────
 
+
 @router.get("/system/settings/ai-reranking")
 def get_ai_reranking_setting():
     """Return whether LLM-powered listwise re-ranking is enabled for chat retrieval."""
@@ -804,6 +862,7 @@ class AiRerankingUpdate(BaseModel):
 def get_reranker_setting():
     """Cross-encoder reranker state: toggle, configured model, breaker status."""
     from orivellum.capabilities.rerank import cross_encoder_status
+
     db = get_db()
     enabled = db.get_setting("cross_reranker_enabled", "true").lower() == "true"
     st = cross_encoder_status()
@@ -837,6 +896,7 @@ def probe_reranker():
         cross_encoder_status,
         reset_cross_encoder_breaker,
     )
+
     st = cross_encoder_status()
     if not st["configured"]:
         return {"ok": False, "detail": "No reranker model configured (serving.reranker_model)"}
@@ -849,8 +909,9 @@ def probe_reranker():
     if scores is None:
         return {
             "ok": False,
-            "detail": (f"Reranker call failed — is the model pulled? "
-                       f"Try: lemonade pull {st['model']}"),
+            "detail": (
+                f"Reranker call failed — is the model pulled? Try: lemonade pull {st['model']}"
+            ),
         }
     ordered_ok = scores[0] > scores[1]
     return {"ok": True, "model": st["model"], "sane_ordering": ordered_ok}
@@ -866,6 +927,7 @@ def set_ai_reranking_setting(body: AiRerankingUpdate):
 
 # ── Late-chunking setting ──────────────────────────────────────────────────────
 
+
 @router.get("/system/settings/late-chunking")
 def get_late_chunking_setting():
     """Return the late-chunking enable flag and last-known probe status.
@@ -876,6 +938,7 @@ def get_late_chunking_setting():
     - ``"untested"`` — no probe has been run since the last server start
     """
     from orivellum.capabilities.embeddings import _late_chunking_probe_cache
+
     db = get_db()
     enabled = db.get_setting("use_late_chunking", "false").lower() == "true"
     if _late_chunking_probe_cache is True:
@@ -920,6 +983,7 @@ def probe_late_chunking():
     ``GET /system/settings/late-chunking`` reflects it without another probe.
     """
     from orivellum.capabilities.embeddings import probe_late_chunking_support
+
     supported = probe_late_chunking_support(force=True)
     return {
         "supported": supported,
@@ -929,10 +993,11 @@ def probe_late_chunking():
 
 # ── Vision model settings + probe ─────────────────────────────────────────────
 
+
 @router.get("/system/settings/vision-model")
 def get_vision_model_setting():
     """Return the configured vision model name (empty = use workhorse fallback)."""
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
     stored = db.get_setting("vision_model", "")
     effective = stored or cfg.serving.vision_model or ""
@@ -955,25 +1020,27 @@ def set_vision_model_setting(body: VisionModelUpdate):
 # Allows users to override the workhorse / reasoner / coder model at runtime
 # without touching config.yaml.  Empty string = use config default.
 
+
 @router.get("/system/settings/models")
 def get_model_settings():
     """Return configured model overrides (empty = use config default)."""
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
     return {
         "workhorse": {
-            "stored":  db.get_setting("workhorse_model_override", ""),
-            "config":  cfg.serving.workhorse_model,
-            "effective": db.get_setting("workhorse_model_override", "") or cfg.serving.workhorse_model,
+            "stored": db.get_setting("workhorse_model_override", ""),
+            "config": cfg.serving.workhorse_model,
+            "effective": db.get_setting("workhorse_model_override", "")
+            or cfg.serving.workhorse_model,
         },
         "reasoner": {
-            "stored":  db.get_setting("reasoner_model_override", ""),
-            "config":  cfg.serving.reasoner_model if hasattr(cfg.serving, "reasoner_model") else "",
+            "stored": db.get_setting("reasoner_model_override", ""),
+            "config": cfg.serving.reasoner_model if hasattr(cfg.serving, "reasoner_model") else "",
             "effective": db.get_setting("reasoner_model_override", ""),
         },
         "coder": {
-            "stored":  db.get_setting("coder_model_override", ""),
-            "config":  cfg.serving.coder_model if hasattr(cfg.serving, "coder_model") else "",
+            "stored": db.get_setting("coder_model_override", ""),
+            "config": cfg.serving.coder_model if hasattr(cfg.serving, "coder_model") else "",
             "effective": db.get_setting("coder_model_override", ""),
         },
     }
@@ -981,8 +1048,8 @@ def get_model_settings():
 
 class ModelOverrideUpdate(BaseModel):
     workhorse: str = ""
-    reasoner:  str = ""
-    coder:     str = ""
+    reasoner: str = ""
+    coder: str = ""
 
 
 @router.patch("/system/settings/models")
@@ -990,17 +1057,18 @@ def set_model_settings(body: ModelOverrideUpdate):
     """Persist model name overrides.  Empty string removes the override."""
     db = get_db()
     db.set_setting("workhorse_model_override", body.workhorse.strip(), actor="user")
-    db.set_setting("reasoner_model_override",  body.reasoner.strip(),  actor="user")
-    db.set_setting("coder_model_override",     body.coder.strip(),     actor="user")
+    db.set_setting("reasoner_model_override", body.reasoner.strip(), actor="user")
+    db.set_setting("coder_model_override", body.coder.strip(), actor="user")
     return {
         "workhorse": body.workhorse.strip(),
-        "reasoner":  body.reasoner.strip(),
-        "coder":     body.coder.strip(),
+        "reasoner": body.reasoner.strip(),
+        "coder": body.coder.strip(),
         "ok": True,
     }
 
 
 # ── Local transcription (ASR) model-size setting ──────────────────────────────
+
 
 @router.get("/system/settings/asr")
 def get_asr_settings():
@@ -1014,7 +1082,8 @@ def get_asr_settings():
         _resolve_asr_local_model,
         faster_whisper_status,
     )
-    db  = get_db()
+
+    db = get_db()
     cfg = get_config()
     config_default = getattr(cfg.serving, "asr_local_model", "large-v3-turbo")
     stored = (db.get_setting("asr_local_model", "") or "").strip()
@@ -1035,6 +1104,7 @@ class AsrSettingUpdate(BaseModel):
 def set_asr_settings(body: AsrSettingUpdate):
     """Persist the local ASR model-size override. Empty string removes it."""
     from orivellum.capabilities.extraction import FW_ALLOWED_SIZES
+
     size = body.model_size.strip()
     if size and size not in FW_ALLOWED_SIZES:
         raise HTTPException(
@@ -1048,6 +1118,7 @@ def set_asr_settings(body: AsrSettingUpdate):
 
 # ── Context-window settings ────────────────────────────────────────────────────
 
+
 @router.get("/system/settings/context-window")
 def get_context_window_setting():
     """Return the effective context-window size (tokens) used for prompt trimming.
@@ -1058,7 +1129,7 @@ def get_context_window_setting():
     and the config default is used as the effective value, matching exactly
     what chat construction applies.
     """
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
     stored_raw = db.get_setting("context_window", "")
     stored: int | None = None
@@ -1090,6 +1161,7 @@ def set_context_window_setting(body: ContextWindowUpdate):
     would be impossible to include).
     """
     from fastapi import HTTPException as _HTTP
+
     if body.context_window < 512:
         raise _HTTP(422, "context_window must be ≥ 512 tokens")
     db = get_db()
@@ -1107,6 +1179,7 @@ def embeddings_status():
     import time
 
     from orivellum.capabilities.embeddings import _unavailable_until
+
     circuit_open = _unavailable_until > time.monotonic()
     return {
         "circuit_open": circuit_open,
@@ -1122,24 +1195,32 @@ def probe_embeddings():
     immediately benefit from semantic ranking again.
     """
     from orivellum.capabilities.embeddings import _reset_circuit_breaker, embed_texts
+
     try:
         # bypass_cooldown forces a real network attempt even while the failure
         # cooldown is open — previously a probe during cooldown short-circuited
         # to None and reported "no vectors" even after the endpoint recovered.
         # Generous timeout: the AI server may need to load the embedding model
         # from disk on the first call after startup/eviction.
-        vecs = embed_texts(["semantic search health probe"], timeout=30,
-                           bypass_cooldown=True)
+        vecs = embed_texts(["semantic search health probe"], timeout=30, bypass_cooldown=True)
         if vecs and len(vecs) > 0:
             # Success closes the cooldown inside embed_texts, but reset
             # explicitly for clarity/back-compat.
             _reset_circuit_breaker()
-            return {"ok": True, "dims": len(vecs[0]),
-                    "detail": f"Embedding returned {len(vecs[0])}-dimensional vector — semantic search is active."}
-        return {"ok": False, "status": "empty",
-                "detail": ("Embedding call returned no vectors. Check that the embedding model "
-                           "is pulled and loadable on the AI server (it may still be loading — "
-                           "try again in a minute). Semantic search falls back to keyword-only.")}
+            return {
+                "ok": True,
+                "dims": len(vecs[0]),
+                "detail": f"Embedding returned {len(vecs[0])}-dimensional vector — semantic search is active.",
+            }
+        return {
+            "ok": False,
+            "status": "empty",
+            "detail": (
+                "Embedding call returned no vectors. Check that the embedding model "
+                "is pulled and loadable on the AI server (it may still be loading — "
+                "try again in a minute). Semantic search falls back to keyword-only."
+            ),
+        }
     except Exception as exc:
         return {"ok": False, "status": "error", "detail": str(exc)}
 
@@ -1160,6 +1241,7 @@ def reindex_status():
         get_live_embedder_dim,
         get_stored_vector_dim,
     )
+
     db = get_db()
     cfg = get_config()
 
@@ -1174,33 +1256,29 @@ def reindex_status():
         pass
 
     running = db.get_setting("reindex_running", "false").lower() == "true"
-    done_str  = db.get_setting("reindex_done",  "0")
+    done_str = db.get_setting("reindex_done", "0")
     total_str = db.get_setting("reindex_total", "0")
 
     try:
-        progress_done  = int(done_str)
+        progress_done = int(done_str)
         progress_total = int(total_str)
     except ValueError:
-        progress_done  = counts["done"]
+        progress_done = counts["done"]
         progress_total = counts["total"]
 
-    mismatch = (
-        stored_dim is not None
-        and live_dim is not None
-        and stored_dim != live_dim
-    )
+    mismatch = stored_dim is not None and live_dim is not None and stored_dim != live_dim
 
     return {
-        "running":        running,
-        "done":           progress_done if running else counts["done"],
-        "total":          progress_total if running else counts["total"],
-        "counts":         counts,
-        "stored_dim":     stored_dim,
-        "live_dim":       live_dim,
-        "mismatch":       mismatch,
+        "running": running,
+        "done": progress_done if running else counts["done"],
+        "total": progress_total if running else counts["total"],
+        "counts": counts,
+        "stored_dim": stored_dim,
+        "live_dim": live_dim,
+        "mismatch": mismatch,
         "embedder_model": getattr(cfg.serving, "embedder_model", ""),
         # Non-empty when the last reindex stopped early (endpoint died mid-run).
-        "error":          db.get_setting("reindex_error", "") or None,
+        "error": db.get_setting("reindex_error", "") or None,
     }
 
 
@@ -1224,6 +1302,7 @@ def trigger_reindex():
     FTS5/BM25 search continues to serve results at full speed while running.
     """
     from orivellum.capabilities.embeddings import get_live_embedder_dim, run_full_reindex
+
     db = get_db()
 
     # Atomic guard: acquire the process-level lock then re-check the DB setting
@@ -1247,9 +1326,9 @@ def trigger_reindex():
             }
 
         db.set_setting("reindex_running", "true")
-        db.set_setting("reindex_done",    "0")
-        db.set_setting("reindex_total",   "0")
-        db.set_setting("reindex_error",   "")
+        db.set_setting("reindex_done", "0")
+        db.set_setting("reindex_total", "0")
+        db.set_setting("reindex_error", "")
     finally:
         # Always release before spawning the thread so other calls are not
         # permanently blocked even if setup fails.
@@ -1263,6 +1342,7 @@ def trigger_reindex():
             db.set_setting("reindex_running", "false")
 
     from orivellum.api.executor import submit_bg as _submit_bg_reindex
+
     _submit_bg_reindex(_worker, kind="background", label="full-reindex")
     return {"ok": True, "detail": "Re-indexing started. Poll /system/reindex/status for progress."}
 
@@ -1271,6 +1351,7 @@ def trigger_reindex():
 def system_stats():
     """Return high-level database statistics for the System settings page."""
     import os
+
     db = get_db()
     summary = db.dashboard_summary()
     try:
@@ -1278,10 +1359,10 @@ def system_stats():
     except Exception:
         db_size = 0
     return {
-        "document_count":  summary.get("document_count", 0),
+        "document_count": summary.get("document_count", 0),
         "knowledge_count": summary.get("knowledge_count", 0),
-        "work_count":      summary.get("work_count", 0),
-        "db_size_bytes":   db_size,
+        "work_count": summary.get("work_count", 0),
+        "db_size_bytes": db_size,
     }
 
 
@@ -1304,16 +1385,17 @@ def probe_vision_model():
     import base64
     import io
 
-    db  = get_db()
+    db = get_db()
     cfg = get_config()
 
     # Resolve model (DB override → config vision_model → workhorse fallback)
-    stored  = db.get_setting("vision_model", "")
-    model   = stored or cfg.serving.vision_model or cfg.serving.workhorse_model
+    stored = db.get_setting("vision_model", "")
+    model = stored or cfg.serving.vision_model or cfg.serving.workhorse_model
 
     # Build a 1×1 white JPEG — smallest meaningful vision payload
     try:
         from PIL import Image as _PIL
+
         buf = io.BytesIO()
         img = _PIL.new("RGB", (1, 1), color=(255, 255, 255))
         img.save(buf, format="JPEG")
@@ -1334,13 +1416,18 @@ def probe_vision_model():
 
     try:
         result = llm_call(
-            [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "What colour is this image? Reply in one word."},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                ],
-            }],
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What colour is this image? Reply in one word."},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
             base_url=cfg.serving.base_url,
             model=model,
             timeout=20,
@@ -1352,7 +1439,8 @@ def probe_vision_model():
         return {
             "ok": False,
             "model": model,
-            "error": result.error or "Model returned an empty response — vision may not be supported",
+            "error": result.error
+            or "Model returned an empty response — vision may not be supported",
         }
     except Exception as exc:
         return {"ok": False, "model": model, "error": str(exc)}
@@ -1402,7 +1490,7 @@ def governance_audit_chain():
         return {"ok": True, "checked_rows": checked, "status": "intact"}
     return JSONResponse(
         {"ok": False, "checked_rows": checked, "status": "broken", "reason": reason},
-        status_code=200,   # 200 so the UI can render the broken state without an error
+        status_code=200,  # 200 so the UI can render the broken state without an error
     )
 
 
@@ -1535,11 +1623,11 @@ def governance_stats():
         ).fetchall()
     stats = {r["review_status"]: r["cnt"] for r in rows}
     return {
-        "pending":  stats.get("ai_auto", 0),
+        "pending": stats.get("ai_auto", 0),
         "approved": stats.get("approved", 0),
         "rejected": stats.get("rejected", 0),
-        "auto":     stats.get("auto", 0),
-        "total":    sum(stats.values()),
+        "auto": stats.get("auto", 0),
+        "total": sum(stats.values()),
     }
 
 
@@ -1571,6 +1659,7 @@ def governance_resolve_conflict(conflict_id: str, body: ConflictResolveBody):
 def governance_rescore():
     """Manually trigger evidence re-scoring + contradiction detection across all active Works."""
     from orivellum.capabilities.evidence import detect_contradictions, rescore_work
+
     db = get_db()
     rescored = conflicts = 0
     for work in db.list_works(status="active")[:50]:
@@ -1596,7 +1685,9 @@ def governance_batch_review(body: BatchReviewBody):
     updated so the client can surface an accurate success message.
     """
     if body.status not in ("approved", "rejected"):
-        raise HTTPException(400, f"Invalid status {body.status!r}. Must be 'approved' or 'rejected'.")
+        raise HTTPException(
+            400, f"Invalid status {body.status!r}. Must be 'approved' or 'rejected'."
+        )
     if not body.item_ids:
         return {"updated": 0, "status": body.status, "total_requested": 0}
 
@@ -1604,7 +1695,7 @@ def governance_batch_review(body: BatchReviewBody):
     updated = 0
 
     with db._lock:
-        for item_id in body.item_ids[:500]:   # safety cap
+        for item_id in body.item_ids[:500]:  # safety cap
             result = db._conn.execute(
                 "UPDATE knowledge SET review_status=? WHERE id=? AND review_status='ai_auto'",
                 (body.status, item_id),
@@ -1632,6 +1723,7 @@ def governance_batch_review(body: BatchReviewBody):
     if updated:
         try:
             from orivellum.capabilities.embeddings import bump_vector_cache_version
+
             bump_vector_cache_version(db._path, "knowledge")
         except Exception:
             pass
@@ -1669,34 +1761,40 @@ def global_search(q: str, limit: int = 20, work_id: str | None = None):
             kn_base += f" LIMIT {min(limit, 50)}"
             kn_rows = db._conn.execute(kn_base, args).fetchall()
         for r in kn_rows:
-            results.append({
-                "kind": "knowledge",
-                "id": r["id"],
-                "title": r["text"][:120],
-                "snippet": r["text"],
-                "work_id": r["work_id"],
-                "work_title": r["work_title"],
-                "confidence": r["confidence"],
-                "item_kind": r["kind"],
-            })
+            results.append(
+                {
+                    "kind": "knowledge",
+                    "id": r["id"],
+                    "title": r["text"][:120],
+                    "snippet": r["text"],
+                    "work_id": r["work_id"],
+                    "work_title": r["work_title"],
+                    "confidence": r["confidence"],
+                    "item_kind": r["kind"],
+                }
+            )
     except Exception as exc:
         import logging as _log
+
         _log.getLogger(__name__).debug("knowledge FTS search failed: %s", exc)
 
     # 2 — Document chunks (FTS)
     try:
         chunk_results = db.search_chunks(q, work_id=work_id, limit=min(limit, 20))
         for r in chunk_results:
-            results.append({
-                "kind": "chunk",
-                "id": r["id"],
-                "title": r.get("doc_title") or r.get("id", "")[:20],
-                "snippet": (r.get("text") or "")[:200],
-                "work_id": r.get("work_id"),
-                "doc_id": r.get("doc_id"),
-            })
+            results.append(
+                {
+                    "kind": "chunk",
+                    "id": r["id"],
+                    "title": r.get("doc_title") or r.get("id", "")[:20],
+                    "snippet": (r.get("text") or "")[:200],
+                    "work_id": r.get("work_id"),
+                    "doc_id": r.get("doc_id"),
+                }
+            )
     except Exception as exc:
         import logging as _log
+
         _log.getLogger(__name__).debug("chunk FTS search failed: %s", exc)
 
     # 3 — Document titles (LIKE fallback)
@@ -1707,16 +1805,19 @@ def global_search(q: str, limit: int = 20, work_id: str | None = None):
             doc_sql = "SELECT id, title, kind, work_id FROM documents WHERE title LIKE ? OR source LIKE ? ORDER BY created_at DESC LIMIT 10"
             doc_rows = db._conn.execute(doc_sql, doc_args).fetchall()
         for r in doc_rows:
-            results.append({
-                "kind": "document",
-                "id": r["id"],
-                "title": r["title"] or r["id"][:20],
-                "snippet": f"{r['kind']} document",
-                "work_id": r["work_id"],
-                "doc_id": r["id"],
-            })
+            results.append(
+                {
+                    "kind": "document",
+                    "id": r["id"],
+                    "title": r["title"] or r["id"][:20],
+                    "snippet": f"{r['kind']} document",
+                    "work_id": r["work_id"],
+                    "doc_id": r["id"],
+                }
+            )
     except Exception as exc:
         import logging as _log
+
         _log.getLogger(__name__).debug("doc title search failed: %s", exc)
 
     # Deduplicate and cap
@@ -1794,9 +1895,10 @@ async def run_diagnostics(vacuum: bool = False):
 def system_jobs(limit: int = 50):
     """Return recent background job status for the job dashboard."""
     from orivellum.api.executor import get_recent_jobs
+
     jobs = get_recent_jobs(limit=min(limit, 200))
     running = sum(1 for j in jobs if j["state"] == "running")
-    failed  = sum(1 for j in jobs if j["state"] == "failed")
+    failed = sum(1 for j in jobs if j["state"] == "failed")
     return {"jobs": jobs, "running": running, "failed": failed, "total": len(jobs)}
 
 
@@ -1816,6 +1918,7 @@ def retry_job(job_id: str):
         501 — job pre-dates retry support (no stored callable).
     """
     from orivellum.api.executor import retry_job as _retry
+
     try:
         _retry(job_id)
     except KeyError as exc:
@@ -1847,22 +1950,35 @@ def system_llm_health():
         import time as _t
 
         import httpx as _hx
+
         t0 = _t.monotonic()
         try:
             r = _hx.post(
                 f"{base_url}/chat/completions",
-                json={"model": model_id, "messages": [{"role": "user", "content": "ping"}],
-                      "max_tokens": 1, "stream": False},
+                json={
+                    "model": model_id,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                    "stream": False,
+                },
                 timeout=5.0,
             )
             ok = r.status_code in (200, 201)
-            return {"ok": ok, "status_code": r.status_code,
-                    "latency_ms": int((_t.monotonic() - t0) * 1000),
-                    "model": model_id, "error": None if ok else r.text[:200]}
+            return {
+                "ok": ok,
+                "status_code": r.status_code,
+                "latency_ms": int((_t.monotonic() - t0) * 1000),
+                "model": model_id,
+                "error": None if ok else r.text[:200],
+            }
         except Exception as exc:
-            return {"ok": False, "status_code": None,
-                    "latency_ms": int((_t.monotonic() - t0) * 1000),
-                    "model": model_id, "error": str(exc)[:200]}
+            return {
+                "ok": False,
+                "status_code": None,
+                "latency_ms": int((_t.monotonic() - t0) * 1000),
+                "model": model_id,
+                "error": str(exc)[:200],
+            }
 
     primary = _probe_model(cfg.serving.base_url, cfg.serving.workhorse_model)
 
@@ -1887,11 +2003,13 @@ def system_llm_health():
 def system_hardware():
     """Return server hardware telemetry: CPU, RAM, disk, GPU (if available)."""
     import time as _time
+
     result: dict = {}
 
     # ── CPU / RAM / Disk (psutil) ─────────────────────────────────────────────
     try:
         import psutil
+
         result["cpu_percent"] = psutil.cpu_percent(interval=0.1)
         result["cpu_count"] = psutil.cpu_count(logical=True) or 1
         mem = psutil.virtual_memory()
@@ -1902,6 +2020,7 @@ def system_hardware():
         }
         try:
             import sys as _sys
+
             _disk_path = "C:\\" if _sys.platform == "win32" else "/"
             disk = psutil.disk_usage(_disk_path)
             result["disk"] = {
@@ -1924,23 +2043,30 @@ def system_hardware():
     gpu_info: list[dict] = []
     try:
         import subprocess as _sp
+
         r = _sp.run(
-            ["nvidia-smi",
-             "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=3,
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
         if r.returncode == 0:
             for line in r.stdout.strip().splitlines():
                 parts = [p.strip() for p in line.split(",")]
                 if len(parts) >= 3:
-                    gpu_info.append({
-                        "name": parts[0],
-                        "vram_used_mb": _safe_int(parts[1]),
-                        "vram_total_mb": _safe_int(parts[2]),
-                        "utilization_percent": _safe_int(parts[3]) if len(parts) > 3 else None,
-                        "temp_c": _safe_int(parts[4]) if len(parts) > 4 else None,
-                    })
+                    gpu_info.append(
+                        {
+                            "name": parts[0],
+                            "vram_used_mb": _safe_int(parts[1]),
+                            "vram_total_mb": _safe_int(parts[2]),
+                            "utilization_percent": _safe_int(parts[3]) if len(parts) > 3 else None,
+                            "temp_c": _safe_int(parts[4]) if len(parts) > 4 else None,
+                        }
+                    )
     except Exception:
         pass
 
@@ -1949,18 +2075,21 @@ def system_hardware():
         try:
             import json as _json
             import subprocess as _sp
+
             r = _sp.run(["rocm-smi", "--json"], capture_output=True, text=True, timeout=3)
             if r.returncode == 0:
                 data = _json.loads(r.stdout)
                 for _k, v in data.items():
                     if isinstance(v, dict):
-                        gpu_info.append({
-                            "name": v.get("Card series", "AMD GPU"),
-                            "vram_used_mb": None,
-                            "vram_total_mb": None,
-                            "utilization_percent": _safe_int(v.get("GPU use (%)", None)),
-                            "temp_c": _safe_int(v.get("Temperature (Sensor edge) (°C)", None)),
-                        })
+                        gpu_info.append(
+                            {
+                                "name": v.get("Card series", "AMD GPU"),
+                                "vram_used_mb": None,
+                                "vram_total_mb": None,
+                                "utilization_percent": _safe_int(v.get("GPU use (%)", None)),
+                                "temp_c": _safe_int(v.get("Temperature (Sensor edge) (°C)", None)),
+                            }
+                        )
         except Exception:
             pass
 
@@ -2043,6 +2172,7 @@ def get_access_log(limit: int = 200):
 @router.get("/briefing")
 def get_briefing():
     import datetime
+
     db = get_db()
     summary = db.dashboard_summary()
     now = datetime.datetime.now(datetime.UTC)
@@ -2116,6 +2246,7 @@ def get_briefing():
 
 # ── User Profile API ─────────────────────────────────────────────────────────
 
+
 class _ProfileUpdate(BaseModel):
     user_name: str | None = None
     user_bio: str | None = None
@@ -2129,8 +2260,8 @@ _VALID_COMM_STYLES = {"casual", "direct", "socratic", "formal", "technical", ""}
 def get_profile():
     db = get_db()
     return {
-        "user_name":          db.get_setting("user_name", ""),
-        "user_bio":           db.get_setting("user_bio", ""),
+        "user_name": db.get_setting("user_name", ""),
+        "user_bio": db.get_setting("user_bio", ""),
         "communication_style": db.get_setting("communication_style", ""),
     }
 
@@ -2146,8 +2277,12 @@ def update_profile(body: _ProfileUpdate):
         style = body.communication_style.strip().lower()
         if style not in _VALID_COMM_STYLES:
             from fastapi import HTTPException
-            raise HTTPException(400, f"Invalid communication_style {style!r}. "
-                                f"Must be one of: {sorted(_VALID_COMM_STYLES - {''})}")
+
+            raise HTTPException(
+                400,
+                f"Invalid communication_style {style!r}. "
+                f"Must be one of: {sorted(_VALID_COMM_STYLES - {''})}",
+            )
         db.set_setting("communication_style", style, actor="user")
     return get_profile()
 
@@ -2165,6 +2300,7 @@ class _WatchDirEntry(BaseModel):
 def list_watch_dirs():
     """Return the configured watch directories and last scan status."""
     from orivellum.capabilities.folder_watch import get_watch_dirs, get_watch_status
+
     db = get_db()
     dirs = get_watch_dirs(db)
     status = get_watch_status(db)
@@ -2173,11 +2309,13 @@ def list_watch_dirs():
     enriched = []
     for entry in dirs:
         ds = status_by_path.get(entry.get("path"), {})
-        enriched.append({
-            **entry,
-            "last_scan_files_imported": ds.get("files_imported", 0),
-            "last_scan_error": ds.get("error"),
-        })
+        enriched.append(
+            {
+                **entry,
+                "last_scan_files_imported": ds.get("files_imported", 0),
+                "last_scan_error": ds.get("error"),
+            }
+        )
     return {
         "dirs": enriched,
         "scanned_at": status.get("scanned_at"),
@@ -2188,6 +2326,7 @@ def list_watch_dirs():
 def add_watch_dir(entry: _WatchDirEntry):
     """Append a new watch directory to the list."""
     from orivellum.capabilities.folder_watch import get_watch_dirs, set_watch_dirs
+
     db = get_db()
     dirs = get_watch_dirs(db)
     # Reject duplicate paths
@@ -2202,6 +2341,7 @@ def add_watch_dir(entry: _WatchDirEntry):
 def update_watch_dir(index: int, entry: _WatchDirEntry):
     """Update a watch directory entry by index."""
     from orivellum.capabilities.folder_watch import get_watch_dirs, set_watch_dirs
+
     db = get_db()
     dirs = get_watch_dirs(db)
     if index < 0 or index >= len(dirs):
@@ -2215,6 +2355,7 @@ def update_watch_dir(index: int, entry: _WatchDirEntry):
 def delete_watch_dir(index: int):
     """Remove a watch directory by index."""
     from orivellum.capabilities.folder_watch import get_watch_dirs, set_watch_dirs
+
     db = get_db()
     dirs = get_watch_dirs(db)
     if index < 0 or index >= len(dirs):
@@ -2227,17 +2368,28 @@ def delete_watch_dir(index: int):
 # ── Extraction templates ───────────────────────────────────────────────────────
 
 _VALID_DOC_KINDS = {
-    "pdf", "docx", "excel", "csv", "markdown", "text",
-    "image", "audio", "pptx", "html", "json", "code", "file",
+    "pdf",
+    "docx",
+    "excel",
+    "csv",
+    "markdown",
+    "text",
+    "image",
+    "audio",
+    "pptx",
+    "html",
+    "json",
+    "code",
+    "file",
 }
 
 
 class ExtractionTemplateCreate(BaseModel):
     name: str
     system_prompt: str
-    kind_label: str | None = None   # None = applies to any document kind
-    field_hints: list[str] = []     # optional extraction hints shown to the model
-    work_id: str | None = None      # None = applies to any Work
+    kind_label: str | None = None  # None = applies to any document kind
+    field_hints: list[str] = []  # optional extraction hints shown to the model
+    work_id: str | None = None  # None = applies to any Work
 
 
 class ExtractionTemplateUpdate(BaseModel):
@@ -2246,8 +2398,8 @@ class ExtractionTemplateUpdate(BaseModel):
     kind_label: str | None = None
     field_hints: list[str] | None = None
     work_id: str | None = None
-    clear_work_id: bool = False       # explicitly set work_id to NULL
-    clear_kind_label: bool = False    # explicitly set kind_label to NULL
+    clear_work_id: bool = False  # explicitly set work_id to NULL
+    clear_kind_label: bool = False  # explicitly set kind_label to NULL
 
 
 @router.get("/system/web-search-status")
@@ -2259,6 +2411,7 @@ def get_web_search_status():
     is shown instead so users know what they need to do.
     """
     import os
+
     configured = bool(os.environ.get("TAVILY_API_KEY", "").strip())
     return {"configured": configured, "provider": "tavily" if configured else None}
 
@@ -2277,8 +2430,7 @@ def create_extraction_template(body: ExtractionTemplateCreate):
     if body.kind_label and body.kind_label not in _VALID_DOC_KINDS:
         raise HTTPException(
             422,
-            f"Unknown kind_label '{body.kind_label}'. "
-            f"Valid values: {sorted(_VALID_DOC_KINDS)}",
+            f"Unknown kind_label '{body.kind_label}'. Valid values: {sorted(_VALID_DOC_KINDS)}",
         )
     if not body.name.strip():
         raise HTTPException(422, "name must not be blank")
@@ -2404,6 +2556,7 @@ def reharvest_with_template(template_id: str, background_tasks: BackgroundTasks)
         try:
             from orivellum.capabilities.extraction import ExtractionResult, PageSegment
             from orivellum.capabilities.knowledge_harvest import llm_harvest
+
             # Rebuild a minimal ExtractionResult from the stored extracted_text.
             with db._lock:
                 row = db._conn.execute(
@@ -2411,14 +2564,12 @@ def reharvest_with_template(template_id: str, background_tasks: BackgroundTasks)
                 ).fetchone()
             text = (row["extracted_text"] if row else "") or ""
             if not text:
-                logger.debug(
-                    "reharvest: doc %s has no extracted_text — skipping", doc["id"][:8]
-                )
+                logger.debug("reharvest: doc %s has no extracted_text — skipping", doc["id"][:8])
                 return
             # Segment the text into ~2000-char chunks mirroring the normal pipeline.
             chunk_size = 2000
             segments = [
-                PageSegment(page=i, text=text[i * chunk_size:(i + 1) * chunk_size])
+                PageSegment(page=i, text=text[i * chunk_size : (i + 1) * chunk_size])
                 for i in range(0, max(1, (len(text) + chunk_size - 1) // chunk_size))
             ]
             er = ExtractionResult(
@@ -2440,9 +2591,11 @@ def reharvest_with_template(template_id: str, background_tasks: BackgroundTasks)
 
     queued = 0
     from orivellum.api.executor import submit_bg as _submit_bg_rh
+
     for doc in docs:
         _submit_bg_rh(
-            _run_reharvest, doc,
+            _run_reharvest,
+            doc,
             kind="pipeline",
             label=f"reharvest:{doc['id'][:8]}",
         )

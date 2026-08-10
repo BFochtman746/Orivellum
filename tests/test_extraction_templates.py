@@ -7,30 +7,30 @@ Covers:
   - llm_harvest: uses matching template prompt; falls back to default when
     no template matches; _using_custom_template flag is set correctly.
 """
+
 from __future__ import annotations
 
 import json
-import sqlite3
-import tempfile
 import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db(tmp: Path):
     """Return an OrivellumDB pointing at a fresh in-memory database."""
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(":memory:")
 
 
 # ---------------------------------------------------------------------------
 # Section 1 — DB CRUD
 # ---------------------------------------------------------------------------
+
 
 class TestExtractionTemplateDB:
     def test_create_and_get(self, tmp_path):
@@ -117,6 +117,7 @@ class TestExtractionTemplateDB:
 # Section 2 — Template priority lookup
 # ---------------------------------------------------------------------------
 
+
 class TestGetTemplateForDoc:
     """Verifies the 3-tier priority: kind+work > kind-only > work-only > None."""
 
@@ -150,8 +151,9 @@ class TestGetTemplateForDoc:
     def test_work_only_match(self, tmp_path):
         db = _make_db(tmp_path)
         wid = self._seed_work(db)
-        t = db.create_extraction_template("Work match", "W {title} {chunk}",
-                                          kind_label=None, work_id=wid)
+        t = db.create_extraction_template(
+            "Work match", "W {title} {chunk}", kind_label=None, work_id=wid
+        )
         result = db.get_template_for_doc("docx", wid)
         assert result is not None
         assert result["id"] == t["id"]
@@ -159,19 +161,20 @@ class TestGetTemplateForDoc:
     def test_exact_kind_plus_work_takes_priority_over_kind_only(self, tmp_path):
         db = _make_db(tmp_path)
         wid = self._seed_work(db)
-        t_kind = db.create_extraction_template("Kind-only",  "A {title} {chunk}", kind_label="pdf")
-        t_both = db.create_extraction_template("Kind+work", "B {title} {chunk}",
-                                               kind_label="pdf", work_id=wid)
+        t_kind = db.create_extraction_template("Kind-only", "A {title} {chunk}", kind_label="pdf")
+        t_both = db.create_extraction_template(
+            "Kind+work", "B {title} {chunk}", kind_label="pdf", work_id=wid
+        )
         result = db.get_template_for_doc("pdf", wid)
         assert result["id"] == t_both["id"], "kind+work must beat kind-only"
 
     def test_exact_kind_plus_work_takes_priority_over_work_only(self, tmp_path):
         db = _make_db(tmp_path)
         wid = self._seed_work(db)
-        t_work = db.create_extraction_template("Work-only",  "A {title} {chunk}",
-                                               work_id=wid)
-        t_both = db.create_extraction_template("Kind+work", "B {title} {chunk}",
-                                               kind_label="pdf", work_id=wid)
+        t_work = db.create_extraction_template("Work-only", "A {title} {chunk}", work_id=wid)
+        t_both = db.create_extraction_template(
+            "Kind+work", "B {title} {chunk}", kind_label="pdf", work_id=wid
+        )
         result = db.get_template_for_doc("pdf", wid)
         assert result["id"] == t_both["id"], "kind+work must beat work-only"
 
@@ -201,15 +204,19 @@ class TestGetTemplateForDoc:
 # Section 3 — llm_harvest uses custom template
 # ---------------------------------------------------------------------------
 
+
 class TestLlmHarvestTemplateIntegration:
     """Verifies llm_harvest selects and formats the matching template prompt."""
 
     def _make_extraction_result(self):
         from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+
         pages = [PageSegment(page=0, text="The defendant agreed to pay damages.")]
         return ExtractionResult(
-            kind="pdf", full_text="The defendant agreed to pay damages.",
-            word_count=6, pages=pages,
+            kind="pdf",
+            full_text="The defendant agreed to pay damages.",
+            word_count=6,
+            pages=pages,
         )
 
     def test_uses_custom_template_prompt(self, tmp_path):
@@ -228,16 +235,18 @@ class TestLlmHarvestTemplateIntegration:
             return json.dumps({"entities": [], "claims": [], "relationships": []})
 
         er = self._make_extraction_result()
-        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_fake_llm):
-            with patch("orivellum.api._deps.get_config") as mc:
-                cfg = MagicMock()
-                cfg.serving.base_url = "http://localhost:9999/v1"
-                cfg.serving.workhorse_model = "test-model"
-                cfg.serving.extraction_timeout_sec = 5
-                mc.return_value = cfg
-                from orivellum.capabilities.knowledge_harvest import llm_harvest
-                llm_harvest(er, doc_id="doc-1", work_id=None, doc_title="Contract",
-                            db=db, kind="pdf")
+        with (
+            patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_fake_llm),
+            patch("orivellum.api._deps.get_config") as mc,
+        ):
+            cfg = MagicMock()
+            cfg.serving.base_url = "http://localhost:9999/v1"
+            cfg.serving.workhorse_model = "test-model"
+            cfg.serving.extraction_timeout_sec = 5
+            mc.return_value = cfg
+            from orivellum.capabilities.knowledge_harvest import llm_harvest
+
+            llm_harvest(er, doc_id="doc-1", work_id=None, doc_title="Contract", db=db, kind="pdf")
 
         assert captured_prompt, "LLM must have been called"
         prompt_text = captured_prompt[0]
@@ -262,16 +271,18 @@ class TestLlmHarvestTemplateIntegration:
             return json.dumps({"entities": [], "claims": [], "relationships": []})
 
         er = self._make_extraction_result()
-        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_fake_llm):
-            with patch("orivellum.api._deps.get_config") as mc:
-                cfg = MagicMock()
-                cfg.serving.base_url = "http://localhost:9999/v1"
-                cfg.serving.workhorse_model = "test-model"
-                cfg.serving.extraction_timeout_sec = 5
-                mc.return_value = cfg
-                from orivellum.capabilities.knowledge_harvest import llm_harvest, _EXTRACT_PROMPT
-                llm_harvest(er, doc_id="doc-1", work_id=None, doc_title="Contract",
-                            db=db, kind="pdf")
+        with (
+            patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_fake_llm),
+            patch("orivellum.api._deps.get_config") as mc,
+        ):
+            cfg = MagicMock()
+            cfg.serving.base_url = "http://localhost:9999/v1"
+            cfg.serving.workhorse_model = "test-model"
+            cfg.serving.extraction_timeout_sec = 5
+            mc.return_value = cfg
+            from orivellum.capabilities.knowledge_harvest import llm_harvest
+
+            llm_harvest(er, doc_id="doc-1", work_id=None, doc_title="Contract", db=db, kind="pdf")
 
         assert captured_prompt, "LLM must be called even without a template"
         # Default prompt must not contain the Excel template's text
@@ -296,16 +307,18 @@ class TestLlmHarvestTemplateIntegration:
             return json.dumps({"entities": [], "claims": [], "relationships": []})
 
         er = self._make_extraction_result()
-        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_fake_llm):
-            with patch("orivellum.api._deps.get_config") as mc:
-                cfg = MagicMock()
-                cfg.serving.base_url = "http://localhost:9999/v1"
-                cfg.serving.workhorse_model = "test-model"
-                cfg.serving.extraction_timeout_sec = 5
-                mc.return_value = cfg
-                from orivellum.capabilities.knowledge_harvest import llm_harvest
-                llm_harvest(er, doc_id="doc-1", work_id=None, doc_title="Standup",
-                            db=db, kind="docx")
+        with (
+            patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", side_effect=_fake_llm),
+            patch("orivellum.api._deps.get_config") as mc,
+        ):
+            cfg = MagicMock()
+            cfg.serving.base_url = "http://localhost:9999/v1"
+            cfg.serving.workhorse_model = "test-model"
+            cfg.serving.extraction_timeout_sec = 5
+            mc.return_value = cfg
+            from orivellum.capabilities.knowledge_harvest import llm_harvest
+
+            llm_harvest(er, doc_id="doc-1", work_id=None, doc_title="Standup", db=db, kind="docx")
 
         assert captured_prompt
         assert "Always list the meeting date" in captured_prompt[0]
@@ -316,12 +329,14 @@ class TestLlmHarvestTemplateIntegration:
 # Section 4 — Nightshift sparse-harvest passes kind= to llm_harvest
 # ---------------------------------------------------------------------------
 
+
 class TestNightshiftKindPassthrough:
     """Verify _pass_sparse_harvest forwards the document kind to llm_harvest."""
 
     def test_kind_forwarded_to_llm_harvest(self, tmp_path, monkeypatch):
         """_pass_sparse_harvest must call llm_harvest with kind= matching the document."""
         from orivellum.database.db import OrivellumDB
+
         db = OrivellumDB(":memory:")
 
         # Stub _get_docs_needing_work to return one synthetic PDF doc
@@ -349,15 +364,19 @@ class TestNightshiftKindPassthrough:
         )
         # Stub chunks so _pass_sparse_harvest builds an ExtractionResult
         import types
+
         fake_chunks_row = [types.SimpleNamespace(text="Some extracted text from a PDF.")]
 
         class _FakeCursor:
             def fetchall(self_):
                 return [{"text": "Some extracted text from a PDF."}]
+
         class _FakeConn:
             def execute(self_, q, args=()):
                 return _FakeCursor()
+
         import threading
+
         db._lock = threading.Lock()
         db._conn = _FakeConn()
         db.get_document = _fake_get_document
@@ -366,13 +385,12 @@ class TestNightshiftKindPassthrough:
         def _fake_harvest(result, *, doc_id, work_id, doc_title, db):
             pass  # rule-based harvest stub
 
-        import importlib
-        import sys
-
         import orivellum.capabilities.nightshift as ns
+
         monkeypatch.setattr(ns, "_get_docs_needing_work", _fake_get_docs)
 
         import orivellum.capabilities.knowledge_harvest as kh
+
         monkeypatch.setattr(kh, "harvest", _fake_harvest)
         monkeypatch.setattr(kh, "llm_harvest", _fake_llm_harvest)
 

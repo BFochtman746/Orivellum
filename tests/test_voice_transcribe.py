@@ -11,6 +11,7 @@ Coverage:
   - success path: transcript text/engine/word_count/duration/language returned
   - oversized clip → 413
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -20,16 +21,15 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import AUTH_HEADERS
-
 from orivellum.api.routes import studio as studio_routes
+from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -45,19 +45,25 @@ def _client(app, db, cfg):
     """TestClient whose lifespan-driven _deps re-init is overridden with the
     test's own db/cfg (the app lifespan wires the real ones on startup)."""
     from orivellum.api import _deps
+
     with TestClient(app) as client:
         _deps.init(db=db, cfg=cfg)
         yield client
 
 
 # Minimal valid magic-byte payloads
-_WEBM_BYTES = b"\x1a\x45\xdf\xa3" + b"\x00" * 64   # EBML header
+_WEBM_BYTES = b"\x1a\x45\xdf\xa3" + b"\x00" * 64  # EBML header
 _WAV_BYTES = b"RIFF" + b"\x00" * 64
 
 
-def _fake_result(text: str = "hello world", engine: str | None = "faster-whisper (base)",
-                 duration: float | None = 1.5, language: str | None = "en"):
+def _fake_result(
+    text: str = "hello world",
+    engine: str | None = "faster-whisper (base)",
+    duration: float | None = 1.5,
+    language: str | None = "en",
+):
     from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+
     meta: dict = {}
     if engine:
         meta["transcription"] = engine
@@ -108,26 +114,36 @@ class VoiceTranscribeTest(unittest.TestCase):
         self.assertEqual(r.status_code, 415)
 
     def test_webm_signature_accepted(self):
-        with mock.patch("orivellum.capabilities.extraction.extract",
-                        return_value=_fake_result()) as m:
-            with _client(self.app, self.db, self.cfg) as client:
-                r = self._post(client, "clip.webm", _WEBM_BYTES)
+        with (
+            mock.patch(
+                "orivellum.capabilities.extraction.extract", return_value=_fake_result()
+            ) as m,
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            r = self._post(client, "clip.webm", _WEBM_BYTES)
         self.assertEqual(r.status_code, 200)
         m.assert_called_once()
 
     def test_no_engine_503(self):
-        with mock.patch("orivellum.capabilities.extraction.extract",
-                        return_value=_fake_result(engine=None)):
-            with _client(self.app, self.db, self.cfg) as client:
-                r = self._post(client, "clip.wav", _WAV_BYTES)
+        with (
+            mock.patch(
+                "orivellum.capabilities.extraction.extract", return_value=_fake_result(engine=None)
+            ),
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            r = self._post(client, "clip.wav", _WAV_BYTES)
         self.assertEqual(r.status_code, 503)
         self.assertIn("Transcription unavailable", r.json()["detail"])
 
     def test_success_returns_transcript_fields(self):
-        with mock.patch("orivellum.capabilities.extraction.extract",
-                        return_value=_fake_result(text="the quick brown fox")):
-            with _client(self.app, self.db, self.cfg) as client:
-                r = self._post(client, "clip.webm", _WEBM_BYTES)
+        with (
+            mock.patch(
+                "orivellum.capabilities.extraction.extract",
+                return_value=_fake_result(text="the quick brown fox"),
+            ),
+            _client(self.app, self.db, self.cfg) as client,
+        ):
+            r = self._post(client, "clip.webm", _WEBM_BYTES)
         self.assertEqual(r.status_code, 200)
         body = r.json()
         # Pages carry the raw transcript, not the "[Audio transcript…]" header
@@ -144,17 +160,16 @@ class VoiceTranscribeTest(unittest.TestCase):
         self.assertEqual(r.status_code, 413)
 
     def test_temp_files_cleaned_up(self):
-        with mock.patch("orivellum.capabilities.extraction.extract",
-                        return_value=_fake_result()):
+        with mock.patch("orivellum.capabilities.extraction.extract", return_value=_fake_result()):
             with _client(self.app, self.db, self.cfg) as client:
                 r = self._post(client, "clip.webm", _WEBM_BYTES)
         self.assertEqual(r.status_code, 200)
         import glob
+
         leftovers = glob.glob(str(Path(tempfile.gettempdir()) / "orv-voice-*"))
         # Directories may exist from other runs; ensure none contain our clip
         for d in leftovers:
-            self.assertFalse(list(Path(d).glob("clip.webm")),
-                             f"temp clip not cleaned up in {d}")
+            self.assertFalse(list(Path(d).glob("clip.webm")), f"temp clip not cleaned up in {d}")
 
 
 if __name__ == "__main__":

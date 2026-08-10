@@ -29,6 +29,7 @@ Usage::
         actor="system",
     )
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -42,6 +43,7 @@ from .enums import BookState, JobState, MessageState
 # Exceptions
 # ---------------------------------------------------------------------------
 
+
 class InvalidTransitionError(Exception):
     """Raised when a requested transition is not in the declared graph.
 
@@ -51,8 +53,7 @@ class InvalidTransitionError(Exception):
         allowed:    the set of states that ARE reachable from ``from_state``.
     """
 
-    def __init__(self, from_state: str, to_state: str,
-                 allowed: frozenset[str]) -> None:
+    def __init__(self, from_state: str, to_state: str, allowed: frozenset[str]) -> None:
         super().__init__(
             f"Transition {from_state!r} → {to_state!r} is not declared. "
             f"Allowed from {from_state!r}: {sorted(allowed) or '(terminal)'}"
@@ -89,8 +90,7 @@ class BlockedTransitionError(Exception):
         blockers:   list of finding dicts that are blocking.
     """
 
-    def __init__(self, from_state: str, to_state: str,
-                 blockers: list[dict]) -> None:
+    def __init__(self, from_state: str, to_state: str, blockers: list[dict]) -> None:
         ids = [b["id"][:12] for b in blockers[:3]]
         extra = f" + {len(blockers) - 3} more" if len(blockers) > 3 else ""
         super().__init__(
@@ -105,6 +105,7 @@ class BlockedTransitionError(Exception):
 # ---------------------------------------------------------------------------
 # StateMachine
 # ---------------------------------------------------------------------------
+
 
 class StateMachine:
     """Declarative state machine built from a transition adjacency dict.
@@ -125,9 +126,7 @@ class StateMachine:
 
     def __init__(self, transitions: dict[str, set[str]]) -> None:
         # Freeze sets so the graph is immutable after construction.
-        self._graph: dict[str, frozenset[str]] = {
-            k: frozenset(v) for k, v in transitions.items()
-        }
+        self._graph: dict[str, frozenset[str]] = {k: frozenset(v) for k, v in transitions.items()}
 
     # ── Inspection ──────────────────────────────────────────────────────────
 
@@ -142,14 +141,13 @@ class StateMachine:
     def assert_transition(self, from_state: str, to_state: str) -> None:
         """Raise :exc:`InvalidTransitionError` if the transition is undeclared."""
         if not self.can_transition(from_state, to_state):
-            raise InvalidTransitionError(
-                from_state, to_state, self.allowed_from(from_state)
-            )
+            raise InvalidTransitionError(from_state, to_state, self.allowed_from(from_state))
 
 
 # ---------------------------------------------------------------------------
 # Core transition helper
 # ---------------------------------------------------------------------------
+
 
 def apply_transition(
     db: OrivellumDB,
@@ -241,29 +239,32 @@ def apply_transition(
 # Pre-built state machines for seed enums
 # ---------------------------------------------------------------------------
 
-MESSAGE_SM: StateMachine = StateMachine({
-    # queued → failed: pre-stream disconnect before any token arrives
-    MessageState.queued:    {MessageState.running, MessageState.failed},
-    MessageState.running:   {MessageState.streaming, MessageState.failed},
-    MessageState.streaming: {MessageState.done, MessageState.failed},
-    # done and failed are terminal
-})
+MESSAGE_SM: StateMachine = StateMachine(
+    {
+        # queued → failed: pre-stream disconnect before any token arrives
+        MessageState.queued: {MessageState.running, MessageState.failed},
+        MessageState.running: {MessageState.streaming, MessageState.failed},
+        MessageState.streaming: {MessageState.done, MessageState.failed},
+        # done and failed are terminal
+    }
+)
 """State machine for assistant chat messages."""
 
-JOB_SM: StateMachine = StateMachine({
-    JobState.queued:  {JobState.running, JobState.cancelled},
-    JobState.running: {JobState.done, JobState.failed, JobState.cancelled},
-    # done / failed / cancelled are terminal
-})
+JOB_SM: StateMachine = StateMachine(
+    {
+        JobState.queued: {JobState.running, JobState.cancelled},
+        JobState.running: {JobState.done, JobState.failed, JobState.cancelled},
+        # done / failed / cancelled are terminal
+    }
+)
 """State machine for background jobs."""
 
 # BookState: sequential forward, single-step; backward returns allowed without
 # the blocker check (return transitions are flagged via check_blockers=False).
 _BOOK_ORDER = list(BookState)
-BOOK_SM: StateMachine = StateMachine({
-    state: {_BOOK_ORDER[i + 1]}
-    for i, state in enumerate(_BOOK_ORDER[:-1])
-})
+BOOK_SM: StateMachine = StateMachine(
+    {state: {_BOOK_ORDER[i + 1]} for i, state in enumerate(_BOOK_ORDER[:-1])}
+)
 """State machine for book/chapter production (B0 → B17).
 
 Forward: exactly one step at a time.
@@ -272,16 +273,16 @@ Backward: use apply_transition(..., check_blockers=False) to return scope.
 
 # Human-readable labels for each B-stage (matches web book-tab.tsx)
 BOOK_STAGE_LABELS: dict[str, str] = {
-    "B0":  "Intake",
-    "B1":  "Outline",
-    "B2":  "Research",
-    "B3":  "Architecture",
-    "B4":  "Chapter Extraction",
-    "B5":  "Chapter Drafting",
-    "B6":  "Continuity Review",
-    "B7":  "Fact Check",
-    "B8":  "Style Pass",
-    "B9":  "Editorial Review",
+    "B0": "Intake",
+    "B1": "Outline",
+    "B2": "Research",
+    "B3": "Architecture",
+    "B4": "Chapter Extraction",
+    "B5": "Chapter Drafting",
+    "B6": "Continuity Review",
+    "B7": "Fact Check",
+    "B8": "Style Pass",
+    "B9": "Editorial Review",
     "B10": "Beta Read",
     "B11": "Revision",
     "B12": "Final Polish",

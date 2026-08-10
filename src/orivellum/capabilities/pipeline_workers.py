@@ -11,6 +11,7 @@ Each worker:
 
 Entry point: ``run_stage_worker(pipeline_id, stage, db, cfg)``
 """
+
 from __future__ import annotations
 
 import json
@@ -28,15 +29,16 @@ logger = logging.getLogger("orivellum.pipeline_workers")
 
 # artifact_type, prompt_slot, display label
 _STAGE_CFG: dict[str, tuple[str, str, str]] = {
-    "B0": ("project_brief",    "pipeline.b0.brief",        "Project Brief"),
-    "B1": ("chapter_outline",  "pipeline.b1.outline",      "Chapter Outline"),
-    "B2": ("research_agenda",  "pipeline.b2.research",     "Research Agenda"),
-    "B3": ("architecture",     "pipeline.b3.architecture", "Architecture"),
-    "B4": ("continuity_report","pipeline.b4.continuity",   "Continuity Review"),
-    "B5": ("fact_check_report","pipeline.b5.factcheck",    "Fact Check"),
+    "B0": ("project_brief", "pipeline.b0.brief", "Project Brief"),
+    "B1": ("chapter_outline", "pipeline.b1.outline", "Chapter Outline"),
+    "B2": ("research_agenda", "pipeline.b2.research", "Research Agenda"),
+    "B3": ("architecture", "pipeline.b3.architecture", "Architecture"),
+    "B4": ("continuity_report", "pipeline.b4.continuity", "Continuity Review"),
+    "B5": ("fact_check_report", "pipeline.b5.factcheck", "Fact Check"),
 }
 
 # ── JSON extraction helper ─────────────────────────────────────────────────────
+
 
 def _parse_json(text: str | None, fallback: Any = None) -> Any:
     """Extract the first JSON object or array from an LLM response."""
@@ -59,6 +61,7 @@ def _parse_json(text: str | None, fallback: Any = None) -> Any:
 
 
 # ── Context compiler ──────────────────────────────────────────────────────────
+
 
 def compile_stage_context(pipeline_id: str, stage: str, db: OrivellumDB) -> dict:
     """Assemble a bounded context package for a stage worker.
@@ -106,8 +109,9 @@ def compile_stage_context(pipeline_id: str, stage: str, db: OrivellumDB) -> dict
                ORDER BY confidence DESC LIMIT 20""",
             (work_id,),
         ).fetchall()
-    knowledge = [{"kind": r["kind"], "text": r["text"],
-                  "subject": r["subject"] or ""} for r in k_rows]
+    knowledge = [
+        {"kind": r["kind"], "text": r["text"], "subject": r["subject"] or ""} for r in k_rows
+    ]
 
     # Prior artifacts for all stages before this one
     stage_order = ["B0", "B1", "B2", "B3", "B4", "B5"]
@@ -130,6 +134,7 @@ def compile_stage_context(pipeline_id: str, stage: str, db: OrivellumDB) -> dict
 
 
 # ── Default prompt templates ──────────────────────────────────────────────────
+
 
 def _docs_block(ctx: dict) -> str:
     lines = []
@@ -164,10 +169,10 @@ _PROMPT_SYSTEM = (
 
 
 def _b0_prompt(ctx: dict) -> str:
-    return f"""Work: {ctx['work_title']}
-Description: {ctx['work_description'] or '(none)'}
+    return f"""Work: {ctx["work_title"]}
+Description: {ctx["work_description"] or "(none)"}
 
-Documents ({len(ctx['documents'])}):
+Documents ({len(ctx["documents"])}):
 {_docs_block(ctx)}
 
 Knowledge highlights:
@@ -186,7 +191,7 @@ Produce a JSON project brief with these exact keys:
 
 def _b1_prompt(ctx: dict) -> str:
     brief = ctx["prior_artifacts"].get("B0", {})
-    return f"""Work: {ctx['work_title']}
+    return f"""Work: {ctx["work_title"]}
 Project brief: {json.dumps(brief, ensure_ascii=False)[:400]}
 
 Documents:
@@ -208,7 +213,7 @@ Produce a JSON chapter outline:
 
 def _b2_prompt(ctx: dict) -> str:
     outline = ctx["prior_artifacts"].get("B1", {})
-    return f"""Work: {ctx['work_title']}
+    return f"""Work: {ctx["work_title"]}
 Chapter outline: {json.dumps(outline, ensure_ascii=False)[:600]}
 
 Existing knowledge:
@@ -229,7 +234,7 @@ Identify open research questions and knowledge gaps. Produce JSON:
 def _b3_prompt(ctx: dict) -> str:
     outline = ctx["prior_artifacts"].get("B1", {})
     research = ctx["prior_artifacts"].get("B2", {})
-    return f"""Work: {ctx['work_title']}
+    return f"""Work: {ctx["work_title"]}
 Chapter outline: {json.dumps(outline, ensure_ascii=False)[:400]}
 Research agenda summary: {json.dumps(research, ensure_ascii=False)[:400]}
 
@@ -252,7 +257,7 @@ Design the book's structural architecture. Produce JSON:
 
 def _b4_prompt(ctx: dict) -> str:
     arch = ctx["prior_artifacts"].get("B3", {})
-    return f"""Work: {ctx['work_title']}
+    return f"""Work: {ctx["work_title"]}
 Architecture: {json.dumps(arch, ensure_ascii=False)[:800]}
 
 Check whether the chapter architecture is internally consistent. Specifically:
@@ -277,7 +282,7 @@ Produce JSON:
 
 def _b5_prompt(ctx: dict) -> str:
     arch = ctx["prior_artifacts"].get("B3", {})
-    return f"""Work: {ctx['work_title']}
+    return f"""Work: {ctx["work_title"]}
 Architecture: {json.dumps(arch, ensure_ascii=False)[:600]}
 
 Knowledge base:
@@ -314,14 +319,17 @@ _PROMPT_BUILDERS = {
 
 # ── Stage workers ─────────────────────────────────────────────────────────────
 
-def _call_llm(user_prompt: str, db: OrivellumDB, cfg: OrivellumConfig,
-              purpose: str, timeout: float = 45.0) -> dict | None:
+
+def _call_llm(
+    user_prompt: str, db: OrivellumDB, cfg: OrivellumConfig, purpose: str, timeout: float = 45.0
+) -> dict | None:
     """Call the LLM and return parsed JSON, or None on failure."""
     from orivellum.capabilities.llm import llm_call
+
     result = llm_call(
         [
             {"role": "system", "content": _PROMPT_SYSTEM},
-            {"role": "user",   "content": user_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         cfg=cfg,
         db=db,
@@ -348,8 +356,8 @@ def _post_b4(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
             object_id=pipeline_id,
             object_type="book_pipeline",
             description=(
-                f"[B4 Continuity] {issue.get('chapter_a','?')} ↔ "
-                f"{issue.get('chapter_b','?')}: {issue.get('description','')[:200]}"
+                f"[B4 Continuity] {issue.get('chapter_a', '?')} ↔ "
+                f"{issue.get('chapter_b', '?')}: {issue.get('description', '')[:200]}"
             ),
             kind="continuity",
             severity=sev,
@@ -366,8 +374,8 @@ def _post_b5(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
             object_id=pipeline_id,
             object_type="book_pipeline",
             description=(
-                f"[B5 Fact Check] {claim.get('chapter','?')}: "
-                f"{claim.get('claim','')[:150]} — {claim.get('reason','')[:150]}"
+                f"[B5 Fact Check] {claim.get('chapter', '?')}: "
+                f"{claim.get('claim', '')[:150]} — {claim.get('reason', '')[:150]}"
             ),
             kind="fact_check",
             severity=sev,
@@ -375,6 +383,7 @@ def _post_b5(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
 
 
 # ── Main entry point ─────────────────────────────────────────────────────────
+
 
 def run_stage_worker(
     pipeline_id: str,
@@ -392,9 +401,7 @@ def run_stage_worker(
     artifact_type, prompt_slot, label = _STAGE_CFG[stage]
 
     # Mark as running immediately so the UI can show a spinner
-    db.upsert_pipeline_artifact(
-        pipeline_id, stage, artifact_type, {}, status="running"
-    )
+    db.upsert_pipeline_artifact(pipeline_id, stage, artifact_type, {}, status="running")
 
     try:
         ctx = compile_stage_context(pipeline_id, stage, db)

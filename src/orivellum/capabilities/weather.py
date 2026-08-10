@@ -7,6 +7,7 @@ Flow:
 
 Falls back gracefully to a helpful error message.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,18 +18,34 @@ from typing import Any
 
 logger = logging.getLogger("orivellum.weather")
 
-_GEO_API     = "https://geocoding-api.open-meteo.com/v1/search"
+_GEO_API = "https://geocoding-api.open-meteo.com/v1/search"
 _WEATHER_API = "https://api.open-meteo.com/v1/forecast"
-_TIMEOUT     = 10
+_TIMEOUT = 10
 
 _WMO_CODES: dict[int, str] = {
-    0: "☀️ Clear sky", 1: "🌤️ Mainly clear", 2: "⛅ Partly cloudy", 3: "☁️ Overcast",
-    45: "🌫️ Fog", 48: "🌫️ Icy fog", 51: "🌦️ Light drizzle", 53: "🌦️ Drizzle",
-    55: "🌧️ Heavy drizzle", 61: "🌧️ Slight rain", 63: "🌧️ Moderate rain",
-    65: "🌧️ Heavy rain", 71: "🌨️ Slight snow", 73: "🌨️ Moderate snow",
-    75: "❄️ Heavy snow", 77: "🌨️ Snow grains", 80: "🌦️ Slight showers",
-    81: "🌧️ Moderate showers", 82: "⛈️ Violent showers", 85: "🌨️ Slight snow showers",
-    86: "🌨️ Heavy snow showers", 95: "⛈️ Thunderstorm", 96: "⛈️ Thunderstorm + hail",
+    0: "☀️ Clear sky",
+    1: "🌤️ Mainly clear",
+    2: "⛅ Partly cloudy",
+    3: "☁️ Overcast",
+    45: "🌫️ Fog",
+    48: "🌫️ Icy fog",
+    51: "🌦️ Light drizzle",
+    53: "🌦️ Drizzle",
+    55: "🌧️ Heavy drizzle",
+    61: "🌧️ Slight rain",
+    63: "🌧️ Moderate rain",
+    65: "🌧️ Heavy rain",
+    71: "🌨️ Slight snow",
+    73: "🌨️ Moderate snow",
+    75: "❄️ Heavy snow",
+    77: "🌨️ Snow grains",
+    80: "🌦️ Slight showers",
+    81: "🌧️ Moderate showers",
+    82: "⛈️ Violent showers",
+    85: "🌨️ Slight snow showers",
+    86: "🌨️ Heavy snow showers",
+    95: "⛈️ Thunderstorm",
+    96: "⛈️ Thunderstorm + hail",
     99: "⛈️ Thunderstorm + heavy hail",
 }
 
@@ -44,15 +61,58 @@ def _fetch_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
 
 
 _US_STATES_FULL = (
-    "Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut",
-    "Delaware","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa",
-    "Kansas","Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan",
-    "Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada",
-    "New Hampshire","New Jersey","New Mexico","New York","North Carolina",
-    "North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Rhode Island",
-    "South Carolina","South Dakota","Tennessee","Texas","Utah","Vermont",
-    "Virginia","Washington","West Virginia","Wisconsin","Wyoming",
+    "Alabama",
+    "Alaska",
+    "Arizona",
+    "Arkansas",
+    "California",
+    "Colorado",
+    "Connecticut",
+    "Delaware",
+    "Florida",
+    "Georgia",
+    "Hawaii",
+    "Idaho",
+    "Illinois",
+    "Indiana",
+    "Iowa",
+    "Kansas",
+    "Kentucky",
+    "Louisiana",
+    "Maine",
+    "Maryland",
+    "Massachusetts",
+    "Michigan",
+    "Minnesota",
+    "Mississippi",
+    "Missouri",
+    "Montana",
+    "Nebraska",
+    "Nevada",
+    "New Hampshire",
+    "New Jersey",
+    "New Mexico",
+    "New York",
+    "North Carolina",
+    "North Dakota",
+    "Ohio",
+    "Oklahoma",
+    "Oregon",
+    "Pennsylvania",
+    "Rhode Island",
+    "South Carolina",
+    "South Dakota",
+    "Tennessee",
+    "Texas",
+    "Utah",
+    "Vermont",
+    "Virginia",
+    "Washington",
+    "West Virginia",
+    "Wisconsin",
+    "Wyoming",
 )
+
 
 def _geocode(location: str) -> dict[str, Any] | None:
     """Try several progressively simpler variants of *location* to handle
@@ -64,8 +124,9 @@ def _geocode(location: str) -> dict[str, Any] | None:
         if not name:
             return None
         try:
-            data = _fetch_json(_GEO_API, {"name": name, "count": 1,
-                                          "language": "en", "format": "json"})
+            data = _fetch_json(
+                _GEO_API, {"name": name, "count": 1, "language": "en", "format": "json"}
+            )
             results = data.get("results", [])
             return results[0] if results else None
         except Exception as exc:
@@ -82,7 +143,9 @@ def _geocode(location: str) -> dict[str, Any] | None:
         r",?\s+\b(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|"
         r"ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|"
         r"SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|USA|US)\b\.?$",
-        "", location, flags=_re.IGNORECASE,
+        "",
+        location,
+        flags=_re.IGNORECASE,
     ).strip()
     if abbr_stripped and abbr_stripped.lower() != location.lower():
         result = _try(abbr_stripped)
@@ -97,7 +160,7 @@ def _geocode(location: str) -> dict[str, Any] | None:
             result = _try(stripped2)
             if result:
                 return result
-            break   # only attempt one state removal
+            break  # only attempt one state removal
 
     # 4. Everything before the first comma ("London, Ontario" → "London")
     comma_part = location.split(",")[0].strip()
@@ -108,9 +171,7 @@ def _geocode(location: str) -> dict[str, Any] | None:
 
     # 5. First word only ("Mystic Connecticut" → "Mystic")
     first_word = location.split()[0].rstrip(",.")
-    if len(first_word) > 2 and first_word.lower() not in (
-        location.lower(), comma_part.lower()
-    ):
+    if len(first_word) > 2 and first_word.lower() not in (location.lower(), comma_part.lower()):
         result = _try(first_word)
         if result:
             return result
@@ -132,7 +193,7 @@ def get_weather(location: str) -> str:
         return (
             "📍 **Weather**\n\n"
             "I couldn't determine the location you're asking about. "
-            "Please specify a city, e.g. *\"What's the weather in London?\"*"
+            'Please specify a city, e.g. *"What\'s the weather in London?"*'
         )
 
     geo = _geocode(location)
@@ -142,21 +203,24 @@ def get_weather(location: str) -> str:
             "I couldn't find that location. Please try a more specific city name."
         )
 
-    lat  = geo["latitude"]
-    lon  = geo["longitude"]
+    lat = geo["latitude"]
+    lon = geo["longitude"]
     name = geo.get("name", location)
     country = geo.get("country_code", "").upper()
     display = f"{name}, {country}" if country else name
 
     try:
-        data = _fetch_json(_WEATHER_API, {
-            "latitude": lat,
-            "longitude": lon,
-            "current_weather": "true",
-            "hourly": "relativehumidity_2m,apparent_temperature",
-            "forecast_days": 1,
-            "timezone": "auto",
-        })
+        data = _fetch_json(
+            _WEATHER_API,
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "current_weather": "true",
+                "hourly": "relativehumidity_2m,apparent_temperature",
+                "forecast_days": 1,
+                "timezone": "auto",
+            },
+        )
     except Exception as exc:
         logger.warning("Weather fetch failed for %r: %s", location, exc)
         return (
@@ -166,10 +230,10 @@ def get_weather(location: str) -> str:
         )
 
     cw = data.get("current_weather", {})
-    temp     = cw.get("temperature")
-    windspd  = cw.get("windspeed")
-    winddir  = cw.get("winddirection")
-    wmo      = cw.get("weathercode", 0)
+    temp = cw.get("temperature")
+    windspd = cw.get("windspeed")
+    winddir = cw.get("winddirection")
+    wmo = cw.get("weathercode", 0)
     condition = _WMO_CODES.get(int(wmo), "Unknown")
 
     # Get humidity from hourly (first hour)

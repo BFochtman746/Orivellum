@@ -6,13 +6,13 @@ These tests enforce the core invariant:
 The tests are entirely in-process — no HTTP, no live LLM, no real DB write.
 They run fast and must stay green when anything in the intake pipeline changes.
 """
+
 from __future__ import annotations
 
-import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
-
+from unittest.mock import MagicMock, patch
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _make_db(doc: dict) -> MagicMock:
     """Return a fake DB where get_document() returns *doc*."""
@@ -40,6 +40,7 @@ def _make_cfg(data_dir: str = "/tmp") -> MagicMock:
 def _run(doc: dict, *, research: bool = False):
     """Run intake on a fake document and return the profile."""
     from orivellum.capabilities.intake import run_intake
+
     db = _make_db(doc)
     cfg = _make_cfg()
     with patch("orivellum.capabilities.embeddings.embed_chunks_for_doc", return_value=0):
@@ -49,8 +50,8 @@ def _run(doc: dict, *, research: bool = False):
 
 # ── Test: ARTIFACT objects never get slot_book or create_work actions ──────────
 
-class TestNoWorkPollution:
 
+class TestNoWorkPollution:
     def test_artifact_doc_has_no_slot_book_action(self):
         """ARTIFACT-tiered documents must never produce a slot_book action."""
         doc = {
@@ -149,41 +150,46 @@ class TestNoWorkPollution:
 
 # ── Test: classifier enforces ARTIFACT correctly ───────────────────────────────
 
-class TestClassifierGate:
 
+class TestClassifierGate:
     def test_migration_batch_classified_artifact(self):
         """Migration batch filenames must be classified as ARTIFACT, not SOURCE."""
-        from orivellum.capabilities.classify import classify_object, Tier
+        from orivellum.capabilities.classify import Tier, classify_object
+
         result = classify_object("A01_MIGRATION_BATCH_011.docx", kind="docx")
         assert result.tier == Tier.ARTIFACT, f"Expected ARTIFACT, got {result.tier}"
 
     def test_run_script_classified_artifact(self):
-        from orivellum.capabilities.classify import classify_object, Tier
+        from orivellum.capabilities.classify import Tier, classify_object
+
         result = classify_object("Run-001_Core_Function_Test.docx", kind="docx")
         assert result.tier == Tier.ARTIFACT
 
     def test_chapter_classified_canon(self):
-        from orivellum.capabilities.classify import classify_object, Tier
+        from orivellum.capabilities.classify import Tier, classify_object
+
         result = classify_object("chapter_01_ash_and_silence.docx", kind="docx")
         assert result.tier == Tier.CANON
 
     def test_research_paper_classified_source(self):
-        from orivellum.capabilities.classify import classify_object, Tier
+        from orivellum.capabilities.classify import Tier, classify_object
+
         result = classify_object("narrative_theory_review.pdf", kind="pdf")
         assert result.tier == Tier.SOURCE
 
     def test_receipt_image_classified_source(self):
-        from orivellum.capabilities.classify import classify_object, Tier
+        from orivellum.capabilities.classify import Tier, classify_object
+
         result = classify_object("receipt_starbucks_2024.jpg", kind="image")
         assert result.tier == Tier.SOURCE
 
 
 # ── Test: intake profile shape ─────────────────────────────────────────────────
 
-class TestIntakeProfileShape:
 
+class TestIntakeProfileShape:
     def test_profile_has_required_fields(self):
-        from orivellum.capabilities.intake import IntakeProfile
+
         doc = {
             "id": "doc-shape-001",
             "title": "some_document.pdf",
@@ -209,6 +215,7 @@ class TestIntakeProfileShape:
     def test_missing_doc_returns_error_profile(self):
         """Requesting intake for a non-existent doc returns an error profile, not an exception."""
         from orivellum.capabilities.intake import run_intake
+
         db = _make_db(None)  # get_document returns None
         db.get_document.return_value = None
         cfg = _make_cfg()
@@ -246,7 +253,9 @@ class TestIntakeProfileShape:
         }
         profile, _ = _run(doc)
         action_ids = {a.id for a in profile.suggested_actions}
-        assert "extract_actions" in action_ids, f"Whiteboard did not get extract_actions; got {action_ids}"
+        assert "extract_actions" in action_ids, (
+            f"Whiteboard did not get extract_actions; got {action_ids}"
+        )
 
     def test_research_not_run_by_default(self):
         """Stage 4 (research) must not run unless research=True is passed."""

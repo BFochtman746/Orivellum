@@ -21,6 +21,7 @@ Usage:
 
   python scripts/collect_inventory.py --dry-run   # print JSON, don't POST
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,17 +32,21 @@ import platform
 import re
 import subprocess
 import sys
-import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+import urllib.request
+from datetime import UTC, datetime
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
 
 def _run(cmd: list[str], timeout: int = 10) -> str:
     """Run a command and return stdout as a string, '' on failure."""
     try:
         r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
             errors="replace",
         )
         return r.stdout.strip()
@@ -151,9 +156,9 @@ def _collect_windows() -> dict:
     if dimm_sum or os_visible:
         primary = dimm_sum if dimm_sum else os_visible
         result["memory"] = {
-            "TotalPhysicalMemory": primary,           # installed DRAM (DIMM sum)
+            "TotalPhysicalMemory": primary,  # installed DRAM (DIMM sum)
             "PhysicalMemoryCapacitySum": dimm_sum or primary,
-            "OsVisibleMemory": os_visible,            # informational: post-firmware
+            "OsVisibleMemory": os_visible,  # informational: post-firmware
         }
 
     # GPU — NO AdapterRAM (INV-REQ-001)
@@ -191,6 +196,7 @@ def _collect_windows() -> dict:
 
 
 # ── Linux /proc reader ─────────────────────────────────────────────────────────
+
 
 def _read_file(path: str) -> str:
     try:
@@ -309,11 +315,11 @@ _LEMONADE_PORTS = [13305, 11434, 8080, 1234]
 # Lemonade and Ollama expose memory through different paths depending on version.
 # We try all known paths; first non-empty result wins.
 _VRAM_PATHS = [
-    "/api/memory",            # Lemonade ≥0.13 standard
-    "/v1/memory",             # alternate prefix
-    "/api/v1/memory",         # alternate prefix
-    "/memory",                # bare path
-    "/info",                  # some Lemonade builds return {vram_total, vram_free}
+    "/api/memory",  # Lemonade ≥0.13 standard
+    "/v1/memory",  # alternate prefix
+    "/api/v1/memory",  # alternate prefix
+    "/memory",  # bare path
+    "/info",  # some Lemonade builds return {vram_total, vram_free}
     "/api/info",
     "/api/status",
 ]
@@ -327,22 +333,23 @@ def _parse_vram_response(data: dict) -> tuple[int, int] | None:
     Returns (total_bytes, free_bytes) or None.
     """
     candidates = [
-        ("total",       "free"),
-        ("vram_total",  "vram_free"),
+        ("total", "free"),
+        ("vram_total", "vram_free"),
         ("totalMemory", "freeMemory"),
-        ("total_memory","free_memory"),
-        ("gpu_memory",  "gpu_memory_free"),
+        ("total_memory", "free_memory"),
+        ("gpu_memory", "gpu_memory_free"),
     ]
     for total_key, free_key in candidates:
         if total_key in data and data[total_key]:
             total = int(data[total_key])
-            free  = int(data.get(free_key, 0))
-            if total > 1_000_000:   # sanity: must be at least 1 MB
+            free = int(data.get(free_key, 0))
+            if total > 1_000_000:  # sanity: must be at least 1 MB
                 return total, free
     return None
 
 
 # ── Strategy 2: AMD ROCm rocm-smi ─────────────────────────────────────────────
+
 
 def _probe_vram_rocm() -> tuple[int, int] | None:
     """Run rocm-smi --showmeminfo vram and parse the output.
@@ -354,10 +361,10 @@ def _probe_vram_rocm() -> tuple[int, int] | None:
     if not out:
         return None
     total = 0
-    used  = 0
+    used = 0
     for line in out.splitlines():
         low = line.lower()
-        m   = re.search(r":\s*(\d+)", line)
+        m = re.search(r":\s*(\d+)", line)
         if not m:
             continue
         val = int(m.group(1))
@@ -371,6 +378,7 @@ def _probe_vram_rocm() -> tuple[int, int] | None:
 
 
 # ── Strategy 4: Lemonade config file ──────────────────────────────────────────
+
 
 def _probe_vram_lemonade_config() -> int | None:
     """Try to read the GPU memory allocation from a Lemonade config file.
@@ -414,8 +422,14 @@ def _probe_vram_lemonade_config() -> int | None:
             continue
 
         # Top-level scalar keys
-        for key in ("gpu_memory_gb", "vram_gb", "gpu_memory", "vram",
-                    "memory_gb", "gpu_allocation_gb"):
+        for key in (
+            "gpu_memory_gb",
+            "vram_gb",
+            "gpu_memory",
+            "vram",
+            "memory_gb",
+            "gpu_allocation_gb",
+        ):
             val = cfg.get(key)
             if val is not None:
                 try:
@@ -458,6 +472,7 @@ def _probe_vram_lemonade_config() -> int | None:
 # "adapterram" for any vram_* predicate — the authority resolver blocks it.
 # We store it as a separate advisory field ("vram_hint") in the payload so the
 # adapter can use it as a last-resort lower-bound without violating the policy.
+
 
 def _probe_vram_cim_adapter_ram() -> dict | None:
     """Read Win32_VideoController.AdapterRAM for the first AMD/Radeon GPU.
@@ -509,8 +524,13 @@ def _detect_cpu_name() -> str:
     if platform.system() == "Windows" or is_wsl:
         ps_exe = "powershell.exe" if platform.system() != "Windows" else "powershell"
         name = _run(
-            [ps_exe, "-NoProfile", "-NonInteractive", "-Command",
-             "(Get-CimInstance Win32_Processor | Select-Object -First 1).Name"],
+            [
+                ps_exe,
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-CimInstance Win32_Processor | Select-Object -First 1).Name",
+            ],
             timeout=10,
         ).strip()
         if name:
@@ -551,6 +571,7 @@ def _print_vram_fallback_hint(cpu_name: str) -> None:
 
 
 # ── Master VRAM probe ─────────────────────────────────────────────────────────
+
 
 def _probe_vram(manual_gib: float | None = None) -> dict:
     """Return a VRAM descriptor using the best available source.
@@ -611,8 +632,12 @@ def _probe_vram(manual_gib: float | None = None) -> dict:
     _print_vram_fallback_hint(cpu_name)
 
     if adapter_info:
-        gib  = adapter_info["bytes"] / 1_073_741_824
-        note = "SATURATED — real value > 4 GiB" if adapter_info["saturated"] else "may be inaccurate on UMA"
+        gib = adapter_info["bytes"] / 1_073_741_824
+        note = (
+            "SATURATED — real value > 4 GiB"
+            if adapter_info["saturated"]
+            else "may be inaccurate on UMA"
+        )
         print(f"  VRAM hint: Win32 AdapterRAM → {gib:.0f} GiB ({note})")
 
     return {
@@ -636,12 +661,15 @@ def _probe_models() -> list[str]:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+
 def build_payload(subject: str, vram_gib: float | None = None) -> dict:
     """Collect hardware facts and return the inventory payload dict."""
     system = platform.system()
-    is_wsl = "microsoft" in platform.uname().release.lower() if hasattr(platform, "uname") else False
+    is_wsl = (
+        "microsoft" in platform.uname().release.lower() if hasattr(platform, "uname") else False
+    )
 
-    print(f"\nPKLOS System Inventory Collector v0.1.0")
+    print("\nPKLOS System Inventory Collector v0.1.0")
     print(f"Platform: {system}" + (" (WSL)" if is_wsl else ""))
     print(f"Subject:  {subject}\n")
 
@@ -659,15 +687,17 @@ def build_payload(subject: str, vram_gib: float | None = None) -> dict:
     # Print what we found
     if hw.get("cpu"):
         c = hw["cpu"]
-        print(f"  CPU:  {c.get('Name','?')} — {c.get('NumberOfCores','?')} cores / "
-              f"{c.get('NumberOfLogicalProcessors','?')} threads")
+        print(
+            f"  CPU:  {c.get('Name', '?')} — {c.get('NumberOfCores', '?')} cores / "
+            f"{c.get('NumberOfLogicalProcessors', '?')} threads"
+        )
     if hw.get("memory"):
         gib = (hw["memory"].get("TotalPhysicalMemory") or 0) / (1024**3)
         print(f"  RAM:  {gib:.0f} GiB")
     if hw.get("gpu"):
-        print(f"  GPU:  {hw['gpu'].get('Name','?')}")
+        print(f"  GPU:  {hw['gpu'].get('Name', '?')}")
     if hw.get("os"):
-        print(f"  OS:   {hw['os'].get('Caption','?')}")
+        print(f"  OS:   {hw['os'].get('Caption', '?')}")
     if hw.get("storage"):
         tb = (hw["storage"].get("TotalBytes") or 0) / (1024**4)
         print(f"  Disk: {tb:.1f} TiB")
@@ -678,14 +708,14 @@ def build_payload(subject: str, vram_gib: float | None = None) -> dict:
 
     payload: dict = {
         "collector_version": "0.1.0",
-        "collected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "collected_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "subject": subject,
-        "cpu":     hw.get("cpu", {}),
-        "memory":  hw.get("memory", {}),
-        "gpu":     hw.get("gpu", {}),
-        "vram":    {k: v for k, v in vram.items() if not k.startswith("_")},
-        "os":      hw.get("os", {}),
-        "bios":    hw.get("bios", {}),
+        "cpu": hw.get("cpu", {}),
+        "memory": hw.get("memory", {}),
+        "gpu": hw.get("gpu", {}),
+        "vram": {k: v for k, v in vram.items() if not k.startswith("_")},
+        "os": hw.get("os", {}),
+        "bios": hw.get("bios", {}),
         "storage": hw.get("storage", {}),
         "installed_models": models,
     }
@@ -720,7 +750,7 @@ def post_payload(payload: dict, api_url: str, api_key: str) -> None:
         print(f"  Unavailable:      {body.get('claims_unavailable', '?')}")
         violations = body.get("violations") or []
         if violations:
-            print(f"\n  Policy notes:")
+            print("\n  Policy notes:")
             for v in violations:
                 print(f"    {v}")
         print("\nInventory stored. Ask the AI about your specs and it will")
@@ -738,17 +768,29 @@ def main():
     parser = argparse.ArgumentParser(
         description="PKLOS inventory collector — posts hardware facts to Orivellum"
     )
-    parser.add_argument("--api-url", default="http://localhost:8080",
-                        help="Base URL of the Orivellum server (default: http://localhost:8080)")
-    parser.add_argument("--api-key", default=os.environ.get("ORIVELLUM_API_KEY", ""),
-                        help="API key / session secret (or set ORIVELLUM_API_KEY env var)")
-    parser.add_argument("--subject", default="device:a01",
-                        help="Canonical device identifier (default: device:a01)")
-    parser.add_argument("--vram-gb", type=float, default=None,
-                        help="Override VRAM size in GiB (use when the API probe fails). "
-                             "For AMD Ryzen AI MAX+ 395 with 128 GiB: typically 96.")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print the JSON payload without posting it")
+    parser.add_argument(
+        "--api-url",
+        default="http://localhost:8080",
+        help="Base URL of the Orivellum server (default: http://localhost:8080)",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("ORIVELLUM_API_KEY", ""),
+        help="API key / session secret (or set ORIVELLUM_API_KEY env var)",
+    )
+    parser.add_argument(
+        "--subject", default="device:a01", help="Canonical device identifier (default: device:a01)"
+    )
+    parser.add_argument(
+        "--vram-gb",
+        type=float,
+        default=None,
+        help="Override VRAM size in GiB (use when the API probe fails). "
+        "For AMD Ryzen AI MAX+ 395 with 128 GiB: typically 96.",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print the JSON payload without posting it"
+    )
     args = parser.parse_args()
 
     payload = build_payload(args.subject, vram_gib=args.vram_gb)

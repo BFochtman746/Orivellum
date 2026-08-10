@@ -8,15 +8,14 @@ Covers every new probe strategy added for AMD Ryzen AI MAX+ 395:
   - _ADAPTER_RAM_SATURATION_BYTES — 32-bit ceiling constant
   - build_payload() vram_hint plumbing — advisory data in payload, not vram
 """
+
 from __future__ import annotations
 
-import importlib
 import io
 import json
 import os
 import sys
 import tempfile
-import types
 import unittest.mock as mock
 
 import pytest
@@ -27,11 +26,10 @@ sys.path.insert(0, _SCRIPTS_DIR)
 
 import collect_inventory as ci
 
-
 # ── _probe_vram_rocm: parser ───────────────────────────────────────────────────
 
-class TestProbeVramRocm:
 
+class TestProbeVramRocm:
     def _run_with_output(self, fake_output: str) -> tuple[int, int] | None:
         with mock.patch.object(ci, "_run", return_value=fake_output):
             return ci._probe_vram_rocm()
@@ -80,7 +78,7 @@ class TestProbeVramRocm:
         """free_bytes = max(0, total - used) must never be negative."""
         output = (
             "GPU[0]          : VRAM Total Memory (B): 10737418240\n"
-            "GPU[0]          : VRAM Total Used Memory (B): 10737418240\n"   # 100% used
+            "GPU[0]          : VRAM Total Used Memory (B): 10737418240\n"  # 100% used
         )
         result = self._run_with_output(output)
         assert result is not None
@@ -92,8 +90,8 @@ class TestProbeVramRocm:
 
 # ── _probe_vram_lemonade_config: config-file reader ───────────────────────────
 
-class TestProbeVramLemonadeConfig:
 
+class TestProbeVramLemonadeConfig:
     def _probe_with_config(self, cfg: dict) -> int | None:
         """Write cfg to a temp JSON file and probe it."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -103,8 +101,10 @@ class TestProbeVramLemonadeConfig:
 
             # Patch the candidate list to point only at our temp file
             import pathlib
+
             with mock.patch.object(
-                ci, "_probe_vram_lemonade_config",
+                ci,
+                "_probe_vram_lemonade_config",
                 wraps=lambda: self._probe_path(pathlib.Path(cfg_path)),
             ):
                 return ci._probe_vram_lemonade_config()
@@ -117,8 +117,14 @@ class TestProbeVramLemonadeConfig:
         except Exception:
             return None
 
-        for key in ("gpu_memory_gb", "vram_gb", "gpu_memory", "vram",
-                    "memory_gb", "gpu_allocation_gb"):
+        for key in (
+            "gpu_memory_gb",
+            "vram_gb",
+            "gpu_memory",
+            "vram",
+            "memory_gb",
+            "gpu_allocation_gb",
+        ):
             val = cfg.get(key)
             if val is not None:
                 try:
@@ -182,6 +188,7 @@ class TestProbeVramLemonadeConfig:
     def _probe_path_from_cfg(self, cfg: dict) -> int | None:
         """Write cfg to a temp JSON file and call the internal path-probe logic."""
         import pathlib
+
         with tempfile.TemporaryDirectory() as tmp:
             p = pathlib.Path(tmp) / "config.json"
             p.write_text(json.dumps(cfg))
@@ -190,8 +197,8 @@ class TestProbeVramLemonadeConfig:
 
 # ── AdapterRAM saturation constant ────────────────────────────────────────────
 
-class TestAdapterRamConstant:
 
+class TestAdapterRamConstant:
     def test_saturation_is_exactly_4gib(self):
         """_ADAPTER_RAM_SATURATION_BYTES must be exactly 4 GiB (2^32)."""
         assert ci._ADAPTER_RAM_SATURATION_BYTES == 4_294_967_296
@@ -203,8 +210,8 @@ class TestAdapterRamConstant:
 
 # ── build_payload: vram_hint plumbing ─────────────────────────────────────────
 
-class TestBuildPayloadVramHint:
 
+class TestBuildPayloadVramHint:
     def _make_minimal_hw(self):
         return {"cpu": {}, "memory": {}, "gpu": {}, "os": {}, "bios": {}, "storage": {}}
 
@@ -212,15 +219,17 @@ class TestBuildPayloadVramHint:
         """When AdapterRAM probe fires, hint lands in payload['vram_hint'] not payload['vram']."""
         adapter_info = {"bytes": 2_147_483_648, "saturated": False, "gpu_name": "Radeon RX 580"}
 
-        with mock.patch.object(ci, "_collect_linux", return_value=self._make_minimal_hw()), \
-             mock.patch.object(ci, "_collect_windows", return_value=self._make_minimal_hw()), \
-             mock.patch.object(ci, "_probe_vram_rocm", return_value=None), \
-             mock.patch.object(ci, "_probe_vram_lemonade_config", return_value=None), \
-             mock.patch.object(ci, "_probe_vram_cim_adapter_ram", return_value=adapter_info), \
-             mock.patch.object(ci, "_probe_models", return_value=[]), \
-             mock.patch.object(ci, "_probe_api", return_value=None), \
-             mock.patch.object(ci, "_detect_cpu_name", return_value=""), \
-             mock.patch("builtins.print"):
+        with (
+            mock.patch.object(ci, "_collect_linux", return_value=self._make_minimal_hw()),
+            mock.patch.object(ci, "_collect_windows", return_value=self._make_minimal_hw()),
+            mock.patch.object(ci, "_probe_vram_rocm", return_value=None),
+            mock.patch.object(ci, "_probe_vram_lemonade_config", return_value=None),
+            mock.patch.object(ci, "_probe_vram_cim_adapter_ram", return_value=adapter_info),
+            mock.patch.object(ci, "_probe_models", return_value=[]),
+            mock.patch.object(ci, "_probe_api", return_value=None),
+            mock.patch.object(ci, "_detect_cpu_name", return_value=""),
+            mock.patch("builtins.print"),
+        ):
             payload = ci.build_payload("device:test")
 
         assert payload["vram"]["source"] == "unavailable"
@@ -230,31 +239,38 @@ class TestBuildPayloadVramHint:
 
     def test_no_vram_hint_key_when_adapter_probe_returns_none(self):
         """When AdapterRAM probe returns None, vram_hint must not appear in payload."""
-        with mock.patch.object(ci, "_collect_linux", return_value=self._make_minimal_hw()), \
-             mock.patch.object(ci, "_collect_windows", return_value=self._make_minimal_hw()), \
-             mock.patch.object(ci, "_probe_vram_rocm", return_value=None), \
-             mock.patch.object(ci, "_probe_vram_lemonade_config", return_value=None), \
-             mock.patch.object(ci, "_probe_vram_cim_adapter_ram", return_value=None), \
-             mock.patch.object(ci, "_probe_models", return_value=[]), \
-             mock.patch.object(ci, "_probe_api", return_value=None), \
-             mock.patch.object(ci, "_detect_cpu_name", return_value=""), \
-             mock.patch("builtins.print"):
+        with (
+            mock.patch.object(ci, "_collect_linux", return_value=self._make_minimal_hw()),
+            mock.patch.object(ci, "_collect_windows", return_value=self._make_minimal_hw()),
+            mock.patch.object(ci, "_probe_vram_rocm", return_value=None),
+            mock.patch.object(ci, "_probe_vram_lemonade_config", return_value=None),
+            mock.patch.object(ci, "_probe_vram_cim_adapter_ram", return_value=None),
+            mock.patch.object(ci, "_probe_models", return_value=[]),
+            mock.patch.object(ci, "_probe_api", return_value=None),
+            mock.patch.object(ci, "_detect_cpu_name", return_value=""),
+            mock.patch("builtins.print"),
+        ):
             payload = ci.build_payload("device:test")
 
         assert "vram_hint" not in payload
 
     def test_vram_field_never_contains_internal_keys(self):
         """payload['vram'] must not contain any key starting with '_'."""
-        with mock.patch.object(ci, "_collect_linux", return_value=self._make_minimal_hw()), \
-             mock.patch.object(ci, "_collect_windows", return_value=self._make_minimal_hw()), \
-             mock.patch.object(ci, "_probe_vram_rocm", return_value=None), \
-             mock.patch.object(ci, "_probe_vram_lemonade_config", return_value=None), \
-             mock.patch.object(ci, "_probe_vram_cim_adapter_ram",
-                               return_value={"bytes": 1_000_000_000, "saturated": False, "gpu_name": "test"}), \
-             mock.patch.object(ci, "_probe_models", return_value=[]), \
-             mock.patch.object(ci, "_probe_api", return_value=None), \
-             mock.patch.object(ci, "_detect_cpu_name", return_value=""), \
-             mock.patch("builtins.print"):
+        with (
+            mock.patch.object(ci, "_collect_linux", return_value=self._make_minimal_hw()),
+            mock.patch.object(ci, "_collect_windows", return_value=self._make_minimal_hw()),
+            mock.patch.object(ci, "_probe_vram_rocm", return_value=None),
+            mock.patch.object(ci, "_probe_vram_lemonade_config", return_value=None),
+            mock.patch.object(
+                ci,
+                "_probe_vram_cim_adapter_ram",
+                return_value={"bytes": 1_000_000_000, "saturated": False, "gpu_name": "test"},
+            ),
+            mock.patch.object(ci, "_probe_models", return_value=[]),
+            mock.patch.object(ci, "_probe_api", return_value=None),
+            mock.patch.object(ci, "_detect_cpu_name", return_value=""),
+            mock.patch("builtins.print"),
+        ):
             payload = ci.build_payload("device:test")
 
         for key in payload["vram"]:
@@ -263,11 +279,14 @@ class TestBuildPayloadVramHint:
 
 # ── AMD Ryzen AI MAX+ 395 fallback guidance ────────────────────────────────────
 
-class TestRyzenFallbackGuidance:
 
+class TestRyzenFallbackGuidance:
     def _get_printed(self, cpu_name: str) -> str:
         buf = io.StringIO()
-        with mock.patch("builtins.print", side_effect=lambda *a, **k: buf.write(" ".join(str(x) for x in a) + "\n")):
+        with mock.patch(
+            "builtins.print",
+            side_effect=lambda *a, **k: buf.write(" ".join(str(x) for x in a) + "\n"),
+        ):
             ci._print_vram_fallback_hint(cpu_name)
         return buf.getvalue()
 
@@ -293,12 +312,14 @@ class TestRyzenFallbackGuidance:
 
 # ── Adapter: new VRAM source types → correct claim predicates ─────────────────
 
+
 class TestAdapterNewSourceTypes:
     """Integration tests: new source types produce the right predicates at the right authority."""
 
     @pytest.fixture
     def db(self, tmp_path):
         from orivellum.database.db import OrivellumDB
+
         d = OrivellumDB(str(tmp_path / "test.db"))
         yield d
         try:
@@ -309,17 +330,22 @@ class TestAdapterNewSourceTypes:
     def _ingest(self, db, vram_dict: dict) -> dict:
         from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
         from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         adapter = WindowsInventoryAdapter(db)
-        return adapter.ingest_inventory({
-            "subject": SUBJECT_DEVICE_A01,
-            "vram": vram_dict,
-        })
+        return adapter.ingest_inventory(
+            {
+                "subject": SUBJECT_DEVICE_A01,
+                "vram": vram_dict,
+            }
+        )
 
     def test_rocm_smi_source_writes_vram_usable_bytes(self, db):
         """rocm_smi is A0 → writes vram_usable_bytes claim."""
         from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         self._ingest(db, {"source": "rocm_smi", "total_bytes": 68_719_476_736, "free_bytes": 0})
         from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
+
         adapter = WindowsInventoryAdapter(db)
         claim = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes")
         assert claim is not None, "rocm_smi source must write vram_usable_bytes"
@@ -329,6 +355,7 @@ class TestAdapterNewSourceTypes:
     def test_rocm_smi_source_writes_vram_gb(self, db):
         """rocm_smi is A0 → also writes vram_gb claim."""
         from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         self._ingest(db, {"source": "rocm_smi", "total_bytes": 68_719_476_736, "free_bytes": 0})
         claim = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_gb")
         assert claim is not None, "rocm_smi source must write vram_gb"
@@ -336,9 +363,12 @@ class TestAdapterNewSourceTypes:
     def test_lemonade_config_source_writes_vram_gb_only(self, db):
         """lemonade_config is A1 → writes vram_gb but NOT vram_usable_bytes."""
         from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
-        self._ingest(db, {"source": "lemonade_config", "total_bytes": 103_079_215_104, "free_bytes": 0})
+
+        self._ingest(
+            db, {"source": "lemonade_config", "total_bytes": 103_079_215_104, "free_bytes": 0}
+        )
         vram_bytes = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes")
-        vram_gb    = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_gb")
+        vram_gb = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_gb")
         assert vram_bytes is None, (
             "lemonade_config (A1) must NOT write vram_usable_bytes (requires A0)"
         )
@@ -350,33 +380,46 @@ class TestAdapterNewSourceTypes:
     def test_user_supplied_source_writes_vram_usable_bytes(self, db):
         """user_supplied is A0 → writes vram_usable_bytes claim."""
         from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
-        self._ingest(db, {"source": "user_supplied", "total_bytes": 103_079_215_104, "free_bytes": 0})
+
+        self._ingest(
+            db, {"source": "user_supplied", "total_bytes": 103_079_215_104, "free_bytes": 0}
+        )
         claim = db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes")
         assert claim is not None, "user_supplied must write vram_usable_bytes"
 
     def test_vram_hint_produces_no_vram_claims_saturated(self, db):
         """Saturated vram_hint must NEVER produce any vram_* claim."""
-        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
         from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
+        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         adapter = WindowsInventoryAdapter(db)
-        adapter.ingest_inventory({
-            "subject": SUBJECT_DEVICE_A01,
-            "vram": {"source": "unavailable"},
-            "vram_hint": {"bytes": 4_294_967_296, "saturated": True, "gpu_name": "AMD Radeon"},
-        })
+        adapter.ingest_inventory(
+            {
+                "subject": SUBJECT_DEVICE_A01,
+                "vram": {"source": "unavailable"},
+                "vram_hint": {"bytes": 4_294_967_296, "saturated": True, "gpu_name": "AMD Radeon"},
+            }
+        )
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes") is None
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_gb") is None
 
     def test_vram_hint_produces_no_vram_claims_non_saturated(self, db):
         """Non-saturated vram_hint must also produce NO vram_* claim (INV-REQ-001)."""
-        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
         from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
+        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         adapter = WindowsInventoryAdapter(db)
-        adapter.ingest_inventory({
-            "subject": SUBJECT_DEVICE_A01,
-            "vram": {"source": "unavailable"},
-            "vram_hint": {"bytes": 2_147_483_648, "saturated": False, "gpu_name": "Radeon RX 580"},
-        })
+        adapter.ingest_inventory(
+            {
+                "subject": SUBJECT_DEVICE_A01,
+                "vram": {"source": "unavailable"},
+                "vram_hint": {
+                    "bytes": 2_147_483_648,
+                    "saturated": False,
+                    "gpu_name": "Radeon RX 580",
+                },
+            }
+        )
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes") is None, (
             "Non-saturated AdapterRAM hint must not be written as vram_usable_bytes"
         )
@@ -387,20 +430,23 @@ class TestAdapterNewSourceTypes:
     def test_lemonade_api_source_unchanged(self, db):
         """Existing lemonade_api source continues to write both vram predicates."""
         from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         self._ingest(db, {"source": "lemonade_api:13305", "total_bytes": 103_079_215_104})
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes") is not None
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_gb") is not None
 
-
     def test_cim_adapter_ram_source_produces_no_vram_claims(self, db):
         """cim_adapter_ram source (underscore variant of AdapterRAM) must be blocked."""
-        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
         from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
+        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         adapter = WindowsInventoryAdapter(db)
-        result = adapter.ingest_inventory({
-            "subject": SUBJECT_DEVICE_A01,
-            "vram": {"source": "cim_adapter_ram", "total_bytes": 2_147_483_648},
-        })
+        result = adapter.ingest_inventory(
+            {
+                "subject": SUBJECT_DEVICE_A01,
+                "vram": {"source": "cim_adapter_ram", "total_bytes": 2_147_483_648},
+            }
+        )
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes") is None, (
             "cim_adapter_ram source must not write vram_usable_bytes"
         )
@@ -408,32 +454,38 @@ class TestAdapterNewSourceTypes:
             "cim_adapter_ram source must not write vram_gb"
         )
         # A violation must be recorded
-        assert any("adapterram" in v.lower() or "adapter_ram" in v.lower()
-                   for v in result.get("violations", [])), (
-            "cim_adapter_ram source must log an INV-REQ-001 violation"
-        )
+        assert any(
+            "adapterram" in v.lower() or "adapter_ram" in v.lower()
+            for v in result.get("violations", [])
+        ), "cim_adapter_ram source must log an INV-REQ-001 violation"
 
     def test_win32_adapter_ram_source_produces_no_vram_claims(self, db):
         """win32_adapter_ram source must be blocked by the AdapterRAM pattern guard."""
-        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
         from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
+        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         adapter = WindowsInventoryAdapter(db)
-        adapter.ingest_inventory({
-            "subject": SUBJECT_DEVICE_A01,
-            "vram": {"source": "win32_adapter_ram", "total_bytes": 4_294_967_296},
-        })
+        adapter.ingest_inventory(
+            {
+                "subject": SUBJECT_DEVICE_A01,
+                "vram": {"source": "win32_adapter_ram", "total_bytes": 4_294_967_296},
+            }
+        )
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes") is None
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_gb") is None
 
     def test_unknown_source_produces_no_vram_claims_and_violation(self, db):
         """An arbitrary unrecognized source is rejected (fail-closed allowlist)."""
-        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
         from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
+        from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         adapter = WindowsInventoryAdapter(db)
-        result = adapter.ingest_inventory({
-            "subject": SUBJECT_DEVICE_A01,
-            "vram": {"source": "some_future_source_we_dont_know", "total_bytes": 8_589_934_592},
-        })
+        result = adapter.ingest_inventory(
+            {
+                "subject": SUBJECT_DEVICE_A01,
+                "vram": {"source": "some_future_source_we_dont_know", "total_bytes": 8_589_934_592},
+            }
+        )
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes") is None, (
             "Unknown VRAM source must not write vram_usable_bytes (fail-closed)"
         )
@@ -447,6 +499,7 @@ class TestAdapterNewSourceTypes:
     def test_allowlist_source_with_port_suffix_still_accepted(self, db):
         """lemonade_api:13305 (source with port suffix) must pass the allowlist check."""
         from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+
         self._ingest(db, {"source": "lemonade_api:13305", "total_bytes": 103_079_215_104})
         assert db.get_claim_by_predicate(SUBJECT_DEVICE_A01, "vram_usable_bytes") is not None
 

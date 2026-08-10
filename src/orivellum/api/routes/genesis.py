@@ -13,6 +13,7 @@ Endpoints:
   GET    /api/works/{id}/genesis/verify             verify ledger hash chain
   GET    /api/works/{id}/genesis/techniques         brainstorm codex (all or per stage)
 """
+
 from __future__ import annotations
 
 import uuid
@@ -36,14 +37,14 @@ from orivellum.capabilities.genesis import (
 )
 from orivellum.capabilities.genesis.codex import CODEX_TEXT, get_codex_for_stage
 
-router = APIRouter(prefix="/api/works", tags=["genesis"],
-                   dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api/works", tags=["genesis"], dependencies=[Depends(require_auth)])
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
+
 class GenesisInitRequest(BaseModel):
-    mode: str = "cold"          # 'cold' | 'library'
+    mode: str = "cold"  # 'cold' | 'library'
     length: int = 80
     acts: int = 4
 
@@ -53,7 +54,7 @@ class ArtifactSaveRequest(BaseModel):
 
 
 class GateRequest(BaseModel):
-    decision: str       # 'pass' | 'fail'
+    decision: str  # 'pass' | 'fail'
     author: str
     note: str = ""
 
@@ -64,6 +65,7 @@ class SealRequest(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _get_work_or_404(db, work_id: str):
     w = db._conn.execute("SELECT id, title FROM works WHERE id=?", (work_id,)).fetchone()
     if not w:
@@ -72,9 +74,7 @@ def _get_work_or_404(db, work_id: str):
 
 
 def _get_book_or_404(db, work_id: str):
-    b = db._conn.execute(
-        "SELECT * FROM genesis_books WHERE work_id=?", (work_id,)
-    ).fetchone()
+    b = db._conn.execute("SELECT * FROM genesis_books WHERE work_id=?", (work_id,)).fetchone()
     if not b:
         raise HTTPException(404, "No GENESIS book for this Work. POST to initialize it.")
     return b
@@ -89,13 +89,15 @@ def _book_response(db, book, stage_status: dict[str, str]) -> dict:
     sealed = book["state"] in ("READY_FOR_B0", "PARKED", "KILLED")
     stages_out = []
     for code, name, tmpl_slug, gate_desc in STAGES:
-        stages_out.append({
-            "code": code,
-            "name": name,
-            "status": stage_status.get(code, "PENDING"),
-            "gate_description": gate_desc,
-            "is_current": code == nxt and not sealed,
-        })
+        stages_out.append(
+            {
+                "code": code,
+                "name": name,
+                "status": stage_status.get(code, "PENDING"),
+                "gate_description": gate_desc,
+                "is_current": code == nxt and not sealed,
+            }
+        )
     return {
         "id": book["id"],
         "work_id": book["work_id"],
@@ -114,6 +116,7 @@ def _book_response(db, book, stage_status: dict[str, str]) -> dict:
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
+
 
 @router.post("/{work_id}/genesis")
 def init_genesis(work_id: str, req: GenesisInitRequest, db=Depends(get_db)):
@@ -160,14 +163,19 @@ def init_genesis(work_id: str, req: GenesisInitRequest, db=Depends(get_db)):
 
     # Seed the ledger
     w = _get_work_or_404(db, work_id)
-    ledger_append(db._conn, book_id, "book.created", {
-        "book_id": book_id,
-        "work_id": work_id,
-        "title": w["title"],
-        "mode": req.mode,
-        "length": req.length,
-        "acts": req.acts,
-    })
+    ledger_append(
+        db._conn,
+        book_id,
+        "book.created",
+        {
+            "book_id": book_id,
+            "work_id": work_id,
+            "title": w["title"],
+            "mode": req.mode,
+            "length": req.length,
+            "acts": req.acts,
+        },
+    )
 
     db._conn.commit()
     book = db._conn.execute("SELECT * FROM genesis_books WHERE id=?", (book_id,)).fetchone()
@@ -203,7 +211,8 @@ def get_stage(work_id: str, code: str, db=Depends(get_db)):
 
     # Gate decisions for this stage (append-only log)
     decisions = [
-        dict(r) for r in db._conn.execute(
+        dict(r)
+        for r in db._conn.execute(
             "SELECT kind, payload, at FROM genesis_ledger "
             "WHERE book_id=? AND kind IN ('gate.pass','gate.fail') "
             "ORDER BY seq",
@@ -247,9 +256,7 @@ def save_stage(work_id: str, code: str, req: ArtifactSaveRequest, db=Depends(get
         "content=excluded.content, sha256=excluded.sha256, updated_at=excluded.updated_at",
         (art_id, book["id"], code, req.content, content_sha, at),
     )
-    db._conn.execute(
-        "UPDATE genesis_books SET updated_at=? WHERE id=?", (at, book["id"])
-    )
+    db._conn.execute("UPDATE genesis_books SET updated_at=? WHERE id=?", (at, book["id"]))
     db._conn.commit()
     return {"ok": True, "sha256": content_sha, "updated_at": at}
 
@@ -302,11 +309,16 @@ def record_gate(work_id: str, code: str, req: GateRequest, db=Depends(get_db)):
                 )
 
         # Append-only gate record via ledger
-        ledger_append(db._conn, book["id"], f"gate.{req.decision}", {
-            "code": code,
-            "author": req.author,
-            "note": req.note,
-        })
+        ledger_append(
+            db._conn,
+            book["id"],
+            f"gate.{req.decision}",
+            {
+                "code": code,
+                "author": req.author,
+                "note": req.note,
+            },
+        )
 
         # Update stage status
         new_status = "PASSED" if req.decision == "pass" else "FAILED"
@@ -346,6 +358,7 @@ def seal_book(work_id: str, req: SealRequest, db=Depends(get_db)):
 
     w = _get_work_or_404(db, work_id)
     import json
+
     # FA-05: check + compute + write under one lock so two concurrent seal
     # requests cannot both pass the "already sealed" check on the same
     # snapshot; the CAS UPDATE ("AND state != 'READY_FOR_B0'") is the claim.

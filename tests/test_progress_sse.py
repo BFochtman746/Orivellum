@@ -50,6 +50,7 @@ E  Route guard — 404 for unknown doc_id.
 F  Deduplication and terminal-finality — unconditional assertions.
 G  Web UI rendering contract — field types and safety.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,7 +61,6 @@ import threading
 import time
 import unittest
 from contextlib import contextmanager
-from pathlib import Path
 
 import httpx
 import uvicorn
@@ -69,6 +69,7 @@ from fastapi.testclient import TestClient
 from tests.conftest import AUTH_HEADERS
 
 # ── SSE parsing helper ─────────────────────────────────────────────────────────
+
 
 def _parse_sse(body: str) -> list[dict]:
     """Decode all ``data: …`` lines from a buffered SSE body string."""
@@ -83,8 +84,9 @@ def _parse_sse(body: str) -> list[dict]:
     return events
 
 
-def _consume_live(base_url: str, path: str, *, timeout: float = 20.0
-                   ) -> tuple[list[dict], list[float]]:
+def _consume_live(
+    base_url: str, path: str, *, timeout: float = 20.0
+) -> tuple[list[dict], list[float]]:
     """Open a live TCP connection to *base_url* + *path* and collect SSE events.
 
     Each ``data:`` frame is received and timestamped as it arrives from the
@@ -113,6 +115,7 @@ def _consume_live(base_url: str, path: str, *, timeout: float = 20.0
 
 # ── App / DB factory ───────────────────────────────────────────────────────────
 
+
 def _make_app(tmp: str):
     """Create a FastAPI app wired to a fresh SQLite DB in *tmp*.
 
@@ -121,13 +124,13 @@ def _make_app(tmp: str):
     opens the same file.  Mutations through the returned ``db`` object are
     therefore visible to the API's internal DB connection.
     """
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import create_app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
-    db  = OrivellumDB(cfg.db_path)   # tmp/orivellum.db — same file the lifespan opens
+    db = OrivellumDB(cfg.db_path)  # tmp/orivellum.db — same file the lifespan opens
     _deps.init(db=db, cfg=cfg)
     return create_app(), db
 
@@ -139,6 +142,7 @@ def _make_sync_client(tmp: str) -> tuple[TestClient, object]:
 
 
 # ── Uvicorn live-server fixture ────────────────────────────────────────────────
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -159,8 +163,11 @@ def _live_server(app, tmp_dir: str):
     os.environ["ORIVELLUM_DATA_DIR"] = tmp_dir
 
     config = uvicorn.Config(
-        app, host="127.0.0.1", port=port,
-        log_level="error", loop="asyncio",
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="error",
+        loop="asyncio",
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
@@ -193,10 +200,18 @@ def _restore_env(key: str, old_value: str | None) -> None:
 
 # ── Stage / field constants ────────────────────────────────────────────────────
 
-_KNOWN_STAGES = frozenset({
-    "extracting", "chunking", "indexing", "harvesting",
-    "transcribing", "complete", "error", "no_text",
-})
+_KNOWN_STAGES = frozenset(
+    {
+        "extracting",
+        "chunking",
+        "indexing",
+        "harvesting",
+        "transcribing",
+        "complete",
+        "error",
+        "no_text",
+    }
+)
 
 # Fields the TypeScript ``ProgressInfo`` interface requires (detail.tsx 775-781)
 _REQUIRED_FIELDS = {"stage", "pct", "items_found", "readiness", "chunk_count"}
@@ -209,6 +224,7 @@ _FLIP_DELAY = 1.3
 
 # ── Phase A — terminal states already set ─────────────────────────────────────
 
+
 class TestTerminalStates(unittest.TestCase):
     """Sync TestClient is sufficient here: the doc is already terminal so the
     generator closes after one iteration — no live-delivery concern."""
@@ -217,8 +233,11 @@ class TestTerminalStates(unittest.TestCase):
         client, db = _make_sync_client(tmp)
         doc = db.create_document(title="t.txt", kind="text")
         db.update_document_extracted(
-            doc["id"], kw.get("text", ""), kw.get("words", 0),
-            readiness=readiness, error_message=kw.get("err"),
+            doc["id"],
+            kw.get("text", ""),
+            kw.get("words", 0),
+            readiness=readiness,
+            error_message=kw.get("err"),
         )
         resp = client.get(f"/api/library/{doc['id']}/progress")
         db.close()
@@ -263,6 +282,7 @@ class TestTerminalStates(unittest.TestCase):
 
 # ── Phase B — live delivery proof (Uvicorn + real TCP) ───────────────────────
 
+
 class TestLiveDelivery(unittest.TestCase):
     """A document starts ``imported`` and a background thread flips its readiness
     to a terminal state at T = _FLIP_DELAY s.  The SSE generator polls every
@@ -273,23 +293,31 @@ class TestLiveDelivery(unittest.TestCase):
     buffers the response — all timestamps would be ≥ flip_time.
     """
 
-    def _run(self, db, base_url: str, doc_id: str, *,
-             terminal_readiness: str,
-             extracted_text: str = "done",
-             word_count: int = 10) -> tuple[list[dict], list[float], float]:
+    def _run(
+        self,
+        db,
+        base_url: str,
+        doc_id: str,
+        *,
+        terminal_readiness: str,
+        extracted_text: str = "done",
+        word_count: int = 10,
+    ) -> tuple[list[dict], list[float], float]:
         flip_time_holder: list[float] = []
 
         def _flip():
             time.sleep(_FLIP_DELAY)
             flip_time_holder.append(time.monotonic())
             if terminal_readiness == "error":
-                db.update_document_extracted(doc_id, "", 0, readiness="error",
-                                             error_message="simulated error")
+                db.update_document_extracted(
+                    doc_id, "", 0, readiness="error", error_message="simulated error"
+                )
             elif terminal_readiness == "no_text":
                 db.update_document_extracted(doc_id, "", 0, readiness="no_text")
             else:
-                db.update_document_extracted(doc_id, extracted_text, word_count,
-                                             readiness=terminal_readiness)
+                db.update_document_extracted(
+                    doc_id, extracted_text, word_count, readiness=terminal_readiness
+                )
 
         t = threading.Thread(target=_flip, daemon=True)
         t.start()
@@ -312,19 +340,21 @@ class TestLiveDelivery(unittest.TestCase):
                 )
             db.close()
 
-        self.assertGreaterEqual(len(events), 2,
-                                f"Expected ≥2 events (extracting + complete); got {events}")
+        self.assertGreaterEqual(
+            len(events), 2, f"Expected ≥2 events (extracting + complete); got {events}"
+        )
 
         stages = [e["stage"] for e in events]
-        self.assertIn("extracting", stages,
-                      f"At least one 'extracting' event required; got {stages}")
-        self.assertEqual(stages[-1], "complete",
-                         f"Last event must be 'complete'; got {stages}")
+        self.assertIn(
+            "extracting", stages, f"At least one 'extracting' event required; got {stages}"
+        )
+        self.assertEqual(stages[-1], "complete", f"Last event must be 'complete'; got {stages}")
 
         self.assertLess(
-            event_times[0], flip_time,
+            event_times[0],
+            flip_time,
             f"First event at {event_times[0]:.3f}s arrived at/after the readiness flip "
-            f"at {flip_time:.3f}s (+{event_times[0]-flip_time:+.3f}s). "
+            f"at {flip_time:.3f}s (+{event_times[0] - flip_time:+.3f}s). "
             f"SSE delivery appears buffered, not live.",
         )
 
@@ -340,22 +370,21 @@ class TestLiveDelivery(unittest.TestCase):
             db.close()
 
         stages = [e["stage"] for e in events]
-        self.assertIn("extracting", stages,
-                      f"Must emit 'extracting' before 'error'; got {stages}")
-        self.assertEqual(stages[-1], "error",
-                         f"Last stage must be 'error'; got {stages}")
+        self.assertIn("extracting", stages, f"Must emit 'extracting' before 'error'; got {stages}")
+        self.assertEqual(stages[-1], "error", f"Last stage must be 'error'; got {stages}")
         self.assertGreater(len(event_times), 0)
-        self.assertLess(event_times[0], flip_time,
-                        f"First event at {event_times[0]:.3f}s must precede flip at "
-                        f"{flip_time:.3f}s")
+        self.assertLess(
+            event_times[0],
+            flip_time,
+            f"First event at {event_times[0]:.3f}s must precede flip at {flip_time:.3f}s",
+        )
 
     def test_pct_starts_below_100_and_ends_at_100(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
             doc = db.create_document(title="pct.txt", kind="text")
             with _live_server(app, tmp) as base_url:
-                events, _, _ = self._run(db, base_url, doc["id"],
-                                          terminal_readiness="ready")
+                events, _, _ = self._run(db, base_url, doc["id"], terminal_readiness="ready")
             db.close()
 
         pcts = [e["pct"] for e in events]
@@ -367,31 +396,26 @@ class TestLiveDelivery(unittest.TestCase):
             app, db = _make_app(tmp)
             doc = db.create_document(title="track.txt", kind="text")
             with _live_server(app, tmp) as base_url:
-                events, _, _ = self._run(db, base_url, doc["id"],
-                                          terminal_readiness="ready")
+                events, _, _ = self._run(db, base_url, doc["id"], terminal_readiness="ready")
             db.close()
 
         readiness = [e["readiness"] for e in events]
-        self.assertIn("imported", readiness,
-                      "Early events must carry readiness='imported'")
-        self.assertEqual(readiness[-1], "ready",
-                         "Final event must carry readiness='ready'")
+        self.assertIn("imported", readiness, "Early events must carry readiness='imported'")
+        self.assertEqual(readiness[-1], "ready", "Final event must carry readiness='ready'")
 
 
 # ── Phase C — stage inference ─────────────────────────────────────────────────
+
 
 class TestStageInference(unittest.TestCase):
     """Stage label inferred from DB counters.  Uses a live Uvicorn server so
     events from an ``imported`` doc are delivered before the background flip."""
 
-    def _first_event(self, app, db, doc_id: str, tmp: str,
-                     flip_delay: float = 0.9) -> dict:
+    def _first_event(self, app, db, doc_id: str, tmp: str, flip_delay: float = 0.9) -> dict:
         def _flip():
             time.sleep(flip_delay)
             with db._lock:
-                db._conn.execute(
-                    "UPDATE documents SET readiness='ready' WHERE id=?", (doc_id,)
-                )
+                db._conn.execute("UPDATE documents SET readiness='ready' WHERE id=?", (doc_id,))
                 db._conn.commit()
 
         t = threading.Thread(target=_flip, daemon=True)
@@ -460,7 +484,7 @@ class TestStageInference(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
             work = db.create_work(title="Test Work")
-            doc  = db.create_document(title="harv.txt", kind="text", work_id=work["id"])
+            doc = db.create_document(title="harv.txt", kind="text", work_id=work["id"])
             db.add_chunk(doc["id"], "some text", page=1)
             db.create_knowledge_item(
                 work_id=work["id"],
@@ -502,6 +526,7 @@ class TestStageInference(unittest.TestCase):
 
 # ── Phase D — event schema ─────────────────────────────────────────────────────
 
+
 class TestEventSchema(unittest.TestCase):
     """Every SSE event must satisfy the TypeScript ``ProgressInfo`` interface.
     Sync TestClient is fine here — schema, not liveness, is under test."""
@@ -509,8 +534,7 @@ class TestEventSchema(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self._app, self.db = _make_app(self._tmp.name)
-        self._client = TestClient(self._app, raise_server_exceptions=True,
-                                   headers=AUTH_HEADERS)
+        self._client = TestClient(self._app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
     def tearDown(self):
         self.db.close()
@@ -545,8 +569,7 @@ class TestEventSchema(unittest.TestCase):
         self.assertGreater(len(events), 0)
         for i, evt in enumerate(events):
             pct = evt.get("pct")
-            self.assertIsInstance(pct, (int, float),
-                                  f"Event[{i}].pct must be numeric: {evt}")
+            self.assertIsInstance(pct, (int, float), f"Event[{i}].pct must be numeric: {evt}")
             self.assertGreaterEqual(pct, 0)
             self.assertLessEqual(pct, 100)
 
@@ -555,8 +578,9 @@ class TestEventSchema(unittest.TestCase):
         events = self._all_events(doc["id"])
         self.assertGreater(len(events), 0)
         for i, evt in enumerate(events):
-            self.assertIn(evt.get("stage"), _KNOWN_STAGES,
-                          f"Event[{i}].stage unknown: {evt.get('stage')!r}")
+            self.assertIn(
+                evt.get("stage"), _KNOWN_STAGES, f"Event[{i}].stage unknown: {evt.get('stage')!r}"
+            )
 
     def test_items_found_is_non_negative_number(self):
         doc = self.db.create_document(title="items.txt", kind="text")
@@ -564,8 +588,7 @@ class TestEventSchema(unittest.TestCase):
         self.assertGreater(len(events), 0)
         for i, evt in enumerate(events):
             n = evt.get("items_found")
-            self.assertIsInstance(n, (int, float),
-                                  f"Event[{i}].items_found not numeric: {evt}")
+            self.assertIsInstance(n, (int, float), f"Event[{i}].items_found not numeric: {evt}")
             self.assertGreaterEqual(n, 0)
 
     def test_chunk_count_is_non_negative_number(self):
@@ -574,8 +597,7 @@ class TestEventSchema(unittest.TestCase):
         self.assertGreater(len(events), 0)
         for i, evt in enumerate(events):
             n = evt.get("chunk_count")
-            self.assertIsInstance(n, (int, float),
-                                  f"Event[{i}].chunk_count not numeric: {evt}")
+            self.assertIsInstance(n, (int, float), f"Event[{i}].chunk_count not numeric: {evt}")
             self.assertGreaterEqual(n, 0)
 
     def test_complete_event_carries_readiness_ready(self):
@@ -583,24 +605,27 @@ class TestEventSchema(unittest.TestCase):
         events = self._all_events(doc["id"])
         for evt in events:
             if evt["stage"] == "complete":
-                self.assertEqual(evt["readiness"], "ready",
-                                 f"complete must carry readiness=ready: {evt}")
+                self.assertEqual(
+                    evt["readiness"], "ready", f"complete must carry readiness=ready: {evt}"
+                )
 
     def test_error_stage_carries_readiness_error(self):
         doc = self.db.create_document(title="err.txt", kind="text")
-        self.db.update_document_extracted(doc["id"], "", 0, readiness="error",
-                                          error_message="test error")
+        self.db.update_document_extracted(
+            doc["id"], "", 0, readiness="error", error_message="test error"
+        )
         resp = self._client.get(f"/api/library/{doc['id']}/progress")
         for evt in _parse_sse(resp.text):
             if evt["stage"] == "error":
-                self.assertEqual(evt["readiness"], "error",
-                                 f"error stage must carry readiness=error: {evt}")
+                self.assertEqual(
+                    evt["readiness"], "error", f"error stage must carry readiness=error: {evt}"
+                )
 
 
 # ── Phase E — route guard ─────────────────────────────────────────────────────
 
-class TestRouteGuard(unittest.TestCase):
 
+class TestRouteGuard(unittest.TestCase):
     def test_missing_doc_returns_404(self):
         with tempfile.TemporaryDirectory() as tmp:
             client, db = _make_sync_client(tmp)
@@ -618,6 +643,7 @@ class TestRouteGuard(unittest.TestCase):
 
 # ── Phase F — deduplication and terminal-finality ─────────────────────────────
 
+
 class TestDeduplication(unittest.TestCase):
     """Both assertions are unconditional — tests fail if ``complete`` never
     appears, or if consecutive payloads are identical."""
@@ -633,24 +659,27 @@ class TestDeduplication(unittest.TestCase):
 
         self.assertGreater(len(events), 0, "Stream must emit at least one event")
         complete_idx = [i for i, e in enumerate(events) if e["stage"] == "complete"]
-        self.assertGreater(len(complete_idx), 0,
-                           "Stream must emit at least one 'complete' event")
-        self.assertEqual(complete_idx[-1], len(events) - 1,
-                         f"'complete' must be the last event; got "
-                         f"{[e['stage'] for e in events]}")
+        self.assertGreater(len(complete_idx), 0, "Stream must emit at least one 'complete' event")
+        self.assertEqual(
+            complete_idx[-1],
+            len(events) - 1,
+            f"'complete' must be the last event; got {[e['stage'] for e in events]}",
+        )
 
     def test_error_is_the_last_event(self):
         with tempfile.TemporaryDirectory() as tmp:
             client, db = _make_sync_client(tmp)
             doc = db.create_document(title="err.txt", kind="text")
-            db.update_document_extracted(doc["id"], "", 0, readiness="error",
-                                         error_message="boom")
+            db.update_document_extracted(doc["id"], "", 0, readiness="error", error_message="boom")
             events = _parse_sse(client.get(f"/api/library/{doc['id']}/progress").text)
             db.close()
 
         self.assertGreater(len(events), 0)
-        self.assertEqual(events[-1]["stage"], "error",
-                         f"Last event must be 'error'; got {[e['stage'] for e in events]}")
+        self.assertEqual(
+            events[-1]["stage"],
+            "error",
+            f"Last event must be 'error'; got {[e['stage'] for e in events]}",
+        )
 
     def test_no_consecutive_duplicate_events(self):
         """Two adjacent events with identical payloads must never appear — the
@@ -675,12 +704,14 @@ class TestDeduplication(unittest.TestCase):
         payloads = [json.dumps(e, sort_keys=True) for e in events]
         for i in range(1, len(payloads)):
             self.assertNotEqual(
-                payloads[i], payloads[i - 1],
-                f"Event[{i}] identical to Event[{i-1}] — dedup broken: {events[i]}",
+                payloads[i],
+                payloads[i - 1],
+                f"Event[{i}] identical to Event[{i - 1}] — dedup broken: {events[i]}",
             )
 
 
 # ── Phase G — web UI rendering contract ───────────────────────────────────────
+
 
 class TestWebUIRenderingContract(unittest.TestCase):
     """Confirm the backend event shape matches what the progress bar reads.
@@ -754,8 +785,9 @@ class TestWebUIRenderingContract(unittest.TestCase):
         _TERMINAL = {"ready", "error", "no_text"}
         evt = self._in_progress_event()
         if evt["stage"] != "complete":
-            self.assertNotIn(evt["readiness"], _TERMINAL,
-                             f"Non-complete event has terminal readiness: {evt}")
+            self.assertNotIn(
+                evt["readiness"], _TERMINAL, f"Non-complete event has terminal readiness: {evt}"
+            )
 
 
 if __name__ == "__main__":

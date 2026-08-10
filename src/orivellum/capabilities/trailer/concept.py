@@ -4,6 +4,7 @@ Generate N distinct trailer concepts, score each on a transparent rubric,
 and recommend one.
 (Ported from media_studio; uses OrivellumLLM.)
 """
+
 from __future__ import annotations
 
 SYSTEM = (
@@ -57,13 +58,18 @@ def _score(concept: dict, brief: dict) -> tuple[dict, float]:
     text = (concept.get("angle", "") + " " + concept.get("rationale", "")).lower()
 
     fidelity = _overlap(concept, brief)
-    hook = min(1.0, 0.4 + 0.15 * sum(
-        k in text for k in ("question", "hook", "stakes", "reversal", "urgent", "twist")
-    ))
+    hook = min(
+        1.0,
+        0.4
+        + 0.15
+        * sum(k in text for k in ("question", "hook", "stakes", "reversal", "urgent", "twist")),
+    )
     n_shots = max(1, len(beats))
     feasibility = max(0.2, 1.0 - 0.08 * (n_shots - 4))
-    if any(w in concept.get("visual_style", "").lower()
-           for w in ("tableaux", "atmospheric", "painterly", "mood")):
+    if any(
+        w in concept.get("visual_style", "").lower()
+        for w in ("tableaux", "atmospheric", "painterly", "mood")
+    ):
         feasibility = min(1.0, feasibility + 0.15)
     distinctiveness = min(1.0, 0.5 + 0.1 * len(set(b.split()[0].lower() for b in beats if b)))
 
@@ -89,12 +95,14 @@ def _overlap(concept: dict, brief: dict) -> float:
         for item in (brief.get(field) or [])
         for w in str(item).split()
     )
-    concept_text = " ".join([
-        concept.get("angle", ""),
-        concept.get("rationale", ""),
-        concept.get("visual_style", ""),
-        concept.get("music_direction", ""),
-    ]).lower()
+    concept_text = " ".join(
+        [
+            concept.get("angle", ""),
+            concept.get("rationale", ""),
+            concept.get("visual_style", ""),
+            concept.get("music_direction", ""),
+        ]
+    ).lower()
     if not brief_words:
         return 0.6
     matches = sum(1 for w in brief_words if w in concept_text)

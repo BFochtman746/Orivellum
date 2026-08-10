@@ -8,6 +8,7 @@ Entry points called by the API layer and nightshift:
   move_message(db, record_id, dest_enc, nonce) — reversible move
   undo_move(db, action_request_id, nonce) — reverse a move
 """
+
 from __future__ import annotations
 
 import json
@@ -32,6 +33,7 @@ _DEFAULT_REVIEW_FOLDER = "A-01 Review"
 
 # ─── Token helpers ─────────────────────────────────────────────────────────────
 
+
 def _get_fresh_client(db: Any):
     """Return a GraphClient with a live access token, or None if not connected."""
     from orivellum.capabilities.mail.graph_client import GraphClient
@@ -42,9 +44,9 @@ def _get_fresh_client(db: Any):
     if not token_data:
         return None
 
-    access_token  = token_data.get("access_token", "")
+    access_token = token_data.get("access_token", "")
     refresh_token = token_data.get("refresh_token", "")
-    expires_at    = float(token_data.get("expires_at", 0))
+    expires_at = float(token_data.get("expires_at", 0))
 
     if time.time() >= expires_at - 120:
         if not refresh_token:
@@ -83,6 +85,7 @@ def _ensure_review_folder(client: Any, db: Any) -> str:
 
 # ─── Sync ──────────────────────────────────────────────────────────────────────
 
+
 def sync_mail(db: Any, cfg: Any) -> dict[str, Any]:
     """Run one delta-sync pass for all configured mail folders.
 
@@ -97,6 +100,7 @@ def sync_mail(db: Any, cfg: Any) -> dict[str, Any]:
         return {"error": "token_unavailable"}
 
     from orivellum.database.mail_store import MailStore
+
     store = MailStore(db)
 
     folders_raw = db.get_setting("mail_steward.sync_folders", '["inbox"]')
@@ -117,11 +121,12 @@ def sync_mail(db: Any, cfg: Any) -> dict[str, Any]:
             delta_link = store.get_delta_link(folder_id)
             result = _sync_folder(client, store, folder_id, delta_link)
             summary["folders"].append({"folder": folder_name, **result})
-            summary["new"]     += result.get("new", 0)
+            summary["new"] += result.get("new", 0)
             summary["updated"] += result.get("updated", 0)
 
         except Exception as exc:
             from orivellum.capabilities.mail.graph_client import GraphGoneError
+
             if isinstance(exc, GraphGoneError):
                 logger.warning("steward.sync: delta link expired for %s — resetting", folder_name)
                 fid = client.get_folder_id(folder_name) or ""
@@ -151,7 +156,7 @@ def _sync_folder(client: Any, store: Any, folder_id: str, delta_link: str | None
             else:
                 updated_count += 1
 
-        next_link  = page.get("@odata.nextLink")
+        next_link = page.get("@odata.nextLink")
         delta_link = page.get("@odata.deltaLink")
         if delta_link:
             final_delta = delta_link
@@ -169,13 +174,14 @@ def _sync_folder(client: Any, store: Any, folder_id: str, delta_link: str | None
 
 # ─── Assessment ────────────────────────────────────────────────────────────────
 
+
 def assess_message(db: Any, cfg: Any, mail_record_id: str) -> dict[str, Any]:
     """Full pipeline: fetch from Graph → threat intel → Lemonade → persist."""
     from orivellum.capabilities.mail import lemonade_analyzer as lemonade
     from orivellum.capabilities.mail import threat_intel
     from orivellum.database.mail_store import MailStore
 
-    store  = MailStore(db)
+    store = MailStore(db)
     record = store.get_mail_record(mail_record_id)
     if not record:
         raise MailStewardError(f"MailRecord {mail_record_id} not found")
@@ -185,39 +191,49 @@ def assess_message(db: Any, cfg: Any, mail_record_id: str) -> dict[str, Any]:
         raise MailStewardError("Not connected to Microsoft Graph")
 
     from orivellum.capabilities.mail.token_vault import decrypt_str
+
     graph_msg_id = decrypt_str(record["graph_message_id_enc"])
     message = client.get_message(graph_msg_id)
 
-    body_obj  = message.get("body") or {}
-    body_text = re.sub(r"<[^>]+>", " ", body_obj.get("content", "") if isinstance(body_obj, dict) else "")
+    body_obj = message.get("body") or {}
+    body_text = re.sub(
+        r"<[^>]+>", " ", body_obj.get("content", "") if isinstance(body_obj, dict) else ""
+    )
 
     threat_evidence = threat_intel.inspect_message(body_text)
 
-    lemonade_url   = db.get_setting("mail_steward.lemonade_url", "http://127.0.0.1:13305/api/v1")
+    lemonade_url = db.get_setting("mail_steward.lemonade_url", "http://127.0.0.1:13305/api/v1")
     lemonade_model = db.get_setting("mail_steward.lemonade_model", "")
     assessment = lemonade.analyze(
-        message, threat_evidence,
-        lemonade_url=lemonade_url, model_id=lemonade_model,
+        message,
+        threat_evidence,
+        lemonade_url=lemonade_url,
+        model_id=lemonade_model,
     )
 
     assessment_id = str(uuid.uuid4())
     store.create_assessment(assessment_id, mail_record_id, assessment, threat_evidence)
     store.update_lifecycle(mail_record_id, "ASSESSED", assessment_id=assessment_id)
-    store.create_audit_event(mail_record_id, "ASSESSMENT_CREATED",
-                             signals=assessment.signals, model_id=assessment.model_id)
+    store.create_audit_event(
+        mail_record_id,
+        "ASSESSMENT_CREATED",
+        signals=assessment.signals,
+        model_id=assessment.model_id,
+    )
 
     return {
-        "assessment_id":    assessment_id,
-        "attention_level":  assessment.attention_level,
-        "needs_reply":      assessment.needs_reply,
+        "assessment_id": assessment_id,
+        "attention_level": assessment.attention_level,
+        "needs_reply": assessment.needs_reply,
         "recommended_action": assessment.recommended_action,
-        "confidence":       assessment.confidence,
-        "is_high_risk":     assessment.is_high_risk,
+        "confidence": assessment.confidence,
+        "is_high_risk": assessment.is_high_risk,
         "injection_flagged": assessment.injection_flagged,
     }
 
 
 # ─── Draft create ──────────────────────────────────────────────────────────────
+
 
 def create_draft(db: Any, mail_record_id: str, nonce: str) -> dict[str, Any]:
     """Create an Outlook reply draft pre-populated with the suggested reply.
@@ -229,7 +245,7 @@ def create_draft(db: Any, mail_record_id: str, nonce: str) -> dict[str, Any]:
     from orivellum.capabilities.mail.token_vault import decrypt_str, encrypt_str
     from orivellum.database.mail_store import MailStore
 
-    store  = MailStore(db)
+    store = MailStore(db)
     record = store.get_mail_record(mail_record_id)
     if not record:
         raise MailStewardError("MailRecord not found")
@@ -255,9 +271,9 @@ def create_draft(db: Any, mail_record_id: str, nonce: str) -> dict[str, Any]:
     if not client:
         raise MailStewardError("Not connected to Microsoft Graph")
 
-    graph_msg_id  = decrypt_str(record["graph_message_id_enc"])
+    graph_msg_id = decrypt_str(record["graph_message_id_enc"])
     draft_created = client.create_reply_draft(graph_msg_id)
-    draft_id      = draft_created.get("id", "")
+    draft_id = draft_created.get("id", "")
     if not draft_id:
         raise MailStewardError("Graph did not return a draft ID")
 
@@ -274,24 +290,30 @@ def create_draft(db: Any, mail_record_id: str, nonce: str) -> dict[str, Any]:
     )
 
     store.update_lifecycle(mail_record_id, "ACTION_APPLIED", action_request_id=action_id)
-    store.create_audit_event(mail_record_id, "ACTION_APPLIED",
-                             model_id=assessment_row.get("model_id", ""),
-                             after={"draft_created": True})
+    store.create_audit_event(
+        mail_record_id,
+        "ACTION_APPLIED",
+        model_id=assessment_row.get("model_id", ""),
+        after={"draft_created": True},
+    )
 
     # Issue a send nonce so the compose view can display it immediately
-    send_nonce = store.issue_nonce(mail_record_id, ACTION_SEND) if (
-        db.get_setting("mail_steward.send_enabled", "false") == "true"
-    ) else None
+    send_nonce = (
+        store.issue_nonce(mail_record_id, ACTION_SEND)
+        if (db.get_setting("mail_steward.send_enabled", "false") == "true")
+        else None
+    )
 
     return {
         "action_request_id": action_id,
-        "suggested_reply":   suggested,
-        "subject":           record.get("subject", ""),
-        "send_nonce":        send_nonce,
+        "suggested_reply": suggested,
+        "subject": record.get("subject", ""),
+        "send_nonce": send_nonce,
     }
 
 
 # ─── Send ──────────────────────────────────────────────────────────────────────
+
 
 def send_draft(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
     """Send a composed Outlook draft.
@@ -313,7 +335,7 @@ def send_draft(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
     if not decision.allowed:
         raise MailStewardError(decision.reason)
 
-    store  = MailStore(db)
+    store = MailStore(db)
     action = store.get_action_request(action_request_id)
     if not action:
         raise MailStewardError("Action request not found")
@@ -329,6 +351,7 @@ def send_draft(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
     # replies may only go to trusted domains and a drafted body that trips
     # the injection screen is refused.  Inactive while the setting is empty.
     from orivellum.capabilities import shield as _shield
+
     record = store.get_mail_record(action["mail_record_id"]) or {}
     assessment = store.get_latest_assessment(action["mail_record_id"]) or {}
     try:
@@ -338,8 +361,7 @@ def send_draft(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
             body_text=assessment.get("suggested_reply") or "",
         )
     except _shield.GateDenied as gd:
-        store.create_audit_event(action["mail_record_id"], "ACTION_REJECTED",
-                                 result="GATE_DENIED")
+        store.create_audit_event(action["mail_record_id"], "ACTION_REJECTED", result="GATE_DENIED")
         raise MailStewardError(str(gd))
 
     client = _get_fresh_client(db)
@@ -353,20 +375,22 @@ def send_draft(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
     client.send_draft(draft_id)
     store.update_action_status(action_request_id, "SENT")
     store.update_lifecycle(action["mail_record_id"], "VERIFIED")
-    store.create_audit_event(action["mail_record_id"], "ACTION_APPLIED",
-                             after={"sent": True})
+    store.create_audit_event(action["mail_record_id"], "ACTION_APPLIED", after={"sent": True})
 
     return {"sent": True, "action_request_id": action_request_id}
 
 
 # ─── Move ──────────────────────────────────────────────────────────────────────
 
-def move_message(db: Any, mail_record_id: str, destination_folder_id_enc: str, nonce: str) -> dict[str, Any]:
+
+def move_message(
+    db: Any, mail_record_id: str, destination_folder_id_enc: str, nonce: str
+) -> dict[str, Any]:
     """Reversible move to a folder."""
     from orivellum.capabilities.mail.token_vault import decrypt_str, encrypt_str
     from orivellum.database.mail_store import MailStore
 
-    store  = MailStore(db)
+    store = MailStore(db)
     if not store.consume_nonce(nonce, mail_record_id, ACTION_MOVE):
         raise MailStewardError("Invalid or already-used move nonce")
 
@@ -378,11 +402,11 @@ def move_message(db: Any, mail_record_id: str, destination_folder_id_enc: str, n
     if not client:
         raise MailStewardError("Not connected to Microsoft Graph")
 
-    graph_msg_id    = decrypt_str(record["graph_message_id_enc"])
+    graph_msg_id = decrypt_str(record["graph_message_id_enc"])
     original_folder = record.get("graph_folder_id_enc", "")  # already encrypted
-    dest_folder_id  = decrypt_str(destination_folder_id_enc)
+    dest_folder_id = decrypt_str(destination_folder_id_enc)
 
-    result     = client.move_message(graph_msg_id, dest_folder_id)
+    result = client.move_message(graph_msg_id, dest_folder_id)
     new_msg_id = result.get("id", "")
     if not new_msg_id:
         raise MailStewardError("Graph did not return new message ID after move")
@@ -403,20 +427,22 @@ def move_message(db: Any, mail_record_id: str, destination_folder_id_enc: str, n
         new_folder_id_enc=destination_folder_id_enc,
         action_request_id=action_id,
     )
-    store.create_audit_event(mail_record_id, "ACTION_APPLIED",
-                             before={"folder": "original"}, after={"folder": "moved"})
+    store.create_audit_event(
+        mail_record_id, "ACTION_APPLIED", before={"folder": "original"}, after={"folder": "moved"}
+    )
 
     return {"action_request_id": action_id, "moved": True}
 
 
 # ─── Undo move ─────────────────────────────────────────────────────────────────
 
+
 def undo_move(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
     """Reverse a previous move operation."""
     from orivellum.capabilities.mail.token_vault import decrypt_str, encrypt_str
     from orivellum.database.mail_store import MailStore
 
-    store  = MailStore(db)
+    store = MailStore(db)
     action = store.get_action_request(action_request_id)
     if not action:
         raise MailStewardError("Action request not found")
@@ -432,12 +458,12 @@ def undo_move(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
     if not client:
         raise MailStewardError("Not connected to Microsoft Graph")
 
-    current_msg_id  = decrypt_str(action.get("result_message_id_enc", ""))
+    current_msg_id = decrypt_str(action.get("result_message_id_enc", ""))
     original_folder = decrypt_str(action.get("original_folder_id_enc", ""))
     if not current_msg_id or not original_folder:
         raise MailStewardError("Undo data is incomplete — original folder not recorded")
 
-    result     = client.move_message(current_msg_id, original_folder)
+    result = client.move_message(current_msg_id, original_folder)
     new_msg_id = result.get("id", "")
 
     store.update_action_status(action_request_id, "REVERSED")
@@ -447,7 +473,6 @@ def undo_move(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
         new_folder_id_enc=encrypt_str(original_folder),
         action_request_id=None,
     )
-    store.create_audit_event(action["mail_record_id"], "ACTION_REVERSED",
-                             after={"undone": True})
+    store.create_audit_event(action["mail_record_id"], "ACTION_REVERSED", after={"undone": True})
 
     return {"undone": True}

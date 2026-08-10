@@ -1,4 +1,5 @@
 """Projects (mastery learning) routes — /api/projects/*"""
+
 from __future__ import annotations
 
 from datetime import UTC
@@ -9,6 +10,8 @@ from pydantic import BaseModel
 from orivellum.api._deps import get_db, require_auth
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+
+
 class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
@@ -35,6 +38,7 @@ def create_project(body: ProjectCreate):
     db = get_db()
     import uuid
     from datetime import datetime
+
     pid = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
     with db._lock:
@@ -44,10 +48,23 @@ def create_project(body: ProjectCreate):
             (pid, body.work_id, body.name, body.description, now),
         )
         db._conn.commit()
-    db.audit("learning.concept_created", object_id=pid, object_type="learning_concept",
-             actor="user", detail=body.name[:120] if body.name else None)
-    return {"project": {"id": pid, "name": body.name, "description": body.description,
-                        "work_id": body.work_id, "mastery": 0.0, "created_at": now}}
+    db.audit(
+        "learning.concept_created",
+        object_id=pid,
+        object_type="learning_concept",
+        actor="user",
+        detail=body.name[:120] if body.name else None,
+    )
+    return {
+        "project": {
+            "id": pid,
+            "name": body.name,
+            "description": body.description,
+            "work_id": body.work_id,
+            "mastery": 0.0,
+            "created_at": now,
+        }
+    }
 
 
 @router.get("/projects/{project_id}")

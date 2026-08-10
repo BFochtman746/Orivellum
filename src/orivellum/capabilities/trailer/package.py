@@ -7,6 +7,7 @@ stored in the trailers.package_json column and served through the API.
 Human-readable markdown strings are embedded as sub-keys so the frontend
 can render them without a separate file system.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -21,7 +22,7 @@ def build_square(*, brief: dict, concept: dict, method: dict, plan: dict, valida
     shot_prompts = {}
     for i, s in enumerate(plan.get("shots", [])):
         shot_prompts[f"shot_{i:02d}"] = (
-            f"# SHOT {i:02d} — {s.get('beat', '')}  [{s.get('beat_type','').upper()}]\n\n"
+            f"# SHOT {i:02d} — {s.get('beat', '')}  [{s.get('beat_type', '').upper()}]\n\n"
             f"[IMAGE MODEL] {s.get('image_model')}\n"
             f"[POSITIVE]\n{s.get('image_prompt', '')}\n\n"
             f"[NEGATIVE]\n{s.get('negative_prompt', '')}\n\n"
@@ -51,8 +52,9 @@ def build_square(*, brief: dict, concept: dict, method: dict, plan: dict, valida
         "format": "square",
         "aspect_ratio": "1:1",
         "duration_s": 30,
-        "platform_targets": plan.get("platform_targets",
-                                     ["Instagram Feed", "LinkedIn", "Twitter/X", "Facebook"]),
+        "platform_targets": plan.get(
+            "platform_targets", ["Instagram Feed", "LinkedIn", "Twitter/X", "Facebook"]
+        ),
         "crop_rule": crop_rule,
         "docs": {
             "production_package": _square_master_md(brief, concept, plan, validation, stamp),
@@ -72,8 +74,9 @@ def build_square(*, brief: dict, concept: dict, method: dict, plan: dict, valida
 def _square_master_md(brief, concept, plan, val, stamp) -> str:
     status = val["status"]
     badge = "✅ READY" if status == "READY" else f"⛔ BLOCKED ({val['critical']} critical)"
-    platforms = ", ".join(plan.get("platform_targets",
-                                   ["Instagram Feed", "LinkedIn", "Twitter/X", "Facebook"]))
+    platforms = ", ".join(
+        plan.get("platform_targets", ["Instagram Feed", "LinkedIn", "Twitter/X", "Facebook"])
+    )
     lines = [
         f"# Square Feed Package — {brief.get('title', '(untitled)')}",
         "",
@@ -95,8 +98,8 @@ def _square_master_md(brief, concept, plan, val, stamp) -> str:
     ]
     for i, s in enumerate(plan.get("shots", [])):
         lines.append(
-            f"- Shot {i:02d} [{s.get('beat_type','').upper()}] "
-            f"**{s.get('beat','')}** · {s.get('duration')}s · {s.get('resolution')}"
+            f"- Shot {i:02d} [{s.get('beat_type', '').upper()}] "
+            f"**{s.get('beat', '')}** · {s.get('duration')}s · {s.get('resolution')}"
         )
     lines += [
         "",
@@ -117,7 +120,7 @@ def _square_shotlist_md(plan: dict) -> str:
     lines = ["# Square Shot List (1:1 · 30 s)", ""]
     for i, s in enumerate(plan.get("shots", [])):
         lines += [
-            f"## Shot {i:02d} [{s.get('beat_type','').upper()}] — {s.get('beat', '')}  "
+            f"## Shot {i:02d} [{s.get('beat_type', '').upper()}] — {s.get('beat', '')}  "
             f"({s.get('duration', '?')}s)",
             f"**Description:** {s.get('description', '')}",
             f"**Square framing:** {s.get('square_framing_note', '')}",
@@ -141,7 +144,8 @@ def _square_assembly_md(plan: dict, crop_rule: str) -> str:
         "",
         crop_rule,
         "",
-        "## Video track (V1)", "",
+        "## Video track (V1)",
+        "",
     ]
     for c in tl.get("V1_video", []):
         lines.append(f"- Shot {c['shot']:02d} @ {c['in']}s for {c['dur']}s")
@@ -150,14 +154,18 @@ def _square_assembly_md(plan: dict, crop_rule: str) -> str:
         lines.append(f"- {c['t']}s — {c['line']}")
     duck = (tl.get("A2_music") or [{}])[0].get("duck_under_vo_db", "?")
     lines += [
-        "", "## Music (A2)",
+        "",
+        "## Music (A2)",
         f"- score.wav @ 0s, duck {duck} dB under VO",
         "",
         "## Caption Safe Zone",
         "- Bottom 15% of frame reserved for text overlays",
         "",
-        "## Transitions", f"- {a.get('transitions', 'hard cut')}",
-        "", "## Audio mix", "",
+        "## Transitions",
+        f"- {a.get('transitions', 'hard cut')}",
+        "",
+        "## Audio mix",
+        "",
     ]
     for k, v in a.get("audio_mix", {}).items():
         lines.append(f"- {k}: {v} LUFS")
@@ -178,7 +186,7 @@ def build_short(*, brief: dict, concept: dict, method: dict, plan: dict, validat
     shot_prompts = {}
     for i, s in enumerate(plan.get("shots", [])):
         shot_prompts[f"shot_{i:02d}"] = (
-            f"# SHOT {i:02d} — {s.get('beat', '')}  [{s.get('beat_type','').upper()}]\n\n"
+            f"# SHOT {i:02d} — {s.get('beat', '')}  [{s.get('beat_type', '').upper()}]\n\n"
             f"[IMAGE MODEL] {s.get('image_model')}\n"
             f"[POSITIVE]\n{s.get('image_prompt', '')}\n\n"
             f"[NEGATIVE]\n{s.get('negative_prompt', '')}\n\n"
@@ -203,8 +211,9 @@ def build_short(*, brief: dict, concept: dict, method: dict, plan: dict, validat
         "format": "short",
         "aspect_ratio": "9:16",
         "duration_s": 30,
-        "platform_targets": plan.get("platform_targets",
-                                     ["Instagram Reels", "TikTok", "YouTube Shorts"]),
+        "platform_targets": plan.get(
+            "platform_targets", ["Instagram Reels", "TikTok", "YouTube Shorts"]
+        ),
         "docs": {
             "production_package": _short_master_md(brief, concept, plan, validation, stamp),
             "book_brief": _brief_md(brief),
@@ -223,8 +232,9 @@ def build_short(*, brief: dict, concept: dict, method: dict, plan: dict, validat
 def _short_master_md(brief, concept, plan, val, stamp) -> str:
     status = val["status"]
     badge = "✅ READY" if status == "READY" else f"⛔ BLOCKED ({val['critical']} critical)"
-    platforms = ", ".join(plan.get("platform_targets",
-                                   ["Instagram Reels", "TikTok", "YouTube Shorts"]))
+    platforms = ", ".join(
+        plan.get("platform_targets", ["Instagram Reels", "TikTok", "YouTube Shorts"])
+    )
     lines = [
         f"# Social Clip Package — {brief.get('title', '(untitled)')}",
         "",
@@ -240,8 +250,8 @@ def _short_master_md(brief, concept, plan, val, stamp) -> str:
     ]
     for i, s in enumerate(plan.get("shots", [])):
         lines.append(
-            f"- Shot {i:02d} [{s.get('beat_type','').upper()}] "
-            f"**{s.get('beat','')}** · {s.get('duration')}s · {s.get('resolution')}"
+            f"- Shot {i:02d} [{s.get('beat_type', '').upper()}] "
+            f"**{s.get('beat', '')}** · {s.get('duration')}s · {s.get('resolution')}"
         )
     lines += [
         "",
@@ -262,7 +272,7 @@ def _short_shotlist_md(plan: dict) -> str:
     lines = ["# Short-Form Shot List (9:16 · 30 s)", ""]
     for i, s in enumerate(plan.get("shots", [])):
         lines += [
-            f"## Shot {i:02d} [{s.get('beat_type','').upper()}] — {s.get('beat', '')}  "
+            f"## Shot {i:02d} [{s.get('beat_type', '').upper()}] — {s.get('beat', '')}  "
             f"({s.get('duration', '?')}s)",
             f"**Description:** {s.get('description', '')}",
             f"**Vertical framing:** {s.get('vertical_framing_note', '')}",
@@ -332,6 +342,7 @@ def build(*, brief: dict, concept: dict, method: dict, plan: dict, validation: d
 # ---------------------------------------------------------------------------
 # Markdown renderers
 # ---------------------------------------------------------------------------
+
 
 def _master_md(brief, concept, method, plan, val, stamp) -> str:
     status = val["status"]
@@ -467,7 +478,7 @@ def _music_md(plan: dict) -> str:
 def _titles_md(plan: dict) -> str:
     lines = ["# Title & Quote Plates", ""]
     for p in plan.get("titles", []):
-        lines.append(f"- **\"{p['text']}\"** → shot {p['for_shot']} · {p['style']}")
+        lines.append(f'- **"{p["text"]}"** → shot {p["for_shot"]} · {p["style"]}')
     return "\n".join(lines) + "\n"
 
 
@@ -482,11 +493,15 @@ def _assembly_md(plan: dict) -> str:
         lines.append(f"- {c['t']}s — {c['line']}")
     duck = (tl.get("A2_music") or [{}])[0].get("duck_under_vo_db", "?")
     lines += [
-        "", "## Music (A2)",
+        "",
+        "## Music (A2)",
         f"- score.wav @ 0s, duck {duck} dB under VO",
         "",
-        "## Transitions", f"- {a.get('transitions', '')}",
-        "", "## Audio mix", "",
+        "## Transitions",
+        f"- {a.get('transitions', '')}",
+        "",
+        "## Audio mix",
+        "",
     ]
     for k, v in a.get("audio_mix", {}).items():
         lines.append(f"- {k}: {v} LUFS")

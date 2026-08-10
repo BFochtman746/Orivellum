@@ -9,6 +9,7 @@ Covers the async transcription backend (POST /api/studio/transcribe):
 No transcription engine is ever invoked: the size/MIME failures happen before a
 job is created, and registry tests manipulate the module-level job dict directly.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,10 +28,10 @@ from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -42,8 +43,9 @@ class _TranscribeTestBase(unittest.TestCase):
     """Shared setup: temp app + clean job registry + captured temp spool dirs."""
 
     def setUp(self):
-        from orivellum.api.routes import studio as studio_mod
         from orivellum.api import _deps
+        from orivellum.api.routes import studio as studio_mod
+
         self.studio = studio_mod
         # Save the process-global dependency container BEFORE re-initing it so
         # teardown can hand the previous DB/config back to whatever test file
@@ -52,14 +54,14 @@ class _TranscribeTestBase(unittest.TestCase):
         self._prev_cfg = _deps._CFG
         self._tmp = tempfile.TemporaryDirectory()
         self.app, self.db = _make_app(self._tmp.name)
-        self.client = TestClient(self.app, raise_server_exceptions=False,
-                                 headers=AUTH_HEADERS)
+        self.client = TestClient(self.app, raise_server_exceptions=False, headers=AUTH_HEADERS)
         with self.studio._transcribe_jobs_lock:
             self._saved_jobs = dict(self.studio._transcribe_jobs)
             self.studio._transcribe_jobs.clear()
 
     def tearDown(self):
         from orivellum.api import _deps
+
         with self.studio._transcribe_jobs_lock:
             self.studio._transcribe_jobs.clear()
             self.studio._transcribe_jobs.update(self._saved_jobs)
@@ -119,8 +121,8 @@ class _TranscribeTestBase(unittest.TestCase):
 # Upload limits
 # ---------------------------------------------------------------------------
 
-class TestTranscribeUploadLimits(_TranscribeTestBase):
 
+class TestTranscribeUploadLimits(_TranscribeTestBase):
     def test_over_limit_returns_413_and_cleans_partial_file(self):
         # Shrink the cap so the test doesn't stream 500 MB.
         with patch.object(self.studio, "_MAX_TRANSCRIBE_BYTES", 4096):
@@ -129,8 +131,7 @@ class TestTranscribeUploadLimits(_TranscribeTestBase):
         self.assertIn("too large", resp.json()["detail"].lower())
         # The spool dir was created, then fully removed — no partial bytes left.
         self.assertEqual(len(created), 1)
-        self.assertFalse(created[0].exists(),
-                         "partial temp dir must be deleted on 413")
+        self.assertFalse(created[0].exists(), "partial temp dir must be deleted on 413")
         self.assertEqual(list(spool_root.iterdir()), [])
         # No job was registered for the failed upload.
         with self.studio._transcribe_jobs_lock:
@@ -141,15 +142,13 @@ class TestTranscribeUploadLimits(_TranscribeTestBase):
         resp, spool_root, created = self._upload(b"definitely not audio" * 100)
         self.assertEqual(resp.status_code, 415, resp.text)
         self.assertEqual(len(created), 1)
-        self.assertFalse(created[0].exists(),
-                         "spooled file must be deleted on 415")
+        self.assertFalse(created[0].exists(), "spooled file must be deleted on 415")
         self.assertEqual(list(spool_root.iterdir()), [])
         with self.studio._transcribe_jobs_lock:
             self.assertEqual(self.studio._transcribe_jobs, {})
 
     def test_unsupported_extension_returns_422_without_spooling(self):
-        resp, spool_root, created = self._upload(b"ID3" + b"\x00" * 100,
-                                                 name="notes.txt")
+        resp, spool_root, created = self._upload(b"ID3" + b"\x00" * 100, name="notes.txt")
         self.assertEqual(resp.status_code, 422)
         # Rejected before any temp dir is created.
         self.assertEqual(created, [])
@@ -187,8 +186,8 @@ class TestTranscribeUploadLimits(_TranscribeTestBase):
 # Job registry — cancel/prune interaction
 # ---------------------------------------------------------------------------
 
-class TestTranscribeJobRegistry(_TranscribeTestBase):
 
+class TestTranscribeJobRegistry(_TranscribeTestBase):
     def test_cancel_sets_cancelling_and_survives_prune(self):
         """A cancelled-but-not-yet-terminal job must NOT be pruned: the worker
         still needs the entry to write its terminal state into."""
@@ -203,10 +202,12 @@ class TestTranscribeJobRegistry(_TranscribeTestBase):
             for i in range(self.studio._MAX_TRANSCRIBE_JOBS + 10):
                 self._seed_job(f"done-{i}", "done", base + i)
             self.studio._prune_transcribe_jobs()
-            self.assertIn("victim", self.studio._transcribe_jobs,
-                          "cancelling job was pruned before the worker finished")
-            self.assertEqual(self.studio._transcribe_jobs["victim"]["state"],
-                             "cancelling")
+            self.assertIn(
+                "victim",
+                self.studio._transcribe_jobs,
+                "cancelling job was pruned before the worker finished",
+            )
+            self.assertEqual(self.studio._transcribe_jobs["victim"]["state"], "cancelling")
             self.assertTrue(self.studio._transcribe_jobs["victim"]["cancel"].is_set())
 
     def test_cancelled_job_prunable_only_after_terminal_state(self):
@@ -220,7 +221,8 @@ class TestTranscribeJobRegistry(_TranscribeTestBase):
             # Worker writes the terminal state with an OLD finished_at —
             # now it is the oldest finished job and eligible for eviction.
             self.studio._transcribe_jobs["victim"].update(
-                {"state": "cancelled", "finished_at": base})
+                {"state": "cancelled", "finished_at": base}
+            )
             self.studio._prune_transcribe_jobs()
             self.assertNotIn("victim", self.studio._transcribe_jobs)
 
@@ -279,8 +281,14 @@ class TestTranscribeJobRegistry(_TranscribeTestBase):
         self.studio._transcribe_jobs["pre-cancelled"]["cancel"].set()
 
         from orivellum.api._deps import get_config
+
         self.studio._run_transcribe_job(
-            "pre-cancelled", tmp_path, "upload.mp3", False, self.db, get_config(),
+            "pre-cancelled",
+            tmp_path,
+            "upload.mp3",
+            False,
+            self.db,
+            get_config(),
         )
         job = self.studio._transcribe_jobs["pre-cancelled"]
         self.assertEqual(job["state"], "cancelled")

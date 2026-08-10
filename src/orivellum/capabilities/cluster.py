@@ -14,6 +14,7 @@ Pipeline
 No ML framework beyond numpy is required.  The vectors are already stored
 as normalised float32 blobs; dot-product == cosine similarity.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,16 +33,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("orivellum.cluster")
 
-_LINK_NEIGHBOURS = 10    # store top-N similar docs per document
+_LINK_NEIGHBOURS = 10  # store top-N similar docs per document
 _MIN_SIM_THRESHOLD = 0.35  # minimum cosine similarity to store a link
-_MAX_K = 20              # cap number of topics
+_MAX_K = 20  # cap number of topics
 _MIN_DOCS_FOR_CLUSTER = 2  # a cluster must have at least this many docs
 _KMEANS_ITERS = 30
-_LABEL_TERMS = 4         # top TF-IDF terms to use in topic label
+_LABEL_TERMS = 4  # top TF-IDF terms to use in topic label
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                      #
 # --------------------------------------------------------------------------- #
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -64,6 +66,7 @@ def _norm(v: np.ndarray) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 # Load vectors                                                                 #
 # --------------------------------------------------------------------------- #
+
 
 def _load_doc_vectors(db: OrivellumDB) -> dict[str, np.ndarray]:
     """Return {doc_id: normalised document embedding} by averaging chunk vecs.
@@ -101,6 +104,7 @@ def _load_doc_vectors(db: OrivellumDB) -> dict[str, np.ndarray]:
 # K-means (cosine space)                                                       #
 # --------------------------------------------------------------------------- #
 
+
 def _kmeans_cosine(X: np.ndarray, k: int, n_iter: int = _KMEANS_ITERS) -> np.ndarray:
     """K-means on normalised vectors using dot-product as similarity.
 
@@ -120,9 +124,9 @@ def _kmeans_cosine(X: np.ndarray, k: int, n_iter: int = _KMEANS_ITERS) -> np.nda
     rng = np.random.default_rng(42)
     chosen = [int(rng.integers(n))]
     for _ in range(k - 1):
-        sims = X @ X[chosen].T        # (n, len(chosen))
-        max_sim = sims.max(axis=1)    # closest centroid similarity
-        probs = 1.0 - max_sim         # prefer points far from existing centroids
+        sims = X @ X[chosen].T  # (n, len(chosen))
+        max_sim = sims.max(axis=1)  # closest centroid similarity
+        probs = 1.0 - max_sim  # prefer points far from existing centroids
         probs = np.clip(probs, 0, None)
         s = probs.sum()
         if s < 1e-12:
@@ -133,12 +137,12 @@ def _kmeans_cosine(X: np.ndarray, k: int, n_iter: int = _KMEANS_ITERS) -> np.nda
             probs /= s
             chosen.append(int(rng.choice(n, p=probs)))
 
-    centroids = _norm_rows(X[chosen].copy())   # (k, d)
+    centroids = _norm_rows(X[chosen].copy())  # (k, d)
     labels = np.zeros(n, dtype=np.int32)
 
     for _ in range(n_iter):
         # Assignment step: nearest centroid by cosine (highest dot product)
-        sims = X @ centroids.T        # (n, k)
+        sims = X @ centroids.T  # (n, k)
         new_labels = np.argmax(sims, axis=1).astype(np.int32)
         if np.all(new_labels == labels):
             break
@@ -169,12 +173,98 @@ def _norm_rows(X: np.ndarray) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 
 _STOP = frozenset(
-    "a an the and or but in on at to of for is are was were be been have has had "
-    "this that with as from by it its he she they we you i do did will would "
-    "which who what how when where there here than then also just can may might "
-    "not no more all one two three four five document research study analysis "
-    "include includes including use uses using provide provides providing data "
-    "based between across different used other than only both some each many most".split()
+    [
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "of",
+        "for",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "have",
+        "has",
+        "had",
+        "this",
+        "that",
+        "with",
+        "as",
+        "from",
+        "by",
+        "it",
+        "its",
+        "he",
+        "she",
+        "they",
+        "we",
+        "you",
+        "i",
+        "do",
+        "did",
+        "will",
+        "would",
+        "which",
+        "who",
+        "what",
+        "how",
+        "when",
+        "where",
+        "there",
+        "here",
+        "than",
+        "then",
+        "also",
+        "just",
+        "can",
+        "may",
+        "might",
+        "not",
+        "no",
+        "more",
+        "all",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "document",
+        "research",
+        "study",
+        "analysis",
+        "include",
+        "includes",
+        "including",
+        "use",
+        "uses",
+        "using",
+        "provide",
+        "provides",
+        "providing",
+        "data",
+        "based",
+        "between",
+        "across",
+        "different",
+        "used",
+        "other",
+        "than",
+        "only",
+        "both",
+        "some",
+        "each",
+        "many",
+        "most",
+    ]
 )
 
 _WORD_RE = re.compile(r"\b[a-z][a-z\-]{2,}\b")
@@ -184,7 +274,9 @@ def _tokenize(text: str) -> list[str]:
     return [w for w in _WORD_RE.findall(text.lower()) if w not in _STOP]
 
 
-def _tfidf_labels(cluster_texts: dict[int, list[str]], n_terms: int = _LABEL_TERMS) -> dict[int, str]:
+def _tfidf_labels(
+    cluster_texts: dict[int, list[str]], n_terms: int = _LABEL_TERMS
+) -> dict[int, str]:
     """Compute TF-IDF top terms per cluster and return a label string."""
     # Compute DF across clusters (each cluster is a document)
     all_clusters = list(cluster_texts.keys())
@@ -216,6 +308,7 @@ def _tfidf_labels(cluster_texts: dict[int, list[str]], n_terms: int = _LABEL_TER
 # DB helpers (topics / topic_members / doc_links)                              #
 # --------------------------------------------------------------------------- #
 
+
 def _clear_topics(db: OrivellumDB) -> None:
     """Remove all clustering output rows (idempotent rebuild)."""
     with db._lock:
@@ -227,8 +320,8 @@ def _clear_topics(db: OrivellumDB) -> None:
 
 def _write_topics(
     db: OrivellumDB,
-    clusters: dict[int, list[str]],      # cluster_id → [doc_id, …]
-    labels: dict[int, str],              # cluster_id → label
+    clusters: dict[int, list[str]],  # cluster_id → [doc_id, …]
+    labels: dict[int, str],  # cluster_id → label
 ) -> dict[int, str]:
     """Insert topics + topic_members; return {cluster_id → topic_id}."""
     now = _now()
@@ -255,8 +348,7 @@ def _write_topics(
         with db._lock:
             db._conn.execute(
                 "INSERT INTO topics(id, name, kind, meta, created_at) VALUES(?,?,?,?,?)",
-                (tid, label, "semantic_cluster",
-                 '{"source":"cluster","algorithm":"kmeans"}', now),
+                (tid, label, "semantic_cluster", '{"source":"cluster","algorithm":"kmeans"}', now),
             )
             for doc_id in doc_ids:
                 db._conn.execute(
@@ -275,14 +367,14 @@ def _write_doc_links(db: OrivellumDB, doc_ids: list[str], X: np.ndarray) -> int:
         return 0
     now = _now()
     # Full pairwise similarity matrix — feasible for n ≤ ~5000
-    sim_matrix = X @ X.T   # (n, n)
+    sim_matrix = X @ X.T  # (n, n)
     written = 0
     with db._lock:
         db._conn.execute("DELETE FROM doc_links WHERE link_type='semantic'")
         for i in range(n):
             # Find top-K neighbours (excluding self)
             row = sim_matrix[i].copy()
-            row[i] = -1.0   # exclude self
+            row[i] = -1.0  # exclude self
             top_j = np.argsort(-row)[:_LINK_NEIGHBOURS]
             for j in top_j:
                 sim = float(row[j])
@@ -310,6 +402,7 @@ def _write_doc_links(db: OrivellumDB, doc_ids: list[str], X: np.ndarray) -> int:
 # Chunk text loading                                                            #
 # --------------------------------------------------------------------------- #
 
+
 def _load_chunk_texts(db: OrivellumDB, doc_ids: list[str]) -> dict[str, list[str]]:
     """Return {doc_id: [chunk_text, …]} for the given documents."""
     if not doc_ids:
@@ -330,6 +423,7 @@ def _load_chunk_texts(db: OrivellumDB, doc_ids: list[str]) -> dict[str, list[str
 # Main entry point                                                              #
 # --------------------------------------------------------------------------- #
 
+
 def run_clustering(db: OrivellumDB) -> dict:
     """Cluster all vectorised documents and rebuild topic/link tables.
 
@@ -344,7 +438,7 @@ def run_clustering(db: OrivellumDB) -> dict:
         return {"status": "skipped", "reason": f"only {n_docs} vectorised documents", "topics": 0}
 
     doc_ids = list(doc_embs.keys())
-    X = np.stack([doc_embs[d] for d in doc_ids], axis=0).astype(np.float32)   # (n, d)
+    X = np.stack([doc_embs[d] for d in doc_ids], axis=0).astype(np.float32)  # (n, d)
 
     # Choose k: sqrt heuristic, capped
     k = min(_MAX_K, max(2, int(math.sqrt(n_docs))))
@@ -368,8 +462,7 @@ def run_clustering(db: OrivellumDB) -> dict:
         cluster_texts[cid] = texts
 
     labels = _tfidf_labels(cluster_texts)
-    logger.info("Clustering: generated labels: %s",
-                {c: l for c, l in list(labels.items())[:5]})
+    logger.info("Clustering: generated labels: %s", {c: l for c, l in list(labels.items())[:5]})
 
     # Write to DB (idempotent — clears previous results first)
     logger.info("Clustering: writing topics to DB…")
@@ -383,7 +476,9 @@ def run_clustering(db: OrivellumDB) -> dict:
     n_topics = len(cluster_to_topic)
     logger.info(
         "Clustering complete: %d topics from %d docs, %d links",
-        n_topics, n_docs, links_written,
+        n_topics,
+        n_docs,
+        links_written,
     )
     return {
         "status": "ok",

@@ -11,6 +11,7 @@ Each item is written to the knowledge table via db.create_knowledge_item().
 Items tagged with review_status='auto' so a future pass can promote or reject
 them without cluttering human-curated knowledge.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,14 +36,21 @@ _MAX_ENTITIES = 20
 # Helpers
 # ---------------------------------------------------------------------------
 
-_SENT_SPLIT = re.compile(r'(?<=[.!?])[ \t]+(?=[A-Z])')
-_CAP_PHRASE = re.compile(
-    r'\b([A-Z][a-z]+(?:[ ]+[A-Z][a-z]+){1,5})\b'
+_SENT_SPLIT = re.compile(r"(?<=[.!?])[ \t]+(?=[A-Z])")
+_CAP_PHRASE = re.compile(r"\b([A-Z][a-z]+(?:[ ]+[A-Z][a-z]+){1,5})\b")
+_STOP_PHRASES = frozenset(
+    {
+        "In The",
+        "Of The",
+        "For The",
+        "To The",
+        "And The",
+        "This Is",
+        "It Is",
+        "There Is",
+        "We Are",
+    }
 )
-_STOP_PHRASES = frozenset({
-    "In The", "Of The", "For The", "To The", "And The",
-    "This Is", "It Is", "There Is", "We Are",
-})
 
 
 def _sentences(text: str) -> list[str]:
@@ -51,9 +59,7 @@ def _sentences(text: str) -> list[str]:
 
 def _is_good_sentence(s: str) -> bool:
     words = s.split()
-    return (len(words) >= _MIN_SENTENCE_WORDS
-            and s.endswith((".", "!", "?"))
-            and not s.isupper())
+    return len(words) >= _MIN_SENTENCE_WORDS and s.endswith((".", "!", "?")) and not s.isupper()
 
 
 def _cap_phrases(text: str) -> list[str]:
@@ -71,9 +77,10 @@ def _cap_phrases(text: str) -> list[str]:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def harvest(result: ExtractionResult, doc_id: str,
-            work_id: str | None, doc_title: str,
-            db: OrivellumDB) -> int:
+
+def harvest(
+    result: ExtractionResult, doc_id: str, work_id: str | None, doc_title: str, db: OrivellumDB
+) -> int:
     """Harvest knowledge from *result* and write to DB.
 
     Returns count of items created.
@@ -81,9 +88,7 @@ def harvest(result: ExtractionResult, doc_id: str,
     created = 0
 
     # 1. Document-level summary node
-    summary = (
-        f"{doc_title} — {result.kind.upper()} document, {result.word_count:,} words."
-    )
+    summary = f"{doc_title} — {result.kind.upper()} document, {result.word_count:,} words."
     db.create_knowledge_item(
         work_id=work_id,
         kind="summary",
@@ -165,9 +170,7 @@ def harvest(result: ExtractionResult, doc_id: str,
         except Exception as _e:
             logger.debug("entity graph write non-fatal: %s", _e)
 
-    logger.info(
-        "Harvested %d knowledge items for doc %s (work=%s)", created, doc_id, work_id
-    )
+    logger.info("Harvested %d knowledge items for doc %s (work=%s)", created, doc_id, work_id)
     return created
 
 
@@ -217,18 +220,23 @@ _MAX_CHUNK_CHARS = 2_000
 _EXTRACTION_TIMEOUT_SEC = 30
 
 
-def _call_llm_sync(prompt: str, base_url: str, model: str, timeout: int,
-                   db: OrivellumDB | None = None) -> str | None:
+def _call_llm_sync(
+    prompt: str, base_url: str, model: str, timeout: int, db: OrivellumDB | None = None
+) -> str | None:
     """Make a synchronous (blocking) call to the LLM endpoint.
 
     Routes through the central ``llm_call`` gateway.  Returns the raw text
     response, or None on any failure.  Safe to call from a background thread.
     """
     from orivellum.capabilities.llm import llm_call
+
     result = llm_call(
         [{"role": "user", "content": prompt}],
-        base_url=base_url, model=model,
-        timeout=timeout, purpose="harvest.llm", db=db,
+        base_url=base_url,
+        model=model,
+        timeout=timeout,
+        purpose="harvest.llm",
+        db=db,
     )
     if not result.ok or result.text is None:
         logger.warning(
@@ -256,10 +264,14 @@ def _parse_extraction(raw: str) -> dict:
         return {}
 
 
-def llm_harvest(result: ExtractionResult, doc_id: str,
-                work_id: str | None, doc_title: str,
-                db: OrivellumDB,
-                kind: str | None = None) -> int:
+def llm_harvest(
+    result: ExtractionResult,
+    doc_id: str,
+    work_id: str | None,
+    doc_title: str,
+    db: OrivellumDB,
+    kind: str | None = None,
+) -> int:
     """LLM-powered knowledge extraction for a single document.
 
     Sends up to _MAX_LLM_CHUNKS text segments to the local AI endpoint and
@@ -309,8 +321,7 @@ def llm_harvest(result: ExtractionResult, doc_id: str,
         if _total_len <= _MAX_HARVEST_CHUNKS * _MAX_CHUNK_CHARS:
             # Short doc — sequential, non-overlapping windows, zero gap at tail
             _chunk_texts: list[str] = [
-                _full_text[i : i + _MAX_CHUNK_CHARS]
-                for i in range(0, _total_len, _MAX_CHUNK_CHARS)
+                _full_text[i : i + _MAX_CHUNK_CHARS] for i in range(0, _total_len, _MAX_CHUNK_CHARS)
             ][:_MAX_HARVEST_CHUNKS]
         elif _MAX_HARVEST_CHUNKS == 1:
             _chunk_texts = [_full_text[:_MAX_CHUNK_CHARS]]
@@ -320,17 +331,16 @@ def llm_harvest(result: ExtractionResult, doc_id: str,
             _tail = _total_len - _MAX_CHUNK_CHARS
             _chunk_texts = [
                 _full_text[
-                    int(_tail * i / (_MAX_HARVEST_CHUNKS - 1))
-                    : int(_tail * i / (_MAX_HARVEST_CHUNKS - 1)) + _MAX_CHUNK_CHARS
+                    int(_tail * i / (_MAX_HARVEST_CHUNKS - 1)) : int(
+                        _tail * i / (_MAX_HARVEST_CHUNKS - 1)
+                    )
+                    + _MAX_CHUNK_CHARS
                 ]
                 for i in range(_MAX_HARVEST_CHUNKS)
             ]
     else:
         # Fallback: use page segments if full_text is absent
-        _chunk_texts = [
-            seg.text[:_MAX_CHUNK_CHARS]
-            for seg in result.pages[:_MAX_HARVEST_CHUNKS]
-        ]
+        _chunk_texts = [seg.text[:_MAX_CHUNK_CHARS] for seg in result.pages[:_MAX_HARVEST_CHUNKS]]
 
     # ── Template resolution ────────────────────────────────────────────────────
     # Priority 1–3: user-defined extraction templates stored in the DB.
@@ -347,8 +357,9 @@ def llm_harvest(result: ExtractionResult, doc_id: str,
             hints: list[str] = et.get("field_hints") or []
             hints_block = ""
             if hints:
-                hints_block = "\n\nExtraction guidance for this document type:\n" + \
-                              "\n".join(f"  • {h}" for h in hints)
+                hints_block = "\n\nExtraction guidance for this document type:\n" + "\n".join(
+                    f"  • {h}" for h in hints
+                )
             # Append the JSON output structure reminder so the parser can handle
             # responses from any custom template that still uses our JSON schema.
             template = (
@@ -356,17 +367,20 @@ def llm_harvest(result: ExtractionResult, doc_id: str,
                 + hints_block
                 + "\n\n"
                 + "Return ONLY valid JSON with this structure:\n"
-                + '{{\n'
+                + "{{\n"
                 + '  "entities": [{{"name": "...", "description": "..."}}],\n'
                 + '  "claims": [{{"text": "..."}}],\n'
                 + '  "relationships": [{{"subject": "...", "predicate": "...", "object": "..."}}\n'
-                + ']\n}}\n\n'
+                + "]\n}}\n\n"
                 + "Document title: {title}\n\nChunk:\n{chunk}"
             )
             _using_custom_template = True
             logger.debug(
                 "llm_harvest: using custom template %r (id=%s) for kind=%s work=%s",
-                et.get("name"), et.get("id", "")[:8], kind, work_id,
+                et.get("name"),
+                et.get("id", "")[:8],
+                kind,
+                work_id,
             )
     except Exception as _te:
         logger.debug("llm_harvest: template lookup failed (%s) — using defaults", _te)
@@ -396,8 +410,9 @@ def llm_harvest(result: ExtractionResult, doc_id: str,
             prompt = template.format(title=doc_title, chunk=_fenced)
         except Exception as exc:
             # Bad DB template (e.g. stray unescaped brace) — never break harvest.
-            logger.warning("harvest.extract template format failed (%s) — "
-                           "falling back to default", exc)
+            logger.warning(
+                "harvest.extract template format failed (%s) — falling back to default", exc
+            )
             prompt = _EXTRACT_PROMPT.format(title=doc_title, chunk=_fenced)
 
         raw = _call_llm_sync(prompt, base_url, model, timeout, db=db)
@@ -436,8 +451,9 @@ def llm_harvest(result: ExtractionResult, doc_id: str,
             created += 1
             # Persist to entities table so the graph layer has real rows
             try:
-                eid = db.upsert_entity(name, "concept",
-                                       meta={"description": desc} if desc else None)
+                eid = db.upsert_entity(
+                    name, "concept", meta={"description": desc} if desc else None
+                )
                 db.create_entity_mention(eid, doc_id, work_id, knowledge_id=kid)
             except Exception as _e:
                 logger.debug("llm entity graph write non-fatal: %s", _e)
@@ -498,7 +514,10 @@ def llm_harvest(result: ExtractionResult, doc_id: str,
 
     logger.info(
         "LLM-harvested %d knowledge items for doc %s (work=%s, chunks=%d)",
-        created, doc_id, work_id, len(_chunk_texts),
+        created,
+        doc_id,
+        work_id,
+        len(_chunk_texts),
     )
     return created
 
@@ -582,8 +601,8 @@ def llm_harvest_by_chapters(
         return 0
 
     base_url = cfg.serving.base_url
-    model    = getattr(cfg.serving, "workhorse_model", None) or cfg.serving.model
-    timeout  = getattr(cfg.serving, "extraction_timeout_sec", _EXTRACTION_TIMEOUT_SEC)
+    model = getattr(cfg.serving, "workhorse_model", None) or cfg.serving.model
+    timeout = getattr(cfg.serving, "extraction_timeout_sec", _EXTRACTION_TIMEOUT_SEC)
 
     # ── Fetch chapters ────────────────────────────────────────────────────────
     try:
@@ -607,10 +626,10 @@ def llm_harvest_by_chapters(
     total_created = 0
 
     for ch_row in chapter_rows:
-        chapter_id    = ch_row["id"]
-        chapter_seq   = ch_row["seq"]
+        chapter_id = ch_row["id"]
+        chapter_seq = ch_row["seq"]
         chapter_title = ch_row["title"] or f"Chapter {chapter_seq + 1}"
-        full_chapter  = (ch_row["text"] or "").strip()
+        full_chapter = (ch_row["text"] or "").strip()
 
         if not full_chapter:
             continue
@@ -637,8 +656,10 @@ def llm_harvest_by_chapters(
             _ch_tail = ch_len - _MAX_CHAPTER_CHARS
             _ch_chunks = [
                 full_chapter[
-                    int(_ch_tail * i / (_MAX_CHAPTER_CALLS - 1))
-                    : int(_ch_tail * i / (_MAX_CHAPTER_CALLS - 1)) + _MAX_CHAPTER_CHARS
+                    int(_ch_tail * i / (_MAX_CHAPTER_CALLS - 1)) : int(
+                        _ch_tail * i / (_MAX_CHAPTER_CALLS - 1)
+                    )
+                    + _MAX_CHAPTER_CHARS
                 ]
                 for i in range(_MAX_CHAPTER_CALLS)
             ]
@@ -652,6 +673,7 @@ def llm_harvest_by_chapters(
 
             try:
                 from orivellum.capabilities.shield import wrap as _shield_wrap2
+
                 prompt = _FICTION_CHAPTER_PROMPT.format(
                     title=doc_title,
                     chapter_title=chapter_title,
@@ -661,8 +683,12 @@ def llm_harvest_by_chapters(
                     ),
                 )
             except Exception as exc:
-                logger.debug("llm_harvest_by_chapters: prompt format error ch%d.%d: %s",
-                             chapter_seq, _chunk_idx, exc)
+                logger.debug(
+                    "llm_harvest_by_chapters: prompt format error ch%d.%d: %s",
+                    chapter_seq,
+                    _chunk_idx,
+                    exc,
+                )
                 continue
 
             raw = _call_llm_sync(prompt, base_url, model, timeout, db=db)
@@ -684,16 +710,23 @@ def llm_harvest_by_chapters(
                     continue
                 text = f"{name} ({role}): {desc}" if desc else f"{name} ({role})"
                 kid = db.create_knowledge_item(
-                    work_id=work_id, kind="character", text=text,
-                    subject=name, predicate="is", obj=role,
-                    confidence=0.90, source_doc_id=doc_id,
-                    review_status="ai_auto", meta=_llm_meta,
+                    work_id=work_id,
+                    kind="character",
+                    text=text,
+                    subject=name,
+                    predicate="is",
+                    obj=role,
+                    confidence=0.90,
+                    source_doc_id=doc_id,
+                    review_status="ai_auto",
+                    meta=_llm_meta,
                     chapter_id=chapter_id,
                 )
                 created += 1
                 try:
                     eid = db.upsert_entity(
-                        name, "character",
+                        name,
+                        "character",
                         meta={"role": role, "description": desc} if desc else {"role": role},
                     )
                     db.create_entity_mention(eid, doc_id, work_id, knowledge_id=kid)
@@ -709,10 +742,15 @@ def llm_harvest_by_chapters(
                 if not text:
                     continue
                 db.create_knowledge_item(
-                    work_id=work_id, kind="event", text=text,
-                    subject=chapter_title, predicate="contains", obj=significance,
+                    work_id=work_id,
+                    kind="event",
+                    text=text,
+                    subject=chapter_title,
+                    predicate="contains",
+                    obj=significance,
                     confidence=0.85 if significance == "major" else 0.75,
-                    source_doc_id=doc_id, review_status="ai_auto",
+                    source_doc_id=doc_id,
+                    review_status="ai_auto",
                     meta={**_llm_meta, "significance": significance},
                     chapter_id=chapter_id,
                 )
@@ -728,10 +766,16 @@ def llm_harvest_by_chapters(
                     continue
                 text = f"{name}: {desc}" if desc else name
                 db.create_knowledge_item(
-                    work_id=work_id, kind="setting", text=text,
-                    subject=name, predicate="is_setting_in", obj=chapter_title,
-                    confidence=0.80, source_doc_id=doc_id,
-                    review_status="ai_auto", meta=_llm_meta,
+                    work_id=work_id,
+                    kind="setting",
+                    text=text,
+                    subject=name,
+                    predicate="is_setting_in",
+                    obj=chapter_title,
+                    confidence=0.80,
+                    source_doc_id=doc_id,
+                    review_status="ai_auto",
+                    meta=_llm_meta,
                     chapter_id=chapter_id,
                 )
                 created += 1
@@ -742,15 +786,21 @@ def llm_harvest_by_chapters(
                     continue
                 subj = (rel.get("subject") or "").strip()
                 pred = (rel.get("predicate") or "").strip()
-                obj  = (rel.get("object") or "").strip()
+                obj = (rel.get("object") or "").strip()
                 if not (subj and pred and obj):
                     continue
                 text = f"{subj} {pred} {obj}"
                 db.create_knowledge_item(
-                    work_id=work_id, kind="relationship", text=text,
-                    subject=subj, predicate=pred, obj=obj,
-                    confidence=0.80, source_doc_id=doc_id,
-                    review_status="ai_auto", meta=_llm_meta,
+                    work_id=work_id,
+                    kind="relationship",
+                    text=text,
+                    subject=subj,
+                    predicate=pred,
+                    obj=obj,
+                    confidence=0.80,
+                    source_doc_id=doc_id,
+                    review_status="ai_auto",
+                    meta=_llm_meta,
                     chapter_id=chapter_id,
                 )
                 created += 1
@@ -769,10 +819,16 @@ def llm_harvest_by_chapters(
                 if not text:
                     continue
                 db.create_knowledge_item(
-                    work_id=work_id, kind="theme", text=text,
-                    subject=chapter_title, predicate="explores_theme", obj=None,
-                    confidence=0.75, source_doc_id=doc_id,
-                    review_status="ai_auto", meta=_llm_meta,
+                    work_id=work_id,
+                    kind="theme",
+                    text=text,
+                    subject=chapter_title,
+                    predicate="explores_theme",
+                    obj=None,
+                    confidence=0.75,
+                    source_doc_id=doc_id,
+                    review_status="ai_auto",
+                    meta=_llm_meta,
                     chapter_id=chapter_id,
                 )
                 created += 1
@@ -785,10 +841,16 @@ def llm_harvest_by_chapters(
                 if not text:
                     continue
                 db.create_knowledge_item(
-                    work_id=work_id, kind="foreshadowing", text=text,
-                    subject=chapter_title, predicate="foreshadows", obj=None,
-                    confidence=0.70, source_doc_id=doc_id,
-                    review_status="ai_auto", meta=_llm_meta,
+                    work_id=work_id,
+                    kind="foreshadowing",
+                    text=text,
+                    subject=chapter_title,
+                    predicate="foreshadows",
+                    obj=None,
+                    confidence=0.70,
+                    source_doc_id=doc_id,
+                    review_status="ai_auto",
+                    meta=_llm_meta,
                     chapter_id=chapter_id,
                 )
                 created += 1
@@ -797,12 +859,17 @@ def llm_harvest_by_chapters(
         if created:
             logger.info(
                 "llm_harvest_by_chapters: %d items, doc %s ch%d (%s)",
-                created, doc_id[:8], chapter_seq, chapter_title[:40],
+                created,
+                doc_id[:8],
+                chapter_seq,
+                chapter_title[:40],
             )
         total_created += created
 
     logger.info(
         "llm_harvest_by_chapters: %d total items, %d chapters, doc %s",
-        total_created, len(chapter_rows), doc_id,
+        total_created,
+        len(chapter_rows),
+        doc_id,
     )
     return total_created

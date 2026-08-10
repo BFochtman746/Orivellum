@@ -5,6 +5,7 @@ per-shot prompts, timed narration, music brief, title plates, assembly
 sheet, and asset manifest.
 (Ported from media_studio; adapted for OrivellumLLM.)
 """
+
 from __future__ import annotations
 
 SHOT_SYS = (
@@ -25,8 +26,12 @@ NARR_SYS = (
 )
 NARR_SCHEMA = """{"lines":[{"t_start": int, "text": str, "emotion": str, "pace": str}]}"""
 
-MUSIC_SYS = "You write MusicGen prompts for trailer scores. Text prompt only; no vocals unless asked."
-MUSIC_SCHEMA = """{"prompt": str, "tempo_bpm": int, "mood": str, "length_seconds": int, "structure": str}"""
+MUSIC_SYS = (
+    "You write MusicGen prompts for trailer scores. Text prompt only; no vocals unless asked."
+)
+MUSIC_SCHEMA = (
+    """{"prompt": str, "tempo_bpm": int, "mood": str, "length_seconds": int, "structure": str}"""
+)
 
 
 def run(llm, cfg: dict, brief: dict, concept: dict, method: dict) -> dict:
@@ -74,6 +79,7 @@ def run(llm, cfg: dict, brief: dict, concept: dict, method: dict) -> dict:
 # Prompt builders
 # --------------------------------------------------------------------------
 
+
 def _shot_user(brief: dict, concept: dict, dur: int) -> str:
     return (
         f"BOOK BRIEF:\n{_kv(brief)}\n\n"
@@ -104,6 +110,7 @@ def _music_user(brief: dict, concept: dict, dur: int) -> str:
 # --------------------------------------------------------------------------
 # Deterministic enrichment
 # --------------------------------------------------------------------------
+
 
 def _apply_render_settings(shots: list[dict], method: dict, cfg: dict) -> None:
     a = method.get("assignments", {})
@@ -136,7 +143,9 @@ def _apply_render_settings(shots: list[dict], method: dict, cfg: dict) -> None:
 def _apply_pronunciation(narration: list[dict], cfg: dict) -> None:
     overrides = cfg["defaults"].get("pronunciation_overrides", {})
     for ln in narration:
-        pron_parts = [f"{k} = /{v}/" for k, v in overrides.items() if k.lower() in ln.get("text", "").lower()]
+        pron_parts = [
+            f"{k} = /{v}/" for k, v in overrides.items() if k.lower() in ln.get("text", "").lower()
+        ]
         ln["pronunciation"] = ", ".join(pron_parts) if pron_parts else ""
 
 
@@ -144,19 +153,23 @@ def _title_plates(shots: list[dict], brief: dict) -> list[dict]:
     plates = []
     for i, s in enumerate(shots):
         if s.get("on_screen_text"):
-            plates.append({
-                "text": s["on_screen_text"],
-                "for_shot": i,
-                "style": "title card — bold serif on dark, letter-spaced",
-            })
+            plates.append(
+                {
+                    "text": s["on_screen_text"],
+                    "for_shot": i,
+                    "style": "title card — bold serif on dark, letter-spaced",
+                }
+            )
     # Always ensure a title plate with the book title
     if not any(p.get("text") == brief.get("title") for p in plates):
         last_shot = len(shots) - 1 if shots else 0
-        plates.append({
-            "text": brief.get("title", "(title)"),
-            "for_shot": last_shot,
-            "style": "closing title — full-screen, centred, fade in",
-        })
+        plates.append(
+            {
+                "text": brief.get("title", "(title)"),
+                "for_shot": last_shot,
+                "style": "closing title — full-screen, centred, fade in",
+            }
+        )
     return plates
 
 
@@ -179,10 +192,7 @@ def _assembly(
     a2 = [{"t": 0, "file": "score.wav", "duck_under_vo_db": -6}]
 
     aspects = cfg["defaults"].get("aspect_ratios", ["16:9"])
-    masters = [
-        {"aspect": ar, "note": f"export at {ar}"}
-        for ar in aspects
-    ]
+    masters = [{"aspect": ar, "note": f"export at {ar}"} for ar in aspects]
     loudness = cfg["defaults"].get("loudness_lufs", -14)
 
     return {
@@ -215,18 +225,48 @@ def _manifest(
 ) -> dict:
     items = []
     for i, s in enumerate(shots):
-        items.append({"id": f"shot_{i:02d}_still", "type": "image",
-                      "model": s.get("image_model"), "status": "pending"})
-        items.append({"id": f"shot_{i:02d}_motion", "type": "video",
-                      "model": s.get("video_model"), "status": "pending"})
+        items.append(
+            {
+                "id": f"shot_{i:02d}_still",
+                "type": "image",
+                "model": s.get("image_model"),
+                "status": "pending",
+            }
+        )
+        items.append(
+            {
+                "id": f"shot_{i:02d}_motion",
+                "type": "video",
+                "model": s.get("video_model"),
+                "status": "pending",
+            }
+        )
     for i, ln in enumerate(narration):
-        items.append({"id": f"narr_{i:02d}", "type": "audio_tts", "text": ln.get("text"),
-                      "status": "pending"})
-    items.append({"id": "score", "type": "audio_music",
-                  "prompt": music.get("prompt", ""), "status": "pending"})
+        items.append(
+            {
+                "id": f"narr_{i:02d}",
+                "type": "audio_tts",
+                "text": ln.get("text"),
+                "status": "pending",
+            }
+        )
+    items.append(
+        {
+            "id": "score",
+            "type": "audio_music",
+            "prompt": music.get("prompt", ""),
+            "status": "pending",
+        }
+    )
     for i, tp in enumerate(titles):
-        items.append({"id": f"title_{i:02d}", "type": "title_plate",
-                      "text": tp.get("text", ""), "status": "pending"})
+        items.append(
+            {
+                "id": f"title_{i:02d}",
+                "type": "title_plate",
+                "text": tp.get("text", ""),
+                "status": "pending",
+            }
+        )
     return {
         "items": items,
         "total": len(items),

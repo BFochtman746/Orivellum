@@ -6,6 +6,7 @@ Covers:
 - POST /api/library/{id}/reprocess clears prior warnings before re-queuing
 - POST /api/library/{id}/extract (alias) also clears warnings
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -17,17 +18,17 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import AUTH_HEADERS
 
-
 # ---------------------------------------------------------------------------
 # Test app factory — uses a real temp DB, bypasses background extraction
 # ---------------------------------------------------------------------------
 
+
 def _make_app(tmp: str):
     """Return a configured FastAPI test app wired to a temp DB."""
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -39,12 +40,12 @@ def _make_app(tmp: str):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _seed_failed_doc(db, readiness: str, warning_kind: str) -> str:
     """Create a document in a failure state with one warning. Returns doc_id."""
     doc = db.create_document(title="bad.txt", kind="text", work_id=None)
     doc_id = doc["id"]
-    db.update_document_extracted(doc_id, "", 0, readiness=readiness,
-                                 error_message="forced failure")
+    db.update_document_extracted(doc_id, "", 0, readiness=readiness, error_message="forced failure")
     db.add_extraction_warning(doc_id, kind=warning_kind, detail="forced detail")
     return doc_id
 
@@ -53,8 +54,8 @@ def _seed_failed_doc(db, readiness: str, warning_kind: str) -> str:
 # GET /api/library — list endpoint includes warnings for failed docs
 # ---------------------------------------------------------------------------
 
-class TestLibraryListWarnings(unittest.TestCase):
 
+class TestLibraryListWarnings(unittest.TestCase):
     def test_error_doc_has_warnings_in_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
@@ -95,16 +96,16 @@ class TestLibraryListWarnings(unittest.TestCase):
             client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
 
             doc = db.create_document(title="ok.txt", kind="text", work_id=None)
-            db.update_document_extracted(doc["id"], "hello world", 2,
-                                         readiness="ready")
+            db.update_document_extracted(doc["id"], "hello world", 2, readiness="ready")
 
             resp = client.get("/api/library")
             self.assertEqual(resp.status_code, 200)
             docs = resp.json()["documents"]
             target = next((d for d in docs if d["id"] == doc["id"]), None)
             self.assertIsNotNone(target)
-            self.assertEqual(target.get("warnings"), [],
-                             "Ready docs must have empty warnings array")
+            self.assertEqual(
+                target.get("warnings"), [], "Ready docs must have empty warnings array"
+            )
             db.close()
 
 
@@ -112,8 +113,8 @@ class TestLibraryListWarnings(unittest.TestCase):
 # GET /api/library/{id} — detail endpoint includes warnings for failed docs
 # ---------------------------------------------------------------------------
 
-class TestLibraryDetailWarnings(unittest.TestCase):
 
+class TestLibraryDetailWarnings(unittest.TestCase):
     def test_error_doc_detail_has_warnings(self):
         with tempfile.TemporaryDirectory() as tmp:
             app, db = _make_app(tmp)
@@ -162,8 +163,8 @@ class TestLibraryDetailWarnings(unittest.TestCase):
 # POST /api/library/{id}/reprocess — clears prior warnings
 # ---------------------------------------------------------------------------
 
-class TestReprocessClearsWarnings(unittest.TestCase):
 
+class TestReprocessClearsWarnings(unittest.TestCase):
     def _make_file_backed_doc(self, db, tmp: str) -> tuple:
         """Create a doc with a real file so reprocess can find it."""
         p = Path(tmp) / "retry.txt"
@@ -176,8 +177,7 @@ class TestReprocessClearsWarnings(unittest.TestCase):
             content_path=str(p),
         )
         doc_id = doc["id"]
-        db.update_document_extracted(doc_id, "", 0, readiness="error",
-                                     error_message="old failure")
+        db.update_document_extracted(doc_id, "", 0, readiness="error", error_message="old failure")
         db.add_extraction_warning(doc_id, kind="file_not_found", detail="old detail")
         return doc_id, p
 
@@ -199,8 +199,11 @@ class TestReprocessClearsWarnings(unittest.TestCase):
             self.assertTrue(resp.json()["ok"])
 
             # Warnings must be cleared
-            self.assertEqual(db.get_extraction_warnings(doc_id), [],
-                             "Warnings must be cleared when reprocess is called")
+            self.assertEqual(
+                db.get_extraction_warnings(doc_id),
+                [],
+                "Warnings must be cleared when reprocess is called",
+            )
             db.close()
 
     def test_extract_alias_clears_warnings(self):
@@ -214,8 +217,11 @@ class TestReprocessClearsWarnings(unittest.TestCase):
                 resp = client.post(f"/api/library/{doc_id}/extract")
 
             self.assertEqual(resp.status_code, 200)
-            self.assertEqual(db.get_extraction_warnings(doc_id), [],
-                             "extract alias must also clear prior warnings")
+            self.assertEqual(
+                db.get_extraction_warnings(doc_id),
+                [],
+                "extract alias must also clear prior warnings",
+            )
             db.close()
 
 
@@ -227,17 +233,20 @@ if __name__ == "__main__":
 # Missing source files — listing, reprocess skip details, restore-file recovery
 # ---------------------------------------------------------------------------
 
-class TestMissingSourceFiles(unittest.TestCase):
 
+class TestMissingSourceFiles(unittest.TestCase):
     def _seed_missing_doc(self, db, tmp: str, readiness: str = "error") -> str:
         """Doc whose recorded file does NOT exist on disk."""
         doc = db.create_document(
-            title="ghost.txt", kind="text", work_id=None,
+            title="ghost.txt",
+            kind="text",
+            work_id=None,
             source=str(Path(tmp) / "nope" / "ghost.txt"),
             content_path="no/pe/ghost.txt",
         )
-        db.update_document_extracted(doc["id"], "", 0, readiness=readiness,
-                                     error_message="missing file")
+        db.update_document_extracted(
+            doc["id"], "", 0, readiness=readiness, error_message="missing file"
+        )
         return doc["id"]
 
     def _seed_present_doc(self, db, tmp: str, readiness: str = "error") -> str:
@@ -247,11 +256,15 @@ class TestMissingSourceFiles(unittest.TestCase):
         f = lib / "real.txt"
         f.write_text("hello")
         doc = db.create_document(
-            title="real.txt", kind="text", work_id=None,
-            source=str(f), content_path="aa/bb/real.txt",
+            title="real.txt",
+            kind="text",
+            work_id=None,
+            source=str(f),
+            content_path="aa/bb/real.txt",
         )
-        db.update_document_extracted(doc["id"], "", 0, readiness=readiness,
-                                     error_message="retryable")
+        db.update_document_extracted(
+            doc["id"], "", 0, readiness=readiness, error_message="retryable"
+        )
         return doc["id"]
 
     def test_missing_files_endpoint_lists_only_missing_docs(self):
@@ -337,9 +350,12 @@ class TestMissingSourceFiles(unittest.TestCase):
             dead_id = self._seed_missing_doc(db, tmp)
             # Another document already owns these exact bytes.
             import hashlib as _h
+
             content = b"already stored elsewhere"
             db.create_document(
-                title="other.txt", kind="text", work_id=None,
+                title="other.txt",
+                kind="text",
+                work_id=None,
                 sha256=_h.sha256(content).hexdigest(),
             )
 
@@ -366,10 +382,12 @@ class TestMissingSourceFiles(unittest.TestCase):
             app, db = _make_app(tmp)
             client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             from orivellum.api.routes.library import _REPROCESS_RESERVED
+
             doc_id = self._seed_missing_doc(db, tmp)
             with db._lock:
-                db._conn.execute("UPDATE documents SET readiness=? WHERE id=?",
-                                 (_REPROCESS_RESERVED, doc_id))
+                db._conn.execute(
+                    "UPDATE documents SET readiness=? WHERE id=?", (_REPROCESS_RESERVED, doc_id)
+                )
                 db._conn.commit()
 
             resp = client.post(
@@ -387,9 +405,11 @@ class TestMissingSourceFiles(unittest.TestCase):
             client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             dead_id = self._seed_missing_doc(db, tmp)
             import hashlib as _h
+
             content = b"claimed by another record"
-            db.create_document(title="other.txt", kind="text", work_id=None,
-                               sha256=_h.sha256(content).hexdigest())
+            db.create_document(
+                title="other.txt", kind="text", work_id=None, sha256=_h.sha256(content).hexdigest()
+            )
 
             resp = client.post(
                 f"/api/library/{dead_id}/restore-file",
@@ -401,6 +421,8 @@ class TestMissingSourceFiles(unittest.TestCase):
             # …and no orphaned bytes staged in the library tree.
             sha = _h.sha256(content).hexdigest()
             shard = Path(tmp) / "library" / sha[:2] / sha[2:4]
-            self.assertFalse(shard.exists() and any(shard.iterdir()),
-                             "conflicting upload must not leave files behind")
+            self.assertFalse(
+                shard.exists() and any(shard.iterdir()),
+                "conflicting upload must not leave files behind",
+            )
             db.close()

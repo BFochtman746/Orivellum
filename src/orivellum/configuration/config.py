@@ -3,6 +3,7 @@
 Single authority — loaded once at startup. All ORIVELLUM_* environment
 variables override YAML values. Sensitive values are redacted in logs.
 """
+
 from __future__ import annotations
 
 import os
@@ -237,41 +238,55 @@ def load_config(path: str | None = None) -> OrivellumConfig:
         log_level=raw.get("log_level", "INFO"),
         serving=ServingConfig(
             base_url=serving_raw.get("base_url", ServingConfig.base_url),
-            workhorse_model=serving_raw.get("workhorse_model", serving_raw.get(
-                "models", {}).get("workhorse", ServingConfig.workhorse_model)),
-            reasoner_model=serving_raw.get("reasoner_model", serving_raw.get(
-                "models", {}).get("reasoner", ServingConfig.reasoner_model)),
-            coder_model=serving_raw.get("coder_model", serving_raw.get(
-                "models", {}).get("coder", ServingConfig.coder_model)),
-            vision_model=serving_raw.get("vision_model", serving_raw.get(
-                "models", {}).get("vision", ServingConfig.vision_model)),
-            embedder_model=serving_raw.get("embedder_model", serving_raw.get(
-                "models", {}).get("embedder", ServingConfig.embedder_model)),
-            tts_model=serving_raw.get("tts_model", serving_raw.get(
-                "models", {}).get("tts", ServingConfig.tts_model)),
-            asr_model=serving_raw.get("asr_model", serving_raw.get(
-                "models", {}).get("asr", ServingConfig.asr_model)),
+            workhorse_model=serving_raw.get(
+                "workhorse_model",
+                serving_raw.get("models", {}).get("workhorse", ServingConfig.workhorse_model),
+            ),
+            reasoner_model=serving_raw.get(
+                "reasoner_model",
+                serving_raw.get("models", {}).get("reasoner", ServingConfig.reasoner_model),
+            ),
+            coder_model=serving_raw.get(
+                "coder_model", serving_raw.get("models", {}).get("coder", ServingConfig.coder_model)
+            ),
+            vision_model=serving_raw.get(
+                "vision_model",
+                serving_raw.get("models", {}).get("vision", ServingConfig.vision_model),
+            ),
+            embedder_model=serving_raw.get(
+                "embedder_model",
+                serving_raw.get("models", {}).get("embedder", ServingConfig.embedder_model),
+            ),
+            tts_model=serving_raw.get(
+                "tts_model", serving_raw.get("models", {}).get("tts", ServingConfig.tts_model)
+            ),
+            asr_model=serving_raw.get(
+                "asr_model", serving_raw.get("models", {}).get("asr", ServingConfig.asr_model)
+            ),
             asr_local_model=serving_raw.get("asr_local_model", ServingConfig.asr_local_model),
             tts_premium_url=str(serving_raw.get("tts_premium_url", ServingConfig.tts_premium_url)),
-            tts_premium_ack_license=bool(serving_raw.get(
-                "tts_premium_ack_license", ServingConfig.tts_premium_ack_license)),
+            tts_premium_ack_license=bool(
+                serving_raw.get("tts_premium_ack_license", ServingConfig.tts_premium_ack_license)
+            ),
             music_gen_url=str(serving_raw.get("music_gen_url", ServingConfig.music_gen_url)),
-            reranker_model=serving_raw.get("reranker_model", serving_raw.get(
-                "models", {}).get("reranker", ServingConfig.reranker_model)),
+            reranker_model=serving_raw.get(
+                "reranker_model",
+                serving_raw.get("models", {}).get("reranker", ServingConfig.reranker_model),
+            ),
             timeout_sec=int(serving_raw.get("timeout_sec", ServingConfig.timeout_sec)),
-            extraction_timeout_sec=int(serving_raw.get(
-                "extraction_timeout_sec", ServingConfig.extraction_timeout_sec)),
-            context_window=int(serving_raw.get(
-                "context_window", ServingConfig.context_window)),
+            extraction_timeout_sec=int(
+                serving_raw.get("extraction_timeout_sec", ServingConfig.extraction_timeout_sec)
+            ),
+            context_window=int(serving_raw.get("context_window", ServingConfig.context_window)),
         ),
         server=ServerConfig(
             host=str(server_raw.get("host", ServerConfig.host)),
             port=int(server_raw.get("port", ServerConfig.port)),
             api_key=str(server_raw.get("api_key", "")),
-            request_timeout_sec=int(server_raw.get(
-                "request_timeout_sec", ServerConfig.request_timeout_sec)),
-            max_body_bytes=int(server_raw.get(
-                "max_body_bytes", ServerConfig.max_body_bytes)),
+            request_timeout_sec=int(
+                server_raw.get("request_timeout_sec", ServerConfig.request_timeout_sec)
+            ),
+            max_body_bytes=int(server_raw.get("max_body_bytes", ServerConfig.max_body_bytes)),
         ),
         database=DatabaseConfig(
             path=str(db_raw.get("path", "")),

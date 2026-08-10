@@ -18,6 +18,7 @@ but NOT used on the hot path — the fast path covers the common cases reliably.
 ROUTE-REQ-002: the "does this output sentence contain a checkable claim?" classifier
 is the system's leak point and MUST be measured for recall (§9, R4).
 """
+
 from __future__ import annotations
 
 import re
@@ -26,13 +27,14 @@ from enum import Enum
 
 class RequestClass(str, Enum):
     """Spec §5.1 request classification vocabulary."""
+
     DETERMINISTICALLY_VERIFIABLE = "deterministically_verifiable"  # must use adapter
-    RETRIEVED_PRIVATE_FACT       = "retrieved_private_fact"         # must search library
-    CURRENT_EXTERNAL_FACT        = "current_external_fact"          # must search web
-    USER_DECLARED_FACT           = "user_declared_fact"             # A7 capture + verify
-    DERIVED_FACT                 = "derived_fact"                   # calc from verified inputs
-    INTERPRETIVE_JUDGMENT        = "interpretive_judgment"          # evidence-backed reasoning
-    CREATIVE                     = "creative"                       # generation/writing
+    RETRIEVED_PRIVATE_FACT = "retrieved_private_fact"  # must search library
+    CURRENT_EXTERNAL_FACT = "current_external_fact"  # must search web
+    USER_DECLARED_FACT = "user_declared_fact"  # A7 capture + verify
+    DERIVED_FACT = "derived_fact"  # calc from verified inputs
+    INTERPRETIVE_JUDGMENT = "interpretive_judgment"  # evidence-backed reasoning
+    CREATIVE = "creative"  # generation/writing
 
     # Backward-compatible aliases used in conversations.py
     @classmethod

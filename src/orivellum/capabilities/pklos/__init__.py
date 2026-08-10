@@ -20,6 +20,7 @@ VER-INV-001: No claim may be presented as fact at a higher authority than
 its evidence supports; and where a verification path exists, the system
 must take it before asserting.
 """
+
 from .abstention import AbstentionPolicy
 from .authority import (
     ALLOWED_TRANSITIONS,
@@ -49,23 +50,44 @@ from .policy_enforcer import EnforcementDecision, PolicyEnforcer, PolicyFailure
 
 __all__ = [
     # authority
-    "AuthorityTier", "ClaimStatus", "ConflictType", "TTLClass",
-    "ALLOWED_TRANSITIONS", "is_allowed_transition",
-    "SUBJECT_DEVICE_A01", "SUBJECT_USER_SELF", "SUBJECT_USER_SYSTEM",
+    "AuthorityTier",
+    "ClaimStatus",
+    "ConflictType",
+    "TTLClass",
+    "ALLOWED_TRANSITIONS",
+    "is_allowed_transition",
+    "SUBJECT_DEVICE_A01",
+    "SUBJECT_USER_SELF",
+    "SUBJECT_USER_SYSTEM",
     # authority_resolver
-    "AuthorityResolver", "AuthorityPolicy", "resolve_authority",
+    "AuthorityResolver",
+    "AuthorityPolicy",
+    "resolve_authority",
     # claim_ledger
     "ClaimLedger",
     # capture_stamp
-    "CaptureStamp", "detect_factual_assertions",
+    "CaptureStamp",
+    "detect_factual_assertions",
     # fact_router
-    "FactRouter", "RequestClass", "classify", "is_checkable_fact", "should_capture_as_a7",
+    "FactRouter",
+    "RequestClass",
+    "classify",
+    "is_checkable_fact",
+    "should_capture_as_a7",
     # abstention
     "AbstentionPolicy",
     # claim_verifier
-    "ClaimVerifier", "VerificationResult", "normalize_value", "verify", "verify_assertion",
+    "ClaimVerifier",
+    "VerificationResult",
+    "normalize_value",
+    "verify",
+    "verify_assertion",
     # policy_enforcer
-    "PolicyEnforcer", "EnforcementDecision", "PolicyFailure",
+    "PolicyEnforcer",
+    "EnforcementDecision",
+    "PolicyFailure",
     # output_validator
-    "OutputValidator", "ValidationResult", "AnswerContract",
+    "OutputValidator",
+    "ValidationResult",
+    "AnswerContract",
 ]

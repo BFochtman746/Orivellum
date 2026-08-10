@@ -14,6 +14,7 @@ Design rules (same philosophy as the rest of the system):
     missing instead of failing silently
   · chapters without text are skipped and reported, never invented
 """
+
 from __future__ import annotations
 
 import html
@@ -105,8 +106,7 @@ def _chapter_xhtml(title: str, text: str) -> str:
     )
 
 
-def _build_epub(title: str, author: str, book_id: str,
-                chapters: list[dict]) -> bytes:
+def _build_epub(title: str, author: str, book_id: str, chapters: list[dict]) -> bytes:
     """Assemble a minimal, valid EPUB 3 and return its bytes."""
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     t = html.escape(_xml_clean(title))
@@ -116,13 +116,9 @@ def _build_epub(title: str, author: str, book_id: str,
         name = f"chapter-{i:03d}.xhtml"
         ch_title = (ch.get("title") or "").strip() or f"Chapter {i}"
         files[f"OEBPS/{name}"] = _chapter_xhtml(ch_title, ch["text"])
-        items.append(
-            f'    <item id="ch{i}" href="{name}" media-type="application/xhtml+xml"/>'
-        )
+        items.append(f'    <item id="ch{i}" href="{name}" media-type="application/xhtml+xml"/>')
         spine.append(f'    <itemref idref="ch{i}"/>')
-        nav_lis.append(
-            f'      <li><a href="{name}">{html.escape(_xml_clean(ch_title))}</a></li>'
-        )
+        nav_lis.append(f'      <li><a href="{name}">{html.escape(_xml_clean(ch_title))}</a></li>')
 
     nav = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -146,18 +142,20 @@ def _build_epub(title: str, author: str, book_id: str,
         '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n'
         '    <item id="css" href="style.css" media-type="text/css"/>\n'
         + "\n".join(items)
-        + "\n  </manifest>\n  <spine>\n" + "\n".join(spine) + "\n  </spine>\n</package>\n"
+        + "\n  </manifest>\n  <spine>\n"
+        + "\n".join(spine)
+        + "\n  </spine>\n</package>\n"
     )
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         # Spec: 'mimetype' must be first and stored uncompressed.
         zf.writestr(
-            zipfile.ZipInfo("mimetype"), "application/epub+zip",
+            zipfile.ZipInfo("mimetype"),
+            "application/epub+zip",
             compress_type=zipfile.ZIP_STORED,
         )
-        zf.writestr("META-INF/container.xml", _CONTAINER_XML,
-                    compress_type=zipfile.ZIP_DEFLATED)
+        zf.writestr("META-INF/container.xml", _CONTAINER_XML, compress_type=zipfile.ZIP_DEFLATED)
         zf.writestr("OEBPS/content.opf", opf, compress_type=zipfile.ZIP_DEFLATED)
         zf.writestr("OEBPS/nav.xhtml", nav, compress_type=zipfile.ZIP_DEFLATED)
         zf.writestr("OEBPS/style.css", _CSS, compress_type=zipfile.ZIP_DEFLATED)
@@ -166,8 +164,9 @@ def _build_epub(title: str, author: str, book_id: str,
     return buf.getvalue()
 
 
-def build_book_export(pipeline: dict, chapters: list[dict],
-                      work: dict | None = None) -> tuple[str, bytes]:
+def build_book_export(
+    pipeline: dict, chapters: list[dict], work: dict | None = None
+) -> tuple[str, bytes]:
     """Build the full book package ZIP; returns (filename, bytes).
 
     Raises ValueError with a user-readable message when not ready — callers
@@ -177,9 +176,11 @@ def build_book_export(pipeline: dict, chapters: list[dict],
     if not readiness["ready"]:
         raise ValueError("; ".join(readiness["reasons"]) or "No packageable chapters")
 
-    title = ((pipeline.get("title") or "").strip()
-             or ((work or {}).get("title") or "").strip()
-             or "Untitled Book")
+    title = (
+        (pipeline.get("title") or "").strip()
+        or ((work or {}).get("title") or "").strip()
+        or "Untitled Book"
+    )
     author = ((work or {}).get("author") or "").strip() or "Orivellum"
     usable = [c for c in chapters if (c.get("text") or "").strip()]
     total_chars = sum(len(c.get("text") or "") for c in usable)
@@ -190,14 +191,18 @@ def build_book_export(pipeline: dict, chapters: list[dict],
         )
     skipped = [
         {"seq": c.get("seq"), "title": c.get("title"), "reason": "empty text"}
-        for c in chapters if not (c.get("text") or "").strip()
+        for c in chapters
+        if not (c.get("text") or "").strip()
     ]
 
     epub = _build_epub(title, author, pipeline["id"], usable)
     slug = _slug(title)
 
+    from orivellum.version import code_version
+
     manifest = {
         "generator": "orivellum-book-package",
+        "code_version": code_version(),
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "title": title,
         "pipeline_id": pipeline["id"],
@@ -206,9 +211,11 @@ def build_book_export(pipeline: dict, chapters: list[dict],
         "chapters_included": len(usable),
         "chapters_skipped": skipped,
         "contents": [f"{slug}.epub", "markdown/", "manifest.json"],
-        "note": ("Built from pipeline chapters as they exist today; "
-                 "stage gates were not bypassed — check pipeline_stage to see "
-                 "how far editing had progressed at export time."),
+        "note": (
+            "Built from pipeline chapters as they exist today; "
+            "stage gates were not bypassed — check pipeline_stage to see "
+            "how far editing had progressed at export time."
+        ),
     }
 
     buf = io.BytesIO()

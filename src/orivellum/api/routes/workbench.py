@@ -5,6 +5,7 @@ builds v1. Every further instruction builds the next version in the
 background. Versions are immutable; revert copies an old version forward.
 Completing a project archives every version + hash manifest as a zip.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,9 +25,10 @@ router = APIRouter(prefix="/api/workbench", dependencies=[Depends(require_auth)]
 
 # ── Bodies ────────────────────────────────────────────────────────────────────
 
+
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
-    kind: str                       # 'xlsx' | 'code'
+    kind: str  # 'xlsx' | 'code'
     brief: str = Field(min_length=1, max_length=8000)
 
 
@@ -40,6 +42,7 @@ class RevertBody(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _project_out(p: dict, versions: list[dict] | None = None) -> dict:
     out = dict(p)
     out["building"] = bool(p.get("building"))
@@ -51,9 +54,12 @@ def _project_out(p: dict, versions: list[dict] | None = None) -> dict:
 
 def _version_out(v: dict) -> dict:
     return {
-        "id": v["id"], "version_no": v["version_no"],
-        "instruction": v["instruction"], "note": v.get("note") or "",
-        "verdict": v.get("verdict"), "created_at": v["created_at"],
+        "id": v["id"],
+        "version_no": v["version_no"],
+        "instruction": v["instruction"],
+        "note": v.get("note") or "",
+        "verdict": v.get("verdict"),
+        "created_at": v["created_at"],
         "files": json.loads(v.get("files_json") or "[]"),
         "checks": json.loads(v.get("checks_json") or "{}"),
     }
@@ -76,12 +82,14 @@ def _start_build(project_id: str, instruction: str) -> None:
 
     def _run() -> None:
         from orivellum.capabilities.workbench import run_build
+
         run_build(get_db(), get_config(), project_id, instruction)
 
     submit_bg(_run, kind="workbench.build", label=f"workbench {project_id[:8]}")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
 
 @router.get("/projects")
 def list_projects(status: str | None = None):
@@ -92,12 +100,13 @@ def list_projects(status: str | None = None):
 @router.post("/projects")
 def create_project(body: ProjectCreate):
     from orivellum.capabilities.workbench import KINDS
+
     if body.kind not in KINDS:
         raise HTTPException(422, f"kind must be one of {KINDS}")
     db = get_db()
     try:
         proj = db.create_wb_project(body.title.strip(), body.kind, body.brief.strip())
-    except Exception as exc:                                      # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         raise internal_error(logger, exc, "workbench create") from exc
     db.claim_wb_build(proj["id"])  # fresh project — always succeeds
     _start_build(proj["id"], "Build the first version of this project from the brief.")
@@ -134,10 +143,11 @@ def revert_project(project_id: str, body: RevertBody):
         raise HTTPException(409, "a build is already running for this project")
     try:
         from orivellum.capabilities.workbench import revert_to
+
         row = revert_to(db, cfg, project_id, body.version_no)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
-    except Exception as exc:                                      # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         raise internal_error(logger, exc, "workbench revert") from exc
     finally:
         db.update_wb_project(project_id, building=0)
@@ -153,10 +163,11 @@ def complete_project(project_id: str):
         raise HTTPException(409, "wait for the running build to finish first")
     try:
         from orivellum.capabilities.workbench import archive_project
+
         path = archive_project(db, cfg, project_id)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    except Exception as exc:                                      # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         raise internal_error(logger, exc, "workbench archive") from exc
     finally:
         db.update_wb_project(project_id, building=0)
@@ -171,12 +182,14 @@ def download_version(project_id: str, version_no: int):
         raise HTTPException(404, f"version v{version_no} not found")
     try:
         from orivellum.capabilities.workbench import make_version_zip
+
         path = make_version_zip(cfg, project_id, version_no)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in proj["title"])[:40]
-    return FileResponse(path, media_type="application/zip",
-                        filename=f"{safe or 'project'}_v{version_no}.zip")
+    return FileResponse(
+        path, media_type="application/zip", filename=f"{safe or 'project'}_v{version_no}.zip"
+    )
 
 
 @router.get("/projects/{project_id}/archive/download")
@@ -187,6 +200,7 @@ def download_archive(project_id: str):
     if not path:
         raise HTTPException(404, "project has not been archived")
     import pathlib
+
     p = pathlib.Path(path)
     if not p.is_file():
         raise HTTPException(404, "archive file missing on disk")
@@ -200,5 +214,6 @@ def delete_project_route(project_id: str):
     if not db.claim_wb_build(project_id, require_active=False):
         raise HTTPException(409, "wait for the running build to finish first")
     from orivellum.capabilities.workbench import delete_project
+
     delete_project(db, cfg, project_id)
     return {"deleted": True}

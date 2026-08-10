@@ -5,6 +5,7 @@ GET  /api/topics/{topic_id}         → topic detail + member documents
 POST /api/topics/rebuild            → trigger a clustering rebuild
 GET  /api/library/{doc_id}/related  → related documents (semantic + topic)
 """
+
 from __future__ import annotations
 
 import json
@@ -19,6 +20,7 @@ logger = logging.getLogger("orivellum.api.topics")
 
 router = APIRouter(prefix="/api", tags=["topics"], dependencies=[Depends(require_auth)])
 # ── GET /api/topics ──────────────────────────────────────────────────────────
+
 
 @router.get("/topics")
 def list_topics(with_docs: bool = False, q: str | None = None):
@@ -81,7 +83,7 @@ def list_topics(with_docs: bool = False, q: str | None = None):
 
     # Optionally load full doc membership + titles in a single query
     doc_map: dict[str, list[str]] = {}  # topic_id → [doc_id, …]
-    title_map: dict[str, str] = {}      # doc_id → title
+    title_map: dict[str, str] = {}  # doc_id → title
     if with_docs:
         with db._lock:
             mem_rows = db._conn.execute(
@@ -131,14 +133,13 @@ def list_topics(with_docs: bool = False, q: str | None = None):
 
 # ── GET /api/topics/{topic_id} ───────────────────────────────────────────────
 
+
 @router.get("/topics/{topic_id}")
 def get_topic(topic_id: str):
     """Return a topic and its member documents."""
     db = get_db()
     with db._lock:
-        topic_row = db._conn.execute(
-            "SELECT * FROM topics WHERE id=?", (topic_id,)
-        ).fetchone()
+        topic_row = db._conn.execute("SELECT * FROM topics WHERE id=?", (topic_id,)).fetchone()
     if not topic_row:
         raise HTTPException(status_code=404, detail="Topic not found")
 
@@ -192,6 +193,7 @@ def get_topic(topic_id: str):
 
 # ── POST /api/topics/rebuild ─────────────────────────────────────────────────
 
+
 class RebuildRequest(BaseModel):
     run_profiles: bool = False  # also generate LLM topic profiles
 
@@ -206,6 +208,7 @@ def rebuild_topics(body: RebuildRequest, background_tasks: BackgroundTasks):
     def _run():
         try:
             from orivellum.capabilities.cluster import run_clustering
+
             result = run_clustering(db)
             logger.info("Topics rebuild finished: %s", result)
         except Exception as exc:
@@ -219,6 +222,7 @@ def rebuild_topics(body: RebuildRequest, background_tasks: BackgroundTasks):
                 if ai_enabled:
                     cfg = get_config()
                     from orivellum.capabilities.topic_profile import generate_topic_profiles
+
                     tp = generate_topic_profiles(db, cfg, force=True)
                     logger.info("Topic profiles generated: %s", tp)
                 else:
@@ -235,15 +239,14 @@ def rebuild_topics(body: RebuildRequest, background_tasks: BackgroundTasks):
 
 # ── GET /api/library/{doc_id}/related ────────────────────────────────────────
 
+
 @router.get("/library/{doc_id}/related")
 def get_related_documents(doc_id: str, limit: int = 12):
     """Return documents related to doc_id via semantic links and shared topics."""
     db = get_db()
     # Verify document exists
     with db._lock:
-        exists = db._conn.execute(
-            "SELECT id FROM documents WHERE id=?", (doc_id,)
-        ).fetchone()
+        exists = db._conn.execute("SELECT id FROM documents WHERE id=?", (doc_id,)).fetchone()
     if not exists:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -319,14 +322,16 @@ def get_related_documents(doc_id: str, limit: int = 12):
     for oid in other_ids:
         entry = related[oid]
         meta = doc_meta.get(oid, {})
-        results.append({
-            **entry,
-            "title": meta.get("title") or "(untitled)",
-            "kind": meta.get("kind"),
-            "readiness": meta.get("readiness"),
-            "work_id": meta.get("work_id"),
-            "word_count": meta.get("word_count", 0),
-        })
+        results.append(
+            {
+                **entry,
+                "title": meta.get("title") or "(untitled)",
+                "kind": meta.get("kind"),
+                "readiness": meta.get("readiness"),
+                "work_id": meta.get("work_id"),
+                "word_count": meta.get("word_count", 0),
+            }
+        )
 
     results.sort(key=lambda x: (x["similarity"] is None, -(x["similarity"] or 0)))
     return {"doc_id": doc_id, "related": results[:limit]}

@@ -5,19 +5,19 @@ Covers:
   2. OrivellumDB.search_knowledge_filtered — date + kind filtering on knowledge
   3. OrivellumDB.search_chunks_filtered — date + kind filtering on chunks
 """
+
 from __future__ import annotations
 
-import threading
-from datetime import datetime, timedelta, timezone
-from typing import Any
-
+from datetime import UTC, datetime
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _make_db(tmp_path):
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(str(tmp_path / "test.db"))
 
 
@@ -25,18 +25,20 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
-_NOW = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)   # Saturday 2024-06-15
+_NOW = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)  # Saturday 2024-06-15
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Section 1 — _detect_query_filters
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class TestDetectQueryFilters:
     """Pure unit tests — no DB required."""
 
     def _f(self, text: str) -> dict | None:
         from orivellum.api.routes.conversations import _detect_query_filters
+
         return _detect_query_filters(text, now=_NOW)
 
     # ── temporal ──────────────────────────────────────────────────────────────
@@ -115,7 +117,7 @@ class TestDetectQueryFilters:
         assert r is not None
         after = datetime.fromisoformat(r["after_date"])
         diff = _NOW - after
-        assert 20 <= diff.days <= 22   # 3*7 = 21
+        assert 20 <= diff.days <= 22  # 3*7 = 21
         assert "3" in r["description"]
 
     def test_past_n_months(self):
@@ -123,7 +125,7 @@ class TestDetectQueryFilters:
         assert r is not None
         after = datetime.fromisoformat(r["after_date"])
         diff = _NOW - after
-        assert 58 <= diff.days <= 62   # 2*30 = 60 (approximate)
+        assert 58 <= diff.days <= 62  # 2*30 = 60 (approximate)
 
     def test_past_week_synonym(self):
         r = self._f("What have I imported over the past week?")
@@ -173,11 +175,13 @@ class TestDetectQueryFilters:
 # Section 1b — _strip_filter_phrases
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class TestStripFilterPhrases:
     """Unit tests for the residual-query extractor."""
 
     def _s(self, text: str) -> str:
         from orivellum.api.routes.conversations import _strip_filter_phrases
+
         return _strip_filter_phrases(text)
 
     def test_pure_temporal_returns_empty(self):
@@ -246,11 +250,11 @@ class TestStripFilterPhrases:
 # Section 2 — search_knowledge_filtered
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class TestSearchKnowledgeFiltered:
     """DB integration tests for search_knowledge_filtered."""
 
-    def _seed_knowledge(self, db, text: str, created_at: str,
-                        doc_kind: str | None = None) -> str:
+    def _seed_knowledge(self, db, text: str, created_at: str, doc_kind: str | None = None) -> str:
         """Insert a knowledge item directly and return its id.
 
         work_id is left NULL to avoid requiring a works + objects chain.
@@ -258,6 +262,7 @@ class TestSearchKnowledgeFiltered:
         + documents row inserted first.
         """
         import uuid
+
         kid = str(uuid.uuid4())
         doc_id = None
         with db._lock:
@@ -390,11 +395,12 @@ class TestSearchKnowledgeFiltered:
 
         # Simulate what _build_system_prompt does: strip filter → empty query
         from orivellum.api.routes.conversations import _strip_filter_phrases
+
         residual = _strip_filter_phrases("what did I add last week?")
         assert residual == ""  # confirms pure-temporal phrase stripped
 
         results = db.search_knowledge_filtered(
-            residual,                              # empty → plain-scan path
+            residual,  # empty → plain-scan path
             after_date="2024-06-01T00:00:00+00:00",
         )
         texts = [r["text"] for r in results]
@@ -409,6 +415,7 @@ class TestSearchKnowledgeFiltered:
         self._seed_knowledge(db, "quarterly revenue analysis (audio)", dt, doc_kind="audio")
 
         from orivellum.api.routes.conversations import _strip_filter_phrases
+
         residual = _strip_filter_phrases("summarize my PDFs")
         assert residual == ""  # pure kind phrase stripped
 
@@ -429,6 +436,7 @@ class TestSearchKnowledgeFiltered:
         appear when the user asks for items from June.
         """
         import uuid
+
         db = _make_db(tmp_path)
 
         jan = "2024-01-10T00:00:00+00:00"
@@ -523,20 +531,18 @@ class TestSearchKnowledgeFiltered:
 # Section 2b — _build_system_prompt integration: Work scope + token budget
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class TestBuildSystemPromptFiltered:
     """End-to-end tests verifying Work-scope isolation and token-budget
     enforcement in the temporal/source-filter path of _build_system_prompt."""
 
-    def _seed_knowledge_with_work(
-        self, db, text: str, created_at: str, work_id: str
-    ) -> str:
+    def _seed_knowledge_with_work(self, db, text: str, created_at: str, work_id: str) -> str:
         """Insert a knowledge item linked to an explicit work_id."""
         import uuid
+
         # Create an objects row for the work (needed by FK)
         with db._lock:
-            exists = db._conn.execute(
-                "SELECT id FROM objects WHERE id=?", (work_id,)
-            ).fetchone()
+            exists = db._conn.execute("SELECT id FROM objects WHERE id=?", (work_id,)).fetchone()
             if not exists:
                 db._conn.execute(
                     "INSERT INTO objects(id,type,version,lifecycle,provenance,"
@@ -545,8 +551,7 @@ class TestBuildSystemPromptFiltered:
                     (work_id, "work", created_at, created_at),
                 )
                 db._conn.execute(
-                    "INSERT INTO works(id,title,work_type,meta) "
-                    "VALUES(?,?,?,?)",
+                    "INSERT INTO works(id,title,work_type,meta) VALUES(?,?,?,?)",
                     (work_id, f"Work {work_id[:4]}", "project", "{}"),
                 )
             kid = str(uuid.uuid4())
@@ -569,14 +574,12 @@ class TestBuildSystemPromptFiltered:
             db._conn.commit()
         return kid
 
-    def _call_build(self, db, work_id: str | None, query: str,
-                    scope: str = "work") -> str:
+    def _call_build(self, db, work_id: str | None, query: str, scope: str = "work") -> str:
         from orivellum.api.routes.conversations import _build_system_prompt
+
         conv = {"id": "c1", "work_id": work_id, "model": None}
         sources: list = []
-        prompt = _build_system_prompt(
-            db, conv, scope=scope, user_query=query, out_sources=sources
-        )
+        prompt = _build_system_prompt(db, conv, scope=scope, user_query=query, out_sources=sources)
         return prompt, sources
 
     def test_work_scope_excludes_other_works(self, tmp_path):
@@ -588,14 +591,10 @@ class TestBuildSystemPromptFiltered:
         self._seed_knowledge_with_work(db, "alpha secret data", dt, wid_a)
         self._seed_knowledge_with_work(db, "beta secret data", dt, wid_b)
 
-        prompt, sources = self._call_build(
-            db, work_id=wid_a, query="what did I add last week?"
-        )
+        prompt, sources = self._call_build(db, work_id=wid_a, query="what did I add last week?")
         assert "alpha secret data" not in prompt or True  # may or may not appear
         # The important assertion: beta's data must NEVER appear
-        assert "beta secret data" not in prompt, (
-            "Work-B content leaked into Work-A conversation"
-        )
+        assert "beta secret data" not in prompt, "Work-B content leaked into Work-A conversation"
         # sources must not reference work-B
         for s in sources:
             assert s.get("work_id") != wid_b, "Work-B source leaked into sources list"
@@ -606,8 +605,9 @@ class TestBuildSystemPromptFiltered:
         Seeds items with a timestamp that falls within the *current* week so
         the 'this week' filter — resolved at runtime — always matches them.
         """
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-        now = _dt.now(_tz.utc)
+        from datetime import datetime as _dt
+
+        now = _dt.now(UTC)
         # Seed at *now* — "this week" starts at Monday 00:00, so any offset into
         # the past (even 2 hours) crosses into last week when the suite runs
         # early on a Monday. now itself is always inside the current week.
@@ -619,7 +619,9 @@ class TestBuildSystemPromptFiltered:
         self._seed_knowledge_with_work(db, "beta global note", recent, wid_b)
 
         prompt, sources = self._call_build(
-            db, work_id=None, query="show me everything from this week",
+            db,
+            work_id=None,
+            query="show me everything from this week",
             scope="all",
         )
         # Both items are from this week and scope is 'all' — at least one should appear
@@ -633,8 +635,10 @@ class TestBuildSystemPromptFiltered:
         to the step-2 recency fallback which returns base-only, just like the
         existing hybrid path does.
         """
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-        now = _dt.now(_tz.utc)
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+
+        now = _dt.now(UTC)
         recent = (now - _td(hours=2)).isoformat()
         db = _make_db(tmp_path)
         wid_other = "w-cccc-0000-0000-000000000003"
@@ -642,10 +646,13 @@ class TestBuildSystemPromptFiltered:
 
         # Conversation scoped to "work" but with no linked work_id
         from orivellum.api.routes.conversations import _build_system_prompt
+
         conv = {"id": "c-unlinked", "work_id": None, "model": None}
         sources: list = []
         prompt = _build_system_prompt(
-            db, conv, scope="work",
+            db,
+            conv,
+            scope="work",
             user_query="show me everything from this week",
             out_sources=sources,
         )
@@ -684,9 +691,7 @@ class TestBuildSystemPromptFiltered:
                 )
                 db._conn.commit()
 
-        prompt, _ = self._call_build(
-            db, work_id=None, query="what did I add last week?"
-        )
+        prompt, _ = self._call_build(db, work_id=None, query="what did I add last week?")
         # Rough check: the prompt should not contain all 20 items
         # (budget at default 8192 ctx × 30% = 2458 tokens ≈ 9830 chars,
         #  each item is ~400 chars so max ≈ 24; but _CONTEXT_KNOWLEDGE=12 cap)
@@ -698,12 +703,15 @@ class TestBuildSystemPromptFiltered:
 # Section 3 — search_chunks_filtered
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class TestSearchChunksFiltered:
     """DB integration tests for search_chunks_filtered."""
 
-    def _seed_chunk(self, db, text: str, created_at: str,
-                    doc_kind: str = "pdf", work_id: str = "w1") -> str:
+    def _seed_chunk(
+        self, db, text: str, created_at: str, doc_kind: str = "pdf", work_id: str = "w1"
+    ) -> str:
         import uuid
+
         doc_id = str(uuid.uuid4())
         chunk_id = str(uuid.uuid4())
         with db._lock:

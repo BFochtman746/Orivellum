@@ -14,6 +14,7 @@ The policy fires at two levels:
                      validator, Phase 2) is the hard backstop.
   HARD — reserved for Phase 2 output validator.  Not implemented here.
 """
+
 from __future__ import annotations
 
 # Instruction injected into the system prompt when CHECKABLE_FACT is detected.

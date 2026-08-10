@@ -6,10 +6,9 @@ Tests:
      structured 503 within 3 seconds — never a spinner-inducing timeout.
   C) OCR status reflects tesseract availability without actually running OCR.
 """
+
 from __future__ import annotations
 
-import importlib
-import importlib.util as _iutil
 import os
 import sys
 import tempfile
@@ -28,10 +27,12 @@ sys.path.insert(0, str(_PROJECT_ROOT / "artifacts" / "api-server" / "src"))
 
 try:
     from fastapi.testclient import TestClient
-    from orivellum.api.app import create_app
+
     from orivellum.api import _deps
+    from orivellum.api.app import create_app
     from orivellum.configuration.config import OrivellumConfig, ServingConfig
     from orivellum.database.db import OrivellumDB
+
     _DEPS_AVAILABLE = True
     _MISSING = ""
 except Exception as _e:  # pragma: no cover
@@ -57,6 +58,7 @@ def _make_client(tmp_path: Path) -> TestClient:
 # ---------------------------------------------------------------------------
 # Phase A — /studio/status structure
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestStudioStatusEndpoint(unittest.TestCase):
@@ -87,8 +89,7 @@ class TestStudioStatusEndpoint(unittest.TestCase):
         data = self.client.get("/api/studio/status").json()
         expected_keys = {"name", "key", "available", "latency_ms"}
         for s in data["tts"]["strategies"]:
-            self.assertTrue(expected_keys.issubset(s.keys()),
-                            f"Strategy missing keys: {s}")
+            self.assertTrue(expected_keys.issubset(s.keys()), f"Strategy missing keys: {s}")
 
     def test_status_tts_strategy_names(self):
         data = self.client.get("/api/studio/status").json()
@@ -126,8 +127,9 @@ class TestStudioStatusEndpoint(unittest.TestCase):
         """AI server at port 99999 is unreachable; ai_server strategy must be False."""
         data = self.client.get("/api/studio/status").json()
         ai_strategy = next(s for s in data["tts"]["strategies"] if s["key"] == "ai_server")
-        self.assertFalse(ai_strategy["available"],
-                         "AI server at 99999 should not be reachable in tests")
+        self.assertFalse(
+            ai_strategy["available"], "AI server at 99999 should not be reachable in tests"
+        )
 
     def test_image_gen_ai_server_unreachable(self):
         """AI server image backend is also unreachable in test environment."""
@@ -146,11 +148,13 @@ class TestStudioStatusEndpoint(unittest.TestCase):
         the deadline is enforced deterministically.
         """
         import time
+
         t0 = time.monotonic()
         self.client.get("/api/studio/status")
         elapsed = time.monotonic() - t0
-        self.assertLess(elapsed, 10.0,
-                        f"Studio status probe took {elapsed:.1f}s — probe timeouts too long?")
+        self.assertLess(
+            elapsed, 10.0, f"Studio status probe took {elapsed:.1f}s — probe timeouts too long?"
+        )
 
     def test_stalled_probes_complete_within_global_deadline(self):
         """Even when every URL probe hangs (blackhole), the endpoint must return
@@ -159,12 +163,14 @@ class TestStudioStatusEndpoint(unittest.TestCase):
         _STATUS_GLOBAL_TIMEOUT = 5 s  →  we assert completion within 7 s.
         """
         import time
+
         from orivellum.api.routes import studio as _studio_mod
 
         # Sleep 0.5 s — longer than the 0.3 s shrunk deadline but short enough
         # that the background threads finish before pytest teardown.
         def _stall(*_a, **_kw):
             import time as _t
+
             _t.sleep(0.5)
             return False, None
 
@@ -172,8 +178,10 @@ class TestStudioStatusEndpoint(unittest.TestCase):
         # Shrink the deadline so the test completes in < 1 s
         _studio_mod._STATUS_GLOBAL_TIMEOUT = 0.3
         try:
-            with patch("orivellum.api.routes.studio._url_probe", side_effect=_stall), \
-                 patch("orivellum.api.routes.studio._probe_tesseract_ok", return_value=False):
+            with (
+                patch("orivellum.api.routes.studio._url_probe", side_effect=_stall),
+                patch("orivellum.api.routes.studio._probe_tesseract_ok", return_value=False),
+            ):
                 t0 = time.monotonic()
                 resp = self.client.get("/api/studio/status")
                 elapsed = time.monotonic() - t0
@@ -181,14 +189,18 @@ class TestStudioStatusEndpoint(unittest.TestCase):
             _studio_mod._STATUS_GLOBAL_TIMEOUT = original_timeout
 
         self.assertEqual(resp.status_code, 200)
-        self.assertLess(elapsed, 2.0,
-                        f"Status with stalled probes took {elapsed:.2f}s — global deadline not enforced")
+        self.assertLess(
+            elapsed,
+            2.0,
+            f"Status with stalled probes took {elapsed:.2f}s — global deadline not enforced",
+        )
 
     def test_stalled_probes_with_custom_comfy_url(self):
         """The custom ComfyUI URL path fires TWO extra probes (/system_stats + root).
         Even with all probes stalled, the endpoint must complete within the deadline.
         """
         import time
+
         from orivellum.api.routes import studio as _studio_mod
 
         # Inject a fake custom ComfyUI URL so both probe paths are exercised
@@ -196,14 +208,17 @@ class TestStudioStatusEndpoint(unittest.TestCase):
 
         def _stall(*_a, **_kw):
             import time as _t
+
             _t.sleep(0.5)
             return False, None
 
         original_timeout = _studio_mod._STATUS_GLOBAL_TIMEOUT
         _studio_mod._STATUS_GLOBAL_TIMEOUT = 0.3
         try:
-            with patch("orivellum.api.routes.studio._url_probe", side_effect=_stall), \
-                 patch("orivellum.api.routes.studio._probe_tesseract_ok", return_value=False):
+            with (
+                patch("orivellum.api.routes.studio._url_probe", side_effect=_stall),
+                patch("orivellum.api.routes.studio._probe_tesseract_ok", return_value=False),
+            ):
                 t0 = time.monotonic()
                 resp = self.client.get("/api/studio/status")
                 elapsed = time.monotonic() - t0
@@ -212,8 +227,9 @@ class TestStudioStatusEndpoint(unittest.TestCase):
             _studio_mod.get_db().set_setting("image_gen_url", "")
 
         self.assertEqual(resp.status_code, 200)
-        self.assertLess(elapsed, 2.0,
-                        f"Custom-ComfyUI stall test took {elapsed:.2f}s — deadline not enforced")
+        self.assertLess(
+            elapsed, 2.0, f"Custom-ComfyUI stall test took {elapsed:.2f}s — deadline not enforced"
+        )
 
     def test_tts_available_or_has_reason(self):
         """If TTS is unavailable, best_strategy must be None; otherwise non-null."""
@@ -235,6 +251,7 @@ class TestStudioStatusEndpoint(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Phase B — Graceful TTS failure (all backends down)
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestTTSGracefulFailure(unittest.TestCase):
@@ -272,13 +289,13 @@ class TestTTSGracefulFailure(unittest.TestCase):
             elapsed = time.monotonic() - t0
 
         self.assertEqual(status, 503, f"Expected 503, got {status}: {body}")
-        self.assertLess(elapsed, 3.0,
-                        f"TTS failure took {elapsed:.1f}s — must fail fast within 3s")
+        self.assertLess(elapsed, 3.0, f"TTS failure took {elapsed:.1f}s — must fail fast within 3s")
 
         detail = body.get("detail", {})
         self.assertIsInstance(detail, dict, "503 detail should be a structured dict")
-        self.assertEqual(detail.get("service"), "tts",
-                         f"Expected service='tts' in detail: {detail}")
+        self.assertEqual(
+            detail.get("service"), "tts", f"Expected service='tts' in detail: {detail}"
+        )
         self.assertIn("strategies_tried", detail)
         # espeak-ng is banned from the cascade — must never appear.
         self.assertNotIn("espeak-ng", detail["strategies_tried"])
@@ -303,17 +320,20 @@ class TestTTSGracefulFailure(unittest.TestCase):
             m.stderr = b""
             return m
 
-        with patch("orivellum.api.routes.studio._get_kokoro", return_value=None), \
-             patch("subprocess.run", side_effect=_fake_run):
+        with (
+            patch("orivellum.api.routes.studio._get_kokoro", return_value=None),
+            patch("subprocess.run", side_effect=_fake_run),
+        ):
             t0 = time.monotonic()
             status, body = self._synthesize()
             elapsed = time.monotonic() - t0
 
         self.assertEqual(status, 503, f"Expected 503, got {status}: {body}")
-        self.assertLess(elapsed, 3.0,
-                        f"TTS failure must surface within 3s, took {elapsed:.1f}s")
-        self.assertFalse(any("espeak" in c for c in calls),
-                         f"espeak-ng was invoked despite the no-robot-voice policy: {calls}")
+        self.assertLess(elapsed, 3.0, f"TTS failure must surface within 3s, took {elapsed:.1f}s")
+        self.assertFalse(
+            any("espeak" in c for c in calls),
+            f"espeak-ng was invoked despite the no-robot-voice policy: {calls}",
+        )
 
     def test_legacy_espeak_samples_are_never_served(self):
         """No-robot-voice policy: a cached voice sample generated by the old
@@ -321,7 +341,8 @@ class TestTTSGracefulFailure(unittest.TestCase):
         engine='espeak' nor from an unlabeled pre-DB filesystem file."""
         from orivellum.api import _deps
         from orivellum.api.routes.studio import (
-            _get_sample_cache_path, _upsert_voice_sample_db,
+            _get_sample_cache_path,
+            _upsert_voice_sample_db,
         )
 
         cfg = _deps.get_config()
@@ -341,14 +362,16 @@ class TestTTSGracefulFailure(unittest.TestCase):
             for vid in ("af_bella", "am_adam"):
                 resp = self.client.get(f"/api/studio/voices/{vid}/sample")
                 self.assertEqual(
-                    resp.status_code, 503,
+                    resp.status_code,
+                    503,
                     f"{vid}: legacy sample was served (HTTP {resp.status_code}) "
                     "— robotic audio must never reach the client",
                 )
 
         # The unlabeled filesystem file must have been invalidated, not relabeled.
-        self.assertFalse(fs_path.exists(),
-                         "Unlabeled legacy sample file should be deleted, not trusted")
+        self.assertFalse(
+            fs_path.exists(), "Unlabeled legacy sample file should be deleted, not trusted"
+        )
 
     def test_tts_empty_text_returns_400(self):
         status, body = self._synthesize(text="   ")
@@ -366,13 +389,15 @@ class TestTTSGracefulFailure(unittest.TestCase):
 
         self.assertEqual(status, 503)
         body_str = str(body).lower()
-        self.assertNotIn("internal server error", body_str,
-                         "503 must not be a generic server error")
+        self.assertNotIn(
+            "internal server error", body_str, "503 must not be a generic server error"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Phase C — OCR status reflects environment
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestOCRStatus(unittest.TestCase):
@@ -429,6 +454,7 @@ class TestOCRStatus(unittest.TestCase):
         ):
             # Configure vision_model in DB before the request
             from orivellum.api import _deps as _d
+
             _d.get_db().set_setting("vision_model", "Qwen3-VL-8B")
             data = self.client.get("/api/studio/status").json()
             _d.get_db().set_setting("vision_model", "")  # cleanup
@@ -450,6 +476,7 @@ class TestOCRStatus(unittest.TestCase):
             ),
         ):
             from orivellum.api import _deps as _d
+
             _d.get_db().set_setting("vision_model", "Qwen3-VL-8B")
             data = self.client.get("/api/studio/status").json()
             _d.get_db().set_setting("vision_model", "")
@@ -463,17 +490,18 @@ class TestOCRStatus(unittest.TestCase):
 # Phase D — _probe_vision_model_listed parsing
 # ---------------------------------------------------------------------------
 
+
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestProbeVisionModelListed(unittest.TestCase):
     """_probe_vision_model_listed correctly parses all /models response formats."""
 
     def setUp(self):
         from orivellum.api.routes.studio import _probe_vision_model_listed
+
         self._probe = _probe_vision_model_listed
 
     def _make_urlopen(self, body: str):
         """Return a mock that replaces urllib.request.urlopen with a context manager."""
-        import io
 
         class _FakeResp:
             def __init__(self, data: bytes):
@@ -494,6 +522,7 @@ class TestProbeVisionModelListed(unittest.TestCase):
     def test_openai_data_list(self):
         """Standard OpenAI format: {"data": [{"id": "Qwen3-VL-8B"}]}."""
         import json
+
         body = json.dumps({"data": [{"id": "Qwen3-VL-8B"}, {"id": "other-model"}]})
         with patch("urllib.request.urlopen", self._make_urlopen(body)):
             self.assertTrue(self._probe("http://localhost:8000/v1", "Qwen3-VL-8B"))
@@ -501,6 +530,7 @@ class TestProbeVisionModelListed(unittest.TestCase):
     def test_lemonade_models_list(self):
         """Lemonade format: {"models": [{"name": "Qwen3-VL-8B"}]}."""
         import json
+
         body = json.dumps({"models": [{"name": "Qwen3-VL-8B"}]})
         with patch("urllib.request.urlopen", self._make_urlopen(body)):
             self.assertTrue(self._probe("http://localhost:8000/v1", "Qwen3-VL-8B"))
@@ -508,6 +538,7 @@ class TestProbeVisionModelListed(unittest.TestCase):
     def test_flat_string_list(self):
         """Flat list of model name strings: ["Qwen3-VL-8B", "other"]."""
         import json
+
         body = json.dumps(["Qwen3-VL-8B", "other-model"])
         with patch("urllib.request.urlopen", self._make_urlopen(body)):
             self.assertTrue(self._probe("http://localhost:8000/v1", "Qwen3-VL-8B"))
@@ -515,6 +546,7 @@ class TestProbeVisionModelListed(unittest.TestCase):
     def test_model_not_in_list(self):
         """Returns False when the model name does not appear in the /models list."""
         import json
+
         body = json.dumps({"data": [{"id": "llama3.3-70b"}]})
         with patch("urllib.request.urlopen", self._make_urlopen(body)):
             self.assertFalse(self._probe("http://localhost:8000/v1", "Qwen3-VL-8B"))
@@ -533,6 +565,7 @@ class TestProbeVisionModelListed(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Phase E — VLM PDF OCR path and exclusive queuing
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestVlmPdfOcr(unittest.TestCase):
@@ -574,12 +607,24 @@ class TestVlmPdfOcr(unittest.TestCase):
         )
 
         # Simulate a no_text PDF in the stuck-docs query result
-        _no_text_pdf = {"id": "doc1", "kind": "pdf", "readiness": "no_text",
-                        "work_id": None, "title": "Scanned.pdf",
-                        "source": None, "content_path": None}
-        _error_doc = {"id": "doc2", "kind": "text", "readiness": "error",
-                      "work_id": None, "title": "broken.txt",
-                      "source": None, "content_path": None}
+        _no_text_pdf = {
+            "id": "doc1",
+            "kind": "pdf",
+            "readiness": "no_text",
+            "work_id": None,
+            "title": "Scanned.pdf",
+            "source": None,
+            "content_path": None,
+        }
+        _error_doc = {
+            "id": "doc2",
+            "kind": "text",
+            "readiness": "error",
+            "work_id": None,
+            "title": "broken.txt",
+            "source": None,
+            "content_path": None,
+        }
 
         report: list[str] = []
         queued_ids: list[str] = []
@@ -588,8 +633,10 @@ class TestVlmPdfOcr(unittest.TestCase):
             queued_ids.append(doc_id)
 
         with (
-            patch("orivellum.capabilities.nightshift._get_stuck_docs",
-                  return_value=[_no_text_pdf, _error_doc]),
+            patch(
+                "orivellum.capabilities.nightshift._get_stuck_docs",
+                return_value=[_no_text_pdf, _error_doc],
+            ),
             # file_path resolution: supply a real temp file only for doc2
             patch.object(Path, "exists", return_value=False),
         ):
@@ -601,39 +648,45 @@ class TestVlmPdfOcr(unittest.TestCase):
         # The critical assertion: no_text PDF was excluded from consideration,
         # so even if doc2 were processed, doc1 never would be.
         # Verify by checking the filter logic directly.
-        from orivellum.capabilities.nightshift import _get_stuck_docs
+
         stuck = [_no_text_pdf, _error_doc]
         vlm = "Qwen3-VL-8B"
         filtered = [
-            d for d in stuck
-            if not (d.get("readiness") == "no_text"
-                    and d.get("kind") in ("pdf", "image"))
+            d
+            for d in stuck
+            if not (d.get("readiness") == "no_text" and d.get("kind") in ("pdf", "image"))
         ]
-        self.assertNotIn(_no_text_pdf, filtered,
-                         "no_text PDF should be excluded when VLM is configured")
-        self.assertIn(_error_doc, filtered,
-                      "error text doc should still be processed by pass 5")
+        self.assertNotIn(
+            _no_text_pdf, filtered, "no_text PDF should be excluded when VLM is configured"
+        )
+        self.assertIn(_error_doc, filtered, "error text doc should still be processed by pass 5")
 
     def test_stuck_docs_includes_no_text_pdf_when_no_vlm(self):
         """Pass 5 must still process no_text PDFs when VLM is NOT configured."""
-        from orivellum.capabilities.nightshift import _get_stuck_docs
 
-        _no_text_pdf = {"id": "doc1", "kind": "pdf", "readiness": "no_text",
-                        "work_id": None, "title": "Scanned.pdf",
-                        "source": None, "content_path": None}
+        _no_text_pdf = {
+            "id": "doc1",
+            "kind": "pdf",
+            "readiness": "no_text",
+            "work_id": None,
+            "title": "Scanned.pdf",
+            "source": None,
+            "content_path": None,
+        }
         stuck = [_no_text_pdf]
         # No VLM — no filter applied
         vlm = ""
         if vlm:
             filtered = [
-                d for d in stuck
-                if not (d.get("readiness") == "no_text"
-                        and d.get("kind") in ("pdf", "image"))
+                d
+                for d in stuck
+                if not (d.get("readiness") == "no_text" and d.get("kind") in ("pdf", "image"))
             ]
         else:
             filtered = stuck
-        self.assertIn(_no_text_pdf, filtered,
-                      "no_text PDF should remain in pass-5 queue when VLM is absent")
+        self.assertIn(
+            _no_text_pdf, filtered, "no_text PDF should remain in pass-5 queue when VLM is absent"
+        )
 
 
 if __name__ == "__main__":
@@ -643,6 +696,7 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # Phase D — Cloned-voice sample previews (premium sidecar path)
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_DEPS_AVAILABLE, f"deps missing: {_MISSING}")
 class TestCloneVoiceSample(unittest.TestCase):
@@ -673,8 +727,10 @@ class TestCloneVoiceSample(unittest.TestCase):
         self.assertNotIn("internal server error", detail)
 
     def test_clone_sample_sidecar_down_returns_503(self):
-        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
-             patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None):
+        with (
+            patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True),
+            patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None),
+        ):
             resp = self._get_sample()
         self.assertEqual(resp.status_code, 503, resp.text)
         detail = str(resp.json().get("detail", "")).lower()
@@ -682,49 +738,62 @@ class TestCloneVoiceSample(unittest.TestCase):
 
     def test_clone_sample_success_is_cached(self):
         calls = MagicMock(return_value=self.FAKE_MP3)
-        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
-             patch("orivellum.api.routes.studio._call_premium_tts_sync", calls):
+        with (
+            patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True),
+            patch("orivellum.api.routes.studio._call_premium_tts_sync", calls),
+        ):
             r1 = self._get_sample()
             r2 = self._get_sample()
         self.assertEqual(r1.status_code, 200, r1.text)
         self.assertEqual(r1.headers.get("X-TTS-Engine"), "premium")
         self.assertEqual(r1.content, self.FAKE_MP3)
         self.assertEqual(r2.status_code, 200)
-        self.assertEqual(calls.call_count, 1,
-                         "second request must be served from cache, not re-synthesized")
+        self.assertEqual(
+            calls.call_count, 1, "second request must be served from cache, not re-synthesized"
+        )
         # Sample text is the short fixed sentence, voice is the clone id.
         _text, _voice = calls.call_args[0][0], calls.call_args[0][1]
         from orivellum.api.routes.studio import _SAMPLE_SENTENCE
+
         self.assertEqual(_text, _SAMPLE_SENTENCE)
         self.assertEqual(_voice, self.CLONE_ID)
         # Cache filename must be Windows-safe (no ":").
         from orivellum.api.routes.studio import _get_sample_cache_path
+
         p = _get_sample_cache_path(_deps.get_config(), self.CLONE_ID)
         self.assertNotIn(":", p.name)
         self.assertTrue(p.exists())
 
     def test_clone_delete_drops_cached_sample(self):
         # Seed a cached sample via a successful synthesis.
-        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
-             patch("orivellum.api.routes.studio._call_premium_tts_sync",
-                   return_value=self.FAKE_MP3):
+        with (
+            patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True),
+            patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=self.FAKE_MP3),
+        ):
             self.assertEqual(self._get_sample().status_code, 200)
 
         sidecar_resp = MagicMock(status_code=200, content=b"{}")
         sidecar_resp.json.return_value = {"deleted": True}
-        with patch("orivellum.api.routes.studio._premium_base_url",
-                   return_value="http://127.0.0.1:9883"), \
-             patch("httpx.delete", return_value=sidecar_resp):
+        with (
+            patch(
+                "orivellum.api.routes.studio._premium_base_url",
+                return_value="http://127.0.0.1:9883",
+            ),
+            patch("httpx.delete", return_value=sidecar_resp),
+        ):
             resp = self.client.delete("/api/studio/voice-clones/test-clone-1")
         self.assertEqual(resp.status_code, 200, resp.text)
 
         from orivellum.api.routes.studio import _get_sample_cache_path
+
         p = _get_sample_cache_path(_deps.get_config(), self.CLONE_ID)
         self.assertFalse(p.exists(), "cached clone sample must be removed on delete")
         # And a fresh request with the sidecar down must now 503, proving the
         # deleted voice's audio can never be served from a stale cache.
-        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
-             patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None):
+        with (
+            patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True),
+            patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None),
+        ):
             self.assertEqual(self._get_sample().status_code, 503)
 
     def test_unknown_catalog_voice_still_404s(self):
@@ -736,15 +805,20 @@ class TestCloneVoiceSample(unittest.TestCase):
         clone id that is NOT marked engine='premium' (mislabeled/legacy) must
         never be served — the route must re-synthesize via the sidecar or 503."""
         from orivellum.api.routes.studio import (
-            _get_sample_cache_path, _upsert_voice_sample_db,
+            _get_sample_cache_path,
+            _upsert_voice_sample_db,
         )
+
         # Seed a valid-looking cached file mislabeled as Kokoro-generated.
         p = _get_sample_cache_path(_deps.get_config(), self.CLONE_ID)
         p.write_bytes(self.FAKE_MP3)
         _upsert_voice_sample_db(_deps.get_db(), self.CLONE_ID, str(p), "kokoro")
 
-        with patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True), \
-             patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None):
+        with (
+            patch("orivellum.api.routes.studio._is_premium_tts_enabled", return_value=True),
+            patch("orivellum.api.routes.studio._call_premium_tts_sync", return_value=None),
+        ):
             resp = self._get_sample()
-        self.assertEqual(resp.status_code, 503,
-                         "mislabeled clone cache row was served — policy violation")
+        self.assertEqual(
+            resp.status_code, 503, "mislabeled clone cache row was served — policy violation"
+        )

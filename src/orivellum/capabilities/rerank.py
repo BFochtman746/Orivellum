@@ -26,6 +26,7 @@ All stages are pure re-orderers — they never drop candidates — so the
 caller's token-budget logic still controls the final count injected into
 the prompt.  Original dicts are never mutated; fresh copies are returned.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 # ── BM25 hyper-parameters (Robertson / Sparck-Jones defaults) ─────────────────
 _BM25_K1: float = 1.5
-_BM25_B: float  = 0.75
+_BM25_B: float = 0.75
 
 # Number of top BM25 candidates sent to the optional LLM re-ranker.
 # Keeping this small (10) bounds LLM prompt size and latency.
@@ -94,9 +95,12 @@ def cross_reranker_enabled(db: Any) -> bool:
 def _serving_reranker() -> tuple[str, str]:
     """Return (base_url, reranker_model) from live config."""
     from orivellum.api._deps import get_config
+
     cfg = get_config()
-    return (cfg.serving.base_url.rstrip("/"),
-            (getattr(cfg.serving, "reranker_model", "") or "").strip())
+    return (
+        cfg.serving.base_url.rstrip("/"),
+        (getattr(cfg.serving, "reranker_model", "") or "").strip(),
+    )
 
 
 def cross_encoder_status() -> dict:
@@ -151,14 +155,19 @@ def cross_encoder_scores(
             return None
         _ce_inflight = True
 
-    payload = json.dumps({
-        "model": model,
-        "query": query[:2000],
-        "documents": [t[:_CE_MAX_DOC_LEN] for t in texts],
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": model,
+            "query": query[:2000],
+            "documents": [t[:_CE_MAX_DOC_LEN] for t in texts],
+        }
+    ).encode()
     req = urllib.request.Request(
-        f"{base_url}/rerank", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST")
+        f"{base_url}/rerank",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
@@ -173,17 +182,21 @@ def cross_encoder_scores(
         for r in results:
             idx = r.get("index")
             score = r.get("relevance_score")
-            if (not isinstance(idx, int) or idx in seen_idx
-                    or not (0 <= idx < len(texts))
-                    or not isinstance(score, (int, float))
-                    or not math.isfinite(float(score))):
+            if (
+                not isinstance(idx, int)
+                or idx in seen_idx
+                or not (0 <= idx < len(texts))
+                or not isinstance(score, (int, float))
+                or not math.isfinite(float(score))
+            ):
                 valid = False
                 break
             scores[idx] = float(score)
             seen_idx.add(idx)
         if not valid or len(seen_idx) != len(texts):
-            logger.warning("Reranker response malformed (%d/%d valid scores)",
-                           len(seen_idx), len(texts))
+            logger.warning(
+                "Reranker response malformed (%d/%d valid scores)", len(seen_idx), len(texts)
+            )
             with _ce_lock:
                 _ce_unavailable_until = time.monotonic() + _CE_FAIL_COOLDOWN
                 _ce_healthy = False
@@ -196,8 +209,7 @@ def cross_encoder_scores(
         with _ce_lock:
             _ce_unavailable_until = time.monotonic() + _CE_FAIL_COOLDOWN
             _ce_healthy = False
-        logger.debug("Reranker unavailable (cooldown %.0fs): %s",
-                     _CE_FAIL_COOLDOWN, exc)
+        logger.debug("Reranker unavailable (cooldown %.0fs): %s", _CE_FAIL_COOLDOWN, exc)
         return None
     finally:
         with _ce_lock:
@@ -207,6 +219,7 @@ def cross_encoder_scores(
 # ──────────────────────────────────────────────────────────────────────────────
 # Tokeniser
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _tokenize(text: str) -> list[str]:
     """Lower-case word tokeniser (no external deps).
@@ -220,6 +233,7 @@ def _tokenize(text: str) -> list[str]:
 # ──────────────────────────────────────────────────────────────────────────────
 # BM25 scorer
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _bm25_doc_score(
     query_terms: list[str],
@@ -296,6 +310,7 @@ def bm25_rerank(
 # LLM listwise re-ranker (optional)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _llm_rerank(
     query: str,
     candidates: list[dict],
@@ -366,6 +381,7 @@ def _llm_rerank(
 # ──────────────────────────────────────────────────────────────────────────────
 # Main entry point
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def rerank_candidates(
     query: str,
@@ -439,12 +455,12 @@ def rerank_candidates(
         try:
             if cross_reranker_enabled(db):
                 _win = min(len(bm25_ranked), _CE_TOP_K)
-                _texts = [str(c.get(text_field) or "")[:_CE_MAX_DOC_LEN]
-                          for c in bm25_ranked[:_win]]
+                _texts = [
+                    str(c.get(text_field) or "")[:_CE_MAX_DOC_LEN] for c in bm25_ranked[:_win]
+                ]
                 _scores = cross_encoder_scores(query, _texts)
                 if _scores is not None:
-                    model_indices = sorted(range(_win),
-                                           key=lambda i: _scores[i], reverse=True)
+                    model_indices = sorted(range(_win), key=lambda i: _scores[i], reverse=True)
                     window = _win
         except Exception as _ce_exc:
             logger.debug("Cross-encoder re-rank skipped (non-fatal): %s", _ce_exc)
@@ -455,6 +471,7 @@ def rerank_candidates(
             try:
                 if db.get_setting("ai_reranking_enabled", "false") == "true":
                     from orivellum.configuration.config import load_config as _lc
+
                     cfg = _lc()
                     # Only pass the top-_LLM_TOP_K BM25 candidates to the LLM
                     # to keep the prompt compact and latency bounded.
@@ -497,8 +514,7 @@ def rerank_candidates(
                 mv = model_rank_by_orig.get(orig_idx, _outside_rank)
                 return 1.0 / (_RRF_K + b + 1) + 1.0 / (_RRF_K + mv + 1)
 
-            result = sorted(bm25_ranked, key=lambda c: _rrf_score(c["_rerank_idx"]),
-                            reverse=True)
+            result = sorted(bm25_ranked, key=lambda c: _rrf_score(c["_rerank_idx"]), reverse=True)
             for c in result:
                 c["rerank_score"] = round(_rrf_score(c["_rerank_idx"]), 8)
         else:
@@ -513,7 +529,5 @@ def rerank_candidates(
         return result
 
     except Exception as exc:
-        logger.debug(
-            "rerank_candidates: non-fatal error, returning original order: %s", exc
-        )
+        logger.debug("rerank_candidates: non-fatal error, returning original order: %s", exc)
         return candidates[:top_k] if top_k is not None else candidates

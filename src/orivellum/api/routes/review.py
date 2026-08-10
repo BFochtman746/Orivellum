@@ -12,6 +12,7 @@ Item ids are namespaced: "<type>:<row id>", e.g. "knowledge:3fa2…".
 Resolving accepts decision approve | reject | defer (+ optional reason);
 defer snoozes the item for 7 days via the review_deferrals table.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,6 +54,7 @@ def _jload(s, default=None):
 
 # ── Queue ─────────────────────────────────────────────────────────────────────
 
+
 @router.get("/review/queue")
 def review_queue(limit: int = 200):
     """Unified review inbox, most-uncertain first (confidence ASC)."""
@@ -77,23 +79,25 @@ def review_queue(limit: int = 200):
         key = f"knowledge:{r['id']}"
         if key in deferred:
             continue
-        items.append({
-            "id": key,
-            "item_type": "knowledge",
-            "title": f"AI-extracted {r['kind']}",
-            "description": r["text"],
-            "confidence": r["confidence"],
-            "work_id": r["work_id"],
-            "work_title": r["work_title"],
-            "evidence": {
-                "source_doc": r["doc_title"],
-                "source_doc_id": r["source_doc_id"],
-                "subject": r["subject"],
-                "predicate": r["predicate"],
-                "object": r["object"],
-            },
-            "created_at": r["created_at"],
-        })
+        items.append(
+            {
+                "id": key,
+                "item_type": "knowledge",
+                "title": f"AI-extracted {r['kind']}",
+                "description": r["text"],
+                "confidence": r["confidence"],
+                "work_id": r["work_id"],
+                "work_title": r["work_title"],
+                "evidence": {
+                    "source_doc": r["doc_title"],
+                    "source_doc_id": r["source_doc_id"],
+                    "subject": r["subject"],
+                    "predicate": r["predicate"],
+                    "object": r["object"],
+                },
+                "created_at": r["created_at"],
+            }
+        )
 
     # 2. Documents flagged for reclassification
     with db._lock:
@@ -109,22 +113,24 @@ def review_queue(limit: int = 200):
         key = f"reclassify:{r['id']}"
         if key in deferred:
             continue
-        items.append({
-            "id": key,
-            "item_type": "reclassify",
-            "title": f"Reclassify \u201c{r['doc_title'] or r['doc_id'][:8]}\u201d?",
-            "description": r["reason"] or "Document flagged for reclassification",
-            "confidence": 0.4,
-            "work_id": r["work_id"],
-            "work_title": r["work_title"],
-            "evidence": {
-                "doc_id": r["doc_id"],
-                "doc_title": r["doc_title"],
-                "current_kind": r["kind"],
-                "current_classification": r["classification"],
-            },
-            "created_at": r["created_at"],
-        })
+        items.append(
+            {
+                "id": key,
+                "item_type": "reclassify",
+                "title": f"Reclassify \u201c{r['doc_title'] or r['doc_id'][:8]}\u201d?",
+                "description": r["reason"] or "Document flagged for reclassification",
+                "confidence": 0.4,
+                "work_id": r["work_id"],
+                "work_title": r["work_title"],
+                "evidence": {
+                    "doc_id": r["doc_id"],
+                    "doc_title": r["doc_title"],
+                    "current_kind": r["kind"],
+                    "current_classification": r["classification"],
+                },
+                "created_at": r["created_at"],
+            }
+        )
 
     # 3. Active suggestions (unexpired)
     now = _now_iso()
@@ -142,48 +148,52 @@ def review_queue(limit: int = 200):
         if key in deferred:
             continue
         meta = _jload(r["meta"], {})
-        items.append({
-            "id": key,
-            "item_type": "suggestion",
-            "title": (r["kind"] or "suggestion").replace("_", " ").capitalize(),
-            "description": r["text"],
-            "confidence": meta.get("confidence", 0.5),
-            "work_id": r["work_id"],
-            "work_title": r["work_title"],
-            "evidence": {"kind": r["kind"], **meta},
-            "created_at": r["created_at"],
-        })
+        items.append(
+            {
+                "id": key,
+                "item_type": "suggestion",
+                "title": (r["kind"] or "suggestion").replace("_", " ").capitalize(),
+                "description": r["text"],
+                "confidence": meta.get("confidence", 0.5),
+                "work_id": r["work_id"],
+                "work_title": r["work_title"],
+                "evidence": {"kind": r["kind"], **meta},
+                "created_at": r["created_at"],
+            }
+        )
 
     # 4. Unresolved near-duplicate pairs
     for p in db.list_near_duplicates(resolved=False):
         key = f"duplicate:{p['id']}"
         if key in deferred:
             continue
-        items.append({
-            "id": key,
-            "item_type": "duplicate",
-            "title": "Possible duplicate documents",
-            "description": (
-                f"\u201c{p.get('doc_a_title') or p['doc_a_id'][:8]}\u201d and "
-                f"\u201c{p.get('doc_b_title') or p['doc_b_id'][:8]}\u201d are "
-                f"{round((p.get('similarity') or 0) * 100)}% similar"
-            ),
-            # Higher similarity = more certain it's a dupe; invert so the most
-            # uncertain (lowest-similarity) pairs surface first like the rest.
-            "confidence": p.get("similarity"),
-            "work_id": p.get("doc_a_work_id") or p.get("doc_b_work_id"),
-            "work_title": None,
-            "evidence": {
-                "dupe_id": p["id"],
-                "doc_a_id": p["doc_a_id"],
-                "doc_b_id": p["doc_b_id"],
-                "doc_a_title": p.get("doc_a_title"),
-                "doc_b_title": p.get("doc_b_title"),
-                "similarity": p.get("similarity"),
-                "kind": p.get("kind"),
-            },
-            "created_at": p.get("created_at") or "",
-        })
+        items.append(
+            {
+                "id": key,
+                "item_type": "duplicate",
+                "title": "Possible duplicate documents",
+                "description": (
+                    f"\u201c{p.get('doc_a_title') or p['doc_a_id'][:8]}\u201d and "
+                    f"\u201c{p.get('doc_b_title') or p['doc_b_id'][:8]}\u201d are "
+                    f"{round((p.get('similarity') or 0) * 100)}% similar"
+                ),
+                # Higher similarity = more certain it's a dupe; invert so the most
+                # uncertain (lowest-similarity) pairs surface first like the rest.
+                "confidence": p.get("similarity"),
+                "work_id": p.get("doc_a_work_id") or p.get("doc_b_work_id"),
+                "work_title": None,
+                "evidence": {
+                    "dupe_id": p["id"],
+                    "doc_a_id": p["doc_a_id"],
+                    "doc_b_id": p["doc_b_id"],
+                    "doc_a_title": p.get("doc_a_title"),
+                    "doc_b_title": p.get("doc_b_title"),
+                    "similarity": p.get("similarity"),
+                    "kind": p.get("kind"),
+                },
+                "created_at": p.get("created_at") or "",
+            }
+        )
 
     # 5. Quarantined documents (ingestion shield tripped at import)
     with db._lock:
@@ -202,29 +212,31 @@ def review_queue(limit: int = 200):
         shield_meta = _jload(r["meta"], {}).get("shield") or {}
         findings = shield_meta.get("findings") or []
         kinds = sorted({f.get("kind", "?") for f in findings})
-        items.append({
-            "id": key,
-            "item_type": "quarantine",
-            "title": f"Quarantined: \u201c{r['title'] or r['id'][:8]}\u201d",
-            "description": (
-                "The import safety screen found "
-                f"{len(findings)} suspicious pattern(s) in this document"
-                + (f" ({', '.join(kinds[:4])})" if kinds else "")
-                + ". It is stored but hidden from search, chat, and AI "
-                  "processing until you release it."
-            ),
-            # Security items should surface first in the queue.
-            "confidence": 0.0,
-            "work_id": r["work_id"],
-            "work_title": r["work_title"],
-            "evidence": {
-                "doc_id": r["id"],
-                "doc_title": r["title"],
-                "doc_kind": r["kind"],
-                "findings": findings[:10],
-            },
-            "created_at": r["created_at"],
-        })
+        items.append(
+            {
+                "id": key,
+                "item_type": "quarantine",
+                "title": f"Quarantined: \u201c{r['title'] or r['id'][:8]}\u201d",
+                "description": (
+                    "The import safety screen found "
+                    f"{len(findings)} suspicious pattern(s) in this document"
+                    + (f" ({', '.join(kinds[:4])})" if kinds else "")
+                    + ". It is stored but hidden from search, chat, and AI "
+                    "processing until you release it."
+                ),
+                # Security items should surface first in the queue.
+                "confidence": 0.0,
+                "work_id": r["work_id"],
+                "work_title": r["work_title"],
+                "evidence": {
+                    "doc_id": r["id"],
+                    "doc_title": r["title"],
+                    "doc_kind": r["kind"],
+                    "findings": findings[:10],
+                },
+                "created_at": r["created_at"],
+            }
+        )
 
     # 6. Captured notes with an AI filing proposal awaiting approval
     with db._lock:
@@ -240,42 +252,46 @@ def review_queue(limit: int = 200):
         proposal = _jload(r["proposal"], {})
         cats = proposal.get("categories") or []
         actions = proposal.get("actions") or []
-        items.append({
-            "id": key,
-            "item_type": "noteblock",
-            "title": proposal.get("title") or (r["text"][:70] + ("…" if len(r["text"]) > 70 else "")),
-            "description": (
-                (proposal.get("summary") or r["text"][:200])
-                + f" — file under {', '.join(cats) if cats else 'unsorted'}"
-                + (f"; {len(actions)} action(s)" if actions else "")
-            ),
-            "confidence": proposal.get("confidence"),
-            "work_id": None,
-            "work_title": None,
-            "evidence": {
-                "day": r["day"],
-                "text": r["text"][:1000],
-                "categories": cats,
-                "kind": proposal.get("kind"),
-                "actions": actions,
-                "open_questions": proposal.get("open_questions") or [],
-                "warnings": proposal.get("warnings") or [],
-            },
-            "created_at": r["created_at"],
-        })
+        items.append(
+            {
+                "id": key,
+                "item_type": "noteblock",
+                "title": proposal.get("title")
+                or (r["text"][:70] + ("…" if len(r["text"]) > 70 else "")),
+                "description": (
+                    (proposal.get("summary") or r["text"][:200])
+                    + f" — file under {', '.join(cats) if cats else 'unsorted'}"
+                    + (f"; {len(actions)} action(s)" if actions else "")
+                ),
+                "confidence": proposal.get("confidence"),
+                "work_id": None,
+                "work_title": None,
+                "evidence": {
+                    "day": r["day"],
+                    "text": r["text"][:1000],
+                    "categories": cats,
+                    "kind": proposal.get("kind"),
+                    "actions": actions,
+                    "open_questions": proposal.get("open_questions") or [],
+                    "warnings": proposal.get("warnings") or [],
+                },
+                "created_at": r["created_at"],
+            }
+        )
 
     # Most uncertain first; None confidence treated as 0.5
     items.sort(key=lambda i: i["confidence"] if i["confidence"] is not None else 0.5)
     counts: dict[str, int] = {}
     for i in items:
         counts[i["item_type"]] = counts.get(i["item_type"], 0) + 1
-    return {"items": items[:min(limit, 500)], "count": len(items), "counts_by_type": counts}
+    return {"items": items[: min(limit, 500)], "count": len(items), "counts_by_type": counts}
 
 
 # ── Resolve ───────────────────────────────────────────────────────────────────
 
+
 class ResolveBody(BaseModel):
-    decision: str                       # approve | reject | defer
+    decision: str  # approve | reject | defer
     reason: str = ""
     canonical_doc_id: str | None = None  # duplicates: which doc survives on approve
 
@@ -317,8 +333,9 @@ def _defer(db, item_type: str, item_id: str, reason: str) -> dict:
 
 
 @router.post("/review/{item_type}:{item_id}/resolve")
-def review_resolve(item_type: str, item_id: str, body: ResolveBody,
-                   background_tasks: BackgroundTasks):
+def review_resolve(
+    item_type: str, item_id: str, body: ResolveBody, background_tasks: BackgroundTasks
+):
     """Resolve one review item. decision: approve | reject | defer."""
     if body.decision not in _VALID_DECISIONS:
         raise HTTPException(400, f"decision must be one of: {', '.join(sorted(_VALID_DECISIONS))}")
@@ -348,7 +365,7 @@ def review_resolve(item_type: str, item_id: str, body: ResolveBody,
         object_type=f"review_{item_type}",
         actor="user",
         detail=f"decision={body.decision}"
-               + (f" reason={body.reason[:120]}" if body.reason else ""),
+        + (f" reason={body.reason[:120]}" if body.reason else ""),
     )
     return result
 
@@ -359,8 +376,7 @@ def _resolve_knowledge(db, item_id: str, body: ResolveBody) -> dict:
     # review can be flipped, so a stale card or a concurrent request through
     # any surface (this route or PATCH /api/knowledge/{id}/review) cannot
     # overturn a decision already made.
-    result = db.update_knowledge_review_status(item_id, status,
-                                               expected_status=("ai_auto",))
+    result = db.update_knowledge_review_status(item_id, status, expected_status=("ai_auto",))
     if result == "not_found":
         raise HTTPException(404, f"Knowledge item {item_id!r} not found")
     if result == "conflict":
@@ -368,12 +384,11 @@ def _resolve_knowledge(db, item_id: str, body: ResolveBody) -> dict:
     return {"ok": True, "decision": body.decision, "review_status": status}
 
 
-def _resolve_reclassify(db, item_id: str, body: ResolveBody,
-                        background_tasks: BackgroundTasks) -> dict:
+def _resolve_reclassify(
+    db, item_id: str, body: ResolveBody, background_tasks: BackgroundTasks
+) -> dict:
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM pending_reclassify WHERE id=?", (item_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM pending_reclassify WHERE id=?", (item_id,)).fetchone()
     if not row:
         raise HTTPException(404, f"Reclassify item {item_id!r} not found")
     doc_id = row["doc_id"]
@@ -392,11 +407,13 @@ def _resolve_reclassify(db, item_id: str, body: ResolveBody,
         doc = db.get_document(doc_id)
         if doc:
             from orivellum.capabilities.pipeline import process_document, resolve_file_path
+
             file_path = resolve_file_path(doc.get("source") or "", doc_id, db)
             if file_path:
                 db.delete_extraction_warnings(doc_id)
-                db.update_document_extracted(doc_id, "", 0, readiness="imported",
-                                             error_message=None)
+                db.update_document_extracted(
+                    doc_id, "", 0, readiness="imported", error_message=None
+                )
                 background_tasks.add_task(
                     process_document,
                     doc_id=doc_id,
@@ -410,8 +427,9 @@ def _resolve_reclassify(db, item_id: str, body: ResolveBody,
     return {"ok": True, "decision": body.decision, "reprocess_queued": reprocess_queued}
 
 
-def _resolve_quarantine(db, item_id: str, body: ResolveBody,
-                        background_tasks: BackgroundTasks) -> dict:
+def _resolve_quarantine(
+    db, item_id: str, body: ResolveBody, background_tasks: BackgroundTasks
+) -> dict:
     """approve = release the document (marks it safe and reprocesses it so it
     finally gets chunked/indexed/harvested); reject = keep it isolated.
     The release mark means a reprocess will not re-quarantine it."""
@@ -436,10 +454,12 @@ def _resolve_quarantine(db, item_id: str, body: ResolveBody,
         doc = db.get_document(item_id)
         if doc:
             from orivellum.capabilities.pipeline import process_document, resolve_file_path
+
             file_path = resolve_file_path(doc.get("source") or "", item_id, db)
             if file_path:
-                db.update_document_extracted(item_id, "", 0, readiness="imported",
-                                             error_message=None)
+                db.update_document_extracted(
+                    item_id, "", 0, readiness="imported", error_message=None
+                )
                 background_tasks.add_task(
                     process_document,
                     doc_id=item_id,
@@ -450,8 +470,7 @@ def _resolve_quarantine(db, item_id: str, body: ResolveBody,
                     db=db,
                 )
                 reprocess_queued = True
-    return {"ok": True, "decision": body.decision,
-            "reprocess_queued": reprocess_queued}
+    return {"ok": True, "decision": body.decision, "reprocess_queued": reprocess_queued}
 
 
 @router.post("/review/quarantine:{item_id}/reopen")
@@ -468,8 +487,7 @@ def review_quarantine_reopen(item_id: str):
         db._conn.commit()
     if not claimed:
         raise HTTPException(404, "Document is not in kept-quarantine state")
-    db.audit("review.quarantine_reopened", object_id=item_id,
-             object_type="document", actor="user")
+    db.audit("review.quarantine_reopened", object_id=item_id, object_type="document", actor="user")
     return {"ok": True}
 
 
@@ -500,18 +518,24 @@ def _resolve_noteblock(db, item_id: str, body: ResolveBody) -> dict:
     except Exception as exc:
         logger.warning("noteblock %s: filing failed, queued for retry: %s", item_id, exc)
         db.set_note_block_error(item_id, f"Filing failed; will retry automatically: {exc}")
-        return {"resolved": True, "decision": "approve", "pending": True,
-                "detail": "Approved. Filing hit an error and will be retried automatically."}
+        return {
+            "resolved": True,
+            "decision": "approve",
+            "pending": True,
+            "detail": "Approved. Filing hit an error and will be retried automatically.",
+        }
 
-    return {"resolved": True, "decision": "approve",
-            "filed_paths": out["filed_paths"], "tasks_created": out["tasks_created"]}
+    return {
+        "resolved": True,
+        "decision": "approve",
+        "filed_paths": out["filed_paths"],
+        "tasks_created": out["tasks_created"],
+    }
 
 
 def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM suggestions WHERE id=?", (item_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM suggestions WHERE id=?", (item_id,)).fetchone()
     if not row:
         raise HTTPException(404, f"Suggestion {item_id!r} not found")
     kind = row["kind"]
@@ -547,8 +571,9 @@ def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:
             target_work_id = meta.get("work_id")
             if not target_work_id:
                 title = meta.get("proposed_title") or row["text"][:80] or "Imported archive"
-                work = db.create_work(title=title, work_type="research",
-                                      description=meta.get("proposed_description"))
+                work = db.create_work(
+                    title=title, work_type="research", description=meta.get("proposed_description")
+                )
                 target_work_id = work["id"]
                 applied["work_created"] = target_work_id
             linked = 0
@@ -577,8 +602,11 @@ def _resolve_duplicate(db, item_id: str, body: ResolveBody) -> dict:
     if not row:
         raise HTTPException(404, f"Duplicate pair {item_id!r} not found")
     pair_ids = {row["doc_a_id"], row["doc_b_id"]}
-    if (body.decision == "approve" and body.canonical_doc_id
-            and body.canonical_doc_id not in pair_ids):
+    if (
+        body.decision == "approve"
+        and body.canonical_doc_id
+        and body.canonical_doc_id not in pair_ids
+    ):
         raise HTTPException(
             400,
             "canonical_doc_id must be one of the pair's documents "
@@ -587,13 +615,15 @@ def _resolve_duplicate(db, item_id: str, body: ResolveBody) -> dict:
 
     # Claim-first resolution lives in the shared db primitive, so this route
     # and the legacy /library/duplicates route can never both apply effects.
-    result = db.resolve_near_duplicate(item_id, action,
-                                       canonical_doc_id=body.canonical_doc_id)
+    result = db.resolve_near_duplicate(item_id, action, canonical_doc_id=body.canonical_doc_id)
     if result is None:
         raise HTTPException(404, f"Duplicate pair {item_id!r} not found")
     if result.get("already_resolved"):
         raise HTTPException(409, "Duplicate pair was already resolved")
-    canonical = (body.canonical_doc_id
-                 if body.canonical_doc_id in pair_ids else row["doc_a_id"])
-    return {"ok": True, "decision": body.decision, "action": action,
-            "canonical_doc_id": canonical if action == "mark_superseded" else None}
+    canonical = body.canonical_doc_id if body.canonical_doc_id in pair_ids else row["doc_a_id"]
+    return {
+        "ok": True,
+        "decision": body.decision,
+        "action": action,
+        "canonical_doc_id": canonical if action == "mark_superseded" else None,
+    }

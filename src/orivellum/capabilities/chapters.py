@@ -13,6 +13,7 @@ Two-line chapter pattern:
   where the number is on one line and the title is on the next.
   The ``_CHAPTER_LINE`` + ``_peek_next_line`` logic handles this.
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,6 +51,7 @@ _SCENE_BREAKS = ("\n* * *\n", "\n# # #\n", "\n***\n", "\n---\n", "\n###\n")
 
 # ── Scene counting ────────────────────────────────────────────────────────────
 
+
 def _count_scenes(text: str) -> int:
     """Count scene breaks within chapter text. Returns at least 1.
 
@@ -68,6 +70,7 @@ def _count_scenes(text: str) -> int:
 
 
 # ── Two-line title peek ────────────────────────────────────────────────────────
+
 
 def _peek_next_line(text: str, pos: int) -> str | None:
     """Return the next non-empty line after *pos* as a candidate chapter title.
@@ -93,10 +96,11 @@ def _peek_next_line(text: str, pos: int) -> str | None:
 
 # ── Data model ────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class ExtractedChapter:
     seq: int
-    level: int          # 1 = H1/chapter, 2 = H2/section, 3 = H3/subsection
+    level: int  # 1 = H1/chapter, 2 = H2/section, 3 = H3/subsection
     title: str
     text: str
     word_count: int = field(init=False)
@@ -108,6 +112,7 @@ class ExtractedChapter:
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 def extract_chapters(text: str, min_section_words: int = 20) -> list[ExtractedChapter]:
     """Extract chapter/section structure from plain extracted text.
@@ -135,6 +140,7 @@ def extract_chapters(text: str, min_section_words: int = 20) -> list[ExtractedCh
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
 
 def _find_headings(text: str) -> list[tuple[int, int, str]]:
     """Return list of (offset, level, title) sorted by offset."""
@@ -206,12 +212,14 @@ def _split_into_chapters(
             )
             continue
 
-        chapters.append(ExtractedChapter(
-            seq=i,
-            level=level,
-            title=_clean_title(title),
-            text=body,
-        ))
+        chapters.append(
+            ExtractedChapter(
+                seq=i,
+                level=level,
+                title=_clean_title(title),
+                text=body,
+            )
+        )
 
     # Re-number seqs after possible merges
     for idx, ch in enumerate(chapters):

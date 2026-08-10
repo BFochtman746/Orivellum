@@ -16,6 +16,7 @@ And run_full_reindex error persistence:
 
 The embeddings endpoint is always mocked — no network calls.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -69,6 +70,7 @@ class EmbedBatchResilientTests(unittest.TestCase):
 
     def test_split_preserves_order_and_cardinality(self):
         """Full batch too slow, halves succeed → output aligned with input."""
+
         def fake(texts, timeout=None, bypass_cooldown=False):
             if texts == [emb._CANARY_TEXT]:
                 return [[0.0, 0.0, 1.0]]
@@ -136,7 +138,7 @@ class EmbedBatchResilientTests(unittest.TestCase):
 
         def fake(texts, timeout=None, bypass_cooldown=False):
             calls["n"] += 1
-            return None
+            return
 
         with patch.object(emb, "embed_texts", side_effect=fake):
             out = emb._embed_batch_resilient([f"t{i}" for i in range(16)])
@@ -175,9 +177,9 @@ class EmbedBatchResilientTests(unittest.TestCase):
 
 class ReindexErrorPersistenceTests(unittest.TestCase):
     def setUp(self):
+        from orivellum.api import _deps
         from orivellum.configuration.config import OrivellumConfig
         from orivellum.database.db import OrivellumDB
-        from orivellum.api import _deps
 
         self._tmp = tempfile.TemporaryDirectory()
         cfg = OrivellumConfig(data_dir=self._tmp.name)
@@ -190,8 +192,7 @@ class ReindexErrorPersistenceTests(unittest.TestCase):
         doc = self.db.create_document(title="seed.txt", kind="text", work_id=None)
         text = "This chunk is comfortably longer than forty characters for embedding."
         self.db.add_chunk(doc_id=doc["id"], text=text, page=0)
-        self.db.update_document_extracted(doc["id"], text, len(text.split()),
-                                          readiness="ready")
+        self.db.update_document_extracted(doc["id"], text, len(text.split()), readiness="ready")
 
     def tearDown(self):
         emb._reset_circuit_breaker()
@@ -220,8 +221,7 @@ class ReindexErrorPersistenceTests(unittest.TestCase):
         self.assertEqual(self.db.get_setting("reindex_running", ""), "false")
 
     def test_midrun_exception_persists_reindex_error(self):
-        with patch.object(emb, "backfill_embeddings",
-                          side_effect=RuntimeError("disk exploded")):
+        with patch.object(emb, "backfill_embeddings", side_effect=RuntimeError("disk exploded")):
             with self.assertRaises(RuntimeError):
                 emb.run_full_reindex(self.db)
         err = self.db.get_setting("reindex_error", "")

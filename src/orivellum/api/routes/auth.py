@@ -14,6 +14,7 @@ all subsequent authentication transparently.
 API / mobile clients that cannot use cookies may still supply a bearer token
 directly (the auth middleware in app.py checks both paths).
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
@@ -41,8 +42,9 @@ async def login(request: Request):
     expected_key = resolve_login_key()
 
     if not expected_key:
-        return JSONResponse({"detail": "Service unavailable — API key not configured yet"},
-                            status_code=503)
+        return JSONResponse(
+            {"detail": "Service unavailable — API key not configured yet"}, status_code=503
+        )
 
     # Constant-time comparison — timing leaks nothing about partial matches.
     if not key_matches(provided_key, expected_key):

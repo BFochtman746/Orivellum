@@ -7,6 +7,7 @@ transitions claim-state.  Emits the final canonical claim record to the ledger.
 This is a deterministic service — NOT an LLM call.
 ARCH-REQ-001: every gate decision is produced outside the LLM.
 """
+
 from __future__ import annotations
 
 import re
@@ -21,11 +22,16 @@ _resolver = AuthorityResolver()
 # ── Unit normalizer ────────────────────────────────────────────────────────────
 
 _BYTE_MULTIPLIERS = {
-    "b": 1, "bytes": 1,
-    "kb": 1_000, "kib": 1_024,
-    "mb": 1_000_000, "mib": 1_048_576,
-    "gb": 1_000_000_000, "gib": 1_073_741_824,
-    "tb": 1_000_000_000_000, "tib": 1_099_511_627_776,
+    "b": 1,
+    "bytes": 1,
+    "kb": 1_000,
+    "kib": 1_024,
+    "mb": 1_000_000,
+    "mib": 1_048_576,
+    "gb": 1_000_000_000,
+    "gib": 1_073_741_824,
+    "tb": 1_000_000_000_000,
+    "tib": 1_099_511_627_776,
 }
 
 _MEMORY_RE = re.compile(
@@ -121,6 +127,7 @@ def values_agree(v1: str, v2: str, tolerance: float = 0.02) -> tuple[bool, Confl
 
 # ── Verification result ────────────────────────────────────────────────────────
 
+
 @dataclass
 class VerificationResult:
     status: ClaimStatus
@@ -135,6 +142,7 @@ class VerificationResult:
 
 
 # ── Verifier ───────────────────────────────────────────────────────────────────
+
 
 class ClaimVerifier:
     """Spec §5.5 — verifies a set of evidence items against the authority policy.
@@ -176,7 +184,8 @@ class ClaimVerifier:
 
         # Filter out prohibited sources (INV-REQ-001)
         safe_evidence = [
-            e for e in evidence_items
+            e
+            for e in evidence_items
             if not _resolver.is_prohibited_source(predicate, e.get("source_locator", ""))
         ]
         if not safe_evidence:
@@ -193,7 +202,9 @@ class ClaimVerifier:
             )
 
         # Normalize all values
-        normalized: list[tuple[str, str, AuthorityTier, dict]] = []  # (norm, display, tier, evidence)
+        normalized: list[
+            tuple[str, str, AuthorityTier, dict]
+        ] = []  # (norm, display, tier, evidence)
         for e in safe_evidence:
             raw = str(e.get("raw_value", "")).strip()
             if not raw:
@@ -222,7 +233,9 @@ class ClaimVerifier:
         # Best authority tier present
         best_tier = min((t for _, _, t, _ in normalized), key=lambda t: t.numeric)
         best_value = next(norm for norm, _, t, _ in normalized if t == best_tier)
-        best_display = next(disp for norm, disp, t, _ in normalized if norm == best_value and t == best_tier)
+        best_display = next(
+            disp for norm, disp, t, _ in normalized if norm == best_value and t == best_tier
+        )
 
         # Run conflict engine across all normalized values
         conflict_type: ConflictType | None = None
@@ -257,7 +270,11 @@ class ClaimVerifier:
             confidence = min(0.95, 0.70 + 0.05 * min(best_tier_count, 5))
             confidence_basis = (
                 f"{best_tier_count} independent {best_tier.value} source(s) agree"
-                + (" within tolerance" if conflict_type == ConflictType.NORMALIZED_AGREEMENT else "")
+                + (
+                    " within tolerance"
+                    if conflict_type == ConflictType.NORMALIZED_AGREEMENT
+                    else ""
+                )
             )
         elif meets_authority:
             status = ClaimStatus.PARTIALLY_VERIFIED
@@ -267,7 +284,9 @@ class ClaimVerifier:
             # Has evidence but below minimum authority (e.g. only A7 available for A1-required predicate)
             status = ClaimStatus.RETRIEVED
             confidence = 0.3
-            confidence_basis = f"retrieved at {best_tier.value} but minimum is {policy.minimum_authority.value}"
+            confidence_basis = (
+                f"retrieved at {best_tier.value} but minimum is {policy.minimum_authority.value}"
+            )
 
         return VerificationResult(
             status=status,
@@ -296,12 +315,14 @@ class ClaimVerifier:
         reach VERIFIED / PARTIALLY_VERIFIED.
         """
         norm, display = normalize_value(predicate, raw_value)
-        evidence = [{
-            "source_type": "user_assertion",
-            "source_locator": "user_assertion",
-            "authority": "A7",
-            "raw_value": raw_value,
-        }]
+        evidence = [
+            {
+                "source_type": "user_assertion",
+                "source_locator": "user_assertion",
+                "authority": "A7",
+                "raw_value": raw_value,
+            }
+        ]
         # Always USER_ASSERTED for a single A7 assertion (spec §3.3 / §6.4)
         return VerificationResult(
             status=ClaimStatus.USER_ASSERTED,

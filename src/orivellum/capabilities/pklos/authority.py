@@ -21,6 +21,7 @@ VER-INV-001: No claim may be presented as fact at a higher authority than
 its evidence supports; and where a verification path exists, the system
 must take it before asserting.
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -73,16 +74,17 @@ class AuthorityTier(str, Enum):
 
 class ClaimStatus(str, Enum):
     """Spec §3.3 claim-state machine states (exact spec terminology)."""
-    UNOBSERVED        = "UNOBSERVED"         # No evidence gathered yet
-    USER_ASSERTED     = "USER_ASSERTED"      # User stated it; not yet verified
-    RETRIEVED         = "RETRIEVED"          # Fetched from a source; not yet corroborated
-    PARTIALLY_VERIFIED= "PARTIALLY_VERIFIED" # Some corroboration; below minimum threshold
-    VERIFIED          = "VERIFIED"           # Meets minimum authority + corroboration
-    CONFLICTED        = "CONFLICTED"         # Two or more sources materially contradict
-    STALE             = "STALE"              # Beyond TTL — revalidation required
-    INVALIDATED       = "INVALIDATED"        # Was verified; subsequent evidence disproved it
-    UNAVAILABLE       = "UNAVAILABLE"        # Verification path failed (timeout/error)
-    ABSTAINED         = "ABSTAINED"          # System chose not to answer (policy decision)
+
+    UNOBSERVED = "UNOBSERVED"  # No evidence gathered yet
+    USER_ASSERTED = "USER_ASSERTED"  # User stated it; not yet verified
+    RETRIEVED = "RETRIEVED"  # Fetched from a source; not yet corroborated
+    PARTIALLY_VERIFIED = "PARTIALLY_VERIFIED"  # Some corroboration; below minimum threshold
+    VERIFIED = "VERIFIED"  # Meets minimum authority + corroboration
+    CONFLICTED = "CONFLICTED"  # Two or more sources materially contradict
+    STALE = "STALE"  # Beyond TTL — revalidation required
+    INVALIDATED = "INVALIDATED"  # Was verified; subsequent evidence disproved it
+    UNAVAILABLE = "UNAVAILABLE"  # Verification path failed (timeout/error)
+    ABSTAINED = "ABSTAINED"  # System chose not to answer (policy decision)
 
     # Spec CLAIM-REQ-002: these statuses MUST NOT be presented as confirmed fact
     # without a visible qualifier.
@@ -127,16 +129,46 @@ class ClaimStatus(str, Enum):
 
 # Allowed status transitions (deterministic enforcement)
 ALLOWED_TRANSITIONS: dict[ClaimStatus, frozenset[ClaimStatus]] = {
-    ClaimStatus.UNOBSERVED:         frozenset({ClaimStatus.USER_ASSERTED, ClaimStatus.RETRIEVED, ClaimStatus.UNAVAILABLE}),
-    ClaimStatus.USER_ASSERTED:      frozenset({ClaimStatus.RETRIEVED, ClaimStatus.PARTIALLY_VERIFIED, ClaimStatus.VERIFIED, ClaimStatus.CONFLICTED, ClaimStatus.UNAVAILABLE}),
-    ClaimStatus.RETRIEVED:          frozenset({ClaimStatus.PARTIALLY_VERIFIED, ClaimStatus.VERIFIED, ClaimStatus.CONFLICTED, ClaimStatus.UNAVAILABLE}),
-    ClaimStatus.PARTIALLY_VERIFIED: frozenset({ClaimStatus.VERIFIED, ClaimStatus.CONFLICTED, ClaimStatus.STALE, ClaimStatus.UNAVAILABLE}),
-    ClaimStatus.VERIFIED:           frozenset({ClaimStatus.STALE, ClaimStatus.CONFLICTED, ClaimStatus.INVALIDATED}),
-    ClaimStatus.CONFLICTED:         frozenset({ClaimStatus.VERIFIED, ClaimStatus.PARTIALLY_VERIFIED, ClaimStatus.INVALIDATED, ClaimStatus.UNAVAILABLE}),
-    ClaimStatus.STALE:              frozenset({ClaimStatus.VERIFIED, ClaimStatus.INVALIDATED, ClaimStatus.UNAVAILABLE}),
-    ClaimStatus.INVALIDATED:        frozenset({ClaimStatus.RETRIEVED}),  # can be re-observed
-    ClaimStatus.UNAVAILABLE:        frozenset({ClaimStatus.RETRIEVED, ClaimStatus.USER_ASSERTED}),  # retry
-    ClaimStatus.ABSTAINED:          frozenset({ClaimStatus.RETRIEVED}),
+    ClaimStatus.UNOBSERVED: frozenset(
+        {ClaimStatus.USER_ASSERTED, ClaimStatus.RETRIEVED, ClaimStatus.UNAVAILABLE}
+    ),
+    ClaimStatus.USER_ASSERTED: frozenset(
+        {
+            ClaimStatus.RETRIEVED,
+            ClaimStatus.PARTIALLY_VERIFIED,
+            ClaimStatus.VERIFIED,
+            ClaimStatus.CONFLICTED,
+            ClaimStatus.UNAVAILABLE,
+        }
+    ),
+    ClaimStatus.RETRIEVED: frozenset(
+        {
+            ClaimStatus.PARTIALLY_VERIFIED,
+            ClaimStatus.VERIFIED,
+            ClaimStatus.CONFLICTED,
+            ClaimStatus.UNAVAILABLE,
+        }
+    ),
+    ClaimStatus.PARTIALLY_VERIFIED: frozenset(
+        {ClaimStatus.VERIFIED, ClaimStatus.CONFLICTED, ClaimStatus.STALE, ClaimStatus.UNAVAILABLE}
+    ),
+    ClaimStatus.VERIFIED: frozenset(
+        {ClaimStatus.STALE, ClaimStatus.CONFLICTED, ClaimStatus.INVALIDATED}
+    ),
+    ClaimStatus.CONFLICTED: frozenset(
+        {
+            ClaimStatus.VERIFIED,
+            ClaimStatus.PARTIALLY_VERIFIED,
+            ClaimStatus.INVALIDATED,
+            ClaimStatus.UNAVAILABLE,
+        }
+    ),
+    ClaimStatus.STALE: frozenset(
+        {ClaimStatus.VERIFIED, ClaimStatus.INVALIDATED, ClaimStatus.UNAVAILABLE}
+    ),
+    ClaimStatus.INVALIDATED: frozenset({ClaimStatus.RETRIEVED}),  # can be re-observed
+    ClaimStatus.UNAVAILABLE: frozenset({ClaimStatus.RETRIEVED, ClaimStatus.USER_ASSERTED}),  # retry
+    ClaimStatus.ABSTAINED: frozenset({ClaimStatus.RETRIEVED}),
 }
 
 
@@ -147,31 +179,33 @@ def is_allowed_transition(from_status: ClaimStatus, to_status: ClaimStatus) -> b
 
 class ConflictType(str, Enum):
     """Spec §3.5 conflict taxonomy."""
-    EXACT_AGREEMENT        = "exact_agreement"
-    NORMALIZED_AGREEMENT   = "normalized_agreement"
-    COMPATIBLE_DIFFERENCE  = "compatible_difference"
-    TEMPORAL_DIFFERENCE    = "temporal_difference"
-    SOURCE_SCOPE_DIFFERENCE= "source_scope_difference"
-    MATERIAL_CONTRADICTION = "material_contradiction"   # CONF-REQ-001: report, never auto-reconcile
+
+    EXACT_AGREEMENT = "exact_agreement"
+    NORMALIZED_AGREEMENT = "normalized_agreement"
+    COMPATIBLE_DIFFERENCE = "compatible_difference"
+    TEMPORAL_DIFFERENCE = "temporal_difference"
+    SOURCE_SCOPE_DIFFERENCE = "source_scope_difference"
+    MATERIAL_CONTRADICTION = "material_contradiction"  # CONF-REQ-001: report, never auto-reconcile
     UNRESOLVABLE_AMBIGUITY = "unresolvable_ambiguity"
 
 
 class TTLClass(str, Enum):
     """Spec §3.6 freshness classes — each carries a revalidation rule."""
-    CPU_IDENTITY      = "cpu_identity"       # hardware-change event or monthly
-    INSTALLED_RAM     = "installed_ram"      # on boot / hardware-change event
-    OS_BUILD          = "os_build"           # daily or on update
-    GPU_DRIVER        = "gpu_driver"         # daily or device-change event
-    FREE_MEMORY       = "free_memory"        # every request
-    RUNNING_SERVERS   = "running_servers"    # every request
-    SERVICE_HEALTH    = "service_health"     # every request
-    INSTALLED_MODELS  = "installed_models"   # event + daily reconcile
-    BENCHMARK_RESULT  = "benchmark_result"   # after relevant hw/sw change
+
+    CPU_IDENTITY = "cpu_identity"  # hardware-change event or monthly
+    INSTALLED_RAM = "installed_ram"  # on boot / hardware-change event
+    OS_BUILD = "os_build"  # daily or on update
+    GPU_DRIVER = "gpu_driver"  # daily or device-change event
+    FREE_MEMORY = "free_memory"  # every request
+    RUNNING_SERVERS = "running_servers"  # every request
+    SERVICE_HEALTH = "service_health"  # every request
+    INSTALLED_MODELS = "installed_models"  # event + daily reconcile
+    BENCHMARK_RESULT = "benchmark_result"  # after relevant hw/sw change
     # Generic classes
-    PERMANENT         = "PERMANENT"          # constitutional facts, birth year — never expire
-    DURABLE           = "DURABLE"            # months/years
-    VOLATILE          = "VOLATILE"           # weeks
-    EPHEMERAL         = "EPHEMERAL"          # hours
+    PERMANENT = "PERMANENT"  # constitutional facts, birth year — never expire
+    DURABLE = "DURABLE"  # months/years
+    VOLATILE = "VOLATILE"  # weeks
+    EPHEMERAL = "EPHEMERAL"  # hours
 
     @property
     def ttl_hours(self) -> int | None:
@@ -180,7 +214,7 @@ class TTLClass(str, Enum):
             "installed_ram": 24 * 30,
             "os_build": 24,
             "gpu_driver": 24,
-            "free_memory": 0,        # always refresh
+            "free_memory": 0,  # always refresh
             "running_servers": 0,
             "service_health": 0,
             "installed_models": 24,
@@ -193,6 +227,6 @@ class TTLClass(str, Enum):
 
 
 # Canonical subject identifiers
-SUBJECT_DEVICE_A01  = "device:a01"    # this machine
-SUBJECT_USER_SELF   = "user:self"
-SUBJECT_USER_SYSTEM = "device:a01"    # alias for backward compat
+SUBJECT_DEVICE_A01 = "device:a01"  # this machine
+SUBJECT_USER_SELF = "user:self"
+SUBJECT_USER_SYSTEM = "device:a01"  # alias for backward compat

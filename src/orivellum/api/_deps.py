@@ -3,6 +3,7 @@
 Call init() once during application startup to wire the database and config
 into all route modules. Routes import get_db() / get_config() — never globals.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -74,8 +75,7 @@ def require_auth(request: Request) -> None:
     expected_key = resolve_login_key()
     if not expected_key:
         # Fail CLOSED — no configured credential must never mean open access.
-        raise HTTPException(status_code=503,
-                            detail="Service not ready — no API key configured")
+        raise HTTPException(status_code=503, detail="Service not ready — no API key configured")
 
     auth_header = request.headers.get("authorization", "")
     scheme, token = get_authorization_scheme_param(auth_header)

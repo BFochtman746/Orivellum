@@ -6,6 +6,7 @@ Covers:
   3. History trimming respects the 80%-of-context_window budget
   4. context_window loaded from YAML / env-var override via load_config()
 """
+
 from __future__ import annotations
 
 import os
@@ -13,15 +14,15 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db(tmp: str):
-    from orivellum.database.db import OrivellumDB
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -44,36 +45,43 @@ def _knowledge_hit(text: str, work_id: str = "w1") -> dict:
 # 1. estimate_tokens
 # ---------------------------------------------------------------------------
 
+
 class TestEstimateTokens:
     def test_empty_string(self):
         from orivellum.api.routes.conversations import estimate_tokens
+
         assert estimate_tokens("") == 0
 
     def test_heuristic(self):
         """4 characters → 1 token."""
         from orivellum.api.routes.conversations import estimate_tokens
+
         assert estimate_tokens("abcd") == 1
         assert estimate_tokens("abcdefgh") == 2
 
     def test_partial_chars(self):
         """Floor division: 5 chars → 1 token (not 1.25)."""
         from orivellum.api.routes.conversations import estimate_tokens
+
         assert estimate_tokens("abcde") == 1
 
     def test_large_text(self):
         from orivellum.api.routes.conversations import estimate_tokens
+
         text = "x" * 4000
         assert estimate_tokens(text) == 1000
 
     def test_never_negative(self):
         """Return value is always >= 0, even for empty input."""
         from orivellum.api.routes.conversations import estimate_tokens
+
         assert estimate_tokens("") >= 0
 
 
 # ---------------------------------------------------------------------------
 # 2. Knowledge injection token budget
 # ---------------------------------------------------------------------------
+
 
 class TestKnowledgeTokenBudget:
     def test_token_budget_stops_injection(self):
@@ -89,20 +97,34 @@ class TestKnowledgeTokenBudget:
             big_texts = [_knowledge_hit("A" * 100, "w1") for _ in range(8)]
 
             out_sources: list = []
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=big_texts), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
+            with (
+                patch(
+                    "orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                    return_value=big_texts,
+                ),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
                 # Use a tiny context window so the token budget is hit quickly
-                with patch.object(C.get_config().serving, "context_window", 256,
-                                  create=False):
+                with patch.object(C.get_config().serving, "context_window", 256, create=False):
                     # get_config() is called each time — patch the returned obj
-                    mock_cfg = type("C", (), {"serving": type("S", (), {
-                        "context_window": 256,
-                    })()})()
+                    mock_cfg = type(
+                        "C",
+                        (),
+                        {
+                            "serving": type(
+                                "S",
+                                (),
+                                {
+                                    "context_window": 256,
+                                },
+                            )()
+                        },
+                    )()
                     with patch.object(C, "get_config", return_value=mock_cfg):
                         prompt = C._build_system_prompt(
-                            db, conv, user_query="test query",
+                            db,
+                            conv,
+                            user_query="test query",
                             out_sources=out_sources,
                         )
 
@@ -126,16 +148,31 @@ class TestKnowledgeTokenBudget:
             tiny_hits = [_knowledge_hit("X", "w1") for _ in range(20)]
 
             out_sources: list = []
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=tiny_hits), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
-                mock_cfg = type("C", (), {"serving": type("S", (), {
-                    "context_window": 1_000_000,  # huge — budget never binding
-                })()})()
+            with (
+                patch(
+                    "orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                    return_value=tiny_hits,
+                ),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
+                mock_cfg = type(
+                    "C",
+                    (),
+                    {
+                        "serving": type(
+                            "S",
+                            (),
+                            {
+                                "context_window": 1_000_000,  # huge — budget never binding
+                            },
+                        )()
+                    },
+                )()
                 with patch.object(C, "get_config", return_value=mock_cfg):
                     C._build_system_prompt(
-                        db, conv, user_query="test",
+                        db,
+                        conv,
+                        user_query="test",
                         out_sources=out_sources,
                     )
 
@@ -156,16 +193,31 @@ class TestKnowledgeTokenBudget:
                 {**_knowledge_hit("Secret", "w1"), "review_status": "ai_auto"},
             ]
             out_sources: list = []
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=untrusted), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
-                mock_cfg = type("C", (), {"serving": type("S", (), {
-                    "context_window": 1_000_000,
-                })()})()
+            with (
+                patch(
+                    "orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                    return_value=untrusted,
+                ),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
+                mock_cfg = type(
+                    "C",
+                    (),
+                    {
+                        "serving": type(
+                            "S",
+                            (),
+                            {
+                                "context_window": 1_000_000,
+                            },
+                        )()
+                    },
+                )()
                 with patch.object(C, "get_config", return_value=mock_cfg):
                     C._build_system_prompt(
-                        db, conv, user_query="test",
+                        db,
+                        conv,
+                        user_query="test",
                         out_sources=out_sources,
                     )
 
@@ -176,6 +228,7 @@ class TestKnowledgeTokenBudget:
 # ---------------------------------------------------------------------------
 # 3. History trimming (existing logic — regression guard)
 # ---------------------------------------------------------------------------
+
 
 class TestHistoryTrimming:
     def test_long_history_trimmed(self):
@@ -196,17 +249,27 @@ class TestHistoryTrimming:
             # leaves ≈ 1140 tokens for history.
             # Each message is 200 chars ≈ 50 tokens → only ~22 of 30 fit.
             # Total expected: system(1) + ~22 history + user(1) = ~24  <  32.
-            mock_cfg = type("C", (), {"serving": type("S", (), {
-                "context_window": 2000,
-                "base_url": "http://localhost",
-                "workhorse_model": "test",
-                "vision_model": "",
-            })()})()
-            with patch.object(C, "get_config", return_value=mock_cfg), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=[]), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
+            mock_cfg = type(
+                "C",
+                (),
+                {
+                    "serving": type(
+                        "S",
+                        (),
+                        {
+                            "context_window": 2000,
+                            "base_url": "http://localhost",
+                            "workhorse_model": "test",
+                            "vision_model": "",
+                        },
+                    )()
+                },
+            )()
+            with (
+                patch.object(C, "get_config", return_value=mock_cfg),
+                patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[]),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
                 messages = C._build_messages(db, conv, "hello?")
 
             # system + trimmed history + final user turn = ~24 (< 32 = full set)
@@ -226,10 +289,10 @@ class TestHistoryTrimming:
 
             from orivellum.api.routes import conversations as C
 
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=[]), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
+            with (
+                patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[]),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
                 messages = C._build_messages(db, conv, "How are you?")
 
             # system + 2 history + final user turn = 4 minimum
@@ -241,10 +304,12 @@ class TestHistoryTrimming:
 # 4. Config loading
 # ---------------------------------------------------------------------------
 
+
 class TestContextWindowConfig:
     def test_default_value(self):
         """Default context_window is 32768 (covers 7B–32B models; see config.py)."""
         from orivellum.configuration.config import ServingConfig
+
         assert ServingConfig.context_window == 32768
 
     def test_yaml_override(self):
@@ -254,12 +319,14 @@ class TestContextWindowConfig:
             cfg_file.write_text("serving:\n  context_window: 16384\n")
 
             from orivellum.configuration.config import load_config
+
             cfg = load_config(str(cfg_file))
             assert cfg.serving.context_window == 16384
 
     def test_env_var_override(self):
         """ORIVELLUM_CONTEXT_WINDOW env var overrides the default."""
         from orivellum.configuration.config import load_config
+
         with patch.dict(os.environ, {"ORIVELLUM_CONTEXT_WINDOW": "4096"}):
             cfg = load_config()
         assert cfg.serving.context_window == 4096
@@ -269,6 +336,7 @@ class TestContextWindowConfig:
 # 5. _get_effective_context_window — DB override takes priority
 # ---------------------------------------------------------------------------
 
+
 class TestGetEffectiveContextWindow:
     def test_db_override_takes_priority(self):
         """A valid DB-stored context_window beats the config value."""
@@ -277,6 +345,7 @@ class TestGetEffectiveContextWindow:
             db.set_setting("context_window", "4096", actor="user")
 
             from orivellum.api.routes.conversations import _get_effective_context_window
+
             result = _get_effective_context_window(db)
             assert result == 4096
             db.close()
@@ -288,6 +357,7 @@ class TestGetEffectiveContextWindow:
             # No DB setting — use config default
 
             from orivellum.api.routes.conversations import _get_effective_context_window
+
             result = _get_effective_context_window(db)
             assert result == cfg.serving.context_window
             db.close()
@@ -299,6 +369,7 @@ class TestGetEffectiveContextWindow:
             db.set_setting("context_window", "not-a-number", actor="user")
 
             from orivellum.api.routes.conversations import _get_effective_context_window
+
             result = _get_effective_context_window(db)
             assert result == cfg.serving.context_window
             db.close()
@@ -310,6 +381,7 @@ class TestGetEffectiveContextWindow:
             db.set_setting("context_window", "256", actor="user")
 
             from orivellum.api.routes.conversations import _get_effective_context_window
+
             result = _get_effective_context_window(db)
             assert result == cfg.serving.context_window
             db.close()
@@ -318,6 +390,7 @@ class TestGetEffectiveContextWindow:
 # ---------------------------------------------------------------------------
 # 6. End-to-end: DB override flows through to chat construction
 # ---------------------------------------------------------------------------
+
 
 class TestDbOverrideEndToEnd:
     def test_knowledge_budget_uses_db_override(self):
@@ -337,12 +410,16 @@ class TestDbOverrideEndToEnd:
             from orivellum.api.routes import conversations as C
 
             out_sources: list = []
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=items), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
+            with (
+                patch(
+                    "orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=items
+                ),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
                 C._build_system_prompt(
-                    db, conv, user_query="test query",
+                    db,
+                    conv,
+                    user_query="test query",
                     out_sources=out_sources,
                 )
 
@@ -369,10 +446,10 @@ class TestDbOverrideEndToEnd:
 
             from orivellum.api.routes import conversations as C
 
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=[]), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
+            with (
+                patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[]),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
                 messages = C._build_messages(db, conv, "hello?")
 
             # Full set = system(1) + 30 history + user(1) = 32; trimming should
@@ -394,10 +471,10 @@ class TestDbOverrideEndToEnd:
 
             from orivellum.api.routes import conversations as C
 
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=[]), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
+            with (
+                patch("orivellum.capabilities.embeddings.hybrid_search_knowledge", return_value=[]),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
                 messages = C._build_messages(db, conv, "How are you?")
 
             assert len(messages) >= 4  # system + 2 history + user
@@ -408,6 +485,7 @@ class TestDbOverrideEndToEnd:
 # 7. GET /system/settings/context-window validation consistency
 # ---------------------------------------------------------------------------
 
+
 class TestGetContextWindowEndpoint:
     def test_sub_512_db_value_not_reported_as_effective(self):
         """GET must not report a sub-512 stored value as effective —
@@ -417,8 +495,9 @@ class TestGetContextWindowEndpoint:
             # Store an invalid sub-512 value directly
             db.set_setting("context_window", "256", actor="user")
 
-            from orivellum.api.routes.system import get_context_window_setting
             from orivellum.api import _deps
+            from orivellum.api.routes.system import get_context_window_setting
+
             _deps.init(db=db, cfg=cfg)
 
             result = get_context_window_setting()
@@ -433,8 +512,9 @@ class TestGetContextWindowEndpoint:
             db, cfg = _make_db(tmp)
             db.set_setting("context_window", "garbage", actor="user")
 
-            from orivellum.api.routes.system import get_context_window_setting
             from orivellum.api import _deps
+            from orivellum.api.routes.system import get_context_window_setting
+
             _deps.init(db=db, cfg=cfg)
 
             result = get_context_window_setting()
@@ -448,8 +528,9 @@ class TestGetContextWindowEndpoint:
             db, cfg = _make_db(tmp)
             db.set_setting("context_window", "16384", actor="user")
 
-            from orivellum.api.routes.system import get_context_window_setting
             from orivellum.api import _deps
+            from orivellum.api.routes.system import get_context_window_setting
+
             _deps.init(db=db, cfg=cfg)
 
             result = get_context_window_setting()
@@ -463,6 +544,7 @@ class TestGetContextWindowEndpoint:
 # 8. Continuation paths respect DB-stored context_window
 # ---------------------------------------------------------------------------
 
+
 class TestContinuationBudget:
     def test_trim_history_for_budget_drops_oldest_messages(self):
         """_trim_history_for_budget returns fewer messages when budget is tight."""
@@ -474,13 +556,14 @@ class TestContinuationBudget:
             from orivellum.api.routes.conversations import _trim_history_for_budget
 
             # 20 messages at 200 chars each = 50 tokens each
-            prior = [{"role": "user" if i % 2 == 0 else "assistant",
-                      "text": "X" * 200, "id": str(i)} for i in range(20)]
+            prior = [
+                {"role": "user" if i % 2 == 0 else "assistant", "text": "X" * 200, "id": str(i)}
+                for i in range(20)
+            ]
             system_prompt = "You are a helpful assistant."  # ~7 tokens
-            partial_text = "I was saying..."               # ~4 tokens
+            partial_text = "I was saying..."  # ~4 tokens
 
-            trimmed = _trim_history_for_budget(prior, system_prompt, db,
-                                               extra_text=partial_text)
+            trimmed = _trim_history_for_budget(prior, system_prompt, db, extra_text=partial_text)
 
             # Budget = 800*0.80 - 7 - 4 - 256 = 373 tokens
             # Each msg = 50 tokens → at most 7 messages fit
@@ -496,8 +579,7 @@ class TestContinuationBudget:
 
             from orivellum.api.routes.conversations import _trim_history_for_budget
 
-            prior = [{"role": "user", "text": f"msg-{i}", "id": str(i)}
-                     for i in range(20)]
+            prior = [{"role": "user", "text": f"msg-{i}", "id": str(i)} for i in range(20)]
             trimmed = _trim_history_for_budget(prior, "sys", db)
 
             # The last message (msg-19) must be present
@@ -524,6 +606,7 @@ class TestContinuationBudget:
 # 9. Oversized single-item truncation (task #417)
 # ---------------------------------------------------------------------------
 
+
 class TestOversizedItemTruncation:
     """When a single knowledge item exceeds the 30% knowledge budget it must be
     truncated to fit, not skipped.  Skipping causes an empty context which
@@ -543,18 +626,33 @@ class TestOversizedItemTruncation:
             oversized = [_knowledge_hit(giant_text, "w1")]
 
             out_sources: list = []
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=oversized), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
-                mock_cfg = type("C", (), {"serving": type("S", (), {
-                    "context_window": 512,
-                    "base_url": "http://localhost",
-                    "workhorse_model": "test",
-                })()})()
+            with (
+                patch(
+                    "orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                    return_value=oversized,
+                ),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
+                mock_cfg = type(
+                    "C",
+                    (),
+                    {
+                        "serving": type(
+                            "S",
+                            (),
+                            {
+                                "context_window": 512,
+                                "base_url": "http://localhost",
+                                "workhorse_model": "test",
+                            },
+                        )()
+                    },
+                )()
                 with patch.object(C, "get_config", return_value=mock_cfg):
                     prompt = C._build_system_prompt(
-                        db, conv, user_query="test query",
+                        db,
+                        conv,
+                        user_query="test query",
                         out_sources=out_sources,
                     )
 
@@ -584,24 +682,39 @@ class TestOversizedItemTruncation:
             # Context window = 512 → budget = int(512 * 0.30) = 153 tokens
             # Item text = exactly 153 * 4 = 612 chars → exactly at budget
             _ctx = 512
-            _budget_tokens = int(_ctx * 0.30)          # 153
+            _budget_tokens = int(_ctx * 0.30)  # 153
             exact_chars = _budget_tokens * _CHARS_PER_TOKEN  # 612
             exact_text = "E" * exact_chars
             exact_item = [_knowledge_hit(exact_text, "w1")]
 
             out_sources: list = []
-            with patch("orivellum.capabilities.embeddings.hybrid_search_knowledge",
-                       return_value=exact_item), \
-                 patch("orivellum.capabilities.embeddings.hybrid_search_chunks",
-                       return_value=[]):
-                mock_cfg = type("C", (), {"serving": type("S", (), {
-                    "context_window": _ctx,
-                    "base_url": "http://localhost",
-                    "workhorse_model": "test",
-                })()})()
+            with (
+                patch(
+                    "orivellum.capabilities.embeddings.hybrid_search_knowledge",
+                    return_value=exact_item,
+                ),
+                patch("orivellum.capabilities.embeddings.hybrid_search_chunks", return_value=[]),
+            ):
+                mock_cfg = type(
+                    "C",
+                    (),
+                    {
+                        "serving": type(
+                            "S",
+                            (),
+                            {
+                                "context_window": _ctx,
+                                "base_url": "http://localhost",
+                                "workhorse_model": "test",
+                            },
+                        )()
+                    },
+                )()
                 with patch.object(C, "get_config", return_value=mock_cfg):
                     C._build_system_prompt(
-                        db, conv, user_query="test query",
+                        db,
+                        conv,
+                        user_query="test query",
                         out_sources=out_sources,
                     )
 

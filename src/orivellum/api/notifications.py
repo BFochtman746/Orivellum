@@ -14,6 +14,7 @@ Design notes:
 - ``emit`` must never raise: it is called from pipeline/TTS workers where a
   notification failure must not affect the actual work.
 """
+
 from __future__ import annotations
 
 import logging
@@ -42,14 +43,16 @@ def emit(kind: str, title: str, body: str = "", url: str = "") -> None:
     try:
         with _lock:
             _next_id += 1
-            _events.append({
-                "id": _next_id,
-                "kind": kind,
-                "title": str(title)[:120],
-                "body": str(body)[:300],
-                "url": str(url)[:500],
-                "created_at": time.time(),
-            })
+            _events.append(
+                {
+                    "id": _next_id,
+                    "kind": kind,
+                    "title": str(title)[:120],
+                    "body": str(body)[:300],
+                    "url": str(url)[:500],
+                    "created_at": time.time(),
+                }
+            )
     except Exception:  # pragma: no cover - defensive; deque append can't fail
         logger.exception("notification emit failed (non-fatal)")
 

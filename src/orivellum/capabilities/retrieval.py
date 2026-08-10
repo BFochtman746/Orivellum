@@ -21,6 +21,7 @@ Classification is:
      call on every message would block the response path.  If needed in v2,
      the ``db`` parameter in :func:`classify_query` is reserved for it.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -39,15 +40,18 @@ logger = logging.getLogger(__name__)
 
 # ── Query types ────────────────────────────────────────────────────────────────
 
+
 class QueryType(str, Enum):
     """The four query categories the adaptive retrieval router recognises."""
-    FACTUAL        = "FACTUAL"
-    SYNTHESIS      = "SYNTHESIS"
-    COMPARISON     = "COMPARISON"
+
+    FACTUAL = "FACTUAL"
+    SYNTHESIS = "SYNTHESIS"
+    COMPARISON = "COMPARISON"
     CONVERSATIONAL = "CONVERSATIONAL"
 
 
 # ── Retrieval config ───────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class RetrievalConfig:
@@ -68,12 +72,13 @@ class RetrievalConfig:
                          merged and de-duplicated.  Used for COMPARISON only.
         label:           Short human-readable tag for logs and message meta.
     """
+
     top_k_knowledge: int
-    top_k_chunks:    int
-    fts_weight:      float
+    top_k_chunks: int
+    fts_weight: float
     semantic_weight: float
-    multi_entity:    bool
-    label:           str
+    multi_entity: bool
+    label: str
 
 
 # ── Per-type configs ───────────────────────────────────────────────────────────
@@ -152,7 +157,7 @@ def _cache_set(text: str, qt: QueryType) -> None:
         if len(_classification_cache) >= _CACHE_MAX:
             # Evict oldest half — dict preserves insertion order in Python ≥ 3.7
             keys = list(_classification_cache.keys())
-            for k in keys[:_CACHE_MAX // 2]:
+            for k in keys[: _CACHE_MAX // 2]:
                 del _classification_cache[k]
         _classification_cache[_cache_key(text)] = qt
 
@@ -262,9 +267,7 @@ def classify_query(
         result = QueryType.COMPARISON
     elif _SYNTHESIS_RE.search(t):
         result = QueryType.SYNTHESIS
-    elif _FACTUAL_RE.match(t):
-        result = QueryType.FACTUAL
-    elif len(t.split()) <= _SHORT_FACTUAL_THRESHOLD:
+    elif _FACTUAL_RE.match(t) or len(t.split()) <= _SHORT_FACTUAL_THRESHOLD:
         result = QueryType.FACTUAL
     else:
         result = QueryType.SYNTHESIS
@@ -275,6 +278,7 @@ def classify_query(
 
 
 # ── COMPARISON entity extraction ───────────────────────────────────────────────
+
 
 def extract_comparison_entities(text: str) -> list[str]:
     """Extract the subjects being compared from a COMPARISON-class query.
@@ -295,30 +299,25 @@ def extract_comparison_entities(text: str) -> list[str]:
         return [m.group(1).strip()[:80], m.group(2).strip()[:80]]
 
     # "difference between X and Y" / "compare X and Y"
-    m = re.search(
-        r"\bbetween\s+(.+?)\s+and\s+(.+?)(?:\?|$)", text, re.IGNORECASE
-    )
+    m = re.search(r"\bbetween\s+(.+?)\s+and\s+(.+?)(?:\?|$)", text, re.IGNORECASE)
     if m:
         return [m.group(1).strip()[:80], m.group(2).strip()[:80]]
 
     # "chapter N and chapter M"
-    m = re.search(
-        r"(chapter\s+\w+)\s+and\s+(chapter\s+\w+)", text, re.IGNORECASE
-    )
+    m = re.search(r"(chapter\s+\w+)\s+and\s+(chapter\s+\w+)", text, re.IGNORECASE)
     if m:
         return [m.group(1), m.group(2)]
 
     # "part N and part M"
-    m = re.search(
-        r"(part\s+\w+)\s+and\s+(part\s+\w+)", text, re.IGNORECASE
-    )
+    m = re.search(r"(part\s+\w+)\s+and\s+(part\s+\w+)", text, re.IGNORECASE)
     if m:
         return [m.group(1), m.group(2)]
 
     # "compare X (and|to|with) Y"
     m = re.search(
         r"\bcompare\s+(.+?)\s+(?:and|to|with)\s+(.+?)(?:\?|$)",
-        text, re.IGNORECASE,
+        text,
+        re.IGNORECASE,
     )
     if m:
         return [m.group(1).strip()[:80], m.group(2).strip()[:80]]

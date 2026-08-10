@@ -14,6 +14,7 @@ Dimensions:
 Overall readiness label (never a bare number):
   Draft | Developing | Substantial | Near-Complete | Ready
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,22 +28,23 @@ logger = logging.getLogger(__name__)
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
 
-_CONTENT_BASELINE_WORDS = 50_000    # typical non-fiction manuscript
-_RESEARCH_MIN_ITEMS = 3             # items per chapter to be "covered"
-_EXPECTED_CHAPTERS_DEFAULT = 10     # assumed when no chapters extracted yet
+_CONTENT_BASELINE_WORDS = 50_000  # typical non-fiction manuscript
+_RESEARCH_MIN_ITEMS = 3  # items per chapter to be "covered"
+_EXPECTED_CHAPTERS_DEFAULT = 10  # assumed when no chapters extracted yet
 
 
 # ── Data types ────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class Dimension:
     name: str
     label: str
-    score: int                  # 0-100
+    score: int  # 0-100
     current: int | float
     target: int | float
     unit: str
-    rule: str                   # plain-language calculation rule
+    rule: str  # plain-language calculation rule
     evidence: list[str] = field(default_factory=list)
 
 
@@ -51,8 +53,8 @@ class CompletenessReport:
     work_id: str
     work_title: str
     dimensions: list[Dimension]
-    overall: int                # weighted average 0-100
-    readiness: str              # "Draft" … "Ready"
+    overall: int  # weighted average 0-100
+    readiness: str  # "Draft" … "Ready"
     summary: str
     evaluated_at: str
 
@@ -61,14 +63,15 @@ class CompletenessReport:
 
 _WEIGHTS = {
     "structural": 0.25,
-    "content":    0.25,
-    "research":   0.25,
-    "editorial":  0.15,
-    "source":     0.10,
+    "content": 0.25,
+    "research": 0.25,
+    "editorial": 0.15,
+    "source": 0.10,
 }
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 def _read_targets(work: dict) -> tuple[int, int]:
     """Return (word_target, chapter_target) for a Work.
@@ -190,7 +193,11 @@ def calculate_work_completeness(work_id: str, db: OrivellumDB) -> CompletenessRe
     )
 
     # 3 — Research coverage
-    research_score = min(100, round(chapters_with_research / max(total_chapters, 1) * 100)) if total_chapters else 0
+    research_score = (
+        min(100, round(chapters_with_research / max(total_chapters, 1) * 100))
+        if total_chapters
+        else 0
+    )
     research = Dimension(
         name="research",
         label="Research",
@@ -238,11 +245,15 @@ def calculate_work_completeness(work_id: str, db: OrivellumDB) -> CompletenessRe
     overall = round(sum(_WEIGHTS[d.name] * d.score for d in dims))
 
     readiness = (
-        "Ready"         if overall >= 80 else
-        "Near-Complete" if overall >= 60 else
-        "Substantial"   if overall >= 40 else
-        "Developing"    if overall >= 20 else
-        "Draft"
+        "Ready"
+        if overall >= 80
+        else "Near-Complete"
+        if overall >= 60
+        else "Substantial"
+        if overall >= 40
+        else "Developing"
+        if overall >= 20
+        else "Draft"
     )
 
     summary = (

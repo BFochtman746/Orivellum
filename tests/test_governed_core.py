@@ -8,22 +8,20 @@ Covers three acceptance criteria verbatim from MILESTONES.md:
 Additional tests exercise the governed_write context manager, outbox helpers,
 and verify_audit_chain() on multi-entry chains.
 """
+
 from __future__ import annotations
 
 import json
 import tempfile
-import threading
-import time
-from pathlib import Path
 
 import pytest
 
 from orivellum.database.db import OrivellumDB, VersionConflictError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_db() -> OrivellumDB:
     """Return an in-memory OrivellumDB with all migrations applied."""
@@ -46,6 +44,7 @@ def _make_conv(db: OrivellumDB, title: str = "Test Conv") -> str:
 # ---------------------------------------------------------------------------
 # 1. Optimistic concurrency — VERSION_CONFLICT
 # ---------------------------------------------------------------------------
+
 
 class TestVersionConflict:
     """Acceptance criterion 1: a stale update is rejected with VERSION_CONFLICT."""
@@ -72,9 +71,7 @@ class TestVersionConflict:
         db = _make_db()
         wid = _make_work(db)
         db.update_work(wid, expected_version=1, title="v2")
-        row = db._conn.execute(
-            "SELECT version FROM objects WHERE id=?", (wid,)
-        ).fetchone()
+        row = db._conn.execute("SELECT version FROM objects WHERE id=?", (wid,)).fetchone()
         assert row["version"] == 2
 
     def test_update_work_stale_after_first_update(self):
@@ -105,9 +102,7 @@ class TestVersionConflict:
     def test_update_conversation_correct_version_succeeds(self):
         db = _make_db()
         cid = _make_conv(db)
-        row = db._conn.execute(
-            "SELECT version FROM conversations WHERE id=?", (cid,)
-        ).fetchone()
+        row = db._conn.execute("SELECT version FROM conversations WHERE id=?", (cid,)).fetchone()
         v = row["version"]
         result = db.update_conversation(cid, title="Renamed", expected_version=v)
         assert result["title"] == "Renamed"
@@ -119,9 +114,9 @@ class TestVersionConflict:
             "SELECT version FROM conversations WHERE id=?", (cid,)
         ).fetchone()["version"]
         db.update_conversation(cid, title="New Title", expected_version=before)
-        after = db._conn.execute(
-            "SELECT version FROM conversations WHERE id=?", (cid,)
-        ).fetchone()["version"]
+        after = db._conn.execute("SELECT version FROM conversations WHERE id=?", (cid,)).fetchone()[
+            "version"
+        ]
         assert after == before + 1
 
     def test_version_conflict_rolls_back_domain_change(self):
@@ -146,6 +141,7 @@ class TestVersionConflict:
 # ---------------------------------------------------------------------------
 # 2. Atomic write — exactly ONE audit row + ONE outbox event per governed_write
 # ---------------------------------------------------------------------------
+
 
 class TestAtomicWrite:
     """Acceptance criterion 2: every governed write emits exactly one audit row
@@ -206,16 +202,17 @@ class TestAtomicWrite:
         wid = _make_work(db)
         audit_before = self._count_audit(db, wid)
         outbox_before = self._count_outbox(db, wid)
-        with pytest.raises(RuntimeError):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError),
+            db.governed_write(
                 operation="work.boom",
                 event_type="work.boom",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute("UPDATE works SET title=? WHERE id=?",
-                                 ("mid-flight", wid))
-                raise RuntimeError("simulated domain failure")
+            ),
+        ):
+            db._conn.execute("UPDATE works SET title=? WHERE id=?", ("mid-flight", wid))
+            raise RuntimeError("simulated domain failure")
         # Nothing committed.
         assert self._count_audit(db, wid) == audit_before
         assert self._count_outbox(db, wid) == outbox_before
@@ -266,8 +263,7 @@ class TestAtomicWrite:
         ok = db.dispatch_outbox_event(event_id)
         assert ok is True
         # Now it should no longer be in the pending list.
-        still_pending = [e for e in db.list_outbox(pending_only=True)
-                         if e["id"] == event_id]
+        still_pending = [e for e in db.list_outbox(pending_only=True) if e["id"] == event_id]
         assert len(still_pending) == 0
 
     def test_outbox_dispatch_idempotent(self):
@@ -284,6 +280,7 @@ class TestAtomicWrite:
 # ---------------------------------------------------------------------------
 # 3. Hash-chained audit ledger — tampering is detectable
 # ---------------------------------------------------------------------------
+
 
 class TestAuditChain:
     """Acceptance criterion 3: editing an audit row breaks the chain and
@@ -307,8 +304,7 @@ class TestAuditChain:
         db.update_work(wid, title="After Tamper row")
         # Grab the most recent chained audit row and overwrite its row_hash.
         row = db._conn.execute(
-            "SELECT id FROM audit_log WHERE row_hash IS NOT NULL "
-            "ORDER BY timestamp DESC LIMIT 1"
+            "SELECT id FROM audit_log WHERE row_hash IS NOT NULL ORDER BY timestamp DESC LIMIT 1"
         ).fetchone()
         db._conn.execute(
             "UPDATE audit_log SET row_hash=? WHERE id=?",
@@ -327,8 +323,7 @@ class TestAuditChain:
         db.update_work(wid, title="Row B")
         # Get the second chained row.
         rows = db._conn.execute(
-            "SELECT id FROM audit_log WHERE row_hash IS NOT NULL "
-            "ORDER BY timestamp ASC, id ASC"
+            "SELECT id FROM audit_log WHERE row_hash IS NOT NULL ORDER BY timestamp ASC, id ASC"
         ).fetchall()
         assert len(rows) >= 2
         second_id = rows[-1]["id"]
@@ -346,8 +341,7 @@ class TestAuditChain:
         wid = _make_work(db)
         db.update_work(wid, title="Modify Operation")
         row = db._conn.execute(
-            "SELECT id FROM audit_log WHERE row_hash IS NOT NULL "
-            "ORDER BY timestamp DESC LIMIT 1"
+            "SELECT id FROM audit_log WHERE row_hash IS NOT NULL ORDER BY timestamp DESC LIMIT 1"
         ).fetchone()
         db._conn.execute(
             "UPDATE audit_log SET operation=? WHERE id=?",
@@ -403,64 +397,63 @@ class TestAuditChain:
 # 4. Schema — version columns and outbox table exist
 # ---------------------------------------------------------------------------
 
+
 class TestSchemaV55ToV57:
     """Verify that schema migrations v55–v57 applied correctly."""
 
     def test_audit_log_has_hash_chain_columns(self):
         db = _make_db()
-        cols = {r[1] for r in db._conn.execute(
-            "PRAGMA table_info(audit_log)"
-        ).fetchall()}
+        cols = {r[1] for r in db._conn.execute("PRAGMA table_info(audit_log)").fetchall()}
         assert "prev_hash" in cols
         assert "row_hash" in cols
 
     def test_outbox_table_exists_with_expected_columns(self):
         db = _make_db()
-        cols = {r[1] for r in db._conn.execute(
-            "PRAGMA table_info(outbox)"
-        ).fetchall()}
-        assert {"id", "event_type", "object_id", "object_type",
-                "payload", "created_at", "dispatched_at"}.issubset(cols)
+        cols = {r[1] for r in db._conn.execute("PRAGMA table_info(outbox)").fetchall()}
+        assert {
+            "id",
+            "event_type",
+            "object_id",
+            "object_type",
+            "payload",
+            "created_at",
+            "dispatched_at",
+        }.issubset(cols)
 
     def test_conversations_has_version_column(self):
         db = _make_db()
-        cols = {r[1] for r in db._conn.execute(
-            "PRAGMA table_info(conversations)"
-        ).fetchall()}
+        cols = {r[1] for r in db._conn.execute("PRAGMA table_info(conversations)").fetchall()}
         assert "version" in cols
 
     def test_messages_has_version_column(self):
         db = _make_db()
-        cols = {r[1] for r in db._conn.execute(
-            "PRAGMA table_info(messages)"
-        ).fetchall()}
+        cols = {r[1] for r in db._conn.execute("PRAGMA table_info(messages)").fetchall()}
         assert "version" in cols
 
     def test_documents_has_version_column(self):
         db = _make_db()
-        cols = {r[1] for r in db._conn.execute(
-            "PRAGMA table_info(documents)"
-        ).fetchall()}
+        cols = {r[1] for r in db._conn.execute("PRAGMA table_info(documents)").fetchall()}
         assert "version" in cols
 
     def test_knowledge_has_version_column(self):
         db = _make_db()
-        cols = {r[1] for r in db._conn.execute(
-            "PRAGMA table_info(knowledge)"
-        ).fetchall()}
+        cols = {r[1] for r in db._conn.execute("PRAGMA table_info(knowledge)").fetchall()}
         assert "version" in cols
 
     def test_schema_version_is_57_or_higher(self):
         db = _make_db()
-        version = int(db._conn.execute(
-            "SELECT value FROM settings WHERE key='schema_version'"
-        ).fetchone()["value"])
+        version = int(
+            db._conn.execute("SELECT value FROM settings WHERE key='schema_version'").fetchone()[
+                "value"
+            ]
+        )
         assert version >= 57
 
 
 # ---------------------------------------------------------------------------
 # 5. Early-commit detection — governed_write enforces single-committer rule
 # ---------------------------------------------------------------------------
+
 
 class TestEarlyCommitDetection:
     """governed_write must raise RuntimeError if the caller commits inside the
@@ -480,36 +473,40 @@ class TestEarlyCommitDetection:
         """A caller that calls _conn.commit() inside governed_write must get RuntimeError."""
         db = _make_db()
         wid = _make_work(db)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.early_commit_test",
                 event_type="work.early_commit_test",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("early-commit", wid),
-                )
-                db._conn.commit()  # ← this must be detected and rejected
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("early-commit", wid),
+            )
+            db._conn.commit()  # ← this must be detected and rejected
 
     def test_early_commit_produces_no_audit_row(self):
         """When a caller commits early, no audit row is written for that operation."""
         db = _make_db()
         wid = _make_work(db)
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError),
+            db.governed_write(
                 operation="work.no_audit",
                 event_type="work.no_audit",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("no-audit", wid),
-                )
-                db._conn.commit()
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("no-audit", wid),
+            )
+            db._conn.commit()
         assert self._count_audit(db, wid) == audit_before, (
             "audit row must not be written when caller commits early"
         )
@@ -519,18 +516,20 @@ class TestEarlyCommitDetection:
         db = _make_db()
         wid = _make_work(db)
         outbox_before = self._count_outbox(db, wid)
-        with pytest.raises(RuntimeError):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError),
+            db.governed_write(
                 operation="work.no_outbox",
                 event_type="work.no_outbox",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("no-outbox", wid),
-                )
-                db._conn.commit()
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("no-outbox", wid),
+            )
+            db._conn.commit()
         assert self._count_outbox(db, wid) == outbox_before, (
             "outbox event must not be written when caller commits early"
         )
@@ -539,22 +538,22 @@ class TestEarlyCommitDetection:
         """The domain change itself must be rolled back when an early commit is detected."""
         db = _make_db()
         wid = _make_work(db, "Original Description")
-        with pytest.raises(RuntimeError):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError),
+            db.governed_write(
                 operation="work.rollback_test",
                 event_type="work.rollback_test",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("mutated-by-early-commit", wid),
-                )
-                db._conn.commit()
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("mutated-by-early-commit", wid),
+            )
+            db._conn.commit()
         # After the RuntimeError the description must not reflect the change.
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
         description = row["description"] if row else None
         assert description != "mutated-by-early-commit", (
             "domain change must be rolled back when caller commits early"
@@ -564,14 +563,16 @@ class TestEarlyCommitDetection:
         """The RuntimeError message must name the cause clearly."""
         db = _make_db()
         wid = _make_work(db)
-        with pytest.raises(RuntimeError) as exc_info:
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError) as exc_info,
+            db.governed_write(
                 operation="work.msg_test",
                 event_type="work.msg_test",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.commit()
+            ),
+        ):
+            db._conn.commit()
         msg = str(exc_info.value)
         assert "governed_write" in msg
         assert "COMMIT" in msg or "commit" in msg.lower()
@@ -601,14 +602,16 @@ class TestEarlyCommitDetection:
         so subsequent operations succeed without any lingering proxy or trace state."""
         db = _make_db()
         wid = _make_work(db)
-        with pytest.raises(RuntimeError):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError),
+            db.governed_write(
                 operation="work.restore_test",
                 event_type="work.restore_test",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.commit()
+            ),
+        ):
+            db._conn.commit()
         # After the error, normal governed writes must succeed.
         db.update_work(wid, title="Post-error update")
         result = db.get_work(wid)
@@ -626,44 +629,47 @@ class TestEarlyCommitDetection:
         db = _make_db()
         wid = _make_work(db)
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.execute_commit",
                 event_type="work.execute_commit",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("pre-execute-commit", wid),
-                )
-                db._conn.execute("COMMIT")
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("pre-execute-commit", wid),
+            )
+            db._conn.execute("COMMIT")
         # Domain change must be rolled back, audit must not be written.
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
-        assert (row["description"] if row else None) != "pre-execute-commit", \
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
+        assert (row["description"] if row else None) != "pre-execute-commit", (
             "Domain change must be rolled back when execute('COMMIT') is called"
-        assert self._count_audit(db, wid) == audit_before, \
+        )
+        assert self._count_audit(db, wid) == audit_before, (
             "No audit row must be written when execute('COMMIT') is called"
+        )
 
     def test_executescript_inside_governed_write_raises(self):
         """executescript() always implicitly COMMITs — must be blocked inside governed_write."""
         db = _make_db()
         wid = _make_work(db)
         outbox_before = self._count_outbox(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.executescript",
                 event_type="work.executescript",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.executescript(
-                    f"UPDATE works SET description='via-script' WHERE id='{wid}'"
-                )
-        assert self._count_outbox(db, wid) == outbox_before, \
+            ),
+        ):
+            db._conn.executescript(f"UPDATE works SET description='via-script' WHERE id='{wid}'")
+        assert self._count_outbox(db, wid) == outbox_before, (
             "No outbox event must be written when executescript() is called"
+        )
 
     def test_cursor_connection_commit_raises(self):
         """cursor().connection.commit() must be blocked — cursor() must return a
@@ -671,26 +677,28 @@ class TestEarlyCommitDetection:
         db = _make_db()
         wid = _make_work(db)
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.cursor_escape",
                 event_type="work.cursor_escape",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("cursor-escape", wid),
-                )
-                # Attempt the cursor-derived-connection escape path
-                db._conn.cursor().connection.commit()
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
-        assert (row["description"] if row else None) != "cursor-escape", \
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("cursor-escape", wid),
+            )
+            # Attempt the cursor-derived-connection escape path
+            db._conn.cursor().connection.commit()
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
+        assert (row["description"] if row else None) != "cursor-escape", (
             "Domain change must be rolled back when cursor().connection.commit() is attempted"
-        assert self._count_audit(db, wid) == audit_before, \
+        )
+        assert self._count_audit(db, wid) == audit_before, (
             "No audit row must be written when cursor().connection.commit() is attempted"
+        )
 
     def test_execute_returns_guarded_cursor_blocking_connection_commit(self):
         """cursor = db._conn.execute(UPDATE); cursor.connection.commit() must be blocked.
@@ -701,22 +709,22 @@ class TestEarlyCommitDetection:
         db = _make_db()
         wid = _make_work(db, "Before execute-cursor escape")
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.execute_cursor_escape",
                 event_type="work.execute_cursor_escape",
                 object_id=wid,
                 object_type="work",
-            ):
-                # execute() must return a guarded cursor, not a raw sqlite3.Cursor
-                cur = db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("execute-cursor-escape", wid),
-                )
-                cur.connection.commit()  # must be intercepted via the guarded cursor
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
+            ),
+        ):
+            # execute() must return a guarded cursor, not a raw sqlite3.Cursor
+            cur = db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("execute-cursor-escape", wid),
+            )
+            cur.connection.commit()  # must be intercepted via the guarded cursor
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
         assert (row["description"] if row else None) != "execute-cursor-escape", (
             "Domain change must be rolled back when cursor.connection.commit() "
             "is called on a cursor returned by execute()"
@@ -730,47 +738,48 @@ class TestEarlyCommitDetection:
         db = _make_db()
         wid = _make_work(db)
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.end_tx",
                 event_type="work.end_tx",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?", ("end-tx", wid)
-                )
-                db._conn.execute("END")
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
-        assert (row["description"] if row else None) != "end-tx", \
+            ),
+        ):
+            db._conn.execute("UPDATE works SET description=? WHERE id=?", ("end-tx", wid))
+            db._conn.execute("END")
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
+        assert (row["description"] if row else None) != "end-tx", (
             "Domain change must be rolled back when execute('END') is called"
-        assert self._count_audit(db, wid) == audit_before, \
+        )
+        assert self._count_audit(db, wid) == audit_before, (
             "No audit row must be written when execute('END') is called"
+        )
 
     def test_end_transaction_keyword_raises_runtime_error(self):
         """execute('END TRANSACTION') must also be blocked."""
         db = _make_db()
         wid = _make_work(db)
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.end_transaction",
                 event_type="work.end_transaction",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("end-transaction", wid),
-                )
-                db._conn.execute("END TRANSACTION")
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
-        assert (row["description"] if row else None) != "end-transaction", \
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("end-transaction", wid),
+            )
+            db._conn.execute("END TRANSACTION")
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
+        assert (row["description"] if row else None) != "end-transaction", (
             "Domain change must be rolled back when execute('END TRANSACTION') is called"
+        )
         assert self._count_audit(db, wid) == audit_before
 
     def test_commit_with_leading_line_comment_raises(self):
@@ -778,23 +787,24 @@ class TestEarlyCommitDetection:
         db = _make_db()
         wid = _make_work(db)
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.commented_commit",
                 event_type="work.commented_commit",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("commented-commit", wid),
-                )
-                db._conn.execute("-- this is a note\nCOMMIT")
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
-        assert (row["description"] if row else None) != "commented-commit", \
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("commented-commit", wid),
+            )
+            db._conn.execute("-- this is a note\nCOMMIT")
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
+        assert (row["description"] if row else None) != "commented-commit", (
             "Domain change must be rolled back when commented COMMIT is attempted"
+        )
         assert self._count_audit(db, wid) == audit_before
 
     def test_commit_with_leading_block_comment_raises(self):
@@ -802,23 +812,24 @@ class TestEarlyCommitDetection:
         db = _make_db()
         wid = _make_work(db)
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.block_comment_commit",
                 event_type="work.block_comment_commit",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("block-comment-commit", wid),
-                )
-                db._conn.execute("/* note */ COMMIT")
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
-        assert (row["description"] if row else None) != "block-comment-commit", \
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("block-comment-commit", wid),
+            )
+            db._conn.execute("/* note */ COMMIT")
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
+        assert (row["description"] if row else None) != "block-comment-commit", (
             "Domain change must be rolled back when block-comment-prefixed COMMIT is attempted"
+        )
         assert self._count_audit(db, wid) == audit_before
 
     def test_pre_existing_connection_alias_commit_raises(self):
@@ -837,20 +848,22 @@ class TestEarlyCommitDetection:
         # Capture alias BEFORE entering governed_write — this holds the real conn.
         raw_conn = db._conn
 
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.alias_commit",
                 event_type="work.alias_commit",
                 object_id=wid,
                 object_type="work",
-            ):
-                # Domain SQL via the proxy
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("alias-committed", wid),
-                )
-                # Commit via the pre-existing raw-connection alias — bypasses proxy
-                raw_conn.commit()
+            ),
+        ):
+            # Domain SQL via the proxy
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("alias-committed", wid),
+            )
+            # Commit via the pre-existing raw-connection alias — bypasses proxy
+            raw_conn.commit()
 
         # Audit and outbox must NOT be written (no partial/inconsistent state)
         assert self._count_audit(db, wid) == audit_before, (
@@ -875,18 +888,20 @@ class TestEarlyCommitDetection:
         # Cursor captured BEFORE governed_write
         raw_cursor = db._conn.cursor()
 
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.cursor_alias_commit",
                 event_type="work.cursor_alias_commit",
                 object_id=wid,
                 object_type="work",
-            ):
-                db._conn.execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("cursor-alias-committed", wid),
-                )
-                raw_cursor.execute("COMMIT")  # SQL-level commit via pre-existing cursor
+            ),
+        ):
+            db._conn.execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("cursor-alias-committed", wid),
+            )
+            raw_cursor.execute("COMMIT")  # SQL-level commit via pre-existing cursor
 
         assert self._count_audit(db, wid) == audit_before, (
             "No audit row must be written when a pre-existing cursor alias issues execute('COMMIT')"
@@ -901,22 +916,22 @@ class TestEarlyCommitDetection:
         db = _make_db()
         wid = _make_work(db, "Before chained execute escape")
         audit_before = self._count_audit(db, wid)
-        with pytest.raises(RuntimeError, match="governed_write"):
-            with db.governed_write(
+        with (
+            pytest.raises(RuntimeError, match="governed_write"),
+            db.governed_write(
                 operation="work.chained_execute_escape",
                 event_type="work.chained_execute_escape",
                 object_id=wid,
                 object_type="work",
-            ):
-                # cursor().execute() must also return a guarded cursor
-                cur = db._conn.cursor().execute(
-                    "UPDATE works SET description=? WHERE id=?",
-                    ("chained-escape", wid),
-                )
-                cur.connection.commit()  # must be intercepted
-        row = db._conn.execute(
-            "SELECT description FROM works WHERE id=?", (wid,)
-        ).fetchone()
+            ),
+        ):
+            # cursor().execute() must also return a guarded cursor
+            cur = db._conn.cursor().execute(
+                "UPDATE works SET description=? WHERE id=?",
+                ("chained-escape", wid),
+            )
+            cur.connection.commit()  # must be intercepted
+        row = db._conn.execute("SELECT description FROM works WHERE id=?", (wid,)).fetchone()
         assert (row["description"] if row else None) != "chained-escape", (
             "Domain change must be rolled back when chained cursor.connection.commit() "
             "is attempted via cursor().execute(...).connection.commit()"

@@ -11,26 +11,26 @@ Covers all seven gap types:
 
 Also verifies coverage_pct, suggested_queries, and the GET endpoint.
 """
+
 from __future__ import annotations
 
 import datetime
 
-import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import AUTH_HEADERS
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_app(tmp_path):
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=str(tmp_path))
-    db  = OrivellumDB(str(tmp_path / "test.db"))
+    db = OrivellumDB(str(tmp_path / "test.db"))
     _deps.init(db=db, cfg=cfg)
     return TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS), db
 
@@ -48,9 +48,7 @@ def _add_ready_doc(db, work_id: str, title: str = "Doc", created_at: str | None 
     db.update_document_extracted(doc_id, f"text of {title}", 100, readiness="ready")
     if created_at:
         with db._lock:
-            db._conn.execute(
-                "UPDATE documents SET created_at=? WHERE id=?", (created_at, doc_id)
-            )
+            db._conn.execute("UPDATE documents SET created_at=? WHERE id=?", (created_at, doc_id))
             db._conn.commit()
     return doc_id
 
@@ -60,10 +58,7 @@ def _add_chapters(db, doc_id: str, work_id: str, titles: list[str]) -> None:
     Replaces any existing chapters for that doc, so pass all desired
     chapter titles in one call.
     """
-    chapters = [
-        {"seq": i + 1, "level": 1, "title": t, "text": ""}
-        for i, t in enumerate(titles)
-    ]
+    chapters = [{"seq": i + 1, "level": 1, "title": t, "text": ""} for i, t in enumerate(titles)]
     db.upsert_book_chapters(doc_id, work_id, chapters)
 
 
@@ -84,6 +79,7 @@ def _add_knowledge(
 
 # ── unit tests — detect_gaps() ────────────────────────────────────────────────
 
+
 def test_empty_work_has_no_gaps(tmp_path):
     """A Work with no documents should produce no gaps."""
     _, db = _make_app(tmp_path)
@@ -102,7 +98,7 @@ def test_gap1_undocumented_doc(tmp_path):
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.gaps import detect_gaps
 
-    work   = db.create_work("Work A")
+    work = db.create_work("Work A")
     _add_ready_doc(db, work["id"], title="PlainDoc")
 
     report = detect_gaps(work["id"], db)
@@ -121,7 +117,7 @@ def test_gap1_absent_when_chapters_exist(tmp_path):
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.gaps import detect_gaps
 
-    work   = db.create_work("Work B")
+    work = db.create_work("Work B")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Introduction"])
 
@@ -135,7 +131,7 @@ def test_gap2_uncovered_chapter(tmp_path):
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.gaps import detect_gaps
 
-    work   = db.create_work("Work C")
+    work = db.create_work("Work C")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Methods"])
 
@@ -154,7 +150,7 @@ def test_gap3_weak_coverage(tmp_path):
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.gaps import detect_gaps
 
-    work   = db.create_work("Work D")
+    work = db.create_work("Work D")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Results"])
     # 2 items — below the MIN_ITEMS_PER_CHAPTER=3 threshold
@@ -177,7 +173,7 @@ def test_gap3_absent_when_sufficient_coverage(tmp_path):
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.gaps import detect_gaps
 
-    work   = db.create_work("Work E")
+    work = db.create_work("Work E")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Conclusion"])
     for i in range(3):
@@ -213,7 +209,7 @@ def test_gap4_absent_when_all_sourced(tmp_path):
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.gaps import detect_gaps
 
-    work   = db.create_work("Work G")
+    work = db.create_work("Work G")
     doc_id = _add_ready_doc(db, work["id"])
     _add_knowledge(db, work["id"], "sourced fact", source_doc_id=doc_id)
 
@@ -236,7 +232,9 @@ def test_gap5_orphaned_research(tmp_path):
 
     # Insert the orphaned knowledge item via the standard API but with a
     # source_doc_id that belongs to work_b, not work_a.
-    _add_knowledge(db, work_a["id"], "orphaned research fact about external doc", source_doc_id=doc_id)
+    _add_knowledge(
+        db, work_a["id"], "orphaned research fact about external doc", source_doc_id=doc_id
+    )
 
     report = detect_gaps(work_a["id"], db)
 
@@ -255,7 +253,7 @@ def test_gap6_stale_source(tmp_path):
 
     work = db.create_work("Work I")
     two_years_ago = (
-        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=730)
+        datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=730)
     ).isoformat()[:10]
     _add_ready_doc(db, work["id"], title="OldDoc", created_at=two_years_ago)
 
@@ -276,7 +274,7 @@ def test_gap6_absent_for_recent_doc(tmp_path):
 
     work = db.create_work("Work J")
     six_months_ago = (
-        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=180)
+        datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=180)
     ).isoformat()[:10]
     _add_ready_doc(db, work["id"], title="NewDoc", created_at=six_months_ago)
 
@@ -325,12 +323,13 @@ def test_gap7_absent_for_distinct_items(tmp_path):
 
 # ── coverage_pct tests ────────────────────────────────────────────────────────
 
+
 def test_coverage_pct_zero_when_all_uncovered(tmp_path):
     """All chapters uncovered → coverage_pct = 0."""
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.gaps import detect_gaps
 
-    work   = db.create_work("Coverage Work")
+    work = db.create_work("Coverage Work")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Ch1", "Ch2"])
 
@@ -344,7 +343,7 @@ def test_coverage_pct_hundred_when_all_covered(tmp_path):
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.gaps import detect_gaps
 
-    work   = db.create_work("Full Coverage")
+    work = db.create_work("Full Coverage")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Only Chapter"])
     for i in range(3):
@@ -356,11 +355,12 @@ def test_coverage_pct_hundred_when_all_covered(tmp_path):
 
 # ── API endpoint test ─────────────────────────────────────────────────────────
 
+
 def test_gaps_endpoint_returns_correct_shape(tmp_path):
     """GET /api/works/{id}/gaps returns GapReport with all required fields."""
     client, db = _make_app(tmp_path)
 
-    work   = db.create_work("API Work")
+    work = db.create_work("API Work")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Intro"])  # uncovered chapter
 
@@ -391,7 +391,7 @@ def test_top_gaps_endpoint(tmp_path):
     """GET /api/gaps/top returns gaps across all active works."""
     client, db = _make_app(tmp_path)
 
-    work   = db.create_work("Active Work")
+    work = db.create_work("Active Work")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Chapter One"])  # creates an uncovered_chapter high gap
 
@@ -406,7 +406,7 @@ def test_top_gaps_endpoint(tmp_path):
     # Should contain at least one gap with work_id and work_title fields
     if data["gaps"]:
         g = data["gaps"][0]
-        assert "work_id"    in g
+        assert "work_id" in g
         assert "work_title" in g
-        assert "severity"   in g
-        assert "kind"       in g
+        assert "severity" in g
+        assert "kind" in g

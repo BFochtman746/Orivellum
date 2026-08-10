@@ -14,6 +14,7 @@ Guards against the blank-page-after-update failure mode:
    ``no-cache`` — including when the build ships a 404.html file, which
    makes StaticFiles(html=True) RETURN a 404 response instead of raising.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -59,6 +60,7 @@ def client_with_404_page(tmp_path) -> TestClient:
 
 # ── Hashed assets: immutable caching ─────────────────────────────────────────
 
+
 class TestHashedAssets:
     def test_get_asset_immutable(self, client):
         r = client.get("/orivellum-ui/assets/index-ABC123.js")
@@ -84,6 +86,7 @@ class TestHashedAssets:
 
 # ── Shell + service worker: never cached ─────────────────────────────────────
 
+
 class TestShellNeverCached:
     @pytest.mark.parametrize("path", ["/orivellum-ui/", "/orivellum-ui/index.html"])
     def test_index_no_cache(self, client, path):
@@ -100,6 +103,7 @@ class TestShellNeverCached:
 
 
 # ── Missing assets: real 404, never the shell, never cached ─────────────────
+
 
 class TestMissingAssets:
     def test_dead_asset_is_404_not_shell(self, client):
@@ -123,12 +127,16 @@ class TestMissingAssets:
 
 # ── SPA deep links: shell with no-cache ──────────────────────────────────────
 
+
 class TestSpaRouting:
-    @pytest.mark.parametrize("path", [
-        "/orivellum-ui/works/abc",
-        "/orivellum-ui/library/some-doc-id",
-        "/orivellum-ui/settings",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/orivellum-ui/works/abc",
+            "/orivellum-ui/library/some-doc-id",
+            "/orivellum-ui/settings",
+        ],
+    )
     def test_deep_link_serves_shell(self, client, path):
         r = client.get(path)
         assert r.status_code == 200

@@ -1,4 +1,5 @@
 """Shared data contracts for the A-01 Mail Steward capability."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -28,16 +29,16 @@ LIFECYCLE_STATES = (
 # ── Action types ───────────────────────────────────────────────────────────────
 
 ACTION_CREATE_DRAFT = "CREATE_DRAFT"
-ACTION_MOVE        = "MOVE"
-ACTION_UNDO_MOVE   = "UNDO_MOVE"
-ACTION_SEND        = "SEND"
-ACTION_DELETE      = "DELETE"  # always disabled in v1
+ACTION_MOVE = "MOVE"
+ACTION_UNDO_MOVE = "UNDO_MOVE"
+ACTION_SEND = "SEND"
+ACTION_DELETE = "DELETE"  # always disabled in v1
 
 # ── Assessment attention levels ────────────────────────────────────────────────
 
-ATTENTION_HIGH   = "high"
+ATTENTION_HIGH = "high"
 ATTENTION_MEDIUM = "medium"
-ATTENTION_LOW    = "low"
+ATTENTION_LOW = "low"
 
 
 @dataclass
@@ -51,12 +52,12 @@ class ThreatEvidence:
 
 @dataclass
 class Assessment:
-    attention_level: str          # high | medium | low
+    attention_level: str  # high | medium | low
     needs_reply: bool
     rationale: str
     suggested_reply: str | None
-    recommended_action: str       # CREATE_DRAFT | MOVE | DEFER | NONE
-    confidence: float             # 0.0–1.0
+    recommended_action: str  # CREATE_DRAFT | MOVE | DEFER | NONE
+    confidence: float  # 0.0–1.0
     is_high_risk: bool
     injection_flagged: bool
     model_id: str = ""
@@ -66,7 +67,7 @@ class Assessment:
 @dataclass
 class MailRecord:
     id: str
-    graph_message_id: str         # plaintext in memory, encrypted in DB
+    graph_message_id: str  # plaintext in memory, encrypted in DB
     graph_change_key: str
     graph_folder_id: str
     conversation_id: str
@@ -95,7 +96,7 @@ class ActionRequest:
     destination_folder_id: str | None
     graph_draft_id: str | None
     nonce: str
-    status: str   # PENDING|APPROVED|APPLIED|REVERSED|REJECTED
+    status: str  # PENDING|APPROVED|APPLIED|REVERSED|REJECTED
     result_message_id: str | None
     original_folder_id: str | None
     actor: str
@@ -116,4 +117,4 @@ class AuditEvent:
     signals: list[str]
     before: dict[str, Any]
     after: dict[str, Any]
-    result: str   # SUCCESS|REJECTED|FAILED
+    result: str  # SUCCESS|REJECTED|FAILED

@@ -9,6 +9,7 @@ The uv sidecar (the automatic-setup path) is mocked throughout: a passive
 probe must NEVER spawn a subprocess, and the forced probe's setup/success/
 failure handling is tested against fake subprocess results.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -21,16 +22,15 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import AUTH_HEADERS
-
 from orivellum.capabilities import enhancement
+from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -57,6 +57,7 @@ class _FakeStream:
 
     def __iter__(self):
         import time
+
         for line in self._lines:
             if self._delay:
                 time.sleep(self._delay)
@@ -86,7 +87,8 @@ class _SidecarIsolatedTest(unittest.TestCase):
     def setUp(self):
         _reset_state()
         self._sidecar_patch = mock.patch.object(
-            enhancement, "_sidecar_probe", lambda force=False: False)
+            enhancement, "_sidecar_probe", lambda force=False: False
+        )
         self._sidecar_patch.start()
 
     def tearDown(self):
@@ -95,7 +97,6 @@ class _SidecarIsolatedTest(unittest.TestCase):
 
 
 class TestProbeCapability(_SidecarIsolatedTest):
-
     def test_probe_reports_error_and_interpreter(self):
         result = enhancement.probe()
         self.assertFalse(result["available"])
@@ -142,8 +143,7 @@ class TestSidecar(unittest.TestCase):
         _reset_state()
         self._tmp = tempfile.TemporaryDirectory()
         self._marker = Path(self._tmp.name) / "dfn3-sidecar-ok"
-        self._marker_patch = mock.patch.object(
-            enhancement, "_marker_path", lambda: self._marker)
+        self._marker_patch = mock.patch.object(enhancement, "_marker_path", lambda: self._marker)
         self._marker_patch.start()
 
     def tearDown(self):
@@ -152,44 +152,49 @@ class TestSidecar(unittest.TestCase):
         _reset_state()
 
     def test_passive_probe_never_spawns_a_subprocess(self):
-        with mock.patch.object(subprocess, "run",
-                               side_effect=AssertionError("passive probe spawned uv")), \
-             mock.patch.object(subprocess, "Popen",
-                               side_effect=AssertionError("passive probe spawned uv")):
+        with (
+            mock.patch.object(
+                subprocess, "run", side_effect=AssertionError("passive probe spawned uv")
+            ),
+            mock.patch.object(
+                subprocess, "Popen", side_effect=AssertionError("passive probe spawned uv")
+            ),
+        ):
             result = enhancement.probe(force=False)
         self.assertFalse(result["available"])
         self.assertIn("Check again", result["error"] or "")
 
     def test_forced_probe_success_writes_marker(self):
-        fake = _FakePopen(lines=["Resolved 25 packages in 1.2s",
-                                 "Installed 25 packages in 1.1s"], returncode=0)
+        fake = _FakePopen(
+            lines=["Resolved 25 packages in 1.2s", "Installed 25 packages in 1.1s"], returncode=0
+        )
         with mock.patch.object(subprocess, "Popen", return_value=fake) as popen:
             result = enhancement.probe(force=True)
         self.assertTrue(result["available"])
         self.assertEqual(result["mode"], "sidecar")
         self.assertIsNone(result["error"])
         popen.assert_called_once()
-        self.assertEqual(self._marker.read_text(encoding="utf-8"),
-                         enhancement._marker_spec())
+        self.assertEqual(self._marker.read_text(encoding="utf-8"), enhancement._marker_spec())
 
     def test_marker_lets_passive_probe_trust_a_prior_success(self):
         self._marker.write_text(enhancement._marker_spec(), encoding="utf-8")
-        with mock.patch.object(subprocess, "Popen",
-                               side_effect=AssertionError("marker should be trusted")):
+        with mock.patch.object(
+            subprocess, "Popen", side_effect=AssertionError("marker should be trusted")
+        ):
             result = enhancement.probe(force=False)
         self.assertTrue(result["available"])
         self.assertEqual(result["mode"], "sidecar")
 
     def test_stale_marker_spec_is_ignored(self):
         self._marker.write_text("old-pins", encoding="utf-8")
-        with mock.patch.object(subprocess, "Popen",
-                               side_effect=AssertionError("stale marker must not probe")):
+        with mock.patch.object(
+            subprocess, "Popen", side_effect=AssertionError("stale marker must not probe")
+        ):
             result = enhancement.probe(force=False)
         self.assertFalse(result["available"])
 
     def test_forced_probe_failure_reports_output_tail(self):
-        fake = _FakePopen(lines=["boom", "ModuleNotFoundError: no wheels"],
-                          returncode=1)
+        fake = _FakePopen(lines=["boom", "ModuleNotFoundError: no wheels"], returncode=1)
         with mock.patch.object(subprocess, "Popen", return_value=fake):
             result = enhancement.probe(force=True)
         self.assertFalse(result["available"])
@@ -198,10 +203,13 @@ class TestSidecar(unittest.TestCase):
 
     def test_forced_probe_failure_prefers_uv_error_line(self):
         fake = _FakePopen(
-            lines=["Downloading torch (184.3MiB)",
-                   "error: Failed to download `torch`",
-                   "  Caused by: network unreachable"],
-            returncode=2)
+            lines=[
+                "Downloading torch (184.3MiB)",
+                "error: Failed to download `torch`",
+                "  Caused by: network unreachable",
+            ],
+            returncode=2,
+        )
         with mock.patch.object(subprocess, "Popen", return_value=fake):
             result = enhancement.probe(force=True)
         self.assertFalse(result["available"])
@@ -231,8 +239,7 @@ class TestSidecar(unittest.TestCase):
         import time
 
         def _slow_ok(*args, **kwargs):
-            return _FakePopen(lines=["Downloading torch (184.3MiB)"],
-                              returncode=0, delay=0.3)
+            return _FakePopen(lines=["Downloading torch (184.3MiB)"], returncode=0, delay=0.3)
 
         started = time.monotonic()
         with mock.patch.object(subprocess, "Popen", side_effect=_slow_ok):
@@ -281,8 +288,7 @@ class TestSidecar(unittest.TestCase):
         import time
 
         def _slow_ok(*args, **kwargs):
-            return _FakePopen(lines=["Installed 4 packages in 0.4s"],
-                              returncode=0, delay=0.4)
+            return _FakePopen(lines=["Installed 4 packages in 0.4s"], returncode=0, delay=0.4)
 
         with mock.patch.object(subprocess, "Popen", side_effect=_slow_ok) as popen:
             first = enhancement.start_setup()
@@ -303,12 +309,16 @@ class TestSidecar(unittest.TestCase):
 
         def _slow(*args, **kwargs):
             return _FakePopen(
-                lines=["Resolved 25 packages in 1.2s",
-                       "Downloading torch (184.3MiB)",
-                       "Downloading torchaudio (2.1MiB)",
-                       "Prepared 25 packages in 3s",
-                       "Installed 25 packages in 1.1s"],
-                returncode=0, delay=0.08)
+                lines=[
+                    "Resolved 25 packages in 1.2s",
+                    "Downloading torch (184.3MiB)",
+                    "Downloading torchaudio (2.1MiB)",
+                    "Prepared 25 packages in 3s",
+                    "Installed 25 packages in 1.1s",
+                ],
+                returncode=0,
+                delay=0.08,
+            )
 
         with mock.patch.object(subprocess, "Popen", side_effect=_slow):
             enhancement.start_setup()
@@ -337,13 +347,17 @@ class TestSidecar(unittest.TestCase):
         inheriting the stdout pipe would otherwise keep the streaming reader
         blocked forever and the advertised timeout would be violated."""
         import time
+
         # Parent spawns a long-lived child (inherits the merged stdout pipe),
         # then sleeps. Killing only the parent would leave the child holding
         # the pipe open.
-        cmd = [sys.executable, "-c",
-               "import subprocess, sys, time; "
-               "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)']); "
-               "time.sleep(300)"]
+        cmd = [
+            sys.executable,
+            "-c",
+            "import subprocess, sys, time; "
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)']); "
+            "time.sleep(300)",
+        ]
         start = time.monotonic()
         with mock.patch.object(enhancement, "_PROBE_TIMEOUT_S", 1.0):
             ok, err = enhancement._run_setup(cmd)
@@ -362,8 +376,13 @@ class TestSidecar(unittest.TestCase):
         self.assertIsNone(err)
 
     def test_apply_setup_line_stage_machine(self):
-        prog = {"stage": "resolving", "detail": None, "packages": 0,
-                "total_mb": 0.0, "last_line": None}
+        prog = {
+            "stage": "resolving",
+            "detail": None,
+            "packages": 0,
+            "total_mb": 0.0,
+            "last_line": None,
+        }
         enhancement._apply_setup_line("Resolved 25 packages in 1.2s", prog)
         self.assertEqual(prog["stage"], "resolving")
         self.assertIn("Resolved 25", prog["detail"])
@@ -388,8 +407,8 @@ class TestSidecar(unittest.TestCase):
         src = Path(self._tmp.name) / "b.wav"
         src.write_bytes(b"RIFF")
         with mock.patch.object(
-                subprocess, "run",
-                side_effect=subprocess.TimeoutExpired(cmd="uv", timeout=1)):
+            subprocess, "run", side_effect=subprocess.TimeoutExpired(cmd="uv", timeout=1)
+        ):
             out = enhancement.enhance_audio(src, output_dir=Path(self._tmp.name))
         self.assertEqual(out, src)
         # A long file timing out doesn't prove the helper is broken.
@@ -398,7 +417,6 @@ class TestSidecar(unittest.TestCase):
 
 
 class TestProbeEndpoints(_SidecarIsolatedTest):
-
     def test_probe_endpoint_starts_background_setup(self):
         """The probe endpoint must return immediately with setting_up=True —
         never running the multi-minute setup inline (request timeout)."""
@@ -433,17 +451,14 @@ class TestProbeEndpoints(_SidecarIsolatedTest):
             # Prime a cached failure
             enhancement.probe()
             self.assertIs(enhancement._df_model, False)
-            resp = client.put("/api/system/settings/audio-enhance",
-                              json={"enabled": True})
+            resp = client.put("/api/system/settings/audio-enhance", json={"enabled": True})
             self.assertEqual(resp.status_code, 200)
             body = resp.json()
             self.assertTrue(body["enabled"])
             self.assertFalse(body["installed"])
-            self.assertEqual(
-                db.get_setting("audio_enhance_enabled", "false"), "true")
+            self.assertEqual(db.get_setting("audio_enhance_enabled", "false"), "true")
             # Disabling never probes
-            resp = client.put("/api/system/settings/audio-enhance",
-                              json={"enabled": False})
+            resp = client.put("/api/system/settings/audio-enhance", json={"enabled": False})
             self.assertIsNone(resp.json()["installed"])
 
 

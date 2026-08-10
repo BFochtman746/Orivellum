@@ -5,6 +5,7 @@ registry.  No external YAML file required; the registry is inlined so the
 module works out-of-the-box on Orivellum without the media_studio install.
 (Ported from media_studio; model registry inlined.)
 """
+
 from __future__ import annotations
 
 # ------------------------------------------------------------------
@@ -12,37 +13,85 @@ from __future__ import annotations
 # ------------------------------------------------------------------
 _DEFAULT_REGISTRY = {
     "image": [
-        {"id": "dreamshaper-sdxl", "role": "daily_driver", "license_class": "open_restricted",
-         "hardware_cost": "fast", "service": "comfyui"},
-        {"id": "flux.2-dev", "role": "quality_ceiling", "license_class": "noncommercial",
-         "hardware_cost": "slow", "service": "comfyui"},
-        {"id": "qwen-image-2.0", "role": "typography", "license_class": "apache",
-         "hardware_cost": "slow", "service": "comfyui"},
+        {
+            "id": "dreamshaper-sdxl",
+            "role": "daily_driver",
+            "license_class": "open_restricted",
+            "hardware_cost": "fast",
+            "service": "comfyui",
+        },
+        {
+            "id": "flux.2-dev",
+            "role": "quality_ceiling",
+            "license_class": "noncommercial",
+            "hardware_cost": "slow",
+            "service": "comfyui",
+        },
+        {
+            "id": "qwen-image-2.0",
+            "role": "typography",
+            "license_class": "apache",
+            "hardware_cost": "slow",
+            "service": "comfyui",
+        },
     ],
     "video": [
-        {"id": "wan-2.2", "role": "workhorse", "license_class": "apache",
-         "hardware_cost": "slow", "service": "comfyui"},
-        {"id": "ltx-2", "role": "talking_and_audio", "license_class": "apache",
-         "hardware_cost": "slow", "service": "comfyui"},
-        {"id": "mochi-2", "role": "cloning", "license_class": "apache",
-         "hardware_cost": "slow", "service": "comfyui"},
+        {
+            "id": "wan-2.2",
+            "role": "workhorse",
+            "license_class": "apache",
+            "hardware_cost": "slow",
+            "service": "comfyui",
+        },
+        {
+            "id": "ltx-2",
+            "role": "talking_and_audio",
+            "license_class": "apache",
+            "hardware_cost": "slow",
+            "service": "comfyui",
+        },
+        {
+            "id": "mochi-2",
+            "role": "cloning",
+            "license_class": "apache",
+            "hardware_cost": "slow",
+            "service": "comfyui",
+        },
     ],
     "voice": [
-        {"id": "kokoro-82m", "role": "hero_quality", "license_class": "apache",
-         "hardware_cost": "fast", "service": "tts_openai"},
+        {
+            "id": "kokoro-82m",
+            "role": "hero_quality",
+            "license_class": "apache",
+            "hardware_cost": "fast",
+            "service": "tts_openai",
+        },
     ],
     "music": [
-        {"id": "musicgen-medium", "role": "score_commercial_safe", "license_class": "mit",
-         "hardware_cost": "fast", "service": "music_openai"},
-        {"id": "stable-audio-open-1.0", "role": "ambient_texture", "license_class": "open_restricted",
-         "hardware_cost": "slow", "service": "music_openai"},
+        {
+            "id": "musicgen-medium",
+            "role": "score_commercial_safe",
+            "license_class": "mit",
+            "hardware_cost": "fast",
+            "service": "music_openai",
+        },
+        {
+            "id": "stable-audio-open-1.0",
+            "role": "ambient_texture",
+            "license_class": "open_restricted",
+            "hardware_cost": "slow",
+            "service": "music_openai",
+        },
     ],
 }
 
 
-def select(registry: dict, role: str, modality: str, commercial_intent: str) -> tuple[dict | None, list]:
+def select(
+    registry: dict, role: str, modality: str, commercial_intent: str
+) -> tuple[dict | None, list]:
     candidates = [
-        c for c in registry.get(modality, [])
+        c
+        for c in registry.get(modality, [])
         if c.get("role") == role
         and (commercial_intent != "commercial" or c.get("license_class") not in ("noncommercial",))
     ]
@@ -50,34 +99,53 @@ def select(registry: dict, role: str, modality: str, commercial_intent: str) -> 
         # Widen search: any license when noncommercial
         candidates = registry.get(modality, [])
 
-    w = {"fidelity": 0.25, "quality": 0.25, "feasibility": 0.25,
-         "license_fit": 0.15, "distinctiveness": 0.10}
+    w = {
+        "fidelity": 0.25,
+        "quality": 0.25,
+        "feasibility": 0.25,
+        "license_fit": 0.15,
+        "distinctiveness": 0.10,
+    }
 
     ranked = []
     for c in candidates:
         fidelity = 0.8 if c.get("role") == role else 0.5
         quality = {
-            "quality_ceiling": 0.95, "hero_quality": 0.9, "typography": 0.85,
-            "workhorse": 0.75, "daily_driver": 0.7, "cloning": 0.8,
-            "score_commercial_safe": 0.9, "ambient_texture": 0.7,
+            "quality_ceiling": 0.95,
+            "hero_quality": 0.9,
+            "typography": 0.85,
+            "workhorse": 0.75,
+            "daily_driver": 0.7,
+            "cloning": 0.8,
+            "score_commercial_safe": 0.9,
+            "ambient_texture": 0.7,
         }.get(c.get("role", ""), 0.7)
         feasibility = {"fast": 0.9, "slow": 0.5}.get(c.get("hardware_cost", "slow"), 0.6)
         license_fit = {
-            "apache": 1.0, "mit": 1.0, "open_restricted": 0.7, "noncommercial": 0.3,
+            "apache": 1.0,
+            "mit": 1.0,
+            "open_restricted": 0.7,
+            "noncommercial": 0.3,
         }.get(c.get("license_class", ""), 0.5)
         total = round(
-            w["fidelity"] * fidelity + w["quality"] * quality
-            + w["feasibility"] * feasibility + w["license_fit"] * license_fit
+            w["fidelity"] * fidelity
+            + w["quality"] * quality
+            + w["feasibility"] * feasibility
+            + w["license_fit"] * license_fit
             + w["distinctiveness"] * 0.6,
             3,
         )
-        ranked.append({
-            "id": c["id"], "role": c.get("role"), "service": c.get("service"),
-            "license_class": c.get("license_class"),
-            "hardware_cost": c.get("hardware_cost"),
-            "score": total,
-            "why": f"role={c.get('role')}, license={c.get('license_class')}, cost={c.get('hardware_cost')}",
-        })
+        ranked.append(
+            {
+                "id": c["id"],
+                "role": c.get("role"),
+                "service": c.get("service"),
+                "license_class": c.get("license_class"),
+                "hardware_cost": c.get("hardware_cost"),
+                "score": total,
+                "why": f"role={c.get('role')}, license={c.get('license_class')}, cost={c.get('hardware_cost')}",
+            }
+        )
 
     ranked.sort(key=lambda x: x["score"], reverse=True)
     return (ranked[0] if ranked else None), ranked

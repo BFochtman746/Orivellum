@@ -11,48 +11,58 @@ Tests the full verification stack:
   - AdapterBase interface
   - Status names in db.upsert_claim (USER_ASSERTED for A7)
 """
+
 from __future__ import annotations
 
-import pytest
-import sqlite3
-import tempfile
 import os
 import sys
+import tempfile
+
+import pytest
 
 # Ensure src is on the path for direct imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from orivellum.capabilities.pklos.adapters.base import (
+    AdapterBase,
+    AdapterRegistry,
+    Evidence,
+    Recipe,
+)
 from orivellum.capabilities.pklos.authority import (
-    AuthorityTier, ClaimStatus, ConflictType, TTLClass,
-    ALLOWED_TRANSITIONS, is_allowed_transition,
-    SUBJECT_DEVICE_A01,
+    AuthorityTier,
+    ClaimStatus,
+    is_allowed_transition,
 )
 from orivellum.capabilities.pklos.authority_resolver import (
-    AuthorityResolver, AuthorityPolicy, resolve as resolve_authority,
+    AuthorityResolver,
 )
 from orivellum.capabilities.pklos.claim_verifier import (
-    ClaimVerifier, VerificationResult, normalize_value, verify, verify_assertion,
+    ClaimVerifier,
+    normalize_value,
 )
 from orivellum.capabilities.pklos.fact_router import (
-    FactRouter, RequestClass, classify, is_checkable_fact, should_capture_as_a7,
-)
-from orivellum.capabilities.pklos.policy_enforcer import (
-    PolicyEnforcer, EnforcementDecision, PolicyFailure,
+    FactRouter,
+    RequestClass,
+    is_checkable_fact,
+    should_capture_as_a7,
 )
 from orivellum.capabilities.pklos.output_validator import (
-    OutputValidator, ValidationResult,
+    OutputValidator,
+    ValidationResult,
 )
-from orivellum.capabilities.pklos.adapters.base import (
-    AdapterBase, Evidence, Recipe, AdapterRegistry,
+from orivellum.capabilities.pklos.policy_enforcer import (
+    PolicyEnforcer,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def temp_db():
     """In-memory SQLite db with the full schema applied."""
     from orivellum.database.db import OrivellumDB
+
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name
     try:
@@ -71,6 +81,7 @@ def temp_db():
 
 # ── AuthorityTier (spec §3.1) ───────────────────────────────────────────────────
 
+
 class TestAuthorityTier:
     def test_nine_tiers(self):
         # A0 through A8 inclusive = 9 tiers (spec §3.1)
@@ -82,10 +93,16 @@ class TestAuthorityTier:
         assert "configuration" in AuthorityTier.A1.label
         assert "vendor" in AuthorityTier.A2.label.lower()
         assert "artifact" in AuthorityTier.A3.label.lower()
-        assert "vault" in AuthorityTier.A4.label.lower() or "knowledge" in AuthorityTier.A4.label.lower()
+        assert (
+            "vault" in AuthorityTier.A4.label.lower()
+            or "knowledge" in AuthorityTier.A4.label.lower()
+        )
         assert "corroborated" in AuthorityTier.A5.label.lower()
         assert "unverified" in AuthorityTier.A6.label.lower()
-        assert "recollection" in AuthorityTier.A7.label.lower() or "assertion" in AuthorityTier.A7.label.lower()
+        assert (
+            "recollection" in AuthorityTier.A7.label.lower()
+            or "assertion" in AuthorityTier.A7.label.lower()
+        )
         assert "inference" in AuthorityTier.A8.label.lower()
 
     def test_a8_cannot_surface_as_fact(self):
@@ -108,14 +125,21 @@ class TestAuthorityTier:
 
 # ── ClaimStatus state machine (spec §3.3) ──────────────────────────────────────
 
+
 class TestClaimStatus:
     def test_correct_statuses_exist(self):
         """Spec §3.3 states must all exist."""
         statuses = {s.value for s in ClaimStatus}
         for expected in (
-            "UNOBSERVED", "USER_ASSERTED", "RETRIEVED",
-            "PARTIALLY_VERIFIED", "VERIFIED", "CONFLICTED",
-            "STALE", "INVALIDATED", "UNAVAILABLE",
+            "UNOBSERVED",
+            "USER_ASSERTED",
+            "RETRIEVED",
+            "PARTIALLY_VERIFIED",
+            "VERIFIED",
+            "CONFLICTED",
+            "STALE",
+            "INVALIDATED",
+            "UNAVAILABLE",
         ):
             assert expected in statuses, f"{expected} missing from ClaimStatus"
 
@@ -134,8 +158,10 @@ class TestClaimStatus:
     def test_claim_req_002_requires_qualifier(self):
         """CLAIM-REQ-002: these statuses must not be presented without qualifier."""
         must_qualify = {
-            ClaimStatus.USER_ASSERTED, ClaimStatus.CONFLICTED,
-            ClaimStatus.STALE, ClaimStatus.PARTIALLY_VERIFIED,
+            ClaimStatus.USER_ASSERTED,
+            ClaimStatus.CONFLICTED,
+            ClaimStatus.STALE,
+            ClaimStatus.PARTIALLY_VERIFIED,
         }
         for s in must_qualify:
             assert s.requires_qualifier, f"{s} should require qualifier"
@@ -161,6 +187,7 @@ class TestClaimStatus:
 
 # ── AuthorityResolver (spec §5.2) ───────────────────────────────────────────────
 
+
 class TestAuthorityResolver:
     def setup_method(self):
         self.resolver = AuthorityResolver()
@@ -180,7 +207,9 @@ class TestAuthorityResolver:
         name alone must be detected as prohibited.
         """
         # Full CIM locator
-        assert self.resolver.is_prohibited_source("vram_usable_bytes", "Win32_VideoController.AdapterRAM")
+        assert self.resolver.is_prohibited_source(
+            "vram_usable_bytes", "Win32_VideoController.AdapterRAM"
+        )
         # Short property name (correct spelling: double-r)
         assert self.resolver.is_prohibited_source("vram_gb", "adapterram")
         # Not prohibited for non-VRAM predicates
@@ -198,10 +227,13 @@ class TestAuthorityResolver:
     def test_meets_minimum_authority(self):
         assert self.resolver.meets_minimum_authority("ram_gb", AuthorityTier.A0)
         assert self.resolver.meets_minimum_authority("ram_gb", AuthorityTier.A7)  # default is A7
-        assert not self.resolver.meets_minimum_authority("installed_physical_memory_bytes", AuthorityTier.A7)
+        assert not self.resolver.meets_minimum_authority(
+            "installed_physical_memory_bytes", AuthorityTier.A7
+        )
 
 
 # ── ClaimVerifier (spec §5.5) ───────────────────────────────────────────────────
+
 
 class TestClaimVerifier:
     def setup_method(self):
@@ -218,10 +250,18 @@ class TestClaimVerifier:
     def test_verify_two_sources_agree(self):
         """Spec test A: two A0 sources agree → VERIFIED with high confidence."""
         evidence = [
-            {"source_type": "windows_cim", "source_locator": "Win32_ComputerSystem.TotalPhysicalMemory",
-             "authority": "A0", "raw_value": "137438953472"},
-            {"source_type": "windows_cim", "source_locator": "Win32_PhysicalMemory.Capacity:sum",
-             "authority": "A0", "raw_value": "137438953472"},
+            {
+                "source_type": "windows_cim",
+                "source_locator": "Win32_ComputerSystem.TotalPhysicalMemory",
+                "authority": "A0",
+                "raw_value": "137438953472",
+            },
+            {
+                "source_type": "windows_cim",
+                "source_locator": "Win32_PhysicalMemory.Capacity:sum",
+                "authority": "A0",
+                "raw_value": "137438953472",
+            },
         ]
         result = self.verifier.verify("installed_physical_memory_bytes", evidence)
         assert result.status == ClaimStatus.VERIFIED
@@ -237,7 +277,12 @@ class TestClaimVerifier:
     def test_verify_material_contradiction(self):
         """Spec test C: conflicting values → CONFLICTED, never auto-reconciled (CONF-REQ-001)."""
         evidence = [
-            {"source_type": "cim", "source_locator": "A", "authority": "A0", "raw_value": "137438953472"},
+            {
+                "source_type": "cim",
+                "source_locator": "A",
+                "authority": "A0",
+                "raw_value": "137438953472",
+            },
             {"source_type": "user", "source_locator": "B", "authority": "A7", "raw_value": "64 GB"},
         ]
         result = self.verifier.verify("installed_physical_memory_bytes", evidence)
@@ -247,9 +292,12 @@ class TestClaimVerifier:
     def test_inv_req_001_adapteram_filtered(self):
         """INV-REQ-001: evidence from AdapterRAM must be rejected for VRAM predicates."""
         evidence = [
-            {"source_type": "windows_cim",
-             "source_locator": "Win32_VideoController.AdapterRAM",
-             "authority": "A0", "raw_value": "4294967295"},  # classic 4GB cap bug
+            {
+                "source_type": "windows_cim",
+                "source_locator": "Win32_VideoController.AdapterRAM",
+                "authority": "A0",
+                "raw_value": "4294967295",
+            },  # classic 4GB cap bug
         ]
         result = self.verifier.verify("vram_usable_bytes", evidence)
         assert result.status == ClaimStatus.UNAVAILABLE  # prohibited source filtered
@@ -264,8 +312,18 @@ class TestClaimVerifier:
     def test_normalized_agreement(self):
         """Spec §3.5: '128 GB' and 137438953472 bytes → normalized_agreement (not contradiction)."""
         evidence = [
-            {"source_type": "user", "source_locator": "assertion", "authority": "A7", "raw_value": "128 GB"},
-            {"source_type": "cim",  "source_locator": "TotalPhysicalMemory", "authority": "A0", "raw_value": "137438953472"},
+            {
+                "source_type": "user",
+                "source_locator": "assertion",
+                "authority": "A7",
+                "raw_value": "128 GB",
+            },
+            {
+                "source_type": "cim",
+                "source_locator": "TotalPhysicalMemory",
+                "authority": "A0",
+                "raw_value": "137438953472",
+            },
         ]
         result = self.verifier.verify("installed_physical_memory_bytes", evidence)
         # Should not be CONFLICTED (normalized agreement within tolerance)
@@ -273,6 +331,7 @@ class TestClaimVerifier:
 
 
 # ── FactRouter (spec §5.1 — all 7 classes) ────────────────────────────────────
+
 
 class TestFactRouter:
     def setup_method(self):
@@ -313,7 +372,11 @@ class TestFactRouter:
             assert self.router.classify(q) == RequestClass.CREATIVE, q
 
     def test_interpretive(self):
-        for q in ["explain transformer attention", "compare PyTorch and JAX", "what are the pros and cons of RAG"]:
+        for q in [
+            "explain transformer attention",
+            "compare PyTorch and JAX",
+            "what are the pros and cons of RAG",
+        ]:
             result = self.router.classify(q)
             assert result in (RequestClass.INTERPRETIVE_JUDGMENT, RequestClass.CREATIVE), q
 
@@ -328,6 +391,7 @@ class TestFactRouter:
 
 
 # ── OutputValidator (spec §5.6, OUT-REQ-001) ───────────────────────────────────
+
 
 class TestOutputValidator:
     def setup_method(self):
@@ -359,7 +423,9 @@ class TestOutputValidator:
 
     def test_pass_with_verified_claim(self):
         """Answer matching a verified claim → passes."""
-        claims = [{"predicate": "ram_gb", "value": "128", "status": "VERIFIED", "authority_tier": "A0"}]
+        claims = [
+            {"predicate": "ram_gb", "value": "128", "status": "VERIFIED", "authority_tier": "A0"}
+        ]
         result = self.validator.validate(
             "how much RAM do I have",
             "You have 128 GB of RAM installed.",
@@ -388,8 +454,20 @@ class TestOutputValidator:
     def test_build_fallback_answer_with_claims(self):
         """Fallback answer with claims → summarizes them."""
         claims = [
-            {"predicate": "gpu_model", "value": "RTX 4090", "unit": None, "status": "VERIFIED", "authority_tier": "A0"},
-            {"predicate": "ram_gb", "value": "128", "unit": "GB", "status": "USER_ASSERTED", "authority_tier": "A7"},
+            {
+                "predicate": "gpu_model",
+                "value": "RTX 4090",
+                "unit": None,
+                "status": "VERIFIED",
+                "authority_tier": "A0",
+            },
+            {
+                "predicate": "ram_gb",
+                "value": "128",
+                "unit": "GB",
+                "status": "USER_ASSERTED",
+                "authority_tier": "A7",
+            },
         ]
         answer = self.validator.build_fallback_answer("what GPU do I have", claims)
         assert "gpu_model" in answer or "RTX" in answer
@@ -397,14 +475,22 @@ class TestOutputValidator:
 
 # ── AdapterBase interface (spec §5.4) ───────────────────────────────────────────
 
+
 class TestAdapterBase:
     def test_adapter_interface(self):
         """A concrete adapter must implement all abstract methods."""
+
         class ConcreteAdapter(AdapterBase):
             @property
-            def adapter_id(self): return "test@0.1.0"
-            def capabilities(self): return ["test_predicate"]
-            def evidence_recipe(self, predicate): return Recipe(predicate=predicate, sources=["test"])
+            def adapter_id(self):
+                return "test@0.1.0"
+
+            def capabilities(self):
+                return ["test_predicate"]
+
+            def evidence_recipe(self, predicate):
+                return Recipe(predicate=predicate, sources=["test"])
+
             def fetch(self, predicate, *, freshness="DURABLE"):
                 return [Evidence("test", "test:locator", "A7", "test_value", predicate)]
 
@@ -418,17 +504,31 @@ class TestAdapterBase:
     def test_registry(self):
         class Adapter1(AdapterBase):
             @property
-            def adapter_id(self): return "a1@0.1.0"
-            def capabilities(self): return ["pred1", "pred2"]
-            def evidence_recipe(self, p): return Recipe(predicate=p, sources=[])
-            def fetch(self, p, *, freshness="DURABLE"): return []
+            def adapter_id(self):
+                return "a1@0.1.0"
+
+            def capabilities(self):
+                return ["pred1", "pred2"]
+
+            def evidence_recipe(self, p):
+                return Recipe(predicate=p, sources=[])
+
+            def fetch(self, p, *, freshness="DURABLE"):
+                return []
 
         class Adapter2(AdapterBase):
             @property
-            def adapter_id(self): return "a2@0.1.0"
-            def capabilities(self): return ["pred2", "pred3"]
-            def evidence_recipe(self, p): return Recipe(predicate=p, sources=[])
-            def fetch(self, p, *, freshness="DURABLE"): return []
+            def adapter_id(self):
+                return "a2@0.1.0"
+
+            def capabilities(self):
+                return ["pred2", "pred3"]
+
+            def evidence_recipe(self, p):
+                return Recipe(predicate=p, sources=[])
+
+            def fetch(self, p, *, freshness="DURABLE"):
+                return []
 
         reg = AdapterRegistry()
         reg.register(Adapter1())
@@ -442,21 +542,28 @@ class TestAdapterBase:
 
 # ── DB status names (spec §3.3 — USER_ASSERTED for A7) ─────────────────────────
 
+
 class TestDBStatusNames:
     def test_a7_upsert_creates_user_asserted(self, temp_db):
         """A7 claims must be stored as USER_ASSERTED, not CURRENT."""
         cid = temp_db.upsert_claim(
-            "device:a01", "ram_gb", "128",
+            "device:a01",
+            "ram_gb",
+            "128",
             authority_tier="A7",
         )
         claim = temp_db.get_claim(cid)
         assert claim is not None
-        assert claim["status"] == "USER_ASSERTED", f"Got {claim['status']!r}, expected USER_ASSERTED"
+        assert claim["status"] == "USER_ASSERTED", (
+            f"Got {claim['status']!r}, expected USER_ASSERTED"
+        )
 
     def test_a0_upsert_creates_retrieved(self, temp_db):
         """A0 claims are initially RETRIEVED (verifier must run to reach VERIFIED)."""
         cid = temp_db.upsert_claim(
-            "device:a01", "cpu_cores", "12",
+            "device:a01",
+            "cpu_cores",
+            "12",
             authority_tier="A0",
         )
         claim = temp_db.get_claim(cid)
@@ -472,8 +579,12 @@ class TestDBStatusNames:
 
     def test_lower_authority_does_not_downgrade(self, temp_db):
         """A lower-authority upsert must NOT overwrite a higher-authority claim."""
-        cid1 = temp_db.upsert_claim("device:a01", "cpu_model", "correct_from_cim", authority_tier="A0")
-        cid2 = temp_db.upsert_claim("device:a01", "cpu_model", "wrong_from_user", authority_tier="A7")
+        cid1 = temp_db.upsert_claim(
+            "device:a01", "cpu_model", "correct_from_cim", authority_tier="A0"
+        )
+        cid2 = temp_db.upsert_claim(
+            "device:a01", "cpu_model", "wrong_from_user", authority_tier="A7"
+        )
         # Should return same claim id and not change value
         claim = temp_db.get_claim(cid1)
         assert claim["value"] == "correct_from_cim"
@@ -496,6 +607,7 @@ class TestDBStatusNames:
 
 # ── PolicyEnforcer (spec §5.3) — integration test ─────────────────────────────
 
+
 class TestPolicyEnforcer:
     def test_non_checkable_passes_through(self, temp_db):
         """Non-checkable queries are not enforced."""
@@ -510,7 +622,10 @@ class TestPolicyEnforcer:
         decision = enforcer.enforce("how much RAM does my system have")
         assert decision.must_abstain
         assert "MANDATORY" in decision.policy_instruction
-        assert "abstain" in decision.policy_instruction.lower() or "verified" in decision.policy_instruction.lower()
+        assert (
+            "abstain" in decision.policy_instruction.lower()
+            or "verified" in decision.policy_instruction.lower()
+        )
 
     def test_checkable_with_claim_gives_context(self, temp_db):
         """Spec test A: has claim → inject verified context, not abstention."""
@@ -532,4 +647,6 @@ class TestPolicyEnforcer:
         temp_db.upsert_claim("device:a01", "gpu_model", "RTX 4090", authority_tier="A7")
         enforcer = PolicyEnforcer(temp_db)
         ctx, instr = enforcer.build_system_prompt_additions("what GPU do I have")
-        assert not (ctx == "" and "MANDATORY" in instr)  # at least one should differ from no-claims case
+        assert not (
+            ctx == "" and "MANDATORY" in instr
+        )  # at least one should differ from no-claims case

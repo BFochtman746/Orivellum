@@ -4,6 +4,7 @@ Gathers all documents for a given year (optionally filtered by Work),
 generates an Excel summary sheet with metadata, and bundles everything
 into a downloadable zip.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,9 +22,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger("orivellum.actions.tax_package")
 
 _EXPENSE_KEYWORDS = {
-    "receipt", "invoice", "expense", "payment", "bill", "purchase",
-    "refund", "transaction", "charge", "fee", "cost", "price", "amount",
-    "tax", "vat", "gst", "statement", "reimbursement",
+    "receipt",
+    "invoice",
+    "expense",
+    "payment",
+    "bill",
+    "purchase",
+    "refund",
+    "transaction",
+    "charge",
+    "fee",
+    "cost",
+    "price",
+    "amount",
+    "tax",
+    "vat",
+    "gst",
+    "statement",
+    "reimbursement",
 }
 
 
@@ -125,15 +141,17 @@ class TaxPackageAction(ActionBase):
         for row_idx, doc in enumerate(all_docs, 1):
             date_str = (doc.get("created_at") or "")[:10]
             src = (doc.get("source") or "").split("/")[-1]
-            ws.append([
-                row_idx,
-                (doc.get("title") or "")[:80],
-                doc.get("kind", ""),
-                date_str,
-                src[:60],
-                doc.get("readiness", ""),
-                doc.get("id", ""),
-            ])
+            ws.append(
+                [
+                    row_idx,
+                    (doc.get("title") or "")[:80],
+                    doc.get("kind", ""),
+                    date_str,
+                    src[:60],
+                    doc.get("readiness", ""),
+                    doc.get("id", ""),
+                ]
+            )
 
         # Stats row
         ws.append([])
@@ -144,6 +162,7 @@ class TaxPackageAction(ActionBase):
         # Column widths
         for col, width in enumerate([5, 50, 10, 14, 40, 12, 38], 1):
             from openpyxl.utils import get_column_letter
+
             ws.column_dimensions[get_column_letter(col)].width = width
 
         # ── Write files to zip ──
@@ -173,13 +192,18 @@ class TaxPackageAction(ActionBase):
 
         # ── Register output ──
         from orivellum.capabilities.generate import _register_output
+
         summary_text = "\n".join(
-            f"{d.get('title','')}: {(d.get('extracted_text') or '')[:200]}"
-            for d in all_docs[:50]
+            f"{d.get('title', '')}: {(d.get('extracted_text') or '')[:200]}" for d in all_docs[:50]
         )
         doc_id = _register_output(
-            zip_path, work_id or None, db, cfg,
-            "zip", f"Tax Package {year}", summary_text,
+            zip_path,
+            work_id or None,
+            db,
+            cfg,
+            "zip",
+            f"Tax Package {year}",
+            summary_text,
         )
 
         rel_path = str(zip_path.relative_to(data_dir))

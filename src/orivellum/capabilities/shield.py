@@ -23,6 +23,7 @@ BLAST RADIUS.  This module implements the CaMeL pattern, adapted:
 Treat screen() as a tripwire (novel attacks WILL get past it) and the gates
 plus quarantine isolation as the real defence.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,14 +38,20 @@ ENDFENCE = "<<<END_UNTRUSTED_CONTENT>>>"
 # Known injection shapes.  Findings are logged and quarantine the document —
 # they are never silently stripped (a stripped attack is an undetected one).
 PATTERNS: list[tuple[str, str]] = [
-    (r"ignore (all |any |the )?(previous|prior|above) (instructions?|prompts?)",
-     "override attempt"),
+    (
+        r"ignore (all |any |the )?(previous|prior|above) (instructions?|prompts?)",
+        "override attempt",
+    ),
     (r"disregard (your|the) (system|previous|prior)", "override attempt"),
     (r"you are now an?|new instructions?:|system prompt:", "role reassignment"),
-    (r"(send|forward|email|exfiltrate)\s+(this|the|all)\s+\S{0,40}\s?(to|at)\s+\S+@",
-     "exfiltration instruction"),
-    (r"(api[_ ]?key|password|secret|token|credential)s?\b.{0,40}(send|reveal|print|show)",
-     "credential request"),
+    (
+        r"(send|forward|email|exfiltrate)\s+(this|the|all)\s+\S{0,40}\s?(to|at)\s+\S+@",
+        "exfiltration instruction",
+    ),
+    (
+        r"(api[_ ]?key|password|secret|token|credential)s?\b.{0,40}(send|reveal|print|show)",
+        "credential request",
+    ),
     (r"</?(script|iframe|img[^>]+onerror)", "markup injection"),
     (r"do not (tell|inform|mention (this )?to) the user", "concealment instruction"),
 ]
@@ -70,21 +77,22 @@ def screen(text: str | None, source: str = "unknown") -> Screening:
     hits: list[dict] = []
     for pat, kind in PATTERNS:
         for m in re.finditer(pat, t, re.I):
-            hits.append({"kind": kind, "match": m.group(0)[:120],
-                         "at": m.start(), "source": source})
+            hits.append(
+                {"kind": kind, "match": m.group(0)[:120], "at": m.start(), "source": source}
+            )
             if len(hits) >= 50:  # enough evidence; don't build a huge list
                 break
         if len(hits) >= 50:
             break
     inv = len(INVISIBLE.findall(t))
     if inv >= _INVISIBLE_THRESHOLD:
-        hits.append({"kind": "invisible characters", "match": f"{inv} chars",
-                     "at": -1, "source": source})
+        hits.append(
+            {"kind": "invisible characters", "match": f"{inv} chars", "at": -1, "source": source}
+        )
     return Screening(clean=not hits, findings=hits, invisible_chars=inv)
 
 
-def wrap(text: str | None, source: str = "untrusted",
-         strip_invisible: bool = True) -> str:
+def wrap(text: str | None, source: str = "untrusted", strip_invisible: bool = True) -> str:
     """Spotlighting.  The fence tells the model where data begins and ends;
     the preamble states plainly that instructions inside it are content."""
     t = INVISIBLE.sub("", text or "") if strip_invisible else (text or "")
@@ -122,6 +130,7 @@ ABSTENTION_DIRECTIVE = (
 
 # ── Capability gates ─────────────────────────────────────────────────────────
 
+
 class GateDenied(Exception):
     """An action was refused by a capability gate.  Message is user-facing."""
 
@@ -129,8 +138,7 @@ class GateDenied(Exception):
 def trusted_mail_domains(db) -> list[str]:
     """Parse the ``mail_trusted_domains`` setting (comma/space separated)."""
     raw = db.get_setting("mail_trusted_domains", "") or ""
-    return [d.strip().lower().lstrip("@")
-            for d in re.split(r"[,\s]+", raw) if d.strip()]
+    return [d.strip().lower().lstrip("@") for d in re.split(r"[,\s]+", raw) if d.strip()]
 
 
 def is_trusted_recipient(addr: str | None, domains: list[str]) -> bool:
@@ -157,19 +165,15 @@ def gate_send_mail(db, recipients: list[str], body_text: str | None) -> None:
     for r in recipients:
         if not is_trusted_recipient(r, domains):
             reasons.append(
-                f"recipient {r!r} is not on the trusted domain list "
-                f"({', '.join(domains)})"
+                f"recipient {r!r} is not on the trusted domain list ({', '.join(domains)})"
             )
     s = screen(body_text or "", source="outbound-mail-body")
     if s.findings:
         kinds = sorted({f["kind"] for f in s.findings})
-        reasons.append(
-            f"outbound body contains suspicious content ({', '.join(kinds)})"
-        )
+        reasons.append(f"outbound body contains suspicious content ({', '.join(kinds)})")
     if reasons:
         logger.warning("send_mail gate DENIED: %s", "; ".join(reasons))
-        raise GateDenied("Send blocked by mail safety gate: "
-                         + "; ".join(reasons))
+        raise GateDenied("Send blocked by mail safety gate: " + "; ".join(reasons))
 
 
 def gate_send_reply(db, sender_domain: str | None, body_text: str | None) -> None:
@@ -193,10 +197,7 @@ def gate_send_reply(db, sender_domain: str | None, body_text: str | None) -> Non
     s = screen(body_text or "", source="outbound-reply-body")
     if s.findings:
         kinds = sorted({f["kind"] for f in s.findings})
-        reasons.append(
-            f"drafted reply contains suspicious content ({', '.join(kinds)})"
-        )
+        reasons.append(f"drafted reply contains suspicious content ({', '.join(kinds)})")
     if reasons:
         logger.warning("send_reply gate DENIED: %s", "; ".join(reasons))
-        raise GateDenied("Send blocked by mail safety gate: "
-                         + "; ".join(reasons))
+        raise GateDenied("Send blocked by mail safety gate: " + "; ".join(reasons))

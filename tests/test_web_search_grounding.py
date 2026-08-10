@@ -10,23 +10,21 @@ Covers:
   - Tavily helper: fetch_web_context() returns [] gracefully on any network error
   - fetch_web_context() returns [] when TAVILY_API_KEY is absent
 """
+
 from __future__ import annotations
 
 import json
 import os
-import unittest.mock as mock
-from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
-
+from unittest.mock import patch
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db():
     from orivellum.database.db import OrivellumDB
+
     return OrivellumDB(":memory:")
 
 
@@ -40,6 +38,7 @@ def _make_conv(db, web_search_enabled: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 # 1 — Schema: web_search_enabled column
 # ---------------------------------------------------------------------------
+
 
 class TestSchemaWebSearchEnabled:
     def test_column_exists_and_defaults_false(self):
@@ -60,6 +59,7 @@ class TestSchemaWebSearchEnabled:
 # ---------------------------------------------------------------------------
 # 2 — DB: set_conversation_web_search
 # ---------------------------------------------------------------------------
+
 
 class TestSetConversationWebSearch:
     def test_enable_sets_flag_true(self):
@@ -101,16 +101,19 @@ class TestSetConversationWebSearch:
 # 3 — Tavily helper: fetch_web_context
 # ---------------------------------------------------------------------------
 
+
 class TestFetchWebContext:
     def test_returns_empty_when_no_api_key(self, monkeypatch):
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         from orivellum.capabilities.websearch import fetch_web_context
+
         result = fetch_web_context("test query")
         assert result == []
 
     def test_returns_empty_on_network_error(self, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
         from orivellum.capabilities.websearch import fetch_web_context
+
         with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
             result = fetch_web_context("test query")
         assert result == []
@@ -122,13 +125,13 @@ class TestFetchWebContext:
             "results": [
                 {
                     "title": "Python 3.13 Release Notes",
-                    "url":   "https://docs.python.org/3.13/",
+                    "url": "https://docs.python.org/3.13/",
                     "content": "Python 3.13 includes many improvements.",
                     "score": 0.95,
                 },
                 {
                     "title": "Python Official Site",
-                    "url":   "https://www.python.org/",
+                    "url": "https://www.python.org/",
                     "content": "The official home of Python.",
                     "score": 0.88,
                 },
@@ -138,10 +141,15 @@ class TestFetchWebContext:
         class _FakeResp:
             def read(self):
                 return json.dumps(fake_response_data).encode()
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         from orivellum.capabilities.websearch import fetch_web_context
+
         with patch("urllib.request.urlopen", return_value=_FakeResp()):
             results = fetch_web_context("Python 3.13", max_results=2)
 
@@ -155,18 +163,28 @@ class TestFetchWebContext:
 
         fake_data = {
             "results": [
-                {"title": f"Result {i}", "url": f"https://example.com/{i}",
-                 "content": f"Content {i}", "score": 0.9 - i * 0.05}
+                {
+                    "title": f"Result {i}",
+                    "url": f"https://example.com/{i}",
+                    "content": f"Content {i}",
+                    "score": 0.9 - i * 0.05,
+                }
                 for i in range(8)
             ]
         }
 
         class _FakeResp:
-            def read(self): return json.dumps(fake_data).encode()
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+            def read(self):
+                return json.dumps(fake_data).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         from orivellum.capabilities.websearch import fetch_web_context
+
         with patch("urllib.request.urlopen", return_value=_FakeResp()):
             results = fetch_web_context("anything", max_results=3)
 
@@ -183,11 +201,17 @@ class TestFetchWebContext:
         }
 
         class _FakeResp:
-            def read(self): return json.dumps(fake_data).encode()
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+            def read(self):
+                return json.dumps(fake_data).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         from orivellum.capabilities.websearch import fetch_web_context
+
         with patch("urllib.request.urlopen", return_value=_FakeResp()):
             results = fetch_web_context("anything", max_results=5)
 
@@ -200,6 +224,7 @@ class TestFetchWebContext:
 # 4 — Context injection via _build_messages
 # ---------------------------------------------------------------------------
 
+
 def _build_messages_with_web(web_results: list[dict], web_search_enabled: bool = True):
     """Call _build_messages with mocked websearch and return (messages, sources)."""
     from orivellum.api.routes.conversations import _build_messages
@@ -208,10 +233,13 @@ def _build_messages_with_web(web_results: list[dict], web_search_enabled: bool =
     conv = _make_conv(db, web_search_enabled=web_search_enabled)
 
     out_sources: list[dict] = []
-    with patch("orivellum.capabilities.websearch.fetch_web_context",
-               return_value=web_results) as mock_fetch:
+    with patch(
+        "orivellum.capabilities.websearch.fetch_web_context", return_value=web_results
+    ) as mock_fetch:
         msgs = _build_messages(
-            db, conv, "What is the latest Python version?",
+            db,
+            conv,
+            "What is the latest Python version?",
             out_sources=out_sources,
         )
     return msgs, out_sources, mock_fetch
@@ -221,8 +249,12 @@ class TestWebSearchContextInjection:
     def test_web_context_appended_to_system_prompt(self, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
         results = [
-            {"title": "Python 3.13 Notes", "url": "https://docs.python.org/3.13/",
-             "content": "Python 3.13 added many improvements to performance.", "score": 0.95},
+            {
+                "title": "Python 3.13 Notes",
+                "url": "https://docs.python.org/3.13/",
+                "content": "Python 3.13 added many improvements to performance.",
+                "score": 0.95,
+            },
         ]
         msgs, sources, mock_fetch = _build_messages_with_web(results, web_search_enabled=True)
 
@@ -234,8 +266,12 @@ class TestWebSearchContextInjection:
     def test_web_sources_appear_in_out_sources(self, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
         results = [
-            {"title": "PEP 703", "url": "https://peps.python.org/703/",
-             "content": "PEP 703 proposes removing the GIL.", "score": 0.90},
+            {
+                "title": "PEP 703",
+                "url": "https://peps.python.org/703/",
+                "content": "PEP 703 proposes removing the GIL.",
+                "score": 0.90,
+            },
         ]
         msgs, sources, _ = _build_messages_with_web(results, web_search_enabled=True)
 
@@ -280,6 +316,7 @@ class TestWebSearchContextInjection:
 # 5 — API toggle endpoint failure paths
 # ---------------------------------------------------------------------------
 
+
 class TestWebSearchToggleAPIFailures:
     """Verify the toggle endpoint returns useful errors on configuration problems.
 
@@ -290,8 +327,6 @@ class TestWebSearchToggleAPIFailures:
 
     def _call_toggle(self, conv_id: str, enabled: bool, db, env_key: str | None):
         """Call toggle_web_search() directly with a patched DB and env."""
-        import os
-        import importlib
         import orivellum.api._deps as _deps
 
         saved_db = _deps._DB
@@ -303,8 +338,10 @@ class TestWebSearchToggleAPIFailures:
             else:
                 os.environ["TAVILY_API_KEY"] = env_key
 
-            from orivellum.api.routes.conversations import toggle_web_search
             from fastapi import HTTPException
+
+            from orivellum.api.routes.conversations import toggle_web_search
+
             try:
                 result = toggle_web_search(conv_id, {"enabled": enabled})
                 return 200, result

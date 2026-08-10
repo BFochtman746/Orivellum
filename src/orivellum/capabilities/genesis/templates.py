@@ -4,8 +4,7 @@ Keys match STAGE_BY_CODE[code][2] (the template slug).
 """
 
 TEMPLATE_CONTENT: dict[str, str] = {
-
-"G0_spark_slate": """\
+    "G0_spark_slate": """\
 # G0 — Spark Slate
 Mode: <<FILL: COLD | LIBRARY>>
 
@@ -22,8 +21,7 @@ Mode: <<FILL: COLD | LIBRARY>>
 Exit gate: one spark chosen; every LIBRARY spark has a verifiable source_pointer
 or is relabelled IDEA-ONLY.
 """,
-
-"G1_premise": """\
+    "G1_premise": """\
 # G1 — Premise Forge
 
 ## What-if ladder (3 rungs)
@@ -52,8 +50,7 @@ or is relabelled IDEA-ONLY.
 - Antithesis: <<FILL>>
 - Suspected synthesis (theme): <<FILL>>
 """,
-
-"G2_viability": """\
+    "G2_viability": """\
 # G2 — Viability Gate
 
 ## Conflict engine (renewable source of conflict for the full length)
@@ -78,8 +75,7 @@ or is relabelled IDEA-ONLY.
 ## VERDICT
 <<FILL: GO | PARK | KILL>>
 """,
-
-"G3_canon_seed": """\
+    "G3_canon_seed": """\
 # G3 — Canon Seed (World, Pillar 1)
 
 ## Canon facts (tiered)
@@ -97,8 +93,7 @@ or is relabelled IDEA-ONLY.
 
 Exit gate: zero HISTORICAL/INFERRED facts without a source_pointer.
 """,
-
-"G4_character_web": """\
+    "G4_character_web": """\
 # G4 — Character Web (Character, Pillar 2)
 
 ## Principal dossiers
@@ -119,8 +114,7 @@ Exit gate: zero HISTORICAL/INFERRED facts without a source_pointer.
 ## Cast-economy pass
 <<FILL: any merges made or explicitly declined>>
 """,
-
-"G5_structure_beats": """\
+    "G5_structure_beats": """\
 # G5 — Structure & Beats (Structure, Pillar 3)
 
 ## Named spine
@@ -142,8 +136,7 @@ Exit gate: zero HISTORICAL/INFERRED facts without a source_pointer.
 - Act 3: <<FILL>>
 - Act 4: <<FILL>>
 """,
-
-"G6_voice_spec": """\
+    "G6_voice_spec": """\
 # G6 — Voice Specification (Voice, Pillar 4)
 
 ## Invariants (no TBD allowed at the gate)
@@ -164,8 +157,7 @@ Exit gate: zero HISTORICAL/INFERRED facts without a source_pointer.
 ### Lament
 <<FILL>>
 """,
-
-"G7_standard_binding": """\
+    "G7_standard_binding": """\
 # G7 — Standard Binding
 
 ## Governing standard
@@ -182,8 +174,7 @@ Exit gate: zero HISTORICAL/INFERRED facts without a source_pointer.
 ## Notes
 <<FILL: any dimension-specific notes or exceptions>>
 """,
-
-"G8_chapter_blueprint": """\
+    "G8_chapter_blueprint": """\
 # G8 — Chapter Blueprint (Advanced Prep)
 
 ## Chapter grid
@@ -199,8 +190,7 @@ Exit gate: zero HISTORICAL/INFERRED facts without a source_pointer.
 - Risk 2 -> defused at: <<FILL>>
 - Risk 3 -> defused at: <<FILL>>
 """,
-
-"G9_ready_to_write": """\
+    "G9_ready_to_write": """\
 # G9 — Ready-to-Write (Assembled Book Bible)
 
 This document assembles the sealed origination package handed to BPOS B0.
@@ -218,5 +208,4 @@ Fill the summary; the seal command computes the manifest + hashes.
 ## Author sign-off statement
 <<FILL: I, the author, affirm this origination is ready to write.>>
 """,
-
 }

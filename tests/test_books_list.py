@@ -6,6 +6,7 @@ an empty database.  These tests create a Work + book pipeline + real
 book_chapters rows and assert the counts, stage labels, and filtering that the
 Books page and the Writing hub stage tiles depend on.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -18,10 +19,10 @@ from tests.conftest import AUTH_HEADERS
 
 
 def _make_app(tmp: str):
-    from orivellum.configuration.config import OrivellumConfig
-    from orivellum.database.db import OrivellumDB
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=tmp)
     db = OrivellumDB(str(Path(tmp) / "test.db"))
@@ -35,8 +36,9 @@ def _make_chapters(db, work_id: str, count: int) -> str:
     Returns the doc id.  Chapters land with pipeline_id=NULL (the real
     extraction order) — create_book_pipeline() links them.
     """
-    doc = db.create_document(title="Manuscript.docx", source="/tmp/m.docx",
-                             kind="manuscript", work_id=work_id)
+    doc = db.create_document(
+        title="Manuscript.docx", source="/tmp/m.docx", kind="manuscript", work_id=work_id
+    )
     chapters = [
         {"seq": i, "level": 1, "title": f"Chapter {i}", "text": f"Body {i}"}
         for i in range(1, count + 1)
@@ -46,7 +48,6 @@ def _make_chapters(db, work_id: str, count: int) -> str:
 
 
 class TestBooksList(unittest.TestCase):
-
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.app, self.db, _cfg = _make_app(self._tmp.name)
@@ -140,10 +141,12 @@ class TestBooksList(unittest.TestCase):
             ids = [r["id"] for r in rows]
             for cid in ids[0:3]:
                 self.db._conn.execute(
-                    "UPDATE book_chapters SET status='drafted' WHERE id=?", (cid,))
+                    "UPDATE book_chapters SET status='drafted' WHERE id=?", (cid,)
+                )
             for cid in ids[3:5]:
                 self.db._conn.execute(
-                    "UPDATE book_chapters SET status='approved' WHERE id=?", (cid,))
+                    "UPDATE book_chapters SET status='approved' WHERE id=?", (cid,)
+                )
             self.db._conn.commit()
 
         book = self.client.get("/api/books").json()["books"][0]
@@ -153,8 +156,7 @@ class TestBooksList(unittest.TestCase):
         self.assertEqual(book["chapter_count"], 6)
 
         canonical = self.db.get_book_pipeline_for_work(work["id"])
-        for key in ("chapter_count", "chapters_extracted",
-                    "chapters_drafted", "chapters_approved"):
+        for key in ("chapter_count", "chapters_extracted", "chapters_drafted", "chapters_approved"):
             self.assertEqual(book[key], canonical[key], key)
 
     def test_book_without_progress_reports_zero_drafted_and_approved(self):

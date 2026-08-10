@@ -9,6 +9,7 @@ Spec §5.2: For each claim predicate, returns:
 This is a deterministic policy service — NOT an LLM call.
 ENF-REQ-002: adapters expose narrow typed operations, never 'run_any_command'.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,11 +20,12 @@ from .authority import AuthorityTier
 @dataclass(frozen=True)
 class AuthorityPolicy:
     """The resolved policy for a specific claim predicate."""
+
     predicate: str
     preferred_sources: list[str]
     minimum_authority: AuthorityTier
-    minimum_corroboration: int          # number of independent sources required
-    conflict_policy: str                # "hold_and_report" | "prefer_higher" | "prefer_newer"
+    minimum_corroboration: int  # number of independent sources required
+    conflict_policy: str  # "hold_and_report" | "prefer_higher" | "prefer_newer"
     ttl_class: str = "DURABLE"
     notes: str = ""
 
@@ -36,7 +38,6 @@ class AuthorityPolicy:
 # as a source for "vram_*" predicates.
 
 _POLICIES: dict[str, AuthorityPolicy] = {
-
     # ── Hardware: RAM ──────────────────────────────────────────────────────────
     "installed_physical_memory_bytes": AuthorityPolicy(
         predicate="installed_physical_memory_bytes",
@@ -63,7 +64,6 @@ _POLICIES: dict[str, AuthorityPolicy] = {
         conflict_policy="hold_and_report",
         ttl_class="installed_ram",
     ),
-
     # ── Hardware: CPU ──────────────────────────────────────────────────────────
     "cpu_model": AuthorityPolicy(
         predicate="cpu_model",
@@ -88,13 +88,15 @@ _POLICIES: dict[str, AuthorityPolicy] = {
     ),
     "cpu_threads": AuthorityPolicy(
         predicate="cpu_threads",
-        preferred_sources=["windows_cim:Win32_Processor.NumberOfLogicalProcessors", "user_assertion"],
+        preferred_sources=[
+            "windows_cim:Win32_Processor.NumberOfLogicalProcessors",
+            "user_assertion",
+        ],
         minimum_authority=AuthorityTier.A1,
         minimum_corroboration=1,
         conflict_policy="prefer_higher",
         ttl_class="cpu_identity",
     ),
-
     # ── Hardware: GPU — CRITICAL (INV-REQ-001) ────────────────────────────────
     # AdapterRAM is PROHIBITED as a source for VRAM on unified-memory architecture.
     "gpu_model": AuthorityPolicy(
@@ -135,7 +137,6 @@ _POLICIES: dict[str, AuthorityPolicy] = {
         ttl_class="installed_ram",
         notes="INV-REQ-001: never derive from AdapterRAM. See vram_usable_bytes.",
     ),
-
     # ── OS / Software ──────────────────────────────────────────────────────────
     "os_name": AuthorityPolicy(
         predicate="os_name",
@@ -147,7 +148,10 @@ _POLICIES: dict[str, AuthorityPolicy] = {
     ),
     "os_version": AuthorityPolicy(
         predicate="os_version",
-        preferred_sources=["windows_cim:Win32_OperatingSystem.Version", "windows_cim:Win32_OperatingSystem.BuildNumber"],
+        preferred_sources=[
+            "windows_cim:Win32_OperatingSystem.Version",
+            "windows_cim:Win32_OperatingSystem.BuildNumber",
+        ],
         minimum_authority=AuthorityTier.A1,
         minimum_corroboration=1,
         conflict_policy="prefer_higher",
@@ -161,7 +165,6 @@ _POLICIES: dict[str, AuthorityPolicy] = {
         conflict_policy="prefer_higher",
         ttl_class="os_build",
     ),
-
     # ── Storage ────────────────────────────────────────────────────────────────
     "storage_total_bytes": AuthorityPolicy(
         predicate="storage_total_bytes",
@@ -171,7 +174,6 @@ _POLICIES: dict[str, AuthorityPolicy] = {
         conflict_policy="prefer_higher",
         ttl_class="DURABLE",
     ),
-
     # ── Installed AI models ────────────────────────────────────────────────────
     "installed_models": AuthorityPolicy(
         predicate="installed_models",
@@ -246,7 +248,10 @@ class AuthorityResolver:
 
     def requires_verification(self, predicate: str) -> bool:
         """True if the predicate has a deterministic verification path available."""
-        return predicate in _POLICIES and _POLICIES[predicate].minimum_authority.numeric < AuthorityTier.A7.numeric
+        return (
+            predicate in _POLICIES
+            and _POLICIES[predicate].minimum_authority.numeric < AuthorityTier.A7.numeric
+        )
 
 
 # Module-level singleton

@@ -10,13 +10,11 @@ Covers:
 """
 
 import pytest
-import sqlite3
-from unittest.mock import patch, MagicMock
 
 from orivellum.database.db import OrivellumDB
 
-
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def db(tmp_path):
@@ -34,9 +32,7 @@ def _insert_conv(db: OrivellumDB, title="Test conv", archived=False, work_id=Non
     cid = result["id"]
     if archived:
         with db._lock:
-            db._conn.execute(
-                "UPDATE conversations SET archived=1 WHERE id=?", (cid,)
-            )
+            db._conn.execute("UPDATE conversations SET archived=1 WHERE id=?", (cid,))
             db._conn.commit()
     return cid
 
@@ -49,8 +45,8 @@ def _insert_msg(db: OrivellumDB, conv_id: str, text="hello world", role="assista
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
-class TestSearchMessages:
 
+class TestSearchMessages:
     def test_empty_query_returns_empty(self, db):
         assert db.search_messages("") == []
         assert db.search_messages("  ") == []
@@ -85,9 +81,9 @@ class TestSearchMessages:
 
     def test_archived_conversations_excluded(self, db):
         archived_cid = _insert_conv(db, title="Archived", archived=True)
-        active_cid   = _insert_conv(db, title="Active",   archived=False)
+        active_cid = _insert_conv(db, title="Active", archived=False)
         _insert_msg(db, archived_cid, text="unique_term_xyz")
-        _insert_msg(db, active_cid,   text="unique_term_xyz")
+        _insert_msg(db, active_cid, text="unique_term_xyz")
         results = db.search_messages("unique_term_xyz")
         # Only the active conversation's message should appear
         assert len(results) == 1
@@ -124,8 +120,7 @@ class TestSearchMessages:
         results = db.search_messages("shape check")
         assert len(results) == 1
         r = results[0]
-        for key in ("id", "conversation_id", "role", "text", "created_at",
-                    "conv_title", "snippet"):
+        for key in ("id", "conversation_id", "role", "text", "created_at", "conv_title", "snippet"):
             assert key in r, f"Missing key: {key}"
         assert r["conversation_id"] == cid
 
@@ -151,6 +146,7 @@ class TestSearchMessages:
 
 # ─── Continuation text regression tests ──────────────────────────────────────
 
+
 class TestContinuationFtsSync:
     """Verify that sync_message_fts() keeps the index correct when message text
     is updated in-place via the continuation handlers (which bypass finalize_message).
@@ -165,9 +161,7 @@ class TestContinuationFtsSync:
         # Simulate a continuation that appends more text directly (bypassing finalize_message)
         new_text = "partial reply here unique_continuation_token_xyz"
         with db._lock:
-            db._conn.execute(
-                "UPDATE messages SET text=? WHERE id=?", (new_text, mid)
-            )
+            db._conn.execute("UPDATE messages SET text=? WHERE id=?", (new_text, mid))
             db._conn.commit()
 
         # Before sync — old FTS entry still has the original text; new token not findable
@@ -208,6 +202,7 @@ class TestContinuationFtsSync:
 
 
 # ─── Deletion lifecycle tests ──────────────────────────────────────────────────
+
 
 class TestFtsDeleteLifecycle:
     """Verify FTS entries are cleaned up when conversations / messages are deleted."""
@@ -285,12 +280,8 @@ class TestFtsDeleteLifecycle:
         db.delete_conversation(cid1)
 
         with db._lock:
-            fts_count = db._conn.execute(
-                "SELECT count(*) FROM messages_fts"
-            ).fetchone()[0]
-            msg_count = db._conn.execute(
-                "SELECT count(*) FROM messages"
-            ).fetchone()[0]
+            fts_count = db._conn.execute("SELECT count(*) FROM messages_fts").fetchone()[0]
+            msg_count = db._conn.execute("SELECT count(*) FROM messages").fetchone()[0]
         assert fts_count == msg_count, (
             f"FTS has {fts_count} rows but messages table has {msg_count}"
         )
@@ -298,9 +289,11 @@ class TestFtsDeleteLifecycle:
 
 # ─── HTTP endpoint smoke test ──────────────────────────────────────────────────
 
+
 def test_search_endpoint_schema(tmp_path):
     """GET /api/conversations/search?q= returns {results: [...]}."""
     from fastapi.testclient import TestClient
+
     from orivellum.api.main import app
 
     client = TestClient(app)

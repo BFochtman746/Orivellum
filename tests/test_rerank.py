@@ -18,18 +18,14 @@ Coverage:
  10. ``rerank_candidates()`` wraps any unhandled exception and returns the
      original candidates list unchanged.
 """
+
 from __future__ import annotations
 
-import math
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from orivellum.capabilities.rerank import (
-    _LLM_TOP_K,
-    _RRF_K,
     _bm25_doc_score,
     _llm_rerank,
     _tokenize,
@@ -37,10 +33,10 @@ from orivellum.capabilities.rerank import (
     rerank_candidates,
 )
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _cands(*texts: str) -> list[dict]:
     """Create minimal candidate dicts from positional text strings."""
@@ -57,6 +53,7 @@ def _fake_db(ai_reranking_enabled: str = "false") -> MagicMock:
 # Tokeniser
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def test_tokenize_basic():
     assert _tokenize("Hello, World! 42") == ["hello", "world", "42"]
 
@@ -69,6 +66,7 @@ def test_tokenize_empty():
 # ──────────────────────────────────────────────────────────────────────────────
 # BM25 doc scorer
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def test_bm25_doc_score_basic():
     """Term that appears once in a two-word doc gives a positive score."""
@@ -89,17 +87,16 @@ def test_bm25_doc_score_zero_overlap():
 # BM25 re-ranker
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def test_bm25_rerank_promotes_relevant():
     """The candidate whose text contains the query term should rank first."""
     cands = _cands(
         "machine learning algorithms and neural networks",  # index 0 — relevant
-        "the quick brown fox jumps over the lazy dog",       # index 1 — irrelevant
-        "python programming language features",              # index 2 — irrelevant
+        "the quick brown fox jumps over the lazy dog",  # index 1 — irrelevant
+        "python programming language features",  # index 2 — irrelevant
     )
     ranked = bm25_rerank("machine learning", cands)
-    assert ranked[0]["id"] == "0", (
-        f"Expected id='0' at rank 0, got id='{ranked[0]['id']}'"
-    )
+    assert ranked[0]["id"] == "0", f"Expected id='0' at rank 0, got id='{ranked[0]['id']}'"
 
 
 def test_bm25_rerank_adds_rerank_score():
@@ -149,6 +146,7 @@ def test_bm25_rerank_does_not_mutate_original():
 # ──────────────────────────────────────────────────────────────────────────────
 # LLM re-ranker internals
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _make_llm_result(text: str, ok: bool = True) -> Any:
     return SimpleNamespace(ok=ok, text=text)
@@ -223,6 +221,7 @@ def test_llm_rerank_empty_candidates():
 # rerank_candidates — integration
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def test_rerank_candidates_bm25_only_when_flag_off():
     """When ai_reranking_enabled is false, llm_call is never invoked."""
     cands = _cands(
@@ -288,10 +287,10 @@ def test_rerank_candidates_llm_changes_order_when_enabled():
     db = _fake_db("true")
 
     # Patch both _llm_rerank (to avoid a real LLM call) and load_config.
-    with patch("orivellum.capabilities.rerank._llm_rerank",
-               return_value=[2, 0, 1]), \
-         patch("orivellum.configuration.config.load_config",
-               return_value=MagicMock()):
+    with (
+        patch("orivellum.capabilities.rerank._llm_rerank", return_value=[2, 0, 1]),
+        patch("orivellum.configuration.config.load_config", return_value=MagicMock()),
+    ):
         result = rerank_candidates("machine learning", cands, db)
 
     ids = [r["id"] for r in result]
@@ -308,9 +307,12 @@ def test_rerank_candidates_llm_exception_falls_back_to_bm25():
     )
     db = _fake_db("true")
 
-    with patch("orivellum.capabilities.rerank._llm_rerank",
-               side_effect=RuntimeError("endpoint down")), \
-         patch.object(db, "get_setting", return_value="true"):
+    with (
+        patch(
+            "orivellum.capabilities.rerank._llm_rerank", side_effect=RuntimeError("endpoint down")
+        ),
+        patch.object(db, "get_setting", return_value="true"),
+    ):
         result = rerank_candidates("machine learning", cands, db)
 
     # BM25 should still work: candidate 1 is more relevant

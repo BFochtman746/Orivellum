@@ -12,6 +12,7 @@ Editorial differences from plan_short.py (9:16 vertical):
   - Caption safe zone: bottom 15% reserved for caption overlays.
   - Platform targets: Instagram Feed, LinkedIn, Twitter/X, Facebook
 """
+
 from __future__ import annotations
 
 SQUARE_DUR = 30
@@ -115,6 +116,7 @@ def run(llm, cfg: dict, brief: dict, concept: dict, method: dict) -> dict:
 
 # ── Prompt builders ────────────────────────────────────────────────────────────
 
+
 def _shot_user(brief: dict, concept: dict) -> str:
     return (
         f"BOOK BRIEF:\n{_kv(brief)}\n\n"
@@ -155,24 +157,26 @@ def _music_user(brief: dict, concept: dict) -> str:
 # ── Deterministic normalization ───────────────────────────────────────────────
 
 _BEAT_SEQUENCE = ("hook", "peak", "close")
-_DEFAULT_DURS  = (5, 15, 10)   # Must sum to SQUARE_DUR (30)
+_DEFAULT_DURS = (5, 15, 10)  # Must sum to SQUARE_DUR (30)
 
 
 def _normalize_shots(shots: list[dict]) -> None:
     """Enforce HOOK/PEAK/CLOSE beat_type sequence and normalize durations to exactly 30 s."""
     while len(shots) < 3:
         i = len(shots)
-        shots.append({
-            "beat": _BEAT_SEQUENCE[i].upper(),
-            "beat_type": _BEAT_SEQUENCE[i],
-            "duration": _DEFAULT_DURS[i],
-            "description": f"{_BEAT_SEQUENCE[i].capitalize()} beat (auto-padded)",
-            "image_prompt": "(placeholder — replace with book-specific prompt)",
-            "motion_prompt": "slow push in, subject centred",
-            "negative_prompt": "blurry, watermark, text, modern objects",
-            "on_screen_text": "",
-            "square_framing_note": "Subject centred; all edges cropped 25% — keep key action in centre 50%",
-        })
+        shots.append(
+            {
+                "beat": _BEAT_SEQUENCE[i].upper(),
+                "beat_type": _BEAT_SEQUENCE[i],
+                "duration": _DEFAULT_DURS[i],
+                "description": f"{_BEAT_SEQUENCE[i].capitalize()} beat (auto-padded)",
+                "image_prompt": "(placeholder — replace with book-specific prompt)",
+                "motion_prompt": "slow push in, subject centred",
+                "negative_prompt": "blurry, watermark, text, modern objects",
+                "on_screen_text": "",
+                "square_framing_note": "Subject centred; all edges cropped 25% — keep key action in centre 50%",
+            }
+        )
 
     for i, s in enumerate(shots):
         s["beat_type"] = _BEAT_SEQUENCE[i]
@@ -205,26 +209,29 @@ def _clamp_narration_timing(narration: list[dict]) -> None:
 
 # ── Deterministic render settings ─────────────────────────────────────────────
 
+
 def _enforce_square_settings(shots: list[dict], method: dict, cfg: dict) -> None:
     """Force all shots to 768×768 and apply consistent render settings."""
     a = method.get("assignments", {})
 
     if not shots:
         for beat_type, beat_name in [("hook", "HOOK"), ("peak", "PEAK"), ("close", "CLOSE")]:
-            shots.append({
-                "beat": beat_name,
-                "beat_type": beat_type,
-                "duration": 10,
-                "description": f"{beat_name} beat",
-                "image_prompt": "(generated offline — replace with book-specific prompt)",
-                "motion_prompt": "slow push in, subject centred",
-                "negative_prompt": "blurry, watermark, text, modern objects, anachronism",
-                "on_screen_text": "",
-                "square_framing_note": "Subject centred; outer 25% all sides will be cropped",
-            })
+            shots.append(
+                {
+                    "beat": beat_name,
+                    "beat_type": beat_type,
+                    "duration": 10,
+                    "description": f"{beat_name} beat",
+                    "image_prompt": "(generated offline — replace with book-specific prompt)",
+                    "motion_prompt": "slow push in, subject centred",
+                    "negative_prompt": "blurry, watermark, text, modern objects, anachronism",
+                    "on_screen_text": "",
+                    "square_framing_note": "Subject centred; outer 25% all sides will be cropped",
+                }
+            )
 
     for i, s in enumerate(shots):
-        s["resolution"] = "768x768"    # 1:1 native
+        s["resolution"] = "768x768"  # 1:1 native
         dur = s.get("duration") or (5 if i == 0 else (15 if i == 1 else 10))
         s["duration"] = dur
         s["frames"] = max(24, int(dur * 3))
@@ -240,20 +247,25 @@ def _enforce_square_settings(shots: list[dict], method: dict, cfg: dict) -> None
             s["image_model"] = "dreamshaper-sdxl"
         s["video_model"] = (a.get("motion_default") or {}).get("id", "wan-2.2")
 
-        s.setdefault("negative_prompt",
-                     "blurry, watermark, text, modern objects, anachronism, portrait orientation, landscape orientation")
+        s.setdefault(
+            "negative_prompt",
+            "blurry, watermark, text, modern objects, anachronism, portrait orientation, landscape orientation",
+        )
         # Centre-crop framing fallback
-        s.setdefault("square_framing_note",
-                     "Subject centred in 1:1 frame; outer 25% all sides will be cropped — "
-                     "keep key action inside the centre 50% of the image both horizontally and vertically. "
-                     "Caption safe zone: bottom 15% clear for text overlays.")
+        s.setdefault(
+            "square_framing_note",
+            "Subject centred in 1:1 frame; outer 25% all sides will be cropped — "
+            "keep key action inside the centre 50% of the image both horizontally and vertically. "
+            "Caption safe zone: bottom 15% clear for text overlays.",
+        )
 
 
 def _apply_pronunciation(narration: list[dict], cfg: dict) -> None:
     overrides = cfg["defaults"].get("pronunciation_overrides", {})
     for ln in narration:
-        parts = [f"{k} = /{v}/" for k, v in overrides.items()
-                 if k.lower() in ln.get("text", "").lower()]
+        parts = [
+            f"{k} = /{v}/" for k, v in overrides.items() if k.lower() in ln.get("text", "").lower()
+        ]
         ln["pronunciation"] = ", ".join(parts) if parts else ""
 
 
@@ -261,18 +273,22 @@ def _title_plates(shots: list[dict], brief: dict) -> list[dict]:
     plates = []
     for i, s in enumerate(shots):
         if s.get("on_screen_text"):
-            plates.append({
-                "text": s["on_screen_text"],
-                "for_shot": i,
-                "style": "square title — bold, centre-frame, safe-zone aware (avoid bottom 15%)",
-            })
+            plates.append(
+                {
+                    "text": s["on_screen_text"],
+                    "for_shot": i,
+                    "style": "square title — bold, centre-frame, safe-zone aware (avoid bottom 15%)",
+                }
+            )
     if not any(p.get("text") == brief.get("title") for p in plates):
         last = len(shots) - 1 if shots else 0
-        plates.append({
-            "text": brief.get("title", "(title)"),
-            "for_shot": last,
-            "style": "closing title — full-bleed square, centred, fade in, large for Feed thumb",
-        })
+        plates.append(
+            {
+                "text": brief.get("title", "(title)"),
+                "for_shot": last,
+                "style": "closing title — full-bleed square, centred, fade in, large for Feed thumb",
+            }
+        )
     return plates
 
 
@@ -304,7 +320,10 @@ def _assembly(shots: list[dict], narration: list[dict], music: dict, cfg: dict) 
         },
         "masters": [
             {"aspect": "1:1", "note": "primary square — Instagram Feed / LinkedIn / Twitter/X"},
-            {"aspect": "9:16", "note": "optional re-frame for Reels — add vertical padding or extend crop"},
+            {
+                "aspect": "9:16",
+                "note": "optional re-frame for Reels — add vertical padding or extend crop",
+            },
         ],
         "export": {
             "codec": "H.264 (libx264), AAC 192kbps",
@@ -314,22 +333,51 @@ def _assembly(shots: list[dict], narration: list[dict], music: dict, cfg: dict) 
     }
 
 
-def _manifest(shots: list[dict], narration: list[dict], music: dict,
-              titles: list[dict]) -> dict:
+def _manifest(shots: list[dict], narration: list[dict], music: dict, titles: list[dict]) -> dict:
     items = []
     for i, s in enumerate(shots):
-        items.append({"id": f"shot_{i:02d}_still",  "type": "image",
-                      "model": s.get("image_model"), "status": "pending"})
-        items.append({"id": f"shot_{i:02d}_motion", "type": "video",
-                      "model": s.get("video_model"), "status": "pending"})
+        items.append(
+            {
+                "id": f"shot_{i:02d}_still",
+                "type": "image",
+                "model": s.get("image_model"),
+                "status": "pending",
+            }
+        )
+        items.append(
+            {
+                "id": f"shot_{i:02d}_motion",
+                "type": "video",
+                "model": s.get("video_model"),
+                "status": "pending",
+            }
+        )
     for i, ln in enumerate(narration):
-        items.append({"id": f"narr_{i:02d}", "type": "audio_tts",
-                      "text": ln.get("text"), "status": "pending"})
-    items.append({"id": "score", "type": "audio_music",
-                  "prompt": music.get("prompt", ""), "status": "pending"})
+        items.append(
+            {
+                "id": f"narr_{i:02d}",
+                "type": "audio_tts",
+                "text": ln.get("text"),
+                "status": "pending",
+            }
+        )
+    items.append(
+        {
+            "id": "score",
+            "type": "audio_music",
+            "prompt": music.get("prompt", ""),
+            "status": "pending",
+        }
+    )
     for i, tp in enumerate(titles):
-        items.append({"id": f"title_{i:02d}", "type": "title_plate",
-                      "text": tp.get("text", ""), "status": "pending"})
+        items.append(
+            {
+                "id": f"title_{i:02d}",
+                "type": "title_plate",
+                "text": tp.get("text", ""),
+                "status": "pending",
+            }
+        )
     return {"items": items, "total": len(items), "save_process_recall": True}
 
 

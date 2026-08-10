@@ -12,6 +12,7 @@ Usage::
 
 The executor is initialized by the FastAPI lifespan in ``app.py``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -101,7 +102,7 @@ def _job_entry(kind: str, label: str) -> dict:
         "kind": kind,
         "label": label,
         "state": "running",  # running | done | failed
-        "attempts": 1,       # submissions so far, including this one (FA-06 cap)
+        "attempts": 1,  # submissions so far, including this one (FA-06 cap)
         "started_at": time.time(),
         "finished_at": None,
         "error": None,
@@ -114,8 +115,9 @@ def _job_entry(kind: str, label: str) -> dict:
     }
 
 
-def _tracked_submit(fn, *args, kind: str = "background", label: str = "",
-                    _attempts: int = 1, **kwargs) -> Future:
+def _tracked_submit(
+    fn, *args, kind: str = "background", label: str = "", _attempts: int = 1, **kwargs
+) -> Future:
     """Submit work and record a job entry for the dashboard.
 
     The registry entry is created AFTER a successful submit() call so that a
@@ -149,7 +151,8 @@ def _tracked_submit(fn, *args, kind: str = "background", label: str = "",
         except Exception as exc:
             logger.exception(
                 "Background job failed (kind=%s, label=%s)",
-                entry["kind"], entry["label"],
+                entry["kind"],
+                entry["label"],
             )
             with _jobs_lock:
                 entry["state"] = "failed"
@@ -166,8 +169,12 @@ def _tracked_submit(fn, *args, kind: str = "background", label: str = "",
     with _jobs_lock:
         _jobs.append(entry)
     _durable(
-        "bg_job_upsert", job_id, kind=entry["kind"], label=entry["label"],
-        state="running", attempts=entry["attempts"],
+        "bg_job_upsert",
+        job_id,
+        kind=entry["kind"],
+        label=entry["label"],
+        state="running",
+        attempts=entry["attempts"],
     )
     try:
         return get_executor().submit(_wrapped)
@@ -203,8 +210,14 @@ def _run_fallback_tracked(fn, args, kwargs, kind: str, label: str) -> bool:
     job_id = entry["id"]
     with _jobs_lock:
         _jobs.append(entry)
-    _durable("bg_job_upsert", job_id, kind=entry["kind"], label=entry["label"],
-             state="running", attempts=1)
+    _durable(
+        "bg_job_upsert",
+        job_id,
+        kind=entry["kind"],
+        label=entry["label"],
+        state="running",
+        attempts=1,
+    )
 
     def _runner():
         global _fallback_active
@@ -225,8 +238,7 @@ def _run_fallback_tracked(fn, args, kwargs, kind: str, label: str) -> bool:
             with _fallback_lock:
                 _fallback_active -= 1
 
-    t = threading.Thread(target=_runner, daemon=True,
-                         name=f"orivellum-fallback-{kind}")
+    t = threading.Thread(target=_runner, daemon=True, name=f"orivellum-fallback-{kind}")
     t.start()
     return True
 
@@ -253,7 +265,8 @@ def submit_bg(fn, *args, kind: str = "background", label: str = "", **kwargs) ->
     except Exception as exc:
         logger.warning(
             "executor submit failed (%s), using bounded fallback: %s",
-            getattr(fn, "__name__", "?"), exc,
+            getattr(fn, "__name__", "?"),
+            exc,
         )
         try:
             started = _run_fallback_tracked(fn, args, kwargs, kind, label)
@@ -264,7 +277,9 @@ def submit_bg(fn, *args, kind: str = "background", label: str = "", **kwargs) ->
             logger.error(
                 "Rejected background work (kind=%s, label=%s): executor pool "
                 "unavailable and fallback pool saturated (max=%d)",
-                kind, label, _MAX_FALLBACK_THREADS,
+                kind,
+                label,
+                _MAX_FALLBACK_THREADS,
             )
 
 
@@ -309,8 +324,7 @@ def retry_job(job_id: str) -> Future:
             raise KeyError(f"Job {job_id!r} not found in dashboard registry")
         if entry["state"] != "failed":
             raise ValueError(
-                f"Job {job_id!r} is in state {entry['state']!r}; only 'failed' "
-                "jobs can be retried"
+                f"Job {job_id!r} is in state {entry['state']!r}; only 'failed' jobs can be retried"
             )
         fn = entry.get("_retry_fn")
         if fn is None:
@@ -334,7 +348,8 @@ def retry_job(job_id: str) -> Future:
         next_attempts = attempts_so_far + 1
 
     return _tracked_submit(
-        fn, *retry_args,
+        fn,
+        *retry_args,
         kind=retry_kind,
         label=f"{retry_label} (retry)",
         _attempts=next_attempts,
@@ -363,6 +378,7 @@ def init(max_workers: int = _DEFAULT_WORKERS) -> ThreadPoolExecutor:
     # the executor stays importable/usable in unit tests without a DB.
     try:
         from orivellum.api import _deps as _deps_mod
+
         set_db_provider(_deps_mod.get_db)
         reconcile_orphans()
     except Exception as exc:  # pragma: no cover - best-effort startup wiring
@@ -404,14 +420,16 @@ def shutdown(wait: bool = True, drain_timeout: float | None = None) -> None:
             ex.shutdown(wait=False)
         drainer = threading.Thread(
             target=lambda: ex.shutdown(wait=True),
-            daemon=True, name="orivellum-bg-drain",
+            daemon=True,
+            name="orivellum-bg-drain",
         )
         drainer.start()
         drainer.join(timeout=drain_timeout)
         if drainer.is_alive():
             logger.warning(
                 "Executor drain exceeded %.1fs — abandoning remaining in-flight "
-                "work to avoid blocking shutdown", drain_timeout,
+                "work to avoid blocking shutdown",
+                drain_timeout,
             )
         return
 

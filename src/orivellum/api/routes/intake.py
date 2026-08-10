@@ -5,6 +5,7 @@ POST /api/intake/research                  Trigger on-demand web research (retur
 GET  /api/intake/{doc_id}/research-status  Poll the background research job status.
 GET  /api/intake/{doc_id}                  Re-fetch a previously computed intake profile.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,8 +21,7 @@ from orivellum.capabilities.intake import IntakeProfile, run_intake
 
 logger = logging.getLogger("orivellum.api.intake")
 
-router = APIRouter(prefix="/api", tags=["intake"],
-                   dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/api", tags=["intake"], dependencies=[Depends(require_auth)])
 
 
 # ── In-memory research job registry ──────────────────────────────────────────
@@ -43,7 +43,7 @@ router = APIRouter(prefix="/api", tags=["intake"],
 _research_jobs: dict[str, dict] = {}
 _research_jobs_lock = threading.Lock()
 
-_TERMINAL_TTL_SECONDS = 300   # 5 minutes
+_TERMINAL_TTL_SECONDS = 300  # 5 minutes
 
 
 def _maybe_evict_terminal_jobs() -> None:
@@ -53,7 +53,8 @@ def _maybe_evict_terminal_jobs() -> None:
     """
     now = time.monotonic()
     to_delete = [
-        doc_id for doc_id, job in _research_jobs.items()
+        doc_id
+        for doc_id, job in _research_jobs.items()
         if job.get("status") in ("done", "error")
         and (now - job.get("_terminal_at", now)) > _TERMINAL_TTL_SECONDS
     ]
@@ -64,6 +65,7 @@ def _maybe_evict_terminal_jobs() -> None:
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
+
 class IntakeRequest(BaseModel):
     doc_id: str
     # Stage 4 (web research) is intentionally excluded from POST /intake.
@@ -73,7 +75,7 @@ class IntakeRequest(BaseModel):
 class ResearchRequest(BaseModel):
     doc_id: str
     query: str | None = None
-    confirmed: bool = False   # user must explicitly confirm egress
+    confirmed: bool = False  # user must explicitly confirm egress
 
 
 class SuggestedActionOut(BaseModel):
@@ -94,7 +96,7 @@ class IntakeProfileOut(BaseModel):
     summary: str
     word_count: int
     headings: list[str]
-    text_snippet: str | None   # first ~500 chars of extracted text for client-side chat grounding
+    text_snippet: str | None  # first ~500 chars of extracted text for client-side chat grounding
     suggested_actions: list[SuggestedActionOut]
     research_summary: str | None
     research_sources: list[dict]
@@ -103,8 +105,9 @@ class IntakeProfileOut(BaseModel):
 
 class ResearchJobOut(BaseModel):
     """Response shape for the async research endpoint and status poll."""
-    job_id: str        # same as doc_id
-    status: str        # pending | running | done | error
+
+    job_id: str  # same as doc_id
+    status: str  # pending | running | done | error
     research_summary: str | None = None
     research_sources: list[dict] = []
     error: str | None = None
@@ -135,6 +138,7 @@ def _profile_to_out(p: IntakeProfile) -> IntakeProfileOut:
 
 # ── Background research worker ────────────────────────────────────────────────
 
+
 def _run_research_background(
     doc_id: str,
     query: str | None,
@@ -159,43 +163,50 @@ def _run_research_background(
         # research_summary=None.  Treat that as an error so the client knows.
         if profile.research_summary is None:
             with _research_jobs_lock:
-                _research_jobs[doc_id].update({
-                    "status": "error",
-                    "research_summary": None,
-                    "research_sources": [],
-                    "error": (
-                        "Web research returned no results. "
-                        "Tavily may be unavailable, the API key may be missing, "
-                        "or the query timed out. Check server logs for details."
-                    ),
-                    "_terminal_at": time.monotonic(),
-                })
+                _research_jobs[doc_id].update(
+                    {
+                        "status": "error",
+                        "research_summary": None,
+                        "research_sources": [],
+                        "error": (
+                            "Web research returned no results. "
+                            "Tavily may be unavailable, the API key may be missing, "
+                            "or the query timed out. Check server logs for details."
+                        ),
+                        "_terminal_at": time.monotonic(),
+                    }
+                )
             logger.warning("Research produced no summary for doc=%s — storing as error", doc_id)
             return
 
         with _research_jobs_lock:
-            _research_jobs[doc_id].update({
-                "status": "done",
-                "research_summary": profile.research_summary,
-                "research_sources": profile.research_sources or [],
-                "error": None,
-                "_terminal_at": time.monotonic(),
-            })
+            _research_jobs[doc_id].update(
+                {
+                    "status": "done",
+                    "research_summary": profile.research_summary,
+                    "research_sources": profile.research_sources or [],
+                    "error": None,
+                    "_terminal_at": time.monotonic(),
+                }
+            )
         logger.info("Background research done for doc=%s", doc_id)
 
     except Exception as exc:
         logger.exception("Background research raised unexpectedly for doc=%s", doc_id)
         with _research_jobs_lock:
-            _research_jobs[doc_id].update({
-                "status": "error",
-                "research_summary": None,
-                "research_sources": [],
-                "error": str(exc),
-                "_terminal_at": time.monotonic(),
-            })
+            _research_jobs[doc_id].update(
+                {
+                    "status": "error",
+                    "research_summary": None,
+                    "research_sources": [],
+                    "error": str(exc),
+                    "_terminal_at": time.monotonic(),
+                }
+            )
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
 
 @router.post("/intake", response_model=IntakeProfileOut)
 def run_intake_pipeline(body: IntakeRequest):
@@ -275,9 +286,13 @@ def run_intake_research(body: ResearchRequest):
     # immediately so it never stays stuck in "pending" indefinitely.
     try:
         from orivellum.api.executor import _tracked_submit
+
         _tracked_submit(
             _run_research_background,
-            body.doc_id, body.query, db, cfg,
+            body.doc_id,
+            body.query,
+            db,
+            cfg,
             kind="research",
             label=f"intake_research_{body.doc_id[:8]}",
         )
@@ -288,11 +303,13 @@ def run_intake_research(body: ResearchRequest):
             body.doc_id,
         )
         with _research_jobs_lock:
-            _research_jobs[body.doc_id].update({
-                "status": "error",
-                "error": f"Could not queue research job: {_submit_exc}",
-                "_terminal_at": time.monotonic(),
-            })
+            _research_jobs[body.doc_id].update(
+                {
+                    "status": "error",
+                    "error": f"Could not queue research job: {_submit_exc}",
+                    "_terminal_at": time.monotonic(),
+                }
+            )
         return ResearchJobOut(
             job_id=body.doc_id,
             status="error",

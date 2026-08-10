@@ -9,11 +9,11 @@ Covers:
   3. Fallback JSON schema is always complete — required keys always present.
   4. Non-existent work_id → 404.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import AUTH_HEADERS
@@ -23,9 +23,9 @@ from tests.conftest import AUTH_HEADERS
 
 def _make_client(tmp_path):
     """Return a TestClient + OrivellumDB backed by a temp directory."""
-    from orivellum.configuration.config import OrivellumConfig
     from orivellum.api import _deps
     from orivellum.api.app import app
+    from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
 
     cfg = OrivellumConfig(data_dir=str(tmp_path))
@@ -38,12 +38,20 @@ def _make_client(tmp_path):
 # ── Expected schema keys ─────────────────────────────────────────────────────
 
 _REQUIRED_TOP_KEYS = {
-    "work_id", "work_title", "genre_analysis",
-    "narrator_profile", "recommendations", "no_content",
+    "work_id",
+    "work_title",
+    "genre_analysis",
+    "narrator_profile",
+    "recommendations",
+    "no_content",
 }
 _REQUIRED_REC_KEYS = {
-    "voice_id", "score", "headline", "rationale",
-    "dimension_match", "voice",
+    "voice_id",
+    "score",
+    "headline",
+    "rationale",
+    "dimension_match",
+    "voice",
 }
 
 
@@ -55,7 +63,9 @@ def _assert_schema(data: dict) -> None:
     for rec in data["recommendations"]:
         missing_rec = _REQUIRED_REC_KEYS - rec.keys()
         assert not missing_rec, f"Recommendation missing keys: {missing_rec}"
-        assert isinstance(rec["voice_id"], str) and rec["voice_id"], "voice_id must be a non-empty string"
+        assert isinstance(rec["voice_id"], str) and rec["voice_id"], (
+            "voice_id must be a non-empty string"
+        )
         assert isinstance(rec["score"], (int, float)), "score must be numeric"
         assert isinstance(rec["voice"], dict), "voice must be a dict"
 
@@ -97,15 +107,16 @@ def test_sparse_work_returns_fallback_without_llm_call(tmp_path):
 
     # Every recommendation must reference a real voice from the catalog
     from orivellum.api.routes.studio import _VOICE_BY_ID
+
     for rec in data["recommendations"]:
         assert rec["voice_id"] in _VOICE_BY_ID, (
             f"Fallback voice_id {rec['voice_id']!r} not found in catalog"
         )
 
     # The genre_analysis must mention lack of content — not a hallucinated genre
-    assert "content" in data["genre_analysis"].lower() or "document" in data["genre_analysis"].lower(), (
-        "genre_analysis should explain lack of content for a sparse Work"
-    )
+    assert (
+        "content" in data["genre_analysis"].lower() or "document" in data["genre_analysis"].lower()
+    ), "genre_analysis should explain lack of content for a sparse Work"
 
     # llm_call must NOT have been called
     sentinel.assert_not_called()

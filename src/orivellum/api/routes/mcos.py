@@ -4,6 +4,7 @@ Benchmark listing/seeding, run orchestration (via FastAPI BackgroundTasks),
 run history + detail, and LLM-gateway telemetry.  Auth is handled by the
 global middleware in app.py, same as every other router.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,6 +20,8 @@ from orivellum.api.errors import internal_error
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mcos", dependencies=[Depends(require_auth)])
+
+
 def _jload(s, default=None):
     if s is None:
         return default
@@ -30,8 +33,9 @@ def _jload(s, default=None):
         return default
 
 
-def _prev_finished_avg(db, benchmark_id: str, before_started_at: str,
-                       exclude_run_id: str) -> float | None:
+def _prev_finished_avg(
+    db, benchmark_id: str, before_started_at: str, exclude_run_id: str
+) -> float | None:
     """Avg_score of the most recent finished NORMAL run strictly before this one.
 
     Prompt A/B runs (meta.prompt_id set) are excluded so they never become a
@@ -60,8 +64,7 @@ def _run_row_to_dict(db, row) -> dict:
         meta.setdefault("delta", None)
         meta.setdefault("regressed", False)
     elif avg is not None:
-        prev = _prev_finished_avg(db, d["benchmark_id"], d.get("started_at") or "",
-                                  d["id"])
+        prev = _prev_finished_avg(db, d["benchmark_id"], d.get("started_at") or "", d["id"])
         if prev is not None:
             delta = round(float(avg) - prev, 6)
             meta["delta"] = delta
@@ -102,6 +105,7 @@ def _heal_mcos_tables(db) -> bool:
     """
     try:
         from orivellum.database.schema import MIGRATIONS
+
         sql = next(s for v, _d, s in MIGRATIONS if v == 52)
         with db._lock:
             for stmt in sql.split(";"):
@@ -126,9 +130,10 @@ def _missing_mcos_tables(db) -> list[str]:
     """Return the v52 tables absent from sqlite_master (empty when healthy)."""
     with db._lock:
         present = {
-            r[0] for r in db._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                "(?,?,?,?)", _MCOS_TABLES,
+            r[0]
+            for r in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?,?,?,?)",
+                _MCOS_TABLES,
             ).fetchall()
         }
     return [t for t in _MCOS_TABLES if t not in present]
@@ -136,10 +141,12 @@ def _missing_mcos_tables(db) -> list[str]:
 
 def _list_benchmarks_rows(db) -> list[dict]:
     with db._lock:
-        benches = [dict(r) for r in db._conn.execute(
-            "SELECT * FROM benchmarks ORDER BY category, name"
-        ).fetchall()]
+        benches = [
+            dict(r)
+            for r in db._conn.execute("SELECT * FROM benchmarks ORDER BY category, name").fetchall()
+        ]
     import sqlite3
+
     out = []
     for b in benches:
         # Per-suite fault tolerance: one broken suite must not hide the rest.
@@ -165,36 +172,46 @@ def _list_benchmarks_rows(db) -> list[dict]:
             logger.warning("Benchmark %s sub-queries failed: %s", b.get("id"), exc)
         except Exception as exc:
             logger.warning("Benchmark %s sub-queries failed: %s", b.get("id"), exc)
-        out.append({
-            "id": b["id"],
-            "name": b["name"],
-            "description": b["description"],
-            "category": b["category"],
-            "kind": b["kind"],
-            "version": b["version"],
-            "enabled": bool(b["enabled"]),
-            "case_count": int(case_count),
-            "last_run": ({
-                "id": last["id"],
-                "avg_score": last["avg_score"],
-                "status": last["status"],
-                "finished_at": last["finished_at"],
-            } if last else None),
-        })
+        out.append(
+            {
+                "id": b["id"],
+                "name": b["name"],
+                "description": b["description"],
+                "category": b["category"],
+                "kind": b["kind"],
+                "version": b["version"],
+                "enabled": bool(b["enabled"]),
+                "case_count": int(case_count),
+                "last_run": (
+                    {
+                        "id": last["id"],
+                        "avg_score": last["avg_score"],
+                        "status": last["status"],
+                        "finished_at": last["finished_at"],
+                    }
+                    if last
+                    else None
+                ),
+            }
+        )
     return out
 
 
 @router.get("/benchmarks")
 def list_benchmarks():
     import sqlite3
+
     db = get_db()
     try:
         # Validate the FULL v52 table set up front — including eval_results,
         # which this listing never reads but benchmark runs write to.
         missing = _missing_mcos_tables(db)
         if missing:
-            logger.warning("MCOS tables missing: %s (schema v%d) — attempting "
-                           "self-heal", missing, _schema_version(db))
+            logger.warning(
+                "MCOS tables missing: %s (schema v%d) — attempting self-heal",
+                missing,
+                _schema_version(db),
+            )
             if not _heal_mcos_tables(db) or _missing_mcos_tables(db):
                 raise HTTPException(
                     status_code=500,
@@ -209,16 +226,14 @@ def list_benchmarks():
         return {"benchmarks": _list_benchmarks_rows(db)}
     except sqlite3.OperationalError as exc:
         msg = str(exc)
-        logger.error("GET /mcos/benchmarks failed: %s (schema v%d)",
-                     msg, _schema_version(db))
+        logger.error("GET /mcos/benchmarks failed: %s (schema v%d)", msg, _schema_version(db))
         if "no such table" in msg.lower():
             # Missing v52 tables — try to self-heal once, then retry.
             if _heal_mcos_tables(db):
                 try:
                     return {"benchmarks": _list_benchmarks_rows(db)}
                 except Exception as retry_exc:  # pragma: no cover - defensive
-                    logger.error("Benchmarks retry after self-heal failed: %s",
-                                 retry_exc)
+                    logger.error("Benchmarks retry after self-heal failed: %s", retry_exc)
             raise HTTPException(
                 status_code=500,
                 detail=(
@@ -231,8 +246,7 @@ def list_benchmarks():
             )
         raise HTTPException(
             status_code=500,
-            detail=f"Benchmark query failed: {msg} "
-                   f"(schema v{_schema_version(db)})",
+            detail=f"Benchmark query failed: {msg} (schema v{_schema_version(db)})",
         )
     except Exception as exc:
         raise internal_error(logger, exc, "GET /mcos/benchmarks") from exc
@@ -241,6 +255,7 @@ def list_benchmarks():
 @router.post("/seed")
 def seed():
     from orivellum.capabilities.mcos import seed_default_benchmarks
+
     db = get_db()
     return seed_default_benchmarks(db)
 
@@ -282,9 +297,7 @@ def run_one(benchmark_id: str, background_tasks: BackgroundTasks):
     cfg = get_config()
     bench = None
     with db._lock:
-        bench = db._conn.execute(
-            "SELECT id FROM benchmarks WHERE id=?", (benchmark_id,)
-        ).fetchone()
+        bench = db._conn.execute("SELECT id FROM benchmarks WHERE id=?", (benchmark_id,)).fetchone()
     if bench is None:
         raise HTTPException(status_code=404, detail="Benchmark not found")
     if _has_running_run(db, benchmark_id):
@@ -343,9 +356,12 @@ def run_all(background_tasks: BackgroundTasks):
     db = get_db()
     cfg = get_config()
     with db._lock:
-        benches = [r["id"] for r in db._conn.execute(
-            "SELECT id FROM benchmarks WHERE enabled=1 ORDER BY category, name"
-        ).fetchall()]
+        benches = [
+            r["id"]
+            for r in db._conn.execute(
+                "SELECT id FROM benchmarks WHERE enabled=1 ORDER BY category, name"
+            ).fetchall()
+        ]
     started: list[str] = []
     for bid in benches:
         if _has_running_run(db, bid):
@@ -361,8 +377,10 @@ def run_all(background_tasks: BackgroundTasks):
 @router.get("/runs")
 def list_runs(benchmark_id: str | None = None, limit: int = Query(20, ge=1, le=200)):
     db = get_db()
-    q = ("SELECT r.*, b.name AS benchmark_name FROM eval_runs r "
-         "JOIN benchmarks b ON b.id = r.benchmark_id")
+    q = (
+        "SELECT r.*, b.name AS benchmark_name FROM eval_runs r "
+        "JOIN benchmarks b ON b.id = r.benchmark_id"
+    )
     args: list = []
     if benchmark_id:
         q += " WHERE r.benchmark_id=?"
@@ -393,15 +411,18 @@ def run_detail(run_id: str):
             "WHERE e.run_id=? ORDER BY e.id",
             (run_id,),
         ).fetchall()
-    out_results = [{
-        "case_id": r["case_id"],
-        "question": r["question"],
-        "score": r["score"],
-        "judge_scores": _jload(r["judge_scores"], {}),
-        "response": r["response"],
-        "latency_ms": r["latency_ms"],
-        "error": r["error"],
-    } for r in results]
+    out_results = [
+        {
+            "case_id": r["case_id"],
+            "question": r["question"],
+            "score": r["score"],
+            "judge_scores": _jload(r["judge_scores"], {}),
+            "response": r["response"],
+            "latency_ms": r["latency_ms"],
+            "error": r["error"],
+        }
+        for r in results
+    ]
     return {"run": _run_row_to_dict(db, row), "results": out_results}
 
 
@@ -428,20 +449,26 @@ def telemetry(days: int = Query(7, ge=1, le=365)):
             (since,),
         ).fetchall()
     return {
-        "by_purpose": [{
-            "purpose": r["purpose"],
-            "calls": r["calls"],
-            "avg_latency_ms": r["avg_latency_ms"],
-            "total_prompt_tokens": r["total_prompt_tokens"],
-            "total_completion_tokens": r["total_completion_tokens"],
-            "error_rate": r["error_rate"],
-        } for r in by_purpose],
-        "daily": [{
-            "day": r["day"],
-            "calls": r["calls"],
-            "errors": r["errors"],
-            "avg_latency_ms": r["avg_latency_ms"],
-        } for r in daily],
+        "by_purpose": [
+            {
+                "purpose": r["purpose"],
+                "calls": r["calls"],
+                "avg_latency_ms": r["avg_latency_ms"],
+                "total_prompt_tokens": r["total_prompt_tokens"],
+                "total_completion_tokens": r["total_completion_tokens"],
+                "error_rate": r["error_rate"],
+            }
+            for r in by_purpose
+        ],
+        "daily": [
+            {
+                "day": r["day"],
+                "calls": r["calls"],
+                "errors": r["errors"],
+                "avg_latency_ms": r["avg_latency_ms"],
+            }
+            for r in daily
+        ],
     }
 
 
@@ -494,8 +521,7 @@ def list_regressions(limit: int = Query(20, ge=1, le=200)):
                 prompt_name_cache[pid] = pinfo
             entry["prompt_name"] = (pinfo or {}).get("name")
             # Prefer the version recorded on the run (may differ from current).
-            entry["prompt_version"] = meta.get("prompt_version") or \
-                (pinfo or {}).get("version")
+            entry["prompt_version"] = meta.get("prompt_version") or (pinfo or {}).get("version")
             # Slot lets governance tell apart chat.base vs harvest.extract, etc.
             entry["prompt_slot"] = meta.get("prompt_slot")
         out.append(entry)
@@ -528,9 +554,7 @@ def ack_regression(run_id: str):
         db._conn.commit()
         if updated == 0:
             # Disambiguate: does the run exist at all?
-            exists = db._conn.execute(
-                "SELECT 1 FROM eval_runs WHERE id=?", (run_id,)
-            ).fetchone()
+            exists = db._conn.execute("SELECT 1 FROM eval_runs WHERE id=?", (run_id,)).fetchone()
     if updated == 0:
         if exists is None:
             raise HTTPException(status_code=404, detail="Run not found")
@@ -539,6 +563,7 @@ def ack_regression(run_id: str):
 
 
 # ── Phase 4: prompt registry ─────────────────────────────────────────────────
+
 
 class PromptCreate(BaseModel):
     slot: str
@@ -588,6 +613,7 @@ def list_prompt_slots():
     """Enumerate the known prompt slots with label + benchmarkability + the
     active prompt's name/version and total prompt count per slot."""
     from orivellum.capabilities.mcos import PROMPT_SLOTS
+
     db = get_db()
     out = []
     for slot, meta in PROMPT_SLOTS.items():
@@ -599,14 +625,16 @@ def list_prompt_slots():
                 "SELECT name, version FROM prompts WHERE slot=? AND active=1 LIMIT 1",
                 (slot,),
             ).fetchone()
-        out.append({
-            "slot": slot,
-            "label": meta["label"],
-            "benchmarkable": meta["benchmarkable"],
-            "active_name": active["name"] if active else None,
-            "active_version": active["version"] if active else None,
-            "prompt_count": int(count),
-        })
+        out.append(
+            {
+                "slot": slot,
+                "label": meta["label"],
+                "benchmarkable": meta["benchmarkable"],
+                "active_name": active["name"] if active else None,
+                "active_version": active["version"] if active else None,
+                "prompt_count": int(count),
+            }
+        )
     return {"slots": out}
 
 
@@ -616,6 +644,7 @@ def create_prompt(body: PromptCreate):
     from datetime import datetime
 
     from orivellum.capabilities.mcos import PROMPT_SLOTS
+
     db = get_db()
     slot = body.slot.strip()
     name = body.name.strip()
@@ -653,6 +682,7 @@ def benchmark_prompt(prompt_id: str, background_tasks: BackgroundTasks):
     from datetime import datetime
 
     from orivellum.capabilities import mcos
+
     db = get_db()
     cfg = get_config()
     prompt = _get_prompt(db, prompt_id)
@@ -688,8 +718,8 @@ def benchmark_prompt(prompt_id: str, background_tasks: BackgroundTasks):
         ).fetchone()
         if busy is not None:
             raise HTTPException(
-                status_code=409,
-                detail="A prompt benchmark for this slot is already running")
+                status_code=409, detail="A prompt benchmark for this slot is already running"
+            )
 
         active = db._conn.execute(
             "SELECT id, content, version FROM prompts WHERE slot=? AND active=1 LIMIT 1",
@@ -713,15 +743,23 @@ def benchmark_prompt(prompt_id: str, background_tasks: BackgroundTasks):
 
         for suite in suites:
             bid = suite["id"]
-            c_meta = {"benchmark_id": bid, "prompt_id": prompt_id,
-                      "prompt_version": prompt["version"],
-                      "prompt_role": "candidate", "prompt_slot": slot}
+            c_meta = {
+                "benchmark_id": bid,
+                "prompt_id": prompt_id,
+                "prompt_version": prompt["version"],
+                "prompt_role": "candidate",
+                "prompt_slot": slot,
+            }
             candidate_runs.append(_reserve(prompt["content"], c_meta))
             if active:
-                a_meta = {"benchmark_id": bid, "prompt_id": prompt_id,
-                          "prompt_version": active["version"],
-                          "prompt_role": "active", "prompt_slot": slot,
-                          "active_prompt_id": active["id"]}
+                a_meta = {
+                    "benchmark_id": bid,
+                    "prompt_id": prompt_id,
+                    "prompt_version": active["version"],
+                    "prompt_role": "active",
+                    "prompt_slot": slot,
+                    "active_prompt_id": active["id"],
+                }
                 active_runs.append(_reserve(active["content"], a_meta))
         db._conn.commit()
 
@@ -741,17 +779,18 @@ def _run_prompt_pairs(db, cfg, plan):
     finalizes them, and never strands a reserved row on failure.
     """
     from orivellum.capabilities import mcos
+
     for entry in plan:
         rid = entry["run_id"]
         meta = entry["meta"]
         bid = meta["benchmark_id"]
         try:
-            mcos._execute_run(db, cfg, bid, rid,
-                              system_prompt=entry["content"], run_meta=meta)
+            mcos._execute_run(db, cfg, bid, rid, system_prompt=entry["content"], run_meta=meta)
         except Exception as exc:  # never strand a reserved row
             logger.warning("prompt run %s failed: %s", rid[:8], exc)
-            mcos._finalize_run(db, rid, status="failed", avg_score=None,
-                               meta={**meta, "error": str(exc)[:300]})
+            mcos._finalize_run(
+                db, rid, status="failed", avg_score=None, meta={**meta, "error": str(exc)[:300]}
+            )
 
 
 def _reap_stale_prompt_runs(db, slot: str) -> None:
@@ -794,11 +833,13 @@ def _prompt_benchmark_status(db, prompt_id: str, quiet: bool = False) -> dict | 
                 continue
             if r["status"] == "running":
                 any_running = True
-            per_suite.append({
-                "benchmark_id": r["benchmark_id"],
-                "avg_score": r["avg_score"],
-                "status": r["status"],
-            })
+            per_suite.append(
+                {
+                    "benchmark_id": r["benchmark_id"],
+                    "avg_score": r["avg_score"],
+                    "status": r["status"],
+                }
+            )
             if r["avg_score"] is not None and r["status"] == "done":
                 avgs.append(r["avg_score"])
         avg = (sum(avgs) / len(avgs)) if avgs else None
@@ -827,8 +868,12 @@ def get_prompt_benchmark(prompt_id: str):
         raise HTTPException(status_code=404, detail="Prompt not found")
     status = _prompt_benchmark_status(db, prompt_id)
     if status is None:
-        return {"status": "none", "candidate": {"avg": None, "per_suite": []},
-                "active": {"avg": None, "per_suite": []}, "delta": None}
+        return {
+            "status": "none",
+            "candidate": {"avg": None, "per_suite": []},
+            "active": {"avg": None, "per_suite": []},
+            "delta": None,
+        }
     return status
 
 
@@ -853,8 +898,13 @@ def activate_prompt(prompt_id: str):
             raise HTTPException(status_code=404, detail="Prompt not found")
         db._conn.commit()
         new_row = db._conn.execute("SELECT * FROM prompts WHERE id=?", (prompt_id,)).fetchone()
-    db.audit("prompt_activated", object_id=prompt_id, object_type="prompt",
-             actor="mcos", detail=f"slot={slot} version={version}")
+    db.audit(
+        "prompt_activated",
+        object_id=prompt_id,
+        object_type="prompt",
+        actor="mcos",
+        detail=f"slot={slot} version={version}",
+    )
     return {"prompt": _prompt_dict(db, new_row)}
 
 
@@ -866,14 +916,10 @@ def delete_prompt(prompt_id: str):
     # delete (which would drop the slot's only active prompt).  The WHERE clause
     # enforces "not active"; rowcount disambiguates 404 vs 409.
     with db._lock:
-        exists = db._conn.execute(
-            "SELECT active FROM prompts WHERE id=?", (prompt_id,)
-        ).fetchone()
+        exists = db._conn.execute("SELECT active FROM prompts WHERE id=?", (prompt_id,)).fetchone()
         if exists is None:
             raise HTTPException(status_code=404, detail="Prompt not found")
-        cur = db._conn.execute(
-            "DELETE FROM prompts WHERE id=? AND active=0", (prompt_id,)
-        )
+        cur = db._conn.execute("DELETE FROM prompts WHERE id=? AND active=0", (prompt_id,))
         if cur.rowcount == 0:
             db._conn.rollback()
             raise HTTPException(status_code=409, detail="Cannot delete the active prompt")
@@ -898,8 +944,7 @@ def rag_config():
         overlap = int(db.get_setting("chunk_overlap_words", "50"))
     except (TypeError, ValueError):
         overlap = _RAG_DEFAULTS["overlap_words"]
-    return {"target_words": target, "overlap_words": overlap,
-            "defaults": dict(_RAG_DEFAULTS)}
+    return {"target_words": target, "overlap_words": overlap, "defaults": dict(_RAG_DEFAULTS)}
 
 
 def _reap_stale_sweeps(db) -> None:
@@ -922,6 +967,7 @@ def _reap_stale_sweeps(db) -> None:
 @router.post("/rag/sweep", status_code=202)
 def rag_sweep_start(background_tasks: BackgroundTasks):
     from orivellum.capabilities import mcos
+
     db = get_db()
     # Reap stale sweeps first, then race-safely reserve a running row: reject
     # with 409 if a non-stale sweep is already running.
@@ -949,15 +995,17 @@ def rag_sweeps(limit: int = Query(5, ge=1, le=50)):
     out = []
     for r in rows:
         meta = _jload(r["meta"], {}) or {}
-        out.append({
-            "id": r["id"],
-            "started_at": r["started_at"],
-            "finished_at": r["finished_at"],
-            "status": r["status"],
-            "results": _jload(r["results"], []) or [],
-            "best": meta.get("best"),
-            "docs_sampled": r["docs_sampled"],
-        })
+        out.append(
+            {
+                "id": r["id"],
+                "started_at": r["started_at"],
+                "finished_at": r["finished_at"],
+                "status": r["status"],
+                "results": _jload(r["results"], []) or [],
+                "best": meta.get("best"),
+                "docs_sampled": r["docs_sampled"],
+            }
+        )
     return {"sweeps": out}
 
 
@@ -967,11 +1015,11 @@ def rag_apply(body: RagApply, background_tasks: BackgroundTasks):
     target = body.target_words
     overlap = body.overlap_words
     if not isinstance(target, int) or not (_RAG_TARGET_MIN <= target <= _RAG_TARGET_MAX):
-        raise HTTPException(status_code=400,
-                            detail=f"target_words must be {_RAG_TARGET_MIN}-{_RAG_TARGET_MAX}")
+        raise HTTPException(
+            status_code=400, detail=f"target_words must be {_RAG_TARGET_MIN}-{_RAG_TARGET_MAX}"
+        )
     if not isinstance(overlap, int) or overlap < 0 or overlap > target // 2:
-        raise HTTPException(status_code=400,
-                            detail="overlap_words must be 0..target_words/2")
+        raise HTTPException(status_code=400, detail="overlap_words must be 0..target_words/2")
     db.set_setting("chunk_target_words", str(target), actor="mcos")
     db.set_setting("chunk_overlap_words", str(overlap), actor="mcos")
 
@@ -981,13 +1029,19 @@ def rag_apply(body: RagApply, background_tasks: BackgroundTasks):
         # Reuse the shared library reprocess machinery — do NOT duplicate the
         # pipeline.  Runs in the background after this response is sent.
         from orivellum.api.routes.library import queue_library_reprocess
+
         summary = queue_library_reprocess(db, background_tasks, force=True)
         reprocess_started = int(summary.get("queued", 0))
         resp["reprocess_started"] = reprocess_started
         detail += f" reprocess_started={reprocess_started}"
 
-    db.audit("rag_config_changed", object_id="chunking", object_type="setting",
-             actor="mcos", detail=detail)
+    db.audit(
+        "rag_config_changed",
+        object_id="chunking",
+        object_type="setting",
+        actor="mcos",
+        detail=detail,
+    )
     return resp
 
 
@@ -998,6 +1052,7 @@ def rag_reprocess_status():
     The UI polls this every 3s while ``processing > 0`` after a reprocess.
     """
     from orivellum.api.routes.library import REPROCESS_INFLIGHT_STATES
+
     db = get_db()
     placeholders = ",".join("?" * len(REPROCESS_INFLIGHT_STATES))
     with db._lock:
