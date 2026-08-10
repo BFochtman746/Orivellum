@@ -3350,6 +3350,170 @@ def get_transcribe_status(job_id: str):
     return {"job_id": job_id, **job}
 
 
+def _strip_transcript_header(text: str) -> str:
+    """Drop the "[Audio transcript: …]" banner that full_text prepends."""
+    text = (text or "").strip()
+    if text.startswith("[Audio transcript"):
+        nl = text.find("\n")
+        text = text[nl + 1:].lstrip() if nl != -1 else ""
+    return text
+
+
+def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
+    """Background worker: re-run the full extraction pipeline on an existing
+    Library audio document, then surface the fresh transcript on the job.
+
+    Reuses ``process_document`` (not bare ``extract``) so chunks, indexes and
+    downstream knowledge stay consistent with the updated transcript — the
+    same guarantee the Library reprocess endpoint gives.
+    """
+    try:
+        with _transcribe_jobs_lock:
+            job = _transcribe_jobs.get(job_id)
+            if job is None or job["cancel"].is_set():
+                if job is not None:
+                    job.update({"state": "cancelled", "finished_at": time.time()})
+                return
+            job["stage"] = "transcribing"
+
+        doc = db.get_document(doc_id)
+        if doc is None:
+            raise RuntimeError(f"Document {doc_id!r} disappeared")
+
+        # Last cancellation point BEFORE any destructive work — once the
+        # document is reset below, the job runs to completion (the DELETE
+        # endpoint's "best effort" contract: an extraction already mutating
+        # the document cannot be interrupted, and the final done/error state
+        # honestly reflects what happened to the document).
+        with _transcribe_jobs_lock:
+            job = _transcribe_jobs.get(job_id)
+            if job is None or job["cancel"].is_set():
+                if job is not None:
+                    job.update({"state": "cancelled", "finished_at": time.time()})
+                return
+
+        # Clear stale warnings and flip readiness so the Library UI shows
+        # the document as processing while the job runs.
+        db.delete_extraction_warnings(doc_id)
+        db.update_document_extracted(doc_id, "", 0, readiness="imported",
+                                     error_message=None)
+
+        from orivellum.capabilities.pipeline import process_document
+        process_document(doc_id=doc_id, file_path=file_path, kind="audio",
+                         work_id=doc.get("work_id"),
+                         title=doc.get("title", ""), db=db)
+
+        fresh = db.get_document(doc_id) or {}
+        readiness = fresh.get("readiness")
+        if readiness != "ready":
+            err = (fresh.get("error_message")
+                   or f"Re-extraction finished in state {readiness!r}")
+            with _transcribe_jobs_lock:
+                if job_id in _transcribe_jobs:
+                    _transcribe_jobs[job_id].update(
+                        {"state": "error", "error": str(err)[:300],
+                         "finished_at": time.time()})
+            return
+
+        meta = fresh.get("meta") or {}
+        if not meta.get("transcription"):
+            # No ASR engine ran — the pipeline stored a metadata-only
+            # placeholder, not a transcript. Mirror the upload path: error.
+            reason = meta.get("reason") or "No transcription engine available"
+            with _transcribe_jobs_lock:
+                if job_id in _transcribe_jobs:
+                    _transcribe_jobs[job_id].update(
+                        {"state": "error", "error": str(reason)[:300],
+                         "finished_at": time.time()})
+            return
+
+        with _transcribe_jobs_lock:
+            job = _transcribe_jobs.get(job_id)
+            if job is None:
+                return
+            job.update({
+                "state": "done",
+                "stage": "done",
+                "text": _strip_transcript_header(fresh.get("extracted_text") or ""),
+                "engine": meta.get("transcription"),
+                "word_count": fresh.get("word_count"),
+                "doc_id": doc_id,
+                "finished_at": time.time(),
+            })
+    except Exception as exc:
+        logger.warning("Re-transcription job %s (doc %s) failed: %s",
+                       job_id, doc_id, exc)
+        with _transcribe_jobs_lock:
+            if job_id in _transcribe_jobs:
+                _transcribe_jobs[job_id].update(
+                    {"state": "error", "error": str(exc)[:300],
+                     "finished_at": time.time()})
+
+
+@router.post("/studio/transcribe/library/{doc_id}")
+def start_library_retranscribe(doc_id: str):
+    """Re-run transcription for an audio document already in the Library.
+
+    Useful after upgrading the ASR engine. Returns ``{job_id}`` immediately;
+    poll GET /studio/transcribe/{job_id}/status like an upload job. The
+    document's stored transcript, chunks and indexes are updated in place.
+    """
+    db = get_db()
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    if (doc.get("kind") or "") != "audio":
+        raise HTTPException(
+            422, f"Document is kind {doc.get('kind')!r} — only audio "
+                 f"documents can be re-transcribed")
+    content_path = doc.get("content_path")
+    if not content_path:
+        raise HTTPException(400, "Document has no stored file (content_path is empty)")
+
+    from orivellum.api.routes.library import _library_root
+    file_path = _library_root() / content_path
+    if not file_path.exists():
+        raise HTTPException(
+            404, "Stored audio file not found — it may have been moved or deleted")
+
+    # Cheap collision guard: "imported" means an extraction is already in
+    # flight for this document (Library reprocess, bulk reprocess, nightshift
+    # recovery, or another Studio job). Stacking a second pipeline run on top
+    # would race on chunks and readiness.
+    if doc.get("readiness") == "imported":
+        raise HTTPException(
+            409, "This document is already being processed — "
+                 "wait for it to finish, then try again")
+
+    with _transcribe_jobs_lock:
+        for j in _transcribe_jobs.values():
+            if j.get("doc_id") == doc_id and j["state"] not in _TRANSCRIBE_TERMINAL:
+                raise HTTPException(
+                    409, "A re-transcription for this document is already running")
+        _prune_transcribe_jobs()
+        job_id = str(uuid.uuid4())
+        _transcribe_jobs[job_id] = {
+            "state": "running",
+            "stage": "queued",
+            "filename": doc.get("title") or content_path,
+            "cancel": threading.Event(),
+            "text": None,
+            "engine": None,
+            "word_count": None,
+            "doc_id": doc_id,
+            "error": None,
+        }
+
+    from orivellum.api.executor import _tracked_submit
+    _tracked_submit(
+        _run_retranscribe_job,
+        job_id, doc_id, str(file_path), db,
+        kind="transcribe",
+        label=f"retranscribe:{(doc.get('title') or '')[:30]}",
+    )
+    return {"job_id": job_id}
+
+
 @router.delete("/studio/transcribe/{job_id}")
 def cancel_transcription(job_id: str):
     """Best-effort cancel: takes effect before/after the engine call, not mid-call."""

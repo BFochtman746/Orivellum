@@ -1511,12 +1511,23 @@ function DocumentWorkshopPanel() {
 
 const AUDIO_ACCEPT = ".mp3,.wav,.m4a,.ogg,.flac";
 
+/** Drop the "[Audio transcript: …]" banner extraction prepends to stored text. */
+function stripAudioHeader(text: string | null | undefined): string {
+  const t = (text ?? "").trim();
+  if (!t.startsWith("[Audio transcript")) return t;
+  const nl = t.indexOf("\n");
+  return nl === -1 ? "" : t.slice(nl + 1).trimStart();
+}
+
 function TranscribePanel() {
   const { data: studioStatus } = useStudioStatus();
   const asr = studioStatus?.asr;
+  const queryClient = useQueryClient();
 
+  const [source, setSource] = useState<"upload" | "library">("upload");
   const [file, setFile] = useState<File | null>(null);
   const [saveToLibrary, setSaveToLibrary] = useState(true);
+  const [libDocId, setLibDocId] = useState<string | null>(null);
   const [jobState, setJobState] = useState<"idle" | "uploading" | "running" | "done" | "error">("idle");
   const [stage, setStage] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
@@ -1525,6 +1536,22 @@ function TranscribePanel() {
   const [docId, setDocId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Library-source data: list of audio docs + the selected doc's stored transcript.
+  const { data: audioDocs } = useListLibrary(
+    { kind: "audio" },
+    { query: { enabled: source === "library", staleTime: 30_000 } } as any,
+  );
+  const { data: libDocResp, isFetching: libDocLoading } = useQuery<{ document: any }>({
+    queryKey: ["library-doc", libDocId],
+    queryFn: () => apiFetch(`${BASE}/library/${libDocId}`).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }),
+    enabled: source === "library" && !!libDocId,
+    staleTime: 10_000,
+  });
+  const libDoc = libDocResp?.document;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const jobIdRef = useRef<string | null>(null);
@@ -1556,6 +1583,47 @@ function TranscribePanel() {
     setJobState("idle");
   }
 
+  /** Shared status-polling loop for upload and re-transcribe jobs. */
+  function beginPolling(job_id: string, opts?: { onDone?: () => void }) {
+    jobIdRef.current = job_id;
+    setJobState("running");
+    setStage("queued");
+    pollRef.current = setInterval(async () => {
+      try {
+        const sr = await apiFetch(`${BASE}/studio/transcribe/${job_id}/status`);
+        if (!sr.ok) {
+          if (sr.status === 404) {
+            stopPolling();
+            setJobState("error");
+            setErrorMsg("Server restarted — the transcription job was lost. Please try again.");
+          }
+          return;
+        }
+        const s = await sr.json();
+        setStage(s.stage ?? null);
+        if (s.state === "done") {
+          stopPolling();
+          setText(s.text ?? "");
+          setEngine(s.engine ?? null);
+          setWordCount(s.word_count ?? null);
+          setDocId(s.doc_id ?? null);
+          setJobState("done");
+          toast.success("Transcription complete");
+          opts?.onDone?.();
+        } else if (s.state === "error") {
+          stopPolling();
+          setJobState("error");
+          setErrorMsg(s.error ?? "Transcription failed");
+        } else if (s.state === "cancelled") {
+          stopPolling();
+          setJobState("idle");
+        }
+      } catch {
+        /* transient poll failure — keep trying */
+      }
+    }, 2000);
+  }
+
   async function handleTranscribe() {
     if (!file) return;
     setJobState("uploading");
@@ -1574,46 +1642,39 @@ function TranscribePanel() {
         throw new Error(typeof raw === "string" ? raw : `HTTP ${resp.status}`);
       }
       const { job_id } = await resp.json();
-      jobIdRef.current = job_id;
-      setJobState("running");
-      setStage("queued");
-      pollRef.current = setInterval(async () => {
-        try {
-          const sr = await apiFetch(`${BASE}/studio/transcribe/${job_id}/status`);
-          if (!sr.ok) {
-            if (sr.status === 404) {
-              stopPolling();
-              setJobState("error");
-              setErrorMsg("Server restarted — the transcription job was lost. Please try again.");
-            }
-            return;
-          }
-          const s = await sr.json();
-          setStage(s.stage ?? null);
-          if (s.state === "done") {
-            stopPolling();
-            setText(s.text ?? "");
-            setEngine(s.engine ?? null);
-            setWordCount(s.word_count ?? null);
-            setDocId(s.doc_id ?? null);
-            setJobState("done");
-            toast.success("Transcription complete");
-          } else if (s.state === "error") {
-            stopPolling();
-            setJobState("error");
-            setErrorMsg(s.error ?? "Transcription failed");
-          } else if (s.state === "cancelled") {
-            stopPolling();
-            setJobState("idle");
-          }
-        } catch {
-          /* transient poll failure — keep trying */
-        }
-      }, 2000);
+      beginPolling(job_id);
     } catch (e: any) {
       stopPolling();
       setJobState("error");
       setErrorMsg(e.message ?? "Upload failed");
+    }
+  }
+
+  async function handleRetranscribe() {
+    if (!libDocId) return;
+    setJobState("running");
+    setStage("queued");
+    setText(null);
+    setErrorMsg(null);
+    setDocId(null);
+    try {
+      const resp = await apiFetch(`${BASE}/studio/transcribe/library/${libDocId}`, { method: "POST" });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        const raw = (err as any).detail;
+        throw new Error(typeof raw === "string" ? raw : `HTTP ${resp.status}`);
+      }
+      const { job_id } = await resp.json();
+      beginPolling(job_id, {
+        onDone: () => {
+          // Stored transcript changed — refresh the doc view.
+          queryClient.invalidateQueries({ queryKey: ["library-doc", libDocId] });
+        },
+      });
+    } catch (e: any) {
+      stopPolling();
+      setJobState("error");
+      setErrorMsg(e.message ?? "Could not start re-transcription");
     }
   }
 
@@ -1634,7 +1695,10 @@ function TranscribePanel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(file?.name ?? "recording").replace(/\.[^.]+$/, "")}-transcript.txt`;
+    const baseName = source === "library"
+      ? (libDoc?.title ?? "document")
+      : (file?.name ?? "recording");
+    a.download = `${baseName.replace(/\.[^.]+$/, "")}-transcript.txt`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -1669,6 +1733,31 @@ function TranscribePanel() {
         )}
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Source toggle: fresh upload vs existing Library audio */}
+        <div className="flex rounded-lg border border-border overflow-hidden" role="tablist" aria-label="Audio source">
+          {([["upload", "Upload a file"], ["library", "From the Library"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={source === key}
+              disabled={busy}
+              onClick={() => {
+                if (source === key) return;
+                setSource(key);
+                setText(null); setEngine(null); setWordCount(null);
+                setDocId(null); setErrorMsg(null); setJobState("idle");
+              }}
+              className={`flex-1 min-h-[44px] text-sm font-medium transition-colors disabled:opacity-50 ${
+                source === key ? "bg-primary/10 text-primary" : "bg-transparent text-muted-foreground hover:bg-muted/40"
+              }`}
+              data-testid={`tab-source-${key}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {source === "upload" && <>
         {/* File picker */}
         <div className="space-y-1">
           <label className="text-xs font-mono uppercase text-muted-foreground">Audio file</label>
@@ -1704,7 +1793,81 @@ function TranscribePanel() {
             )}
           </button>
         </div>
+        </>}
 
+        {source === "library" && (
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs font-mono uppercase text-muted-foreground">Library audio document</label>
+              <Select
+                value={libDocId ?? ""}
+                onValueChange={(v) => {
+                  setLibDocId(v || null);
+                  setText(null); setEngine(null); setWordCount(null);
+                  setDocId(null); setErrorMsg(null); setJobState("idle");
+                }}
+                disabled={busy}
+              >
+                <SelectTrigger data-testid="select-library-audio">
+                  <SelectValue placeholder={
+                    (audioDocs?.documents?.length ?? 0) === 0
+                      ? "No audio documents in the Library yet"
+                      : "Pick an audio document…"
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  {(audioDocs?.documents ?? []).map((d: any) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.title || d.source?.split("/").pop() || d.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Stored transcript — shown instantly, no job needed */}
+            {libDocId && (
+              libDocLoading && !libDoc ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading stored transcript…
+                </div>
+              ) : libDoc ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-mono uppercase text-muted-foreground">Stored transcript</span>
+                    {libDoc.meta?.transcription && (
+                      <Badge variant="secondary" className="font-mono text-[10px]">
+                        {libDoc.meta.transcription === "ai_server" ? "AI server"
+                          : libDoc.meta.transcription === "faster_whisper" ? "faster-whisper"
+                          : libDoc.meta.transcription}
+                      </Badge>
+                    )}
+                    {libDoc.word_count != null && libDoc.word_count > 0 && (
+                      <span className="text-[11px] font-mono text-muted-foreground">
+                        {Number(libDoc.word_count).toLocaleString()} words
+                      </span>
+                    )}
+                  </div>
+                  {stripAudioHeader(libDoc.extracted_text) ? (
+                    <div className="p-4 rounded-lg bg-muted/30 border border-border/50 max-h-64 overflow-y-auto">
+                      <p className="text-sm font-serif whitespace-pre-wrap leading-relaxed" data-testid="text-stored-transcript">
+                        {stripAudioHeader(libDoc.extracted_text)}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground" data-testid="text-stored-transcript">
+                      {libDoc.readiness === "ready"
+                        ? "This document has no stored transcript yet."
+                        : `This document is in state "${libDoc.readiness}" — re-transcribe to extract its text.`}
+                    </p>
+                  )}
+                </div>
+              ) : null
+            )}
+          </div>
+        )}
+
+        {source === "upload" && <>
         {/* Save to library toggle */}
         <label className="flex items-center gap-2.5 cursor-pointer select-none min-h-[44px]">
           <input
@@ -1731,6 +1894,22 @@ function TranscribePanel() {
             <><FileText className="w-4 h-4" /> Transcribe</>
           )}
         </Button>
+        </>}
+
+        {source === "library" && (
+          <Button
+            onClick={handleRetranscribe}
+            disabled={!libDocId || busy || (asr ? !asr.available : false)}
+            className="w-full gap-2"
+            data-testid="button-retranscribe"
+          >
+            {busy ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> {stageLabel}</>
+            ) : (
+              <><RefreshCw className="w-4 h-4" /> Re-transcribe</>
+            )}
+          </Button>
+        )}
 
         {/* Error state */}
         {jobState === "error" && errorMsg && (
