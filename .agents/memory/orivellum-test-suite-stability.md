@@ -13,3 +13,6 @@ description: Order-dependence and flake patterns in the pytest suite, plus how t
 **Why:** Background registration jobs (e.g. `_register_output_bg` from the TTS SSE stream) keep writing into the test's data dir after the response completes; rmtree races them (`OSError: Directory not empty`). The ignore flag covers persist.py's untracked raw-thread fallback spawned mid-shutdown.
 
 **Running the full suite in the Replit container:** the 8GB container cannot survive a single-process full run — pytest gets SIGBUS (bus error in SQLite migrations at random tests) or is OOM-killed silently around 60–75%. Run in alphabetical chunks of ~10 files instead; also note background `setsid` runners get reaped by the container, so prefer foreground `timeout 280` batches. Kill tsserver/stale Playwright chromium first to free ~2GB. On the user's 128GB machine a single run is fine.
+
+## Timing-based concurrency tests (Aug 2026)
+Never give a "fast path finishes before slow path" test a fixed-sleep window — loaded CI runners flake it (OCR isolation test failed by 0.47s). Start the timing window from an event set inside the slow worker (threading.Event) and widen the slow duration under `CI` env. Sibling perf assertions should carry explicit CI headroom in the budget comment.
