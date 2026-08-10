@@ -826,6 +826,49 @@ export function ReadAloudProvider({
     } catch { /* ignore */ }
   }, [nowPlaying, playing]);
 
+  // Position state: gives the lock screen an accurate, scrubbable timeline.
+  // Without this, iOS infers duration from the audio element, which lags or
+  // reports a wrong length for blob-based TTS parts. Guarded twice —
+  // mediaSession may be missing (plain HTTP) and setPositionState is newer
+  // than the rest of the API — so unavailable = zero effect.
+  const updatePositionState = useCallback(() => {
+    const ms = getMediaSession();
+    if (!ms || typeof ms.setPositionState !== "function") return;
+    try {
+      const el = audioRef.current;
+      if (!nowPlaying || !el || !isFinite(el.duration) || el.duration <= 0) {
+        ms.setPositionState(); // clear — no meaningful timeline right now
+        return;
+      }
+      ms.setPositionState({
+        duration: el.duration,
+        position: Math.max(0, Math.min(el.currentTime, el.duration)),
+        playbackRate: el.playbackRate || 1,
+      });
+    } catch { /* invalid state mid-transition / unsupported — ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nowPlaying]);
+
+  // Refresh on metadata load (covers part changes — each part swaps src),
+  // seeks, rate changes, and play/pause transitions.
+  useEffect(() => {
+    if (!nowPlaying) { updatePositionState(); return; } // clears stale state
+    const el = audioRef.current;
+    if (!el) return;
+    const events = ["loadedmetadata", "durationchange", "seeked", "ratechange", "play", "pause"] as const;
+    for (const ev of events) el.addEventListener(ev, updatePositionState);
+    updatePositionState();
+    return () => { for (const ev of events) el.removeEventListener(ev, updatePositionState); };
+  }, [nowPlaying, mediaUrl, updatePositionState]);
+
+  // Periodic refresh while playing guards against drift (the OS extrapolates
+  // from the last reported position + rate; blob playback can hiccup).
+  useEffect(() => {
+    if (!playing) return;
+    const id = window.setInterval(updatePositionState, 5000);
+    return () => window.clearInterval(id);
+  }, [playing, updatePositionState]);
+
   // Action handlers. play/pause act directly on the shared <audio> element
   // (its onPlay/onPause events keep React state in sync); next/previous route
   // through goToPart for multi-part TTS sessions. OS-initiated actions count
@@ -839,7 +882,7 @@ export function ReadAloudProvider({
     if (!nowPlaying) {
       // No session — leave no stale handlers behind.
       for (const a of ["play", "pause", "nexttrack", "previoustrack",
-                       "seekforward", "seekbackward"] as MediaSessionAction[]) {
+                       "seekforward", "seekbackward", "seekto"] as MediaSessionAction[]) {
         set(a, null);
       }
       return;
@@ -857,6 +900,19 @@ export function ReadAloudProvider({
       const el = audioRef.current;
       if (el) el.currentTime = Math.max(0, el.currentTime - 10);
     });
+    // Lock-screen scrubber → seek within the current part. The "seeked" event
+    // listener then re-reports position state, keeping the scrubber honest.
+    set("seekto", (details) => {
+      const el = audioRef.current;
+      if (!el || !isFinite(el.duration)) return;
+      const t = details?.seekTime;
+      if (typeof t !== "number" || !isFinite(t)) return;
+      const clamped = Math.max(0, Math.min(t, el.duration));
+      try {
+        if (details.fastSeek && typeof el.fastSeek === "function") el.fastSeek(clamped);
+        else el.currentTime = clamped;
+      } catch { el.currentTime = clamped; }
+    });
     const multiPart = nowPlaying.kind === "tts" && chunks.length > 1;
     set("nexttrack", multiPart ? () => {
       if (indexRef.current + 1 < chunksRef.current.length) {
@@ -868,7 +924,7 @@ export function ReadAloudProvider({
     } : null);
     return () => {
       for (const a of ["play", "pause", "nexttrack", "previoustrack",
-                       "seekforward", "seekbackward"] as MediaSessionAction[]) {
+                       "seekforward", "seekbackward", "seekto"] as MediaSessionAction[]) {
         set(a, null);
       }
     };
