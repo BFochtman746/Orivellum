@@ -192,8 +192,16 @@ def _sheet_exceptions(wb, exceptions: list[ExceptionRow]) -> None:
     _style_header(ws, 1, len(headers))
     for e in exceptions:
         ws.append(
-            (e.exception_id, e.pdf_page, e.exception_type, e.description,
-             e.value_a, e.value_b, "", "open")
+            (
+                e.exception_id,
+                e.pdf_page,
+                e.exception_type,
+                e.description,
+                e.value_a,
+                e.value_b,
+                "",
+                "open",
+            )
         )
         _fill_row(ws, ws.max_row, len(headers), _META_FILL)
     ws.column_dimensions["D"].width = 70
@@ -228,8 +236,15 @@ def _sheet_checks(wb, manifest: dict, exceptions: list[ExceptionRow]) -> None:
         _fill_row(ws, r, len(headers), _FORMULA_FILL)
     r = ws.max_row + 1
     open_formula = f'=COUNTIF(Exceptions!H2:H{len(exceptions) + 1},"open")' if exceptions else "=0"
-    ws.append(("C4", "Open exceptions (resolve before release)", open_formula, 0,
-               f'=IF(C{r}=0,"PASS","REVIEW")'))
+    ws.append(
+        (
+            "C4",
+            "Open exceptions (resolve before release)",
+            open_formula,
+            0,
+            f'=IF(C{r}=0,"PASS","REVIEW")',
+        )
+    )
     _fill_row(ws, r, len(headers), _FORMULA_FILL)
     ws.column_dimensions["B"].width = 44
 
@@ -331,9 +346,7 @@ def _gate_completeness(xlsx: pathlib.Path, manifest: dict) -> dict:
         if registered != expected:
             return _fail(f"register has {registered} page(s), source has {expected}")
         if data_sheets != manifest["table_pages"]:
-            return _fail(
-                f"{data_sheets} data sheet(s) for {manifest['table_pages']} table page(s)"
-            )
+            return _fail(f"{data_sheets} data sheet(s) for {manifest['table_pages']} table page(s)")
         totals = manifest.get("content_totals") or {}
         problem = _check_table_rows(wb, totals) or _check_narrative(wb, totals)
         if problem:

@@ -70,8 +70,7 @@ def _mini_pdf(page_texts: list[str]) -> bytes:
     for off in offsets:
         out += f"{off:010d} 00000 n \n".encode()
     out += (
-        f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\n"
-        f"startxref\n{xref_pos}\n%%EOF"
+        f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF"
     ).encode()
     return bytes(out)
 
@@ -148,9 +147,7 @@ class ChannelComparisonTest(unittest.TestCase):
     def test_duplicate_occurrences_need_duplicate_corroboration(self):
         from orivellum.capabilities.pdf_excel import PageExtract, compare_channels
 
-        pages = [
-            PageExtract(page=1, text_a="Total 42 and again 42", text_b="Total 42 once")
-        ]
+        pages = [PageExtract(page=1, text_a="Total 42 and again 42", text_b="Total 42 once")]
         exc = compare_channels(pages)
         token_rows = [e for e in exc if e.value_a == "42"]
         self.assertEqual(len(token_rows), 1)
@@ -205,8 +202,15 @@ class WorkbookBuildAndGatesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             xlsx, _ = self._build(tmp)
             wb = load_workbook(xlsx)
-            expected = ("README", "Page_Register", "P001", "Narrative",
-                        "Exceptions", "Checks", "Changelog")
+            expected = (
+                "README",
+                "Page_Register",
+                "P001",
+                "Narrative",
+                "Exceptions",
+                "Checks",
+                "Changelog",
+            )
             for sheet in expected:
                 self.assertIn(sheet, wb.sheetnames, sheet)
             checks = wb["Checks"]
@@ -242,8 +246,7 @@ class WorkbookBuildAndGatesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             pdf = Path(tmp) / "mini.pdf"
             pdf.write_bytes(_mini_pdf(["x"]))
-            big = PageExtract(page=1, text_a="t", text_b="t",
-                              tables=[[["a"], ["b"], ["c"], ["d"]]])
+            big = PageExtract(page=1, text_a="t", text_b="t", tables=[[["a"], ["b"], ["c"], ["d"]]])
             manifest = _manifest_for(pdf, [big])
             with (
                 patch.object(pdf_excel_build, "_MAX_TABLE_ROWS", 3),

@@ -133,9 +133,7 @@ def preflight(pdf_path: pathlib.Path, pages: list[PageExtract]) -> dict:
         # Extraction totals the completeness gate certifies against — the
         # published workbook must contain exactly this much content.
         "content_totals": {
-            "table_rows": {
-                str(p.page): sum(len(t) for t in p.tables) for p in pages if p.tables
-            },
+            "table_rows": {str(p.page): sum(len(t) for t in p.tables) for p in pages if p.tables},
             "narrative_chars": {
                 str(p.page): len(p.text_a.strip())
                 for p in pages
@@ -200,7 +198,7 @@ def dual_channel_extract(pdf_path: pathlib.Path) -> list[PageExtract]:
     for i, rp in enumerate(reader.pages):
         if i < len(pages):
             try:
-                text_b = (rp.extract_text() or "")[: MAX_TOTAL_TEXT_CHARS]
+                text_b = (rp.extract_text() or "")[:MAX_TOTAL_TEXT_CHARS]
                 pages[i].text_b = text_b
             except Exception:  # noqa: BLE001 - channel B is independent; A stands alone
                 pages[i].text_b = ""

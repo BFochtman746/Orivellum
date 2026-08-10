@@ -95,3 +95,4 @@
 - [Work render pause/resume](orivellum-work-render-resume.md) — segment texts single-sourced; resume-info counts only engine-reachable cache; status copied under lock; UI detach + job-id poll guard.
 - [Project Workbench](orivellum-workbench.md) — Tasklet-style build/edit/repair for xlsx+code; claim-before-mutate, files-before-row publish, hash-gated archives; proof gates queued.
 - [Workbench import + analyze](orivellum-workbench-import-analyze.md) — upload becomes v1 verbatim; analyze publishes report versions; submit_bg returns bool (release claims on False); xlsx zip-bomb guard.
+- [PDF→Excel protocol](orivellum-pdf-excel.md) — verified-or-refused: no silent truncation, occurrence-aware bidirectional channel compare, parser ceilings; auto review on every upload (workbench_auto_review).
