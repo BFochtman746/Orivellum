@@ -53,10 +53,27 @@ def create_backup():
         if db_path.exists():
             zf.write(db_path, "orivellum.db")
         # Sidecar databases (Studio / Pressworks) — part of a full restore.
+        # Snapshot via SQLite's online backup API rather than a raw file copy:
+        # a raw copy can race a concurrent transaction (and would silently
+        # omit -wal contents if WAL is ever enabled on these files).
+        import sqlite3
+        import tempfile
         for side in ("atelier.db", "press.db"):
             sp = data_dir / side
-            if sp.exists():
-                zf.write(sp, side)
+            if not sp.exists():
+                continue
+            with tempfile.TemporaryDirectory() as td:
+                snap = Path(td) / side
+                src = sqlite3.connect(str(sp))
+                try:
+                    dst = sqlite3.connect(str(snap))
+                    try:
+                        src.backup(dst)
+                    finally:
+                        dst.close()
+                finally:
+                    src.close()
+                zf.write(snap, side)
         # Serving configuration — restoring without it loses model endpoints.
         # Resolve against the repo ROOT (same anchor load_config uses), never
         # the process CWD, which differs under workflow runners.

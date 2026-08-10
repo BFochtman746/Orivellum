@@ -39,26 +39,28 @@ def require_auth(request: fastapi.Request) -> None:
     """FastAPI dependency that enforces API key authentication.
 
     Raises HTTP 401 when the request does not carry a valid bearer token or
-    X-Api-Key header.  Import and include as a router dependency where you
-    need per-route granularity; the global middleware in app.py covers all
-    routes by default.
+    X-Api-Key header, and HTTP 503 when no credential is configured at all
+    (fail closed).  Uses the same credential resolution and constant-time
+    comparison as the global middleware in app.py — see
+    orivellum.api.auth_keys.  Import and include as a router dependency where
+    you need per-route granularity; the global middleware covers all routes
+    by default.
     """
-    import os
-
-    from fastapi import HTTPException  # noqa: F401
+    from fastapi import HTTPException
     from fastapi.security.utils import get_authorization_scheme_param
 
-    # SESSION_SECRET takes priority — same source of truth as the middleware.
-    expected_key = os.environ.get("SESSION_SECRET", "")
+    from orivellum.api.auth_keys import key_matches, resolve_login_key
+
+    expected_key = resolve_login_key()
     if not expected_key:
-        if _DB is None:
-            raise RuntimeError("Database not initialized")
-        expected_key = _DB.get_setting("api_key", "")
+        # Fail CLOSED — no configured credential must never mean open access.
+        raise HTTPException(status_code=503,
+                            detail="Service not ready — no API key configured")
 
     auth_header = request.headers.get("authorization", "")
     scheme, token = get_authorization_scheme_param(auth_header)
     if scheme.lower() != "bearer":
         token = request.headers.get("x-api-key", "")
 
-    if not expected_key or token != expected_key:
+    if not key_matches(token, expected_key):
         raise HTTPException(status_code=401, detail="Unauthorized")

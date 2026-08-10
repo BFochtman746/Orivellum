@@ -32,7 +32,10 @@ _deprecation_warned = False
 
 
 def key_matches(provided: str, expected: str) -> bool:
-    """Constant-time equality check; False when either side is empty."""
+    """Constant-time equality check; False when either side is empty or not a
+    string (e.g. a JSON body sent ``{"key": 123}`` — reject, don't 500)."""
+    if not isinstance(provided, str) or not isinstance(expected, str):
+        return False
     if not provided or not expected:
         return False
     return secrets.compare_digest(provided.encode("utf-8"),
