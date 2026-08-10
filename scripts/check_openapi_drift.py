@@ -8,6 +8,11 @@ frontend compiles against endpoints that no longer exist.
 The spec is intentionally a curated SUBSET of the app (internal endpoints are
 not all specced), so the check is one-directional: spec ⊆ app.
 
+Scope: this is a route-shape/existence check. Path parameters are compared by
+POSITION, not name ({workId} vs {work_id} both match {}), and request/response
+schemas are not compared — semantic drift inside an operation is out of scope
+and is covered by the generated client's TypeScript compile in the JS CI job.
+
 Usage: python scripts/check_openapi_drift.py
 Exit 0 = spec matches, 1 = drift.
 """

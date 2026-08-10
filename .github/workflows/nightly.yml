@@ -26,15 +26,18 @@ jobs:
       - name: Run mutation testing
         env:
           SESSION_SECRET: ci-test-secret-not-a-real-key-padding-to-32-plus-chars
-        # mutmut exits non-zero when mutants survive; the gate below decides.
-        run: >
-          uv run --with mutmut --with pytest --with pytest-asyncio
-          --with hypothesis mutmut run || true
+        # mutmut exits non-zero when mutants survive — that alone must not
+        # fail the step (the gate decides), but a run that produced no stats
+        # DID break and must fail here rather than fail open downstream.
+        run: |
+          uv run --with mutmut --with pytest --with pytest-asyncio \
+            --with hypothesis mutmut run || echo "mutmut exited non-zero (survivors expected)"
+          test -f mutants/mutmut-stats.json || { echo "mutation run produced no stats — it crashed"; exit 1; }
 
       - name: Collect results
         run: >
           uv run --with mutmut --with pytest --with pytest-asyncio
-          --with hypothesis mutmut results > mutation-results.txt || true
+          --with hypothesis mutmut results > mutation-results.txt
 
       - name: Gate on surviving mutants (frozen baseline, only shrinks)
         run: python scripts/check_mutation_score.py mutation-results.txt

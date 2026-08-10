@@ -13,11 +13,20 @@ from __future__ import annotations
 import pathlib
 import sys
 
-MAX_SURVIVORS = 45  # 41 measured + small headroom for mutmut version drift
+MAX_SURVIVORS = 41  # measured baseline — lower this when you kill survivors
 
 
 def main() -> int:
     text = pathlib.Path(sys.argv[1]).read_text() if len(sys.argv) > 1 else sys.stdin.read()
+    # Fail CLOSED: an empty results file usually means the mutation run itself
+    # broke (import error, config drift), not that every mutant was killed.
+    # A healthy run always reports at least the known surviving baseline.
+    if not text.strip() and MAX_SURVIVORS > 0:
+        print(
+            "Mutation gate FAILED — results are empty but the baseline expects "
+            f"{MAX_SURVIVORS} survivors; the mutation run itself likely broke."
+        )
+        return 1
     survivors = [ln.strip() for ln in text.splitlines() if ln.strip().endswith(": survived")]
     print(f"Surviving mutants: {len(survivors)} (ceiling {MAX_SURVIVORS})")
     if len(survivors) > MAX_SURVIVORS:

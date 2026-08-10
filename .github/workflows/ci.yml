@@ -27,6 +27,9 @@ jobs:
       - name: Ruff lint (full ruleset; baseline may only shrink)
         run: uvx ruff check src tests scripts orivellum-runner
 
+      - name: Lint-debt ratchet (grandfathered files cannot gain violations)
+        run: uv run --with ruff python scripts/check_lint_ratchet.py
+
       # ── Gate 3: architecture contracts + file-size budget ──
       - name: Architecture contracts (import-linter)
         run: uv run --with import-linter lint-imports
