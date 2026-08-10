@@ -168,18 +168,33 @@ pick the workhorse in the model picker again; nothing else changes.
 
 ## Troubleshooting
 
+> **One-command check-up:** `.\scripts\doctor.ps1` runs all of these checks
+> automatically (tools, disk space, Lemonade reachability, pulled models,
+> config tuning, API health) and prints the exact fix for anything broken.
+
 | Symptom | Fix |
 |---------|-----|
-| Connection refused on port 13305 | Lemonade not running — check system tray or run `lemonade serve` |
+| Connection refused on port 13305 | Lemonade not running — run `lemonade status`; if stopped, launch Lemonade from the Start menu (it registers to start at login) |
+| Port 13305 doesn't answer but Lemonade is running | Check the `port` key in `%USERPROFILE%\.cache\lemonade\config.json` (Lemonade's own config — default 13305) and match `base_url` in `config.yaml` |
+| NPU errors / models fall back to CPU | Update the NPU driver — minimum `32.0.203.280` for Ryzen AI 1.6.0. Guide: https://lemonade-server.ai/driver_install (use AMD's auto-detect tool first) |
 | Model not found error | Run `lemonade list` to see pulled model names; update `config.yaml` to match exactly |
 | Slow first response | Normal — model loading into unified RAM; subsequent responses are faster |
+| Chat and embeddings constantly re-loading | `lemonade config set max_loaded_models=2` then restart Lemonade (the limit is per model type) |
+| Disk filling up | Models live in `%USERPROFILE%\.cache\huggingface\hub`. Move them by setting the `HF_HOME` env var (FAQ: "Where are models stored") |
 | Embeddings not working | Lemonade's embedding endpoint needs `Qwen3-Embedding-8B-GGUF` pulled first; Orivellum falls back to keyword search if unavailable |
 | Want to switch to Ollama instead | Change `base_url` in `config.yaml` to `http://127.0.0.1:11434/v1` and use Ollama model names |
 
+Still stuck? The Lemonade FAQ and Discord are active:
+https://lemonade-server.ai/docs/guide/faq/ · https://discord.gg/5xXzkMu8Zk
+
 ---
 
-## References
+## References (verified Aug 2026)
 
-- Lemonade docs: https://lemonade-server.ai/docs/
-- AMD Lemonade blog: https://www.amd.com/en/developer/resources/technical-articles/unlocking-a-wave-of-llm-apps-on-ryzen-ai-through-lemonade-server.html
+- Lemonade user guide: https://lemonade-server.ai/docs/guide/
+- Install guide: https://lemonade-server.ai/docs/guide/install/
+- Server configuration (`config.json` keys): https://lemonade-server.ai/docs/guide/configuration/
+- NPU driver installation: https://lemonade-server.ai/driver_install
+- FAQ: https://lemonade-server.ai/docs/guide/faq/
+- Releases: https://github.com/lemonade-sdk/lemonade/releases
 - Ryzen AI developer hub: https://developer.amd.com/playbooks/lemonade-getting-started/

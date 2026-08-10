@@ -305,5 +305,10 @@ Write-Host "    2. Start Orivellum (from the project root):" -ForegroundColor Wh
 Write-Host "       .\scripts\start.ps1" -ForegroundColor Gray
 Write-Host ""
 Write-Host "    3. Open http://localhost:8080/orivellum-ui/ in your browser" -ForegroundColor White
+Write-Host ""
+Write-Host "    4. Verify everything (any time something feels off):" -ForegroundColor White
+Write-Host "       .\scripts\doctor.ps1" -ForegroundColor Gray
+Write-Host "       Checks tools, disk space, Lemonade + models, API health -- and" -ForegroundColor DarkGray
+Write-Host "       prints the exact fix for anything broken." -ForegroundColor DarkGray
 Write-Host "---------------------------------------" -ForegroundColor Green
 Write-Host ""

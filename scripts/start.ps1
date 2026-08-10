@@ -147,15 +147,27 @@ if ($SkipBuild -and (Test-Path $uiDist)) {
 
 # ---- Lemonade Server (AMD Ryzen AI Max+ 395) --------------------------------
 # Lemonade Server manages NPU / iGPU acceleration automatically  -  no manual
-# ROCm / HSA environment variables are needed.  Just ensure Lemonade is running
-# before starting Orivellum; it starts automatically on login after install.
+# ROCm / HSA environment variables are needed.  It starts automatically on
+# login after install; we probe it here so a dead backend is caught BEFORE
+# the app comes up with broken chat.
 #
 # Install guide : scripts\windows\lemonade-setup.md
-# Lemonade docs : https://lemonade-server.ai
-#
-# Verify Lemonade is up:
-#   Invoke-WebRequest http://127.0.0.1:13305/api/v1/models -UseBasicParsing
-Write-Host "[lmnd] Lemonade Server should be running on http://127.0.0.1:13305" -ForegroundColor DarkCyan
+# Lemonade docs : https://lemonade-server.ai/docs/guide/
+# Full check-up : .\scripts\doctor.ps1
+$lemonadeUp = $false
+try {
+  $lr = Invoke-WebRequest -Uri "http://127.0.0.1:13305/api/v1/models" `
+    -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop
+  if ($lr.StatusCode -eq 200) { $lemonadeUp = $true }
+} catch {}
+if ($lemonadeUp) {
+  Write-Host "[lmnd] Lemonade Server is up on http://127.0.0.1:13305 [OK]" -ForegroundColor $Green
+} else {
+  Write-Host "[lmnd] WARNING: Lemonade Server is NOT answering on http://127.0.0.1:13305" -ForegroundColor Yellow
+  Write-Host "       Chat/AI features will be offline until it is running." -ForegroundColor $Gray
+  Write-Host "       Run 'lemonade status', or launch Lemonade from the Start menu." -ForegroundColor $Gray
+  Write-Host "       Diagnose everything with:        .\scripts\doctor.ps1" -ForegroundColor $Gray
+}
 
 # ---- Step 2: Start API (serves both /api/* and /orivellum-ui/*) -----------
 Write-Host "[api]  Starting API server on port $ApiPort ..." -ForegroundColor $Cyan
