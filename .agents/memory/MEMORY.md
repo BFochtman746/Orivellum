@@ -78,4 +78,5 @@
 - [Test suite stability](orivellum-test-suite-stability.md) — never get_event_loop() in tests; drain shared executor before temp-dir cleanup; full suite OOMs in this container — run ~10-file chunks.
 - [Measurement layer](orivellum-measurement-layer.md) — TTFT/tok-s telemetry, benches, golden-set eval; decode rate = (n-1)/window; NULL = not measured; one bench at a time (409 guard).
 - [Local transcription](orivellum-transcription.md) — large-v3-turbo default w/ DB override + base fallback; fallback cached per request; model meta travels via snapshot; verbose_json needs segment AND word granularities.
+- [Music & SFX generation](orivellum-music-gen.md) — sidecar :9884; per-model DB license acks; load+inference under one lock; strict registration with partial-success flag.
 - [Ingestion shield & abstention](orivellum-ingestion-shield.md) — quarantine enforced at every READ (COALESCE(d.quarantined,0)=0); vector cache invalidates on count only; mail gates off until mail_trusted_domains set.
