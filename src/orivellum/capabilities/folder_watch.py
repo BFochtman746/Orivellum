@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-import time
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -53,7 +53,7 @@ _stop_event = threading.Event()
 
 # ─── Watch-dirs config helpers ────────────────────────────────────────────────
 
-def get_watch_dirs(db: "OrivellumDB") -> list[dict]:
+def get_watch_dirs(db: OrivellumDB) -> list[dict]:
     """Return the list of configured watch directories.
 
     Prefers the ``watch_dirs`` setting (multi-dir JSON array) and falls back to
@@ -79,7 +79,7 @@ def get_watch_dirs(db: "OrivellumDB") -> list[dict]:
     return []
 
 
-def set_watch_dirs(dirs: list[dict], db: "OrivellumDB") -> None:
+def set_watch_dirs(dirs: list[dict], db: OrivellumDB) -> None:
     """Persist the watch-dirs list and clear the legacy single-dir keys."""
     db.set_setting("watch_dirs", json.dumps(dirs), actor="user")
     # Clear legacy keys so the UI and watcher read from watch_dirs only.
@@ -88,7 +88,7 @@ def set_watch_dirs(dirs: list[dict], db: "OrivellumDB") -> None:
     db.set_setting("folder_watch_work_id", "", actor="system")
 
 
-def get_watch_status(db: "OrivellumDB") -> dict:
+def get_watch_status(db: OrivellumDB) -> dict:
     """Return the status written by the last watcher scan cycle."""
     raw = db.get_setting("watch_dirs_status", "")
     if raw:
@@ -101,7 +101,7 @@ def get_watch_status(db: "OrivellumDB") -> dict:
 
 # ─── Seen-file registry ────────────────────────────────────────────────────────
 
-def _get_seen_paths(db: "OrivellumDB") -> set[str]:
+def _get_seen_paths(db: OrivellumDB) -> set[str]:
     try:
         raw = db.get_setting("folder_watch_seen", "")
         return set(json.loads(raw)) if raw else set()
@@ -109,7 +109,7 @@ def _get_seen_paths(db: "OrivellumDB") -> set[str]:
         return set()
 
 
-def _mark_seen(paths: list[str], db: "OrivellumDB") -> None:
+def _mark_seen(paths: list[str], db: OrivellumDB) -> None:
     try:
         seen = _get_seen_paths(db)
         seen.update(paths)
@@ -138,7 +138,7 @@ _KIND_MAP: dict[str, str] = {
 }
 
 
-def _import_file(file_path: Path, work_id: str | None, db: "OrivellumDB") -> bool:
+def _import_file(file_path: Path, work_id: str | None, db: OrivellumDB) -> bool:
     """Copy a file into the library and queue it for processing.
 
     Returns True on success (including dedup skip).
@@ -177,8 +177,8 @@ def _import_file(file_path: Path, work_id: str | None, db: "OrivellumDB") -> boo
             work_id=work_id,
         )
 
-        from orivellum.capabilities.pipeline import process_document
         from orivellum.api.executor import get_executor
+        from orivellum.capabilities.pipeline import process_document
         get_executor().submit(
             process_document,
             doc_id=doc["id"], file_path=str(dest), kind=kind,
@@ -194,7 +194,7 @@ def _import_file(file_path: Path, work_id: str | None, db: "OrivellumDB") -> boo
 
 # ─── Main polling loop ────────────────────────────────────────────────────────
 
-def _watch_loop(db: "OrivellumDB") -> None:
+def _watch_loop(db: OrivellumDB) -> None:
     logger.info("folder_watch: daemon started (interval=%ds)", _POLL_INTERVAL_SEC)
     while not _stop_event.is_set():
         dir_statuses: list[dict] = []
@@ -241,9 +241,9 @@ def _watch_loop(db: "OrivellumDB") -> None:
 
         # Write scan status so the UI can display last-scan info
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
             scan_status = {
-                "scanned_at": datetime.now(timezone.utc).isoformat(),
+                "scanned_at": datetime.now(UTC).isoformat(),
                 "dirs": dir_statuses,
             }
             db.set_setting("watch_dirs_status", json.dumps(scan_status), actor="system")
@@ -257,12 +257,15 @@ def _watch_loop(db: "OrivellumDB") -> None:
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
-def start_watcher(db: "OrivellumDB") -> None:
+def start_watcher(db: OrivellumDB) -> None:
     """Start the folder-watch background thread.  Idempotent."""
     global _thread
     if _thread is not None and _thread.is_alive():
         return
     _stop_event.clear()
+    # Deliberately a dedicated daemon thread, NOT the shared executor: this is
+    # a long-lived polling loop that would otherwise permanently occupy one of
+    # the bounded pool workers.  Same pattern as the nightshift scheduler loop.
     _thread = threading.Thread(
         target=_watch_loop,
         args=(db,),

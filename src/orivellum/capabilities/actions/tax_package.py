@@ -6,18 +6,17 @@ into a downloadable zip.
 """
 from __future__ import annotations
 
-import io
 import logging
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from orivellum.capabilities.actions import ActionBase, _now
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.actions.tax_package")
 
@@ -46,7 +45,7 @@ class TaxPackageAction(ActionBase):
     }
 
     def confirm_message(self, inputs: dict) -> str:
-        year = inputs.get("year", datetime.now(timezone.utc).year)
+        year = inputs.get("year", datetime.now(UTC).year)
         work_part = ""
         if inputs.get("work_id"):
             work_part = " linked to this Work"
@@ -56,11 +55,11 @@ class TaxPackageAction(ActionBase):
             f"and bundle the source files into a zip archive you can download."
         )
 
-    def _execute_impl(self, inputs: dict, db: "OrivellumDB", cfg: "OrivellumConfig") -> dict:
+    def _execute_impl(self, inputs: dict, db: OrivellumDB, cfg: OrivellumConfig) -> dict:
         import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Alignment, Font, PatternFill
 
-        year: int = int(inputs.get("year") or datetime.now(timezone.utc).year)
+        year: int = int(inputs.get("year") or datetime.now(UTC).year)
         work_id: str | None = inputs.get("work_id")
         data_dir = Path(cfg.data_dir)
 
@@ -150,7 +149,7 @@ class TaxPackageAction(ActionBase):
         # ── Write files to zip ──
         out_dir = data_dir / "outputs" / "generate" / f"tax_{year}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M")
         xlsx_name = f"tax_summary_{year}_{ts}.xlsx"
         xlsx_path = out_dir / xlsx_name
         wb.save(str(xlsx_path))

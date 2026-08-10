@@ -9,13 +9,14 @@ import tempfile
 import threading
 import time
 import uuid
+from datetime import UTC
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -102,10 +103,10 @@ def _rotate_outputs(out_dir: Path) -> None:
 # Keyed by (absolute_path_str, mtime_ns) so stale entries auto-invalidate when
 # a file changes.  Process-lifetime cache — small enough that eviction isn't
 # needed (at most _MAX_OUTPUTS entries).
-_OUTPUT_DURATION_CACHE: dict[tuple[str, int], "float | None"] = {}
+_OUTPUT_DURATION_CACHE: dict[tuple[str, int], float | None] = {}
 
 
-def _probe_duration(path: Path) -> "float | None":
+def _probe_duration(path: Path) -> float | None:
     """Return audio/video duration in seconds via ffprobe.
 
     Non-fatal — returns None when ffprobe is absent or the file is unreadable.
@@ -128,7 +129,7 @@ def _probe_duration(path: Path) -> "float | None":
             capture_output=True,
             timeout=3,
         )
-        dur: "float | None" = None
+        dur: float | None = None
         if r.returncode == 0:
             import json as _jmod
             data = _jmod.loads(r.stdout)
@@ -613,7 +614,7 @@ def _apply_acx_mastering(input_path: str, output_path: str) -> bool:
 
 # ── QA gate: per-segment audio checks before the merge ───────────────────────
 
-def _qa_check_audio(path: Path) -> "str | None":
+def _qa_check_audio(path: Path) -> str | None:
     """Inspect one synthesized segment with ffmpeg volumedetect.
 
     Returns a human-readable problem description when the segment should NOT
@@ -665,13 +666,13 @@ def _seg_cache_path(cfg, text: str, engine: str, voice: str, speed: float,
     import hashlib
     key = hashlib.sha256(
         f"{_SEG_CACHE_VERSION}\x1f{text}\x1f{engine}\x1f{voice}\x1f{speed:.2f}"
-        .encode("utf-8")
+        .encode()
     ).hexdigest()[:40]
     return _seg_cache_dir(cfg) / f"{key}{suffix}"
 
 
 def _seg_cache_get(cfg, text: str, voice: str, speed: float,
-                   engines: list[str], suffix: str = ".wav") -> "Path | None":
+                   engines: list[str], suffix: str = ".wav") -> Path | None:
     """Return the cached segment for the FIRST engine in priority order.
 
     The cache is treated as UNTRUSTED: every hit is re-validated through the
@@ -728,7 +729,7 @@ def _prune_seg_cache(cfg) -> None:
 
 
 def _finalize_segment(cfg, text: str, voice: str, speed: float,
-                      attempt_fn, seg_label: str) -> "Path | None":
+                      attempt_fn, seg_label: str) -> Path | None:
     """QA-gate + cache one synthesized segment.
 
     ``attempt_fn() -> (Path | None, engine_name | None)`` runs the caller's
@@ -809,8 +810,8 @@ def _get_sample_cache_path(cfg, voice_id: str) -> Path:
 
 def _upsert_voice_sample_db(db, voice_id: str, sample_path: str, engine: str) -> None:
     """Upsert a voice_samples row — records which file backs this voice's sample."""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
+    from datetime import datetime
+    now = datetime.now(UTC).isoformat()
     with db._lock:
         db._conn.execute(
             """INSERT INTO voice_samples (voice_id, sample_path, engine, created_at, updated_at)
@@ -985,6 +986,7 @@ def _build_voice_catalog_summary() -> str:
 async def recommend_voices(body: VoiceRecommendRequest):
     """Analyze a Work and recommend the best narrator voices using the LLM."""
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.capabilities.llm import llm_call
 
     db  = get_db()
@@ -1185,8 +1187,8 @@ class VoiceDesignRequest(BaseModel):
 @router.post("/studio/voices/design")
 async def design_voice(body: VoiceDesignRequest):
     """Map a natural-language narrator description to the closest catalog voices."""
-    import math
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.capabilities.llm import llm_call
 
     if not body.description.strip():
@@ -1267,7 +1269,7 @@ Return this JSON structure exactly:
             logger.warning(
                 "Voice design: LLM returned %d match(es) but none had a valid "
                 "catalog voice_id — falling back to keyword scoring",
-                len((data.get("matches") or [])),
+                len(data.get("matches") or []),
             )
         except Exception as exc:
             logger.warning("Voice design parse failed: %s", exc)
@@ -1489,7 +1491,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
 
     wav_parts: list[Path] = []
 
-    def _synth_segment(text: str, idx: int, seg_voice: "str | None" = None) -> Path | None:
+    def _synth_segment(text: str, idx: int, seg_voice: str | None = None) -> Path | None:
         """Synthesise one segment to WAV (cache → engines → QA gate)."""
         seg_voice = seg_voice or body.voice
         # Neural engines only — no robotic fallback by owner policy.
@@ -1504,7 +1506,7 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             shutil.copyfile(cached, wav)
             return wav
 
-        def _attempt() -> "tuple[Path | None, str | None]":
+        def _attempt() -> tuple[Path | None, str | None]:
             # Strategy 0: Premium sidecar (decoded to WAV so concat inputs
             # stay homogeneous — the concat demuxer chokes on mixed codecs).
             if premium_ok:
@@ -1697,7 +1699,7 @@ def _run_work_tts_job(
     doc_texts: list[tuple[str, str, str]],  # (doc_id, title, full_text)
     out_dir: Path,
     cfg,
-    casting: "dict[str, str] | None" = None,
+    casting: dict[str, str] | None = None,
 ) -> None:
     """Background worker: synthesise a full work audiobook chapter by chapter."""
     kokoro_eng = _get_kokoro()
@@ -1717,7 +1719,7 @@ def _run_work_tts_job(
     premium_ok = _is_premium_tts_enabled(cfg)
     _prune_seg_cache(cfg)
 
-    def _synth(text: str, seg_voice: "str | None" = None) -> "Path | None":
+    def _synth(text: str, seg_voice: str | None = None) -> Path | None:
         nonlocal seg_idx
         seg_voice = seg_voice or voice
         wav = tmp_dir / f"seg_{seg_idx:06d}.wav"
@@ -1733,7 +1735,7 @@ def _run_work_tts_job(
             shutil.copyfile(cached, wav)
             return wav
 
-        def _attempt() -> "tuple[Path | None, str | None]":
+        def _attempt() -> tuple[Path | None, str | None]:
             # Strategy 0: Premium sidecar (decoded to WAV for homogeneous concat).
             if premium_ok:
                 try:
@@ -2192,7 +2194,6 @@ async def synthesize_speech(body: TTSRequest):
     try:
         kokoro = _get_kokoro()
         if kokoro is not None:
-            import numpy as np
             import soundfile as sf
 
             # All 28 catalog IDs are valid Kokoro voice IDs; resolve via the
@@ -2348,7 +2349,7 @@ async def _synthesize_text_to_mp3(
     out_dir: Path,
     cfg: object,
     quality: str = "final",
-) -> "Path | None":
+) -> Path | None:
     """Synthesize *text* → MP3 using the same neural-only cascade as
     ``synthesize_speech`` (premium → AI server → Kokoro; NO robotic fallback
     by owner policy).  Returns the saved ``Path`` on success or ``None`` when
@@ -2435,7 +2436,7 @@ async def _synthesize_text_to_mp3(
     return None
 
 
-async def _stream_tts_events(body: "TTSRequest"):
+async def _stream_tts_events(body: TTSRequest):
     """Async generator: synthesise ``body.text`` in ~150-word segments and
     yield SSE lines for each completed segment.
 
@@ -2458,6 +2459,7 @@ async def _stream_tts_events(body: "TTSRequest"):
     on the mobile client or ``encodeURIComponent`` elsewhere.
     """
     import json as _json
+
     from orivellum.api.executor import get_executor as _gex
 
     cfg = get_config()
@@ -2598,7 +2600,7 @@ _doc_tts_jobs_lock = threading.Lock()
 
 def _run_doc_tts_job(
     job_id: str,
-    body: "DocumentTTSRequest",
+    body: DocumentTTSRequest,
     segments: list[str],
     full_text: str,
     doc: dict,
@@ -2663,7 +2665,7 @@ def _run_doc_tts_job(
 
             # ── Deterministic cache lookup (premium=mp3, local engines=wav) ──
             import shutil as _shutil
-            cached_out: "Path | None" = None
+            cached_out: Path | None = None
             if premium_ok:
                 c = _seg_cache_get(cfg, seg, body.voice, body.speed,
                                    ["premium"], suffix=".mp3")
@@ -2684,7 +2686,7 @@ def _run_doc_tts_job(
                     _doc_tts_jobs[job_id]["segments_done"] = idx + 1
                 continue
 
-            def _attempt(idx=idx, seg=seg, wav_path=wav_path) -> "tuple[Path | None, str | None]":
+            def _attempt(idx=idx, seg=seg, wav_path=wav_path) -> tuple[Path | None, str | None]:
                 # Strategy 0: Premium TTS engine
                 if premium_ok:
                     try:
@@ -3231,6 +3233,7 @@ async def voice_transcribe(file: UploadFile = File(...)):
 
     try:
         from starlette.concurrency import run_in_threadpool
+
         from orivellum.capabilities.extraction import extract
         result = await run_in_threadpool(extract, tmp_path, "audio", db=db)
 
@@ -3289,7 +3292,7 @@ def list_outputs():
         name = f.name
         if kind == "audio":
             if name.startswith("tts_full_"):
-                label: "str | None" = "Full narration"
+                label: str | None = "Full narration"
             elif name.startswith("music_"):
                 label = "Music"
             elif name.startswith("sfx_"):
@@ -3302,7 +3305,7 @@ def list_outputs():
             label = None
 
         # ── Duration (best-effort) ────────────────────────────────────────
-        duration_sec: "float | None" = None
+        duration_sec: float | None = None
         if kind == "audio" and probe_budget > 0:
             duration_sec = _probe_duration(f)
             if duration_sec is not None or probe_budget > 0:
@@ -3454,8 +3457,8 @@ async def _try_comfyui(client, body: ImageGenRequest,
     """
     base = base_url.rstrip("/")
     try:
-        import uuid as _uuid
         import asyncio
+        import uuid as _uuid
 
         # Resolve checkpoint from DB setting (best-effort; never blocks gen)
         checkpoint = "v1-5-pruned-emaonly.ckpt"
@@ -3574,8 +3577,8 @@ def _is_ssrf_url(url: str) -> bool:
     and the metadata service (169.254.169.254).  Hostnames that resolve to
     blocked IPs are NOT probed here — add DNS resolution if needed.
     """
-    import urllib.parse as _up
     import ipaddress as _ip
+    import urllib.parse as _up
     try:
         parsed = _up.urlparse(url)
         host = parsed.hostname or ""
@@ -3961,9 +3964,8 @@ def studio_status():
     """
     import concurrent.futures as _cf
     import importlib.util
-    import shutil
     import time
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     cfg = get_config()
     db = get_db()
@@ -4045,7 +4047,7 @@ def studio_status():
 
     # Engine identity from the sidecar's /health (e.g. "chatterbox") so the
     # UI badge can name the engine.  Loopback call — cheap when reachable.
-    premium_engine: "str | None" = None
+    premium_engine: str | None = None
     if premium_tts_reachable:
         try:
             import httpx as _hx_prem
@@ -4129,7 +4131,11 @@ def studio_status():
     # because users may have Whisper loaded or not, even with the server up.
     from orivellum.capabilities.extraction import (
         _is_faster_whisper_loaded as _fw_loaded_check,
+    )
+    from orivellum.capabilities.extraction import (
         _resolve_asr_local_model as _fw_resolve_size,
+    )
+    from orivellum.capabilities.extraction import (
         faster_whisper_status as _fw_status,
     )
     ai_asr_server_ok = bool(ai_tts_ok)   # same server; proxy from TTS probe
@@ -4218,7 +4224,7 @@ def studio_status():
             "faster_whisper_loaded": fw_loaded,
             "faster_whisper_model_size": asr_local_model_sz,
         },
-        "last_checked": datetime.now(timezone.utc).isoformat(),
+        "last_checked": datetime.now(UTC).isoformat(),
     }
 
 
@@ -4309,8 +4315,11 @@ class OCRRequest(BaseModel):
 
 def _probe_tesseract_cmd() -> None:
     """Ensure pytesseract can find the tesseract binary (NixOS/Replit path fix)."""
-    import shutil, subprocess as _sp, pytesseract as _pt
+    import shutil
+    import subprocess as _sp
     from pathlib import Path as _P
+
+    import pytesseract as _pt
 
     if shutil.which("tesseract"):
         return
@@ -4366,8 +4375,8 @@ async def run_ocr(body: OCRRequest):
         raise HTTPException(400, "content_b64 is not valid base64")
 
     try:
-        from PIL import Image
         import pytesseract
+        from PIL import Image
     except ImportError:
         raise HTTPException(503, "OCR dependencies (Pillow, pytesseract) not available")
 
@@ -4380,7 +4389,7 @@ async def run_ocr(body: OCRRequest):
                 asyncio.to_thread(pytesseract.image_to_string, img),
                 timeout=_OCR_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("OCR timed out after %ds", _OCR_TIMEOUT)
             raise HTTPException(504, f"OCR timed out after {_OCR_TIMEOUT} s — "
                                      "try a smaller or lower-resolution image")

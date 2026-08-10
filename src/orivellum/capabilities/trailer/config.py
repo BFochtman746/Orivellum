@@ -7,6 +7,7 @@ workhorse_model from cfg.serving.  Falls back to offline mode only when
 base_url is genuinely absent (e.g. the config file cannot be found).
 """
 from __future__ import annotations
+
 import logging
 
 logger = logging.getLogger(__name__)

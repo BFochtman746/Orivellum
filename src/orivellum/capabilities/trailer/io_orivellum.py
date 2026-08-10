@@ -10,7 +10,6 @@ Orivellum server.  Given a DB handle and work_id it:
      extremely large corpora don't overflow the context window.
 """
 from __future__ import annotations
-import json
 
 
 def sample_passages(text: str, windows: int = 6, window_chars: int = 1800) -> str:

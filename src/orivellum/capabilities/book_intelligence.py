@@ -42,7 +42,7 @@ def _title_tokens(title: str) -> list[str]:
 _KNOWLEDGE_SCAN_CAP = 3000  # bound the in-memory matching pass
 
 
-def _load_knowledge_texts(db: "OrivellumDB", work_id: str) -> list[str]:
+def _load_knowledge_texts(db: OrivellumDB, work_id: str) -> list[str]:
     """Prefetch this Work's knowledge item texts once (lowercased).
 
     Chapter research counts are computed in a single in-memory pass instead of
@@ -69,7 +69,7 @@ def _knowledge_count_for_title(title: str, knowledge_texts: list[str]) -> int:
     return sum(1 for blob in knowledge_texts if pattern.search(blob))
 
 
-def build_book_intelligence(work_id: str, db: "OrivellumDB") -> dict:
+def build_book_intelligence(work_id: str, db: OrivellumDB) -> dict:
     """Assemble the full book-intelligence payload for one Work."""
     work = db.get_work(work_id)
     if not work:

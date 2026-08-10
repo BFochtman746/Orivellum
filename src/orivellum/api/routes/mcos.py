@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +283,6 @@ def _has_running_run(db, benchmark_id: str) -> bool:
 
 @router.post("/run/{benchmark_id}")
 def run_one(benchmark_id: str, background_tasks: BackgroundTasks):
-    from orivellum.capabilities.mcos import run_benchmark
     db = get_db()
     cfg = get_config()
     bench = None
@@ -307,11 +307,12 @@ def _start_run(db, cfg, benchmark_id: str, background_tasks: BackgroundTasks) ->
     409 guard in run_one is race-safe; the worker then executes the cases.
     """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from orivellum.capabilities import mcos
 
     run_id = str(uuid.uuid4())
-    started = datetime.now(timezone.utc).isoformat()
+    started = datetime.now(UTC).isoformat()
     model = ""
     try:
         model = cfg.serving.workhorse_model or ""
@@ -617,7 +618,8 @@ def list_prompt_slots():
 @router.post("/prompts")
 def create_prompt(body: PromptCreate):
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from orivellum.capabilities.mcos import PROMPT_SLOTS
     db = get_db()
     slot = body.slot.strip()
@@ -633,7 +635,7 @@ def create_prompt(body: PromptCreate):
         ).fetchone()
         version = int(row["mv"]) + 1
         pid = str(uuid.uuid4())
-        created = datetime.now(timezone.utc).isoformat()
+        created = datetime.now(UTC).isoformat()
         db._conn.execute(
             "INSERT INTO prompts(id,slot,name,content,version,active,notes,created_at)"
             " VALUES(?,?,?,?,?,0,?,?)",
@@ -653,7 +655,8 @@ def _get_prompt(db, prompt_id: str) -> dict | None:
 @router.post("/prompts/{prompt_id}/benchmark")
 def benchmark_prompt(prompt_id: str, background_tasks: BackgroundTasks):
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from orivellum.capabilities import mcos
     db = get_db()
     cfg = get_config()
@@ -681,7 +684,7 @@ def benchmark_prompt(prompt_id: str, background_tasks: BackgroundTasks):
     candidate_runs: list[str] = []
     active_runs: list[str] = []
     plan: list[dict] = []  # worker execution plan (run_id, content, meta)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with db._lock:
         busy = db._conn.execute(
             "SELECT 1 FROM eval_runs WHERE status='running' AND json_valid(meta) "

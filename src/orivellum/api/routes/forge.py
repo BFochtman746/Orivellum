@@ -15,10 +15,10 @@ import pathlib
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 logger = logging.getLogger(__name__)
 

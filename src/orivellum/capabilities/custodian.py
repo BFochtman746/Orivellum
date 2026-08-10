@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ SUPPRESS_DAYS = 30   # days to honour an explicit user dismissal before re-nudgi
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _uid() -> str:
@@ -48,7 +48,7 @@ def _days_since(iso: str | None) -> int | None:
     try:
         ts = datetime.fromisoformat(iso.replace("Z", "+00:00"))
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         return max(0, (_now_utc() - ts).days)
     except Exception:
         return None
@@ -56,7 +56,7 @@ def _days_since(iso: str | None) -> int | None:
 
 # ── Last-activity query ────────────────────────────────────────────────────────
 
-def _get_work_last_activity(db: "OrivellumDB", work_id: str) -> str | None:
+def _get_work_last_activity(db: OrivellumDB, work_id: str) -> str | None:
     """Return the ISO timestamp of the most recent activity for a Work.
 
     Checks:
@@ -102,7 +102,7 @@ def _get_work_last_activity(db: "OrivellumDB", work_id: str) -> str | None:
     return max(candidates)
 
 
-def _get_active_nudge(db: "OrivellumDB", work_id: str, kind: str) -> dict | None:
+def _get_active_nudge(db: OrivellumDB, work_id: str, kind: str) -> dict | None:
     """Return the existing unresolved nudge for this (work, kind) pair, or None."""
     with db._lock:
         row = db._conn.execute(
@@ -114,7 +114,7 @@ def _get_active_nudge(db: "OrivellumDB", work_id: str, kind: str) -> dict | None
     return dict(row) if row else None
 
 
-def _is_user_suppressed(db: "OrivellumDB", work_id: str, kind: str) -> bool:
+def _is_user_suppressed(db: OrivellumDB, work_id: str, kind: str) -> bool:
     """Return True if the user explicitly dismissed this (work, kind) nudge recently.
 
     Suppression lasts SUPPRESS_DAYS days from the dismissal timestamp.  After
@@ -133,7 +133,7 @@ def _is_user_suppressed(db: "OrivellumDB", work_id: str, kind: str) -> bool:
 
 
 def _upsert_nudge(
-    db: "OrivellumDB",
+    db: OrivellumDB,
     work_id: str,
     kind: str,
     message: str,
@@ -183,7 +183,7 @@ def _upsert_nudge(
     return nid, True
 
 
-def _auto_resolve_nudge(db: "OrivellumDB", work_id: str, kind: str) -> bool:
+def _auto_resolve_nudge(db: OrivellumDB, work_id: str, kind: str) -> bool:
     """Auto-resolve a nudge when its trigger condition has naturally cleared.
 
     Sets user_dismissed=0 so the record is distinguishable from an explicit
@@ -203,7 +203,7 @@ def _auto_resolve_nudge(db: "OrivellumDB", work_id: str, kind: str) -> bool:
     return cur.rowcount > 0
 
 
-def _get_pipeline_last_advanced(db: "OrivellumDB", pipeline_id: str) -> str | None:
+def _get_pipeline_last_advanced(db: OrivellumDB, pipeline_id: str) -> str | None:
     """Return the ISO timestamp of the most recent pipeline stage artifact.
 
     Using pipeline_artifacts.created_at is authoritative for 'when was the
@@ -218,7 +218,7 @@ def _get_pipeline_last_advanced(db: "OrivellumDB", pipeline_id: str) -> str | No
     return row["last_adv"] if row else None
 
 
-def _prune_old_nudges(db: "OrivellumDB") -> int:
+def _prune_old_nudges(db: OrivellumDB) -> int:
     """Delete resolved nudges older than PRUNE_DAYS days."""
     cutoff = (_now_utc() - timedelta(days=PRUNE_DAYS)).isoformat()
     with db._lock:
@@ -230,7 +230,7 @@ def _prune_old_nudges(db: "OrivellumDB") -> int:
     return cur.rowcount
 
 
-def _check_one_work(db: "OrivellumDB", work: dict) -> tuple[int, int]:
+def _check_one_work(db: OrivellumDB, work: dict) -> tuple[int, int]:
     """Check a single Work for staleness signals and write/refresh any nudges.
 
     Policy: at most ONE unresolved nudge per (work_id, kind) at any time.
@@ -341,7 +341,7 @@ def _check_one_work(db: "OrivellumDB", work: dict) -> tuple[int, int]:
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 
-def run_custodian(db: "OrivellumDB") -> dict:
+def run_custodian(db: OrivellumDB) -> dict:
     """Check all Works for staleness signals; write new nudges.
 
     Returns a summary dict for the nightshift report.
@@ -383,7 +383,7 @@ def run_custodian(db: "OrivellumDB") -> dict:
     }
 
 
-def get_top_nudges(db: "OrivellumDB", limit: int = 5) -> list[dict]:
+def get_top_nudges(db: OrivellumDB, limit: int = 5) -> list[dict]:
     """Return top unresolved nudges ordered by priority descending, then newest first."""
     with db._lock:
         rows = db._conn.execute(
@@ -398,7 +398,7 @@ def get_top_nudges(db: "OrivellumDB", limit: int = 5) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def resolve_nudge(db: "OrivellumDB", nudge_id: str) -> bool:
+def resolve_nudge(db: OrivellumDB, nudge_id: str) -> bool:
     """Mark a nudge as user-dismissed.
 
     Sets user_dismissed=1 so the suppression window (SUPPRESS_DAYS) is honoured

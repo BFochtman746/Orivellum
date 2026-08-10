@@ -128,7 +128,7 @@ def invalidate_vector_cache() -> None:
         _version_counters.clear()
 
 
-def _load_vecs(db: "OrivellumDB", object_type: str,
+def _load_vecs(db: OrivellumDB, object_type: str,
                all_sql: str, all_params: tuple) -> list:
     """Return cached vector entries, rebuilding when the write version changed.
 
@@ -182,7 +182,7 @@ def _reset_circuit_breaker() -> None:
 
 # ── Dimensionality mismatch detection ─────────────────────────────────────────
 
-def get_stored_vector_dim(db: "OrivellumDB") -> int | None:
+def get_stored_vector_dim(db: OrivellumDB) -> int | None:
     """Return the dimensionality of currently stored vectors, or None if empty.
 
     Samples the most common ``dim`` value across all rows in the ``vectors``
@@ -226,7 +226,7 @@ def get_live_embedder_dim(timeout: float = 8.0) -> int | None:
     return None
 
 
-def count_embeddable_items(db: "OrivellumDB") -> dict[str, int]:
+def count_embeddable_items(db: OrivellumDB) -> dict[str, int]:
     """Return the total and already-vectorized counts per object type.
 
     Used by the reindex status endpoint so the UI can show progress.
@@ -278,7 +278,7 @@ def count_embeddable_items(db: "OrivellumDB") -> dict[str, int]:
         return {"total": 0, "done": 0}
 
 
-def run_full_reindex(db: "OrivellumDB", *, batch_size: int = 64) -> int:
+def run_full_reindex(db: OrivellumDB, *, batch_size: int = 64) -> int:
     """Delete all vectors then re-embed everything in batches.
 
     Designed to run in a background daemon thread.  Progress is written to the
@@ -500,7 +500,7 @@ def _embed_batch_resilient(texts: list[str],
     return left + right
 
 
-def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
+def backfill_embeddings(db: OrivellumDB, max_items: int = 200) -> int:
     """Embed chunks, knowledge items, and conversation chunks that lack vectors.
 
     Extends to cover ``conversation_chunks`` so exchanges stored during an
@@ -555,7 +555,7 @@ def backfill_embeddings(db: "OrivellumDB", max_items: int = 200) -> int:
     return embedded
 
 
-def _mark_chunk_embedding_method(db: "OrivellumDB", chunk_id: str, method: str) -> None:
+def _mark_chunk_embedding_method(db: OrivellumDB, chunk_id: str, method: str) -> None:
     """Mark a chunk's embedding_method column.  Non-fatal — never raises."""
     try:
         with db._lock:
@@ -567,7 +567,7 @@ def _mark_chunk_embedding_method(db: "OrivellumDB", chunk_id: str, method: str) 
         pass
 
 
-def embed_chunks_for_doc(doc_id: str, db: "OrivellumDB") -> int:
+def embed_chunks_for_doc(doc_id: str, db: OrivellumDB) -> int:
     """Embed all chunks of one document that don't have vectors yet.
 
     When ``use_late_chunking`` is enabled in DB settings **and** the embeddings
@@ -648,7 +648,7 @@ def embed_chunks_for_doc(doc_id: str, db: "OrivellumDB") -> int:
         return 0
 
 
-def _embed_chunks_late(doc_id: str, db: "OrivellumDB") -> int:
+def _embed_chunks_late(doc_id: str, db: OrivellumDB) -> int:
     """Internal: attempt the late-chunking path for one document.
 
     Loads the document's extracted text and all unembedded chunk spans, then
@@ -688,7 +688,7 @@ def _embed_chunks_late(doc_id: str, db: "OrivellumDB") -> int:
     return embed_with_late_chunking(full_text, chunk_infos, db)
 
 
-def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge",
+def semantic_search(query: str, db: OrivellumDB, object_type: str = "knowledge",
                     limit: int = 10, work_id: str | None = None) -> list[dict]:
     """Cosine-rank stored vectors against the query embedding.
 
@@ -782,7 +782,7 @@ def semantic_search(query: str, db: "OrivellumDB", object_type: str = "knowledge
 _RRF_K = 60  # standard reciprocal-rank-fusion constant
 
 
-def hybrid_search_chunks(query: str, db: "OrivellumDB", limit: int = 10,
+def hybrid_search_chunks(query: str, db: OrivellumDB, limit: int = 10,
                          work_id: str | None = None,
                          fts_weight: float = 0.5,
                          semantic_weight: float = 0.5) -> list[dict]:
@@ -850,7 +850,7 @@ def embed_conversation_exchange(
     conv_id: str,
     user_text: str,
     assistant_text: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
 ) -> str | None:
     """Embed one user+assistant exchange and store it as a conversation chunk.
 
@@ -954,7 +954,7 @@ def _run_late_chunking_probe() -> bool:
 def embed_with_late_chunking(
     full_text: str,
     chunk_infos: list[tuple[str, int | None, int | None]],
-    db: "OrivellumDB",
+    db: OrivellumDB,
 ) -> int:
     """Embed document chunks using the late-chunking technique.
 
@@ -1076,7 +1076,7 @@ def embed_with_late_chunking(
 
 def semantic_search_conversations(
     query: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     limit: int = 5,
 ) -> list[dict]:
     """Semantic search over conversation chunks.
@@ -1088,7 +1088,7 @@ def semantic_search_conversations(
     return semantic_search(query, db, object_type="conv_chunk", limit=limit)
 
 
-def hybrid_search_knowledge(query: str, db: "OrivellumDB", limit: int = 10,
+def hybrid_search_knowledge(query: str, db: OrivellumDB, limit: int = 10,
                             work_id: str | None = None,
                             fts_weight: float = 0.5,
                             semantic_weight: float = 0.5) -> list[dict]:

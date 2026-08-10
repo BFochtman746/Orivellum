@@ -7,15 +7,15 @@ appears in the Learn home.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from orivellum.capabilities.actions import ActionBase
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.actions.study_plan")
 
@@ -45,10 +45,11 @@ class StudyPlanAction(ActionBase):
             "and generate a **structured study plan** saved to your Learn home."
         )
 
-    def _execute_impl(self, inputs: dict, db: "OrivellumDB", cfg: "OrivellumConfig") -> dict:
+    def _execute_impl(self, inputs: dict, db: OrivellumDB, cfg: OrivellumConfig) -> dict:
         from docx import Document
         from docx.shared import Pt, RGBColor
-        from orivellum.capabilities.generate import _register_output, _now_label, _slug
+
+        from orivellum.capabilities.generate import _now_label, _register_output, _slug
 
         work_id: str = inputs["work_id"]
         work = db.get_work(work_id)
@@ -92,7 +93,7 @@ class StudyPlanAction(ActionBase):
         title_str = f"Study Plan — {work.get('title', 'Work')}"
         doc.add_heading(title_str, 0)
         doc.add_paragraph(
-            f"Generated {datetime.now(timezone.utc).strftime('%B %d, %Y')} · "
+            f"Generated {datetime.now(UTC).strftime('%B %d, %Y')} · "
             f"{len(concepts)} concept{'s' if len(concepts) != 1 else ''}"
         )
 
@@ -153,7 +154,7 @@ class StudyPlanAction(ActionBase):
                 text=plan_text[:3000],
                 source_doc_id=doc_id,
                 review_status="auto",
-                meta={"plan_for": work_id, "generated_at": datetime.now(timezone.utc).isoformat()},
+                meta={"plan_for": work_id, "generated_at": datetime.now(UTC).isoformat()},
             )
         except Exception as exc:
             logger.warning("Could not write study plan knowledge item: %s", exc)

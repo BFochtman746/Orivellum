@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
 
-from .authority import AuthorityTier, ClaimStatus, ConflictType, TTLClass
-from .authority_resolver import AuthorityResolver, AuthorityPolicy
+from .authority import AuthorityTier, ClaimStatus, ConflictType
+from .authority_resolver import AuthorityResolver
 
 _resolver = AuthorityResolver()
 

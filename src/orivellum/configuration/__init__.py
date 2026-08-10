@@ -1,4 +1,4 @@
 """Configuration package."""
-from .config import load_config, OrivellumConfig
+from .config import OrivellumConfig, load_config
 
 __all__ = ["load_config", "OrivellumConfig"]

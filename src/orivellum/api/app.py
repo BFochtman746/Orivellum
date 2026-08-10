@@ -17,10 +17,9 @@ import os
 import secrets
 import sys
 import time
-from pathlib import Path
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from typing import Deque
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,9 +28,9 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from orivellum import __version__
+from orivellum.api import _deps
 from orivellum.configuration.config import load_config
 from orivellum.database.db import OrivellumDB
-from orivellum.api import _deps
 
 logging.basicConfig(
     level=os.environ.get("ORIVELLUM_LOG_LEVEL", "INFO"),
@@ -136,8 +135,12 @@ async def lifespan(app: FastAPI):
     # so it only needs db and can be safely registered at startup.
     try:
         from orivellum.capabilities.pklos.adapters.base import registry as _pklos_registry
-        from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter as _WinInvAdapter
-        from orivellum.capabilities.pklos.adapters.recollection import RecollectionAdapter as _RecollectionAdapter
+        from orivellum.capabilities.pklos.adapters.recollection import (
+            RecollectionAdapter as _RecollectionAdapter,
+        )
+        from orivellum.capabilities.pklos.adapters.windows_inventory import (
+            WindowsInventoryAdapter as _WinInvAdapter,
+        )
         _pklos_registry.register(_WinInvAdapter(db))
         _pklos_registry.register(_RecollectionAdapter(db))
         logger.info("PKLOS adapters registered: %s", list(_pklos_registry.all_capabilities().keys()))
@@ -300,7 +303,7 @@ def create_app() -> FastAPI:
     # ── In-memory sliding-window rate limiter ─────────────────────────────────
     # Keyed by (client_ip, route_prefix) → deque of request timestamps.
     # Limits are intentionally generous for a single-user local workspace.
-    _rl_windows: dict[tuple[str, str], Deque[float]] = defaultdict(deque)
+    _rl_windows: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 
     _RATE_LIMITS: dict[str, tuple[int, int]] = {
         # path prefix           max_requests  window_seconds
@@ -398,10 +401,35 @@ def create_app() -> FastAPI:
 
     # Register routers
     from orivellum.api.routes import (
-        auth, health, works, conversations, library, knowledge,
-        projects, backups, studio, files, system, dashboard, learning, write,
-        mcos, review, claims, pklos, intake, generate, topics, actions, mcp,
-        genesis, finishing, forge, mail, bench, music,
+        actions,
+        auth,
+        backups,
+        bench,
+        claims,
+        conversations,
+        dashboard,
+        files,
+        finishing,
+        forge,
+        generate,
+        genesis,
+        health,
+        intake,
+        knowledge,
+        learning,
+        library,
+        mail,
+        mcos,
+        mcp,
+        music,
+        pklos,
+        projects,
+        review,
+        studio,
+        system,
+        topics,
+        works,
+        write,
     )
     _route_modules = [
         auth, health, works, conversations, library, knowledge,
@@ -418,10 +446,11 @@ def create_app() -> FastAPI:
         app.include_router(module.router, prefix="/orivellum-ui", include_in_schema=False)
 
     # ── Governed-core exception handlers ─────────────────────────────────────
-    from orivellum.database.db import VersionConflictError
     from orivellum.capabilities.state_machine import (
-        InvalidTransitionError, BlockedTransitionError,
+        BlockedTransitionError,
+        InvalidTransitionError,
     )
+    from orivellum.database.db import VersionConflictError
 
     @app.exception_handler(VersionConflictError)
     async def version_conflict_handler(request: Request, exc: VersionConflictError):

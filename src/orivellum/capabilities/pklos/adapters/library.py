@@ -83,8 +83,8 @@ class LibraryAdapter(AdapterBase):
         try:
             # Reuse existing hybrid search infrastructure
             from orivellum.capabilities.embeddings import (
-                hybrid_search_knowledge,
                 hybrid_search_chunks,
+                hybrid_search_knowledge,
             )
             evidence: list[Evidence] = []
 

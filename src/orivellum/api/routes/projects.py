@@ -1,6 +1,8 @@
 """Projects (mastery learning) routes — /api/projects/*"""
 from __future__ import annotations
 
+from datetime import UTC
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -34,9 +36,9 @@ def list_projects():
 def create_project(body: ProjectCreate):
     db = get_db()
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
     pid = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with db._lock:
         db._conn.execute(
             """INSERT INTO learning_concepts(id, work_id, name, description, mastery, meta, created_at)

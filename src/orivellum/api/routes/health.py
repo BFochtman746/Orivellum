@@ -4,14 +4,14 @@ from __future__ import annotations
 import platform
 import socket
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import psutil
 from fastapi import APIRouter
 
 from orivellum import __version__
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 router = APIRouter()
 
@@ -38,7 +38,7 @@ def health():
     return {
         "status": overall,
         "version": __version__,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "services": {
             "database": db_health,
             "ai": ai_health,

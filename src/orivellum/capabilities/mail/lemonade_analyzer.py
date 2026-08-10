@@ -22,7 +22,11 @@ from typing import Any
 import httpx
 
 from orivellum.capabilities.mail.models import (
-    Assessment, ATTENTION_HIGH, ATTENTION_MEDIUM, ATTENTION_LOW, ThreatEvidence,
+    ATTENTION_HIGH,
+    ATTENTION_LOW,
+    ATTENTION_MEDIUM,
+    Assessment,
+    ThreatEvidence,
 )
 
 logger = logging.getLogger("orivellum.mail.lemonade")

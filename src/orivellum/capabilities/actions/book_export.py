@@ -6,15 +6,15 @@ and assembles them into a single .docx manuscript file.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from orivellum.capabilities.actions import ActionBase
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.actions.book_export")
 
@@ -40,11 +40,12 @@ class BookExportAction(ActionBase):
             "**DOCX manuscript** in pipeline sequence order, ready to download."
         )
 
-    def _execute_impl(self, inputs: dict, db: "OrivellumDB", cfg: "OrivellumConfig") -> dict:
+    def _execute_impl(self, inputs: dict, db: OrivellumDB, cfg: OrivellumConfig) -> dict:
         from docx import Document
-        from docx.shared import Pt, RGBColor
         from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from orivellum.capabilities.generate import _register_output, _now_label, _slug
+        from docx.shared import Pt, RGBColor
+
+        from orivellum.capabilities.generate import _now_label, _register_output, _slug
 
         work_id: str = inputs["work_id"]
         work = db.get_work(work_id)
@@ -89,7 +90,7 @@ class BookExportAction(ActionBase):
                 p.runs[0].font.italic = True
 
         meta_p = doc.add_paragraph(
-            f"Exported {datetime.now(timezone.utc).strftime('%B %d, %Y')} "
+            f"Exported {datetime.now(UTC).strftime('%B %d, %Y')} "
             f"· {len(chapters)} chapter{'s' if len(chapters) != 1 else ''}"
         )
         meta_p.alignment = WD_ALIGN_PARAGRAPH.CENTER

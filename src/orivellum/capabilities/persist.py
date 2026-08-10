@@ -22,13 +22,13 @@ import logging
 import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.persist")
 
@@ -36,7 +36,7 @@ _CHUNK_SIZE = 1_000   # chars per chunk (matches generate.py)
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _uuid() -> str:
@@ -48,7 +48,7 @@ def _uuid() -> str:
 def record_provenance(
     object_id: str,
     source: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     origin_id: str | None = None,
     work_id: str | None = None,
     topic_id: str | None = None,
@@ -156,8 +156,8 @@ def register_and_index(
     doc_path: Path,
     text_content: str,
     kind: str,
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
     *,
     title: str | None = None,
     work_id: str | None = None,
@@ -306,8 +306,8 @@ def register_and_index(
 
 def register_text_note(
     text: str,
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
     *,
     title: str = "Generated note",
     work_id: str | None = None,

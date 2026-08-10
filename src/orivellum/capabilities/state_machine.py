@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 
 from .enums import BookState, JobState, MessageState
 
-
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -135,7 +134,7 @@ class StateMachine:
 # ---------------------------------------------------------------------------
 
 def apply_transition(
-    db: "OrivellumDB",
+    db: OrivellumDB,
     sm: StateMachine,
     *,
     object_id: str,

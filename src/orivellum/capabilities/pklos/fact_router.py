@@ -36,7 +36,7 @@ class RequestClass(str, Enum):
 
     # Backward-compatible aliases used in conversations.py
     @classmethod
-    def CHECKABLE_FACT(cls) -> "RequestClass":
+    def CHECKABLE_FACT(cls) -> RequestClass:
         return cls.DETERMINISTICALLY_VERIFIABLE
 
     @property

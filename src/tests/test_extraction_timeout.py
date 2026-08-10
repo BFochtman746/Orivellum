@@ -12,14 +12,12 @@ Verified behaviours:
 """
 from __future__ import annotations
 
-import time
 import logging
+import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
-import pytest
 import httpx
-
 
 # ---------------------------------------------------------------------------
 # Helpers / stubs
@@ -194,7 +192,7 @@ def _make_hanging_server():
     handlers — avoids the 30-second sleep blocking teardown.
     """
     import socketserver
-    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from http.server import BaseHTTPRequestHandler, HTTPServer
 
     class _ThreadingServer(socketserver.ThreadingMixIn, HTTPServer):
         daemon_threads = True  # handler threads die with the test process
@@ -220,6 +218,7 @@ def test_call_llm_sync_respects_timeout_with_real_server():
     The call must return within (timeout + 1 s) overhead, not hang forever.
     """
     import threading
+
     from orivellum.capabilities.knowledge_harvest import _call_llm_sync
 
     server, port = _make_hanging_server()
@@ -261,6 +260,7 @@ def test_llm_harvest_per_chunk_timeout_bounds_total_time():
     and that one chunk's timeout does not prevent the rest from being attempted.
     """
     import threading
+
     from orivellum.capabilities.knowledge_harvest import llm_harvest
 
     server, port = _make_hanging_server()

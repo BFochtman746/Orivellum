@@ -1,16 +1,14 @@
 """Backups routes — /api/backups/*"""
 from __future__ import annotations
 
-import hashlib
-import shutil
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 router = APIRouter(prefix="/api")
 
@@ -32,7 +30,7 @@ def list_backups():
         result.append({
             "name": f.name,
             "size_bytes": stat.st_size,
-            "created_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            "created_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
         })
     return {"backups": result, "count": len(result)}
 
@@ -41,7 +39,7 @@ def list_backups():
 def create_backup():
     cfg = get_config()
     bd = _backup_dir()
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     zip_path = bd / f"orivellum_backup_{ts}.zip"
 
     db = get_db()
@@ -65,7 +63,7 @@ def create_backup():
         "backup": {
             "name": zip_path.name,
             "size_bytes": stat.st_size,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
     }
 

@@ -83,7 +83,7 @@ def _pick_canonical(doc_a: dict, doc_b: dict) -> str | None:
 
 
 def auto_resolve_duplicates(
-    db: "OrivellumDB",
+    db: OrivellumDB,
     max_pairs: int | None = None,
 ) -> dict:
     """Process unresolved ``doc_dupes`` rows and apply automatic resolution.
@@ -185,7 +185,7 @@ def auto_resolve_duplicates(
 def auto_resolve_import_hits(
     new_doc_id: str,
     hits: list[tuple[str, float, str]],
-    db: "OrivellumDB",
+    db: OrivellumDB,
 ) -> dict:
     """Immediately resolve near-duplicate hits found during document import.
 

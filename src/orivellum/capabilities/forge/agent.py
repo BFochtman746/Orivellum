@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import pathlib
 import subprocess
 import textwrap
-from typing import Callable
+from collections.abc import Callable
 
 from orivellum.capabilities.llm import llm_call
 

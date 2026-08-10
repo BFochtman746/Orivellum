@@ -22,6 +22,7 @@ its evidence supports; and where a verification path exists, the system
 must take it before asserting.
 """
 from __future__ import annotations
+
 from enum import Enum
 
 
@@ -65,7 +66,7 @@ class AuthorityTier(str, Enum):
         """A7 and A8 should be verified against a higher tier when possible."""
         return self in (AuthorityTier.A7, AuthorityTier.A8)
 
-    def outranks(self, other: "AuthorityTier") -> bool:
+    def outranks(self, other: AuthorityTier) -> bool:
         """True if this tier has higher authority (lower numeric) than other."""
         return self.numeric < other.numeric
 

@@ -158,8 +158,11 @@ class TestZipChildTracking:
         # the code-path inspection above verifies the import site is correct)
         import inspect
         src = inspect.getsource(_pipeline._explode_zip_into_documents)
-        assert "_tracked_submit" in src, \
-            "_explode_zip_into_documents must use _tracked_submit, not get_executor().submit()"
+        assert ("submit_bg" in src or "_tracked_submit" in src), \
+            "_explode_zip_into_documents must route through the tracked executor " \
+            "(submit_bg/_tracked_submit), not get_executor().submit() or raw threads"
+        assert "threading.Thread" not in src, \
+            "_explode_zip_into_documents must not spawn raw threads"
         assert "get_executor" not in src or "get_executor" not in src.split("_tracked_submit")[0], \
             "get_executor().submit() call should not precede _tracked_submit in ZIP path"
 

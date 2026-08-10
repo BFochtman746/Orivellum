@@ -4,18 +4,18 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from .planner import create_plan
-from .visual import create_visual_design
 from .agent import run_builder
 from .gates import run_quality_gates
+from .planner import create_plan
+from .visual import create_visual_design
 
 logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _build_work_context(db: object, work_id: str | None) -> str:

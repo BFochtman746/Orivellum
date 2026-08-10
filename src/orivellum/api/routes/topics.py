@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 logger = logging.getLogger("orivellum.api.topics")
 
@@ -24,7 +23,7 @@ router = APIRouter(prefix="/api", tags=["topics"])
 # ── GET /api/topics ──────────────────────────────────────────────────────────
 
 @router.get("/topics")
-def list_topics(with_docs: bool = False, q: Optional[str] = None):
+def list_topics(with_docs: bool = False, q: str | None = None):
     """Return all topic clusters with document counts and profile summary.
 
     Pass ``with_docs=true`` to include ``doc_ids`` (list of document IDs) and

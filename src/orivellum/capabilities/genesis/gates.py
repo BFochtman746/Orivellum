@@ -3,9 +3,10 @@ GENESIS gate logic — stage ordering, ledger chain, status helpers.
 All DB calls use a raw sqlite3 Connection (the caller holds the lock).
 """
 from __future__ import annotations
+
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 STAGES: list[tuple[str, str, str, str]] = [
     ("G0", "Spark Slate",
@@ -49,7 +50,7 @@ GENESIS_HASH = "0" * 64  # chain anchor
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def sha256_text(text: str) -> str:

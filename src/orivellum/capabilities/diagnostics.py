@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import logging
 import shutil
-import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.diagnostics")
 
@@ -35,7 +34,7 @@ def _check(name: str, status: str, value: Any, detail: str = "") -> dict:
 
 # ── Section runners ───────────────────────────────────────────────────────────
 
-def _check_db_integrity(db: "OrivellumDB") -> list[dict]:
+def _check_db_integrity(db: OrivellumDB) -> list[dict]:
     checks: list[dict] = []
 
     # Schema version (tracked in settings table, not PRAGMA user_version)
@@ -77,7 +76,7 @@ def _check_db_integrity(db: "OrivellumDB") -> list[dict]:
     return checks
 
 
-def _check_table_counts(db: "OrivellumDB") -> list[dict]:
+def _check_table_counts(db: OrivellumDB) -> list[dict]:
     tables = [
         "objects", "works", "documents", "chunks", "vectors",
         "knowledge", "conversations", "messages", "tasks",
@@ -97,7 +96,7 @@ def _check_table_counts(db: "OrivellumDB") -> list[dict]:
     return counts
 
 
-def _check_orphans(db: "OrivellumDB") -> list[dict]:
+def _check_orphans(db: OrivellumDB) -> list[dict]:
     checks: list[dict] = []
 
     # Documents without objects records
@@ -171,9 +170,9 @@ def _check_orphans(db: "OrivellumDB") -> list[dict]:
     return checks
 
 
-def _check_stuck_records(db: "OrivellumDB") -> list[dict]:
+def _check_stuck_records(db: OrivellumDB) -> list[dict]:
     checks: list[dict] = []
-    now_ts = datetime.now(timezone.utc).isoformat()
+    now_ts = datetime.now(UTC).isoformat()
 
     # Documents stuck in 'imported' > 10 minutes
     try:
@@ -243,7 +242,7 @@ def _check_stuck_records(db: "OrivellumDB") -> list[dict]:
     return checks
 
 
-def _check_configuration(db: "OrivellumDB", cfg: "OrivellumConfig") -> list[dict]:
+def _check_configuration(db: OrivellumDB, cfg: OrivellumConfig) -> list[dict]:
     checks: list[dict] = []
 
     # LLM base URL
@@ -315,7 +314,7 @@ def _check_configuration(db: "OrivellumDB", cfg: "OrivellumConfig") -> list[dict
     return checks
 
 
-def _check_services(cfg: "OrivellumConfig") -> list[dict]:
+def _check_services(cfg: OrivellumConfig) -> list[dict]:
     checks: list[dict] = []
 
     # LLM endpoint reachability
@@ -334,7 +333,11 @@ def _check_services(cfg: "OrivellumConfig") -> list[dict]:
 
     # Embeddings circuit breaker state
     try:
-        from orivellum.capabilities.embeddings import _circuit_state, _failure_count, _FAILURE_THRESHOLD
+        from orivellum.capabilities.embeddings import (
+            _FAILURE_THRESHOLD,
+            _circuit_state,
+            _failure_count,
+        )
         state = _circuit_state
         fc = _failure_count
         checks.append(_check("Embeddings circuit breaker", OK if state == "closed" else WARN,
@@ -370,7 +373,7 @@ def _check_services(cfg: "OrivellumConfig") -> list[dict]:
     return checks
 
 
-def _check_data_quality(db: "OrivellumDB") -> list[dict]:
+def _check_data_quality(db: OrivellumDB) -> list[dict]:
     checks: list[dict] = []
 
     # Works without documents
@@ -450,20 +453,20 @@ def _check_data_quality(db: "OrivellumDB") -> list[dict]:
         status = INFO if n > 0 else OK
         checks.append(_check("Governance queue items pending", status, n,
                               f"{n} items await governance review" if n else "Queue clear"))
-    except Exception as exc:
+    except Exception:
         checks.append(_check("Governance queue items pending", INFO, "—", "Table not present or no pending items"))
 
     return checks
 
 
-def _check_nightshift(db: "OrivellumDB") -> list[dict]:
+def _check_nightshift(db: OrivellumDB) -> list[dict]:
     checks: list[dict] = []
 
     last_run_raw = db.get_setting("nightshift_last_run")
     if last_run_raw:
         try:
             last_dt = datetime.fromisoformat(last_run_raw.replace("Z", "+00:00"))
-            age_h = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+            age_h = (datetime.now(UTC) - last_dt).total_seconds() / 3600
             age_label = f"{age_h:.1f}h ago"
             status = WARN if age_h > 36 else OK
             checks.append(_check("Nightshift last run", status, last_run_raw,
@@ -485,7 +488,7 @@ def _check_nightshift(db: "OrivellumDB") -> list[dict]:
     return checks
 
 
-def _check_pipeline_health(db: "OrivellumDB") -> list[dict]:
+def _check_pipeline_health(db: OrivellumDB) -> list[dict]:
     checks: list[dict] = []
 
     try:
@@ -522,7 +525,7 @@ def _check_pipeline_health(db: "OrivellumDB") -> list[dict]:
 
 # ── VACUUM ─────────────────────────────────────────────────────────────────────
 
-def _run_vacuum(db: "OrivellumDB") -> dict:
+def _run_vacuum(db: OrivellumDB) -> dict:
     """Run VACUUM under the db write lock. Returns a timing result."""
     try:
         # Measure size before
@@ -563,8 +566,8 @@ def render_markdown(result: dict) -> str:
         "",
         "## Summary",
         "",
-        f"| Checks | Count |",
-        f"|--------|-------|",
+        "| Checks | Count |",
+        "|--------|-------|",
         f"| ✅ Passing | {result['summary']['ok']} |",
         f"| ⚠️  Warnings | {result['summary']['warn']} |",
         f"| ❌ Errors | {result['summary']['error']} |",
@@ -603,8 +606,8 @@ def render_markdown(result: dict) -> str:
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def run_full_diagnostic(
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
     vacuum: bool = False,
 ) -> dict:
     """Run all diagnostic checks and return a structured result.
@@ -619,7 +622,7 @@ def run_full_diagnostic(
         all_checks, markdown_report.
     """
     t_start = time.monotonic()
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(UTC).isoformat()
 
     # Schema version (tracked in settings table, not PRAGMA user_version)
     schema_ver = db.get_setting("schema_version", "0")

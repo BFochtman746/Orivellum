@@ -20,7 +20,6 @@ import time
 import uuid
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Deque
 
 logger = logging.getLogger("orivellum.executor")
 
@@ -35,7 +34,7 @@ _DEFAULT_WORKERS = 8
 # Keeps at most _MAX_JOBS entries (deque with maxlen).  Thread-safe via lock.
 _MAX_JOBS = 200
 _jobs_lock = threading.Lock()
-_jobs: Deque[dict] = deque(maxlen=_MAX_JOBS)
+_jobs: deque[dict] = deque(maxlen=_MAX_JOBS)
 
 
 def _job_entry(kind: str, label: str) -> dict:

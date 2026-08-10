@@ -10,19 +10,34 @@ Supports format = 'full' | 'short' | 'both' (default: 'both').
   both  → package_json = {format:'both', full:{...}, short:{...}}
 """
 from __future__ import annotations
+
 import json
 import logging
 import traceback
 
 from . import (
-    analyze, concept as concept_mod, method as method_mod,
-    plan as plan_mod, plan_short as plan_short_mod,
+    analyze,
+    package,
+    validate,
+)
+from . import (
+    concept as concept_mod,
+)
+from . import (
+    method as method_mod,
+)
+from . import (
+    plan as plan_mod,
+)
+from . import (
+    plan_short as plan_short_mod,
+)
+from . import (
     plan_square as plan_square_mod,
-    validate, package,
 )
 from .config import build_trailer_config
-from .llm_adapter import OrivellumLLM
 from .io_orivellum import book_text_from_work
+from .llm_adapter import OrivellumLLM
 
 logger = logging.getLogger(__name__)
 

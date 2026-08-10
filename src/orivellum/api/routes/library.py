@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 from orivellum.capabilities.pipeline import process_document
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def _maybe_suggest_version(db, new_doc_id: str, work_id: str, filename: str) -> 
                 if already:
                     continue
                 import datetime as _dt
-                now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+                now_iso = _dt.datetime.now(_dt.UTC).isoformat()
                 meta_payload = json.dumps({
                     "doc_a_id": other["id"],
                     "doc_b_id": new_doc_id,
@@ -547,6 +547,7 @@ def library_doc_progress(doc_id: str):
     """
     import json as _js
     import time as _t
+
     from fastapi.responses import StreamingResponse as _SR
 
     db = get_db()
@@ -956,8 +957,9 @@ def library_reprocess(
 @router.get("/library/{doc_id}/download")
 def download_document(doc_id: str):
     """Serve the original stored file as a download."""
-    from fastapi.responses import FileResponse
     import mimetypes
+
+    from fastapi.responses import FileResponse
     db = get_db()
     doc = db.get_document(doc_id)
     if not doc:

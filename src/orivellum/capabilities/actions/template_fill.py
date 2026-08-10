@@ -10,16 +10,14 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from orivellum.capabilities.actions import ActionBase
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.actions.template_fill")
 
@@ -63,8 +61,8 @@ class TemplateFillAction(ActionBase):
             f"and produce a ready-to-download filled copy."
         )
 
-    def _execute_impl(self, inputs: dict, db: "OrivellumDB", cfg: "OrivellumConfig") -> dict:
-        from orivellum.capabilities.generate import _register_output, _now_label
+    def _execute_impl(self, inputs: dict, db: OrivellumDB, cfg: OrivellumConfig) -> dict:
+        from orivellum.capabilities.generate import _now_label, _register_output
 
         template_doc_id: str = inputs["template_doc_id"]
         data: dict = inputs.get("data", {})

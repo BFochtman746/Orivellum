@@ -16,7 +16,6 @@ The policy fires at two levels:
 """
 from __future__ import annotations
 
-
 # Instruction injected into the system prompt when CHECKABLE_FACT is detected.
 # This is the soft enforcement layer.
 ABSTENTION_INSTRUCTION = (

@@ -118,7 +118,7 @@ def evict_from_lsh_index(doc_id: str) -> None:
                     del _lsh_index[key]
 
 
-def _ensure_index_built(db: "OrivellumDB") -> None:
+def _ensure_index_built(db: OrivellumDB) -> None:
     """Lazily load all stored signatures into the in-memory LSH index.
 
     The index is scoped to a single DB connection.  If called with a
@@ -162,7 +162,7 @@ def _ensure_index_built(db: "OrivellumDB") -> None:
             )
 
 
-def rebuild_lsh_index(db: "OrivellumDB") -> int:
+def rebuild_lsh_index(db: OrivellumDB) -> int:
     """Tear down and rebuild the LSH index from the current minhash_sig table.
 
     Safe to call at server startup after the DB is ready.  Returns the number
@@ -242,7 +242,7 @@ def _maybe_record(
     doc_id: str,
     other_id: str,
     sim: float,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     results: list[tuple[str, float, str]],
 ) -> None:
     """If *sim* crosses a threshold, persist the pair and append to *results*.
@@ -313,7 +313,7 @@ def _maybe_record(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def compute_and_store(doc_id: str, text: str, db: "OrivellumDB") -> bytes | None:
+def compute_and_store(doc_id: str, text: str, db: OrivellumDB) -> bytes | None:
     """Compute MinHash for *text*, persist it, and update the LSH index.
 
     Returns the sketch bytes, or None if the text is too short.
@@ -350,7 +350,7 @@ def compute_and_store(doc_id: str, text: str, db: "OrivellumDB") -> bytes | None
 def find_and_record_near_duplicates(
     doc_id: str,
     sig: bytes,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     work_id: str | None = None,
 ) -> list[tuple[str, float, str]]:
     """Compare *sig* against stored sketches; write hits to ``doc_dupes``.

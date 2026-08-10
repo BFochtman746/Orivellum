@@ -9,11 +9,12 @@ HTTP response returns immediately after file storage.
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from orivellum.capabilities.extraction import extract
 from orivellum.capabilities.chunking import chunk_and_store
+from orivellum.capabilities.extraction import extract
 from orivellum.capabilities.knowledge_harvest import harvest, llm_harvest
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def _explode_zip_into_documents(
-    doc_id: str, path: Path, work_id: str | None, zip_title: str, db: "OrivellumDB"
+    doc_id: str, path: Path, work_id: str | None, zip_title: str, db: OrivellumDB
 ) -> list[str]:
     """Extract each supported file inside a ZIP as its own library document.
 
@@ -32,7 +33,6 @@ def _explode_zip_into_documents(
     in a daemon thread so the ZIP handler returns quickly.
     """
     import hashlib
-    import threading
     import zipfile
 
     from orivellum.api._deps import get_config
@@ -111,7 +111,10 @@ def _explode_zip_into_documents(
                 file_path.write_bytes(content)
 
                 from orivellum.capabilities.classify import (
-                    classify_object as _classify, EXCLUDED_FROM_WORKS as _EFW,
+                    EXCLUDED_FROM_WORKS as _EFW,
+                )
+                from orivellum.capabilities.classify import (
+                    classify_object as _classify,
                 )
                 _child_clf = _classify(basename, kind=kind, source_path=name)
                 _child_tier = _child_clf.tier.value
@@ -147,23 +150,15 @@ def _explode_zip_into_documents(
                     logger.debug("ZIP child %s is tier=%s — skipping harvest", basename, _child_tier)
                     continue
 
-                # Queue processing via tracked executor so work is bounded,
-                # visible in the job dashboard, and never spawns unlimited threads.
-                try:
-                    from orivellum.api.executor import _tracked_submit as _ts_zip
-                    _ts_zip(
-                        process_document, doc["id"], str(file_path), kind, work_id, title, db,
-                        kind="pipeline", label=f"process:{doc['id'][:8]}",
-                    )
-                except Exception as _exc_zip:
-                    # Executor not yet initialised (e.g. tests) — fall back to thread
-                    logger.warning("Executor unavailable for ZIP child %s, falling back to thread: %s",
-                                   doc["id"][:8], _exc_zip)
-                    threading.Thread(
-                        target=process_document,
-                        args=(doc["id"], str(file_path), kind, work_id, title, db),
-                        daemon=True,
-                    ).start()
+                # Queue processing via the shared tracked executor so work is
+                # bounded, visible in the job dashboard, and never spawns
+                # unlimited threads.  submit_bg never raises and handles the
+                # executor-not-initialised (tests) fallback internally.
+                from orivellum.api.executor import submit_bg as _submit_zip
+                _submit_zip(
+                    process_document, doc["id"], str(file_path), kind, work_id, title, db,
+                    kind="pipeline", label=f"process:{doc['id'][:8]}",
+                )
 
     except zipfile.BadZipFile as exc:
         logger.error("ZIP explode: bad archive %s: %s", path.name, exc)
@@ -178,15 +173,17 @@ def _explode_zip_into_documents(
     # rather than an exact CANON check, so user-uploaded archives ("archive.zip",
     # "documents.zip") also get a suggestion, which matches the original intent.
     from orivellum.capabilities.classify import (
-        classify_object as _clf_arch,
         EXCLUDED_FROM_WORKS as _EFW,
+    )
+    from orivellum.capabilities.classify import (
+        classify_object as _clf_arch,
     )
     _archive_tier = _clf_arch(zip_title, source_path=zip_title).tier
     if work_id is None and len(children) > 2 and _archive_tier not in _EFW:
         try:
             import json as _json
             import uuid as _uuid_mod
-            from datetime import datetime as _dt, timezone as _tz
+            from datetime import datetime as _dt
 
             proposed = Path(zip_title).stem.replace("_", " ").replace("-", " ").strip() or zip_title
             with db._lock:
@@ -212,7 +209,7 @@ def _explode_zip_into_documents(
                                 "proposed_title": proposed,
                                 "confidence": 0.6,
                             }),
-                            _dt.now(_tz.utc).isoformat(),
+                            _dt.now(UTC).isoformat(),
                         ),
                     )
                     db._conn.commit()
@@ -225,7 +222,7 @@ def _explode_zip_into_documents(
 def _suggest_version_relationships(
     doc_id: str,
     hits: list[tuple[str, float, str]],
-    db: "OrivellumDB",
+    db: OrivellumDB,
 ) -> None:
     """Create version_relationship suggestions for likely_revision pairs.
 
@@ -241,7 +238,7 @@ def _suggest_version_relationships(
     """
     import json as _json
     import uuid as _uuid_mod
-    from datetime import datetime as _dt, timezone as _tz
+    from datetime import datetime as _dt
 
     for other_id, sim, kind in hits:
         if kind != "likely_revision":
@@ -286,7 +283,7 @@ def _suggest_version_relationships(
                                 "confidence": round(sim, 4),
                                 "similarity": round(sim, 4),
                             }),
-                            _dt.now(_tz.utc).isoformat(),
+                            _dt.now(UTC).isoformat(),
                         ),
                     )
                     db._conn.commit()
@@ -301,7 +298,7 @@ def _suggest_version_relationships(
             )
 
 
-def resolve_file_path(file_path: str, doc_id: str, db: "OrivellumDB") -> Path | None:
+def resolve_file_path(file_path: str, doc_id: str, db: OrivellumDB) -> Path | None:
     """Return the file as a Path, falling back to content_path from the DB.
 
     This makes reprocessing after a server restart safe: even if the original
@@ -335,7 +332,7 @@ def resolve_file_path(file_path: str, doc_id: str, db: "OrivellumDB") -> Path | 
 
 def process_document(doc_id: str, file_path: str, kind: str,
                      work_id: str | None, title: str,
-                     db: "OrivellumDB") -> None:
+                     db: OrivellumDB) -> None:
     """Extract, chunk, and harvest a single document.
 
     Safe to call from a daemon thread — catches and logs all exceptions.
@@ -538,7 +535,7 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # endpoint is down), generate_context_prefixes_for_doc() returns 0
         # silently and embed_chunks_for_doc() falls through to bare-text
         # embedding — preserving the pre-existing behaviour.
-        def _enrich_and_embed(doc_id: str, db: "OrivellumDB",
+        def _enrich_and_embed(doc_id: str, db: OrivellumDB,
                               title: str, text_excerpt: str) -> None:
             try:
                 from orivellum.capabilities.chunking import generate_context_prefixes_for_doc
@@ -594,7 +591,10 @@ def process_document(doc_id: str, file_path: str, kind: str,
         # When auto_dedup_enabled=true the system resolves detected pairs immediately
         # without requiring manual action in the Review Queue.
         try:
-            from orivellum.capabilities.dedup import compute_and_store, find_and_record_near_duplicates
+            from orivellum.capabilities.dedup import (
+                compute_and_store,
+                find_and_record_near_duplicates,
+            )
             _text_for_dedup = result.full_text
             if _text_for_dedup:
                 _sig = compute_and_store(doc_id, _text_for_dedup, db)
@@ -606,7 +606,9 @@ def process_document(doc_id: str, file_path: str, kind: str,
                         # Inline auto-resolution — only when the user has opted in.
                         if db.get_setting("auto_dedup_enabled", "false").lower() == "true":
                             try:
-                                from orivellum.capabilities.auto_dedup import auto_resolve_import_hits
+                                from orivellum.capabilities.auto_dedup import (
+                                    auto_resolve_import_hits,
+                                )
                                 _ar = auto_resolve_import_hits(doc_id, _hits, db)
                                 if _ar["superseded"] or _ar["versioned"]:
                                     logger.info(

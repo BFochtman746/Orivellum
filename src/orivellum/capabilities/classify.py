@@ -21,10 +21,10 @@ classification, so it is intentionally not returned here.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Callable, Optional
 
 
 class Tier(str, Enum):
@@ -91,10 +91,10 @@ class Classification:
 def classify_object(
     name: str,
     *,
-    kind: Optional[str] = None,
-    sample_text: Optional[str] = None,
-    source_path: Optional[str] = None,
-    llm_tiebreak: Optional[Callable[[str, Optional[str]], Optional[Tier]]] = None,
+    kind: str | None = None,
+    sample_text: str | None = None,
+    source_path: str | None = None,
+    llm_tiebreak: Callable[[str, str | None], Tier | None] | None = None,
 ) -> Classification:
     """Return the tier for one object. Deterministic first; LLM only if ambiguous.
 

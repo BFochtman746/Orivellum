@@ -20,19 +20,32 @@ VER-INV-001: No claim may be presented as fact at a higher authority than
 its evidence supports; and where a verification path exists, the system
 must take it before asserting.
 """
-from .authority import (
-    AuthorityTier, ClaimStatus, ConflictType, TTLClass,
-    ALLOWED_TRANSITIONS, is_allowed_transition,
-    SUBJECT_DEVICE_A01, SUBJECT_USER_SELF, SUBJECT_USER_SYSTEM,
-)
-from .authority_resolver import AuthorityResolver, AuthorityPolicy, resolve as resolve_authority
-from .claim_ledger import ClaimLedger
-from .capture_stamp import CaptureStamp, detect_factual_assertions
-from .fact_router import FactRouter, RequestClass, classify, is_checkable_fact, should_capture_as_a7
 from .abstention import AbstentionPolicy
-from .claim_verifier import ClaimVerifier, VerificationResult, normalize_value, verify, verify_assertion
-from .policy_enforcer import PolicyEnforcer, EnforcementDecision, PolicyFailure
-from .output_validator import OutputValidator, ValidationResult, AnswerContract
+from .authority import (
+    ALLOWED_TRANSITIONS,
+    SUBJECT_DEVICE_A01,
+    SUBJECT_USER_SELF,
+    SUBJECT_USER_SYSTEM,
+    AuthorityTier,
+    ClaimStatus,
+    ConflictType,
+    TTLClass,
+    is_allowed_transition,
+)
+from .authority_resolver import AuthorityPolicy, AuthorityResolver
+from .authority_resolver import resolve as resolve_authority
+from .capture_stamp import CaptureStamp, detect_factual_assertions
+from .claim_ledger import ClaimLedger
+from .claim_verifier import (
+    ClaimVerifier,
+    VerificationResult,
+    normalize_value,
+    verify,
+    verify_assertion,
+)
+from .fact_router import FactRouter, RequestClass, classify, is_checkable_fact, should_capture_as_a7
+from .output_validator import AnswerContract, OutputValidator, ValidationResult
+from .policy_enforcer import EnforcementDecision, PolicyEnforcer, PolicyFailure
 
 __all__ = [
     # authority

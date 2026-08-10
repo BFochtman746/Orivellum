@@ -20,9 +20,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from .authority import AuthorityTier, ClaimStatus
+from .authority import ClaimStatus
 from .authority_resolver import AuthorityResolver
-from .claim_verifier import ClaimVerifier, VerificationResult
+from .claim_verifier import ClaimVerifier
 from .fact_router import FactRouter, RequestClass
 
 logger = logging.getLogger("orivellum.pklos.policy_enforcer")
@@ -125,8 +125,8 @@ class PolicyEnforcer:
             )
 
         # Checkable fact: consult claim ledger
-        from .claim_ledger import ClaimLedger
         from .authority import SUBJECT_DEVICE_A01
+        from .claim_ledger import ClaimLedger
         ledger = ClaimLedger(self._db)
         claims = ledger.search_for_context(query, limit=15)
 

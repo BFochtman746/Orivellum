@@ -14,9 +14,9 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Form, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 logger = logging.getLogger("orivellum.api.actions")
 router = APIRouter(prefix="/api/actions", tags=["actions"])
@@ -125,7 +125,7 @@ def get_run_log(run_id: str):
     # Duration
     if run.get("completed_at") and run.get("created_at"):
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
             start = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
             end   = datetime.fromisoformat(run["completed_at"].replace("Z", "+00:00"))
             secs  = round((end - start).total_seconds(), 1)

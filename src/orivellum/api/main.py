@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+
 import uvicorn
+
 from orivellum.api.app import app
 
 if __name__ == "__main__":

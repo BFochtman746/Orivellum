@@ -370,7 +370,7 @@ def _llm_rerank(
 def rerank_candidates(
     query: str,
     candidates: list[dict],
-    db: "OrivellumDB | None",
+    db: OrivellumDB | None,
     *,
     text_field: str = "text",
     top_k: int | None = None,

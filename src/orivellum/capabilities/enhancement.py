@@ -428,8 +428,8 @@ def enhance_audio(path: Path, output_dir: Path | None = None) -> Path:
         return path  # unavailable in both modes — skip silently
 
     try:
-        import torch          # type: ignore[import]
-        import torchaudio     # type: ignore[import]
+        import torch  # type: ignore[import]
+        import torchaudio  # type: ignore[import]
         from df import enhance  # type: ignore[import]
 
         model, df_state = pair

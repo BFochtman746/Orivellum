@@ -4,21 +4,23 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
-from orivellum.capabilities.pklos.fact_router import is_checkable_fact, should_capture_as_a7
+from orivellum.api._deps import get_config, get_db
 from orivellum.capabilities.pklos.abstention import AbstentionPolicy
-from orivellum.capabilities.pklos.claim_ledger import ClaimLedger
-from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
-from orivellum.capabilities.pklos.output_validator import OutputValidator
 from orivellum.capabilities.pklos.capture_stamp import (
-    CaptureStamp, detect_factual_assertions,
+    CaptureStamp,
+    detect_factual_assertions,
 )
+from orivellum.capabilities.pklos.claim_ledger import ClaimLedger
+from orivellum.capabilities.pklos.fact_router import is_checkable_fact
+from orivellum.capabilities.pklos.output_validator import OutputValidator
+from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -97,13 +99,12 @@ def _log_knowledge_retrievals(db: Any, conv_id: str,
     if not ids:
         return
 
-    import threading as _threading
-    import uuid as _uuid_mod
     import datetime as _dt
+    import uuid as _uuid_mod
 
     def _worker() -> None:
         try:
-            now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            now = _dt.datetime.now(_dt.UTC).isoformat()
             rows = [
                 (str(_uuid_mod.uuid4()), kid, conv_id, now)
                 for kid in ids
@@ -271,6 +272,7 @@ def _make_thumbnail_b64(
     try:
         import base64 as _b64
         import io
+
         from PIL import Image as _PIL
         raw = _b64.b64decode(image_b64)
         img = _PIL.open(io.BytesIO(raw)).convert("RGB")
@@ -636,7 +638,7 @@ async def send_message(conv_id: str, body: MessageSend):
         else:
             db.add_message(conv_id, "user", stored_text, meta=user_meta or None)
 
-    import asyncio, threading
+    import asyncio
 
     # PKLOS Layer 0 — capture factual assertions about the user's system.
     # Runs only when the fast pattern detects a hardware/system statement.
@@ -712,8 +714,12 @@ async def send_message(conv_id: str, body: MessageSend):
 
     if body.deep:
         import asyncio
+
         from orivellum.capabilities.cognition import (
-            classify, get_clarifying_question, deliberate, update_compass,
+            classify,
+            deliberate,
+            get_clarifying_question,
+            update_compass,
         )
         route = await asyncio.to_thread(
             classify, body.text, messages[:-1], cfg.serving.base_url, model, db
@@ -977,6 +983,7 @@ async def continue_message(conv_id: str, body: ContinueBody):
     msgs.append({"role": "assistant", "content": partial_text})
 
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.capabilities.llm import llm_call
     result = await run_in_threadpool(
         llm_call, msgs,
@@ -1182,8 +1189,8 @@ def _strip_filter_phrases(text: str) -> str:
 
 def _detect_query_filters(
     text: str,
-    now: "datetime | None" = None,
-) -> "dict | None":
+    now: datetime | None = None,
+) -> dict | None:
     """Detect temporal and document-kind filters from a user query.
 
     Returns a dict with keys:
@@ -1210,20 +1217,21 @@ def _detect_query_filters(
         images / photos / screenshots · PowerPoint / slides / PPTX ·
         plain text / TXT files
     """
-    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     import re as _re
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
 
     if now is None:
-        now = _dt.now(_tz.utc)
+        now = _dt.now(UTC)
 
     t = text.lower()
 
     # ── Temporal detection ───────────────────────────────────────────────────
-    after: "_dt | None" = None
-    before: "_dt | None" = None
-    time_desc: "str | None" = None
+    after: _dt | None = None
+    before: _dt | None = None
+    time_desc: str | None = None
 
-    def _day_start(d: "_dt") -> "_dt":
+    def _day_start(d: _dt) -> _dt:
         return d.replace(hour=0, minute=0, second=0, microsecond=0)
 
     if _re.search(r'\btoday\b', t):
@@ -1935,8 +1943,12 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             # message hash so retries never re-run the regex pass.
             from orivellum.capabilities.retrieval import (
                 classify_query as _classify_query,
-                get_retrieval_config as _get_retrieval_config,
+            )
+            from orivellum.capabilities.retrieval import (
                 extract_comparison_entities as _extract_entities,
+            )
+            from orivellum.capabilities.retrieval import (
+                get_retrieval_config as _get_retrieval_config,
             )
             _query_type = _classify_query(user_query, db)
             _ret_cfg = _get_retrieval_config(_query_type)
@@ -1974,7 +1986,8 @@ def _build_system_prompt(db: Any, conv: dict, scope: str = "work",
             # Hybrid = keyword FTS + semantic vectors (falls back to FTS-only
             # automatically when the embeddings endpoint is unavailable).
             from orivellum.capabilities.embeddings import (
-                hybrid_search_knowledge, hybrid_search_chunks,
+                hybrid_search_chunks,
+                hybrid_search_knowledge,
             )
 
             # ── COMPARISON: per-entity sub-queries ─────────────────────────────
@@ -2456,6 +2469,7 @@ async def _call_ai(messages: list[dict], model: str, db: Any = None) -> str:
     reply text, or the unavailable message on any failure.
     """
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.capabilities.llm import llm_call
 
     cfg = get_config()
@@ -2499,6 +2513,7 @@ async def _call_ai_vision(messages: list[dict], model: str, db: Any = None) -> s
     an actionable message rather than the generic "AI unavailable" text.
     """
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.capabilities.llm import llm_call
 
     cfg = get_config()
@@ -2540,6 +2555,7 @@ async def _stream_response(
     """
     import asyncio
     import time as _time
+
     from orivellum.capabilities.llm import record_llm_call
 
     cfg = get_config()
@@ -2579,6 +2595,14 @@ async def _stream_response(
     # reference _assist_id even when an early-return path (intent/clarify/council)
     # fires before the stub is created.
     _assist_id: str = ""
+    # Streaming telemetry — declared BEFORE the try so the finally-block
+    # telemetry recorder can read them on EVERY terminal path, including the
+    # intent/clarify/council early returns that never reach the streaming
+    # section (referencing them unbound raised UnboundLocalError there).
+    _ttft_monotonic: float | None = None
+    _delta_count = 0
+    _usage_prompt: int | None = None
+    _usage_completion: int | None = None
     try:
         # ── Intent routing — runs before deep mode and normal AI ──────────────
         _stream_work_id = conv.get("work_id")
@@ -2610,7 +2634,10 @@ async def _stream_response(
         # ── Deep mode: run the meta-prompt gate ────────────────────────────────
         if deep:
             from orivellum.capabilities.cognition import (
-                classify, get_clarifying_question, deliberate, update_compass,
+                classify,
+                deliberate,
+                get_clarifying_question,
+                update_compass,
             )
 
             route = await asyncio.to_thread(
@@ -2839,7 +2866,7 @@ async def _stream_response(
                                         _tag_buf = _tag_buf[idx + 8 :]
                         except Exception:
                             pass
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("AI stream timed out after %ss of silence (conv=%s)",
                            _CHUNK_TIMEOUT_SEC, conv_id)
             _stream_ok = False
@@ -3007,6 +3034,7 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
     """
     import asyncio
     import time as _time
+
     from orivellum.capabilities.llm import record_llm_call
 
     cfg = get_config()
@@ -3062,7 +3090,7 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
                         )
                     except StopAsyncIteration:
                         break
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "Continuation stream timed out after %ss of silence (conv=%s)",
                             _CONT_TIMEOUT_SEC, conv_id,
@@ -3089,7 +3117,7 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
                             yield f"data: {json.dumps({'token': raw})}\n\n"
                     except Exception:
                         pass
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # Catch timeout bubbling out of the outer httpx context manager
         logger.warning("Continuation stream outer timeout (conv=%s)", conv_id)
         _stream_ok = False
@@ -3411,7 +3439,9 @@ def _handle_remember(db: Any, user_text: str, base_url: str, model: str) -> str:
 def _handle_image_gen(query: str, base_url: str, model: str) -> str:
     """Attempt image generation via the AI backend; return a markdown response."""
     try:
-        import urllib.request, urllib.error, json as _json
+        import json as _json
+        import urllib.error
+        import urllib.request
         cfg = get_config()
         payload = json.dumps({
             "model": model,
@@ -3842,8 +3872,10 @@ def _handle_recall_query(
     with clickable conversation links and a ``memory_hits`` list with the
     retrieval_source-annotated memory facts used in the answer.
     """
-    from orivellum.capabilities.embeddings import semantic_search_conversations
-    from orivellum.capabilities.embeddings import hybrid_search_knowledge
+    from orivellum.capabilities.embeddings import (
+        hybrid_search_knowledge,
+        semantic_search_conversations,
+    )
     from orivellum.capabilities.memory import search_and_rerank_memories
 
     # ── 1. Hybrid memory retrieval + three-stage reranking ────────────────────

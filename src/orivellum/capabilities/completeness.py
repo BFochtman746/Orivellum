@@ -100,7 +100,7 @@ def _read_targets(work: dict) -> tuple[int, int]:
     return word_target, chapter_target
 
 
-def calculate_work_completeness(work_id: str, db: "OrivellumDB") -> CompletenessReport:
+def calculate_work_completeness(work_id: str, db: OrivellumDB) -> CompletenessReport:
     """Calculate a multi-dimensional completeness report for a Work."""
     import datetime
 
@@ -258,5 +258,5 @@ def calculate_work_completeness(work_id: str, db: "OrivellumDB") -> Completeness
         overall=overall,
         readiness=readiness,
         summary=summary,
-        evaluated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        evaluated_at=datetime.datetime.now(datetime.UTC).isoformat(),
     )

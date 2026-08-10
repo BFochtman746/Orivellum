@@ -18,13 +18,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.topic_profile")
 
@@ -36,7 +35,7 @@ _LLM_TIMEOUT        = 45      # seconds per LLM call
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
-def _topics_needing_profiles(db: "OrivellumDB", limit: int, force: bool) -> list[dict]:
+def _topics_needing_profiles(db: OrivellumDB, limit: int, force: bool) -> list[dict]:
     """Return topics that have no profile row (or all topics if force=True)."""
     with db._lock:
         if force:
@@ -57,7 +56,7 @@ def _topics_needing_profiles(db: "OrivellumDB", limit: int, force: bool) -> list
     return [dict(r) for r in rows]
 
 
-def _sample_chunks(db: "OrivellumDB", topic_id: str, n: int) -> list[str]:
+def _sample_chunks(db: OrivellumDB, topic_id: str, n: int) -> list[str]:
     """Return up to *n* chunk text excerpts from documents in a topic."""
     with db._lock:
         rows = db._conn.execute(
@@ -76,14 +75,14 @@ def _sample_chunks(db: "OrivellumDB", topic_id: str, n: int) -> list[str]:
 
 
 def _upsert_profile(
-    db: "OrivellumDB",
+    db: OrivellumDB,
     topic_id: str,
     what_it_is: str,
     purpose: str,
     connected: list[str],
     gaps: list[str],
 ) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with db._lock:
         db._conn.execute(
             """INSERT INTO topic_profiles
@@ -153,8 +152,8 @@ def _build_prompt(topic_name: str, excerpts: list[str]) -> list[dict]:
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def generate_topic_profiles(
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig | None" = None,
+    db: OrivellumDB,
+    cfg: OrivellumConfig | None = None,
     *,
     max_topics: int = _MAX_TOPICS_PER_RUN,
     force: bool = False,
@@ -178,7 +177,7 @@ def generate_topic_profiles(
         logger.info("topic_profile: skipped — ai_extraction_enabled is not true")
         return {"generated": 0, "skipped": 0, "errors": 0}
 
-    from orivellum.capabilities.llm import llm_call, record_llm_call
+    from orivellum.capabilities.llm import llm_call
 
     generated = skipped = errors = 0
 

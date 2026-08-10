@@ -1,12 +1,10 @@
 """Forge quality gates — run in parallel via asyncio.gather."""
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import pathlib
 import subprocess
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

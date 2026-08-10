@@ -22,7 +22,7 @@ import re
 import uuid
 from typing import Any
 
-from .authority import AuthorityTier, ClaimStatus, TTLClass, SUBJECT_USER_SYSTEM
+from .authority import SUBJECT_USER_SYSTEM, AuthorityTier, TTLClass
 
 logger = logging.getLogger("orivellum.pklos.capture_stamp")
 

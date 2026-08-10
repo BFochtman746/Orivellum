@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -49,7 +49,7 @@ def _parse_ts(ts: str | None) -> datetime | None:
         return None
     try:
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     except Exception:
         return None
 
@@ -58,7 +58,7 @@ def compute_evidence_score(item: dict, corroborating_sources: int,
                            source_created_at: str | None,
                            now: datetime | None = None) -> tuple[float, dict]:
     """Return (confidence 0..1, components dict) for a knowledge item."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
 
     base = _BASE_BY_KIND.get(item.get("kind", ""), _DEFAULT_BASE)
     meta = item.get("meta") or {}
@@ -96,7 +96,7 @@ def compute_evidence_score(item: dict, corroborating_sources: int,
     return score, components
 
 
-def rescore_work(work_id: str, db: "OrivellumDB", limit: int = 500) -> int:
+def rescore_work(work_id: str, db: OrivellumDB, limit: int = 500) -> int:
     """Re-score confidence for all knowledge items in a Work.
 
     Rejected items are skipped (their confidence is moot). Returns the number
@@ -121,7 +121,7 @@ def rescore_work(work_id: str, db: "OrivellumDB", limit: int = 500) -> int:
                 subj_sources.setdefault(subj, set()).add(r["source_doc_id"])
 
     changed = 0
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for r in rows:
         item = dict(r)
         subj = (item.get("subject") or "").strip().lower()
@@ -148,7 +148,7 @@ def _norm(s: str | None) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
-def detect_contradictions(work_id: str, db: "OrivellumDB",
+def detect_contradictions(work_id: str, db: OrivellumDB,
                           limit: int = 400) -> int:
     """Detect conflicting claims within a Work and record them in `conflicts`.
 

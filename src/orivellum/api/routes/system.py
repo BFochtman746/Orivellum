@@ -5,13 +5,13 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,7 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
     """
     db  = get_db()
     cfg = get_config()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # ── Gather knowledge context ───────────────────────────────────────────────
     with db._lock:
@@ -247,6 +247,7 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
     llm_suggestions: list[dict] | None = None
     try:
         import httpx
+
         from orivellum.capabilities.llm import llm_call
         probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
         if probe.status_code == 200:
@@ -379,7 +380,6 @@ def nightshift_run_now():
     and before the worker thread is scheduled, so two near-simultaneous requests
     (or a request racing the 3AM daemon) can never both start a run.
     """
-    import threading
     from orivellum.capabilities.nightshift import run_nightshift, try_start
 
     if not try_start():
@@ -564,9 +564,6 @@ def update_job_state(job_id: str, body: JobStateUpdateBody):
         actor:      who is requesting the change (default: "system")
         detail:     optional reason for the audit log
     """
-    from orivellum.capabilities.state_machine import (
-        InvalidTransitionError, BlockedTransitionError,
-    )
     db = get_db()
     job = db.get_job(job_id)
     if not job:
@@ -823,7 +820,9 @@ def set_reranker_setting(body: RerankerUpdate):
 def probe_reranker():
     """Live-test the reranker endpoint; closes the circuit breaker on success."""
     from orivellum.capabilities.rerank import (
-        cross_encoder_scores, cross_encoder_status, reset_cross_encoder_breaker,
+        cross_encoder_scores,
+        cross_encoder_status,
+        reset_cross_encoder_breaker,
     )
     st = cross_encoder_status()
     if not st["configured"]:
@@ -998,7 +997,9 @@ def get_asr_settings():
     model is actually loaded in memory and any low-memory fallback reason.
     """
     from orivellum.capabilities.extraction import (
-        FW_ALLOWED_SIZES, _resolve_asr_local_model, faster_whisper_status,
+        FW_ALLOWED_SIZES,
+        _resolve_asr_local_model,
+        faster_whisper_status,
     )
     db  = get_db()
     cfg = get_config()
@@ -1090,8 +1091,9 @@ def embeddings_status():
     Does not make a network call — just reads the in-process cooldown
     timestamp so the UI can show whether semantic search is degraded.
     """
-    from orivellum.capabilities.embeddings import _unavailable_until
     import time
+
+    from orivellum.capabilities.embeddings import _unavailable_until
     circuit_open = _unavailable_until > time.monotonic()
     return {
         "circuit_open": circuit_open,
@@ -1106,7 +1108,7 @@ def probe_embeddings():
     A successful probe resets the circuit breaker so subsequent searches
     immediately benefit from semantic ranking again.
     """
-    from orivellum.capabilities.embeddings import embed_texts, _reset_circuit_breaker
+    from orivellum.capabilities.embeddings import _reset_circuit_breaker, embed_texts
     try:
         # bypass_cooldown forces a real network attempt even while the failure
         # cooldown is open — previously a probe during cooldown short-circuited
@@ -1139,12 +1141,12 @@ def reindex_status():
     - the stored-vector dimensionality vs. the live-embedder dimensionality
       so the UI can warn when the two are incompatible
     """
+    from orivellum.api._deps import get_config
     from orivellum.capabilities.embeddings import (
         count_embeddable_items,
-        get_stored_vector_dim,
         get_live_embedder_dim,
+        get_stored_vector_dim,
     )
-    from orivellum.api._deps import get_config
     db = get_db()
     cfg = get_config()
 
@@ -1190,6 +1192,7 @@ def reindex_status():
 
 
 import threading as _threading
+
 # Process-level mutex: prevents two concurrent POST /system/reindex requests
 # from both passing the running-check and launching competing destructive jobs.
 _reindex_start_lock = _threading.Lock()
@@ -1207,8 +1210,7 @@ def trigger_reindex():
     immediately; poll ``GET /system/reindex/status`` for progress.
     FTS5/BM25 search continues to serve results at full speed while running.
     """
-    import threading
-    from orivellum.capabilities.embeddings import run_full_reindex, get_live_embedder_dim
+    from orivellum.capabilities.embeddings import get_live_embedder_dim, run_full_reindex
     db = get_db()
 
     # Atomic guard: acquire the process-level lock then re-check the DB setting
@@ -1555,7 +1557,7 @@ def governance_resolve_conflict(conflict_id: str, body: ConflictResolveBody):
 @router.post("/governance/rescore")
 def governance_rescore():
     """Manually trigger evidence re-scoring + contradiction detection across all active Works."""
-    from orivellum.capabilities.evidence import rescore_work, detect_contradictions
+    from orivellum.capabilities.evidence import detect_contradictions, rescore_work
     db = get_db()
     rescored = conflicts = 0
     for work in db.list_works(status="active")[:50]:
@@ -1765,6 +1767,7 @@ async def run_diagnostics(vacuum: bool = False):
     document you can copy and send to an AI assistant for a complete evaluation.
     """
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.capabilities.diagnostics import run_full_diagnostic
 
     db = get_db()
@@ -1822,7 +1825,9 @@ def system_llm_health():
 
     def _probe_model(base_url: str, model_id: str) -> dict:
         """Send a minimal /chat/completions request and measure latency."""
-        import time as _t, httpx as _hx
+        import time as _t
+
+        import httpx as _hx
         t0 = _t.monotonic()
         try:
             r = _hx.post(
@@ -1923,7 +1928,8 @@ def system_hardware():
     # ── GPU — rocm-smi (AMD) ──────────────────────────────────────────────────
     if not gpu_info:
         try:
-            import subprocess as _sp, json as _json
+            import json as _json
+            import subprocess as _sp
             r = _sp.run(["rocm-smi", "--json"], capture_output=True, text=True, timeout=3)
             if r.returncode == 0:
                 data = _json.loads(r.stdout)
@@ -1965,8 +1971,8 @@ def system_lemonade():
     else:
         lemonade_root = base.rstrip("/")
 
-    import urllib.request as _urlr
     import json as _json
+    import urllib.request as _urlr
 
     def _get(path: str) -> dict | None:
         try:
@@ -2020,7 +2026,7 @@ def get_briefing():
     import datetime
     db = get_db()
     summary = db.dashboard_summary()
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     hour = now.hour
     if hour < 12:
         time_of_day = "morning"
@@ -2038,7 +2044,7 @@ def get_briefing():
         last_active_iso = db.get_setting("last_active", "").strip()
         if last_active_iso:
             _la = datetime.datetime.fromisoformat(last_active_iso)
-            _delta = now - _la.replace(tzinfo=datetime.timezone.utc)
+            _delta = now - _la.replace(tzinfo=datetime.UTC)
             days_since = max(0, _delta.days)
         # Update last_active on every briefing call
         db.set_setting("last_active", now.isoformat(), actor="system")
@@ -2342,7 +2348,6 @@ def reharvest_with_template(template_id: str, background_tasks: BackgroundTasks)
     Queues background jobs for each matching document so the response returns
     immediately. Only runs when AI extraction is currently enabled.
     """
-    import threading
     db = get_db()
     t = db.get_extraction_template(template_id)
     if not t:
@@ -2378,8 +2383,8 @@ def reharvest_with_template(template_id: str, background_tasks: BackgroundTasks)
 
     def _run_reharvest(doc: dict) -> None:
         try:
-            from orivellum.capabilities.knowledge_harvest import llm_harvest
             from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+            from orivellum.capabilities.knowledge_harvest import llm_harvest
             # Rebuild a minimal ExtractionResult from the stored extracted_text.
             with db._lock:
                 row = db._conn.execute(

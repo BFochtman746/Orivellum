@@ -5,8 +5,6 @@ Verifies that:
 2. No route module reads the old `.model` attribute directly (all uses are now
    explicit: workhorse_model / reasoner_model / …).
 """
-import subprocess
-import sys
 from pathlib import Path
 
 

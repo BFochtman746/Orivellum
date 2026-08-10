@@ -16,13 +16,13 @@ import logging
 import sqlite3
 import threading
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from .schema import MIGRATIONS
-
 
 # ---------------------------------------------------------------------------
 # Governed-core exceptions (Sovereign Platform M0.1)
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _uuid() -> str:
@@ -95,7 +95,7 @@ class OrivellumDB:
         self._run_migrations()
 
     @classmethod
-    def open(cls, path: str) -> "OrivellumDB":
+    def open(cls, path: str) -> OrivellumDB:
         return cls(path)
 
     def _configure(self) -> None:
@@ -104,7 +104,7 @@ class OrivellumDB:
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA synchronous=NORMAL")
 
-    def read_conn(self) -> "sqlite3.Connection":
+    def read_conn(self) -> sqlite3.Connection:
         """Return a per-thread read-only SQLite connection.
 
         SQLite's WAL mode allows any number of concurrent readers to run
@@ -304,10 +304,10 @@ class OrivellumDB:
         """Insert a new extraction template and return it."""
         import json as _j
         import uuid as _u
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
 
         tid = str(_u.uuid4())
-        now = _dt.now(_tz.utc).isoformat()
+        now = _dt.now(UTC).isoformat()
         hints_json = _j.dumps(field_hints or [])
         with self._lock:
             self._conn.execute(
@@ -337,12 +337,12 @@ class OrivellumDB:
         Pass ``_clear_kind_label=True`` to set kind_label to NULL.
         """
         import json as _j
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
 
         existing = self.get_extraction_template(template_id)
         if not existing:
             return None
-        now = _dt.now(_tz.utc).isoformat()
+        now = _dt.now(UTC).isoformat()
         cols: list[tuple] = [("updated_at", now)]
         if name is not None:
             cols.append(("name", name))
@@ -650,7 +650,7 @@ class OrivellumDB:
             _real_conn.set_trace_callback(_commit_tracer)
 
             # Forward-declare so _GuardedCursor.connection can reference it.
-            _proxy: "_NoCommitProxy | None" = None
+            _proxy: _NoCommitProxy | None = None
 
             class _GuardedCursor:
                 """Wraps a real sqlite3.Cursor so .connection returns the proxy.
@@ -670,7 +670,7 @@ class OrivellumDB:
                     # cursor().connection.commit() is also intercepted.
                     return _proxy
 
-                def execute(self, sql: str, params: Any = ()) -> "_GuardedCursor":
+                def execute(self, sql: str, params: Any = ()) -> _GuardedCursor:
                     if _is_commit_sql(sql):
                         _flag()
                         return self
@@ -679,7 +679,7 @@ class OrivellumDB:
                     # so the caller's .connection always resolves to the proxy.
                     return self
 
-                def executemany(self, sql: str, seq: Any) -> "_GuardedCursor":
+                def executemany(self, sql: str, seq: Any) -> _GuardedCursor:
                     if _is_commit_sql(sql):
                         _flag()
                         return self
@@ -705,14 +705,14 @@ class OrivellumDB:
                 def rollback(self) -> None:
                     _real_conn.rollback()
 
-                def execute(self, sql: str, params: Any = ()) -> "_GuardedCursor":
+                def execute(self, sql: str, params: Any = ()) -> _GuardedCursor:
                     if _is_commit_sql(sql):
                         _flag()
                         return _GuardedCursor(_real_conn.cursor())
                     # Wrap the returned cursor so its .connection → proxy.
                     return _GuardedCursor(_real_conn.execute(sql, params))
 
-                def executemany(self, sql: str, seq: Any) -> "_GuardedCursor":
+                def executemany(self, sql: str, seq: Any) -> _GuardedCursor:
                     if _is_commit_sql(sql):
                         _flag()
                         return _GuardedCursor(_real_conn.cursor())
@@ -723,7 +723,7 @@ class OrivellumDB:
                     # after the script — any call inside governed_write is forbidden.
                     _flag()
 
-                def cursor(self) -> "_GuardedCursor":
+                def cursor(self) -> _GuardedCursor:
                     return _GuardedCursor(_real_conn.cursor())
 
                 def __getattr__(self, name: str) -> Any:
@@ -1617,7 +1617,7 @@ class OrivellumDB:
             InvalidTransitionError: if the transition is not in MESSAGE_SM.
             BlockedTransitionError: if open high/critical findings block it.
         """
-        from orivellum.capabilities.state_machine import apply_transition, MESSAGE_SM
+        from orivellum.capabilities.state_machine import MESSAGE_SM, apply_transition
         with self._lock:
             row = self._conn.execute(
                 "SELECT state FROM messages WHERE id=?", (msg_id,)
@@ -1905,7 +1905,7 @@ class OrivellumDB:
             # Nothing to do — skip the governed write entirely.
             with self._lock:
                 self._conn.execute(
-                    f"UPDATE conversations SET updated_at=? WHERE id=?",
+                    "UPDATE conversations SET updated_at=? WHERE id=?",
                     (now, conv_id),
                 )
                 self._conn.commit()
@@ -4476,7 +4476,7 @@ class OrivellumDB:
             ttl = int(setting)
         except Exception:
             ttl = ttl_minutes if ttl_minutes is not None else default_ttl
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
         cutoff  = (now_dt - timedelta(minutes=ttl)).isoformat()
         now_str = now_dt.isoformat()
         with self._lock:
@@ -4980,7 +4980,7 @@ class OrivellumDB:
         evaluated = row["evaluated_at"]
         try:
             ts = datetime.datetime.fromisoformat(evaluated)
-            age = (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - ts.replace(tzinfo=None)).total_seconds()
+            age = (datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - ts.replace(tzinfo=None)).total_seconds()
             if age > max_age_seconds:
                 return None
         except Exception:
@@ -4999,9 +4999,10 @@ class OrivellumDB:
         ``evaluated_at``, and ``suggested_queries`` (list[str]).
         Stale rows are silently excluded.
         """
-        import json as _json, datetime
+        import datetime
+        import json as _json
         cutoff = (
-            datetime.datetime.now(datetime.timezone.utc)
+            datetime.datetime.now(datetime.UTC)
             - datetime.timedelta(seconds=max_age_seconds)
         ).strftime("%Y-%m-%d %H:%M:%S")
         with self._lock:

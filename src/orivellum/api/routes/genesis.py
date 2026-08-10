@@ -16,17 +16,23 @@ Endpoints:
 from __future__ import annotations
 
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db
 from orivellum.capabilities.genesis import (
-    STAGES, STAGE_CODES, STAGE_BY_CODE, TEMPLATE_CONTENT,
-    ledger_append, sha256_text, canonical, now_iso,
-    get_stage_status, next_open_stage,
-    compute_seal, verify_ledger,
+    STAGE_BY_CODE,
+    STAGE_CODES,
+    STAGES,
+    TEMPLATE_CONTENT,
+    compute_seal,
+    get_stage_status,
+    ledger_append,
+    next_open_stage,
+    now_iso,
+    sha256_text,
+    verify_ledger,
 )
 from orivellum.capabilities.genesis.codex import CODEX_TEXT, get_codex_for_stage
 
@@ -364,7 +370,7 @@ def verify_chain(work_id: str, db=Depends(get_db)):
 
 
 @router.get("/{work_id}/genesis/techniques")
-def techniques(work_id: str, stage: Optional[str] = None, db=Depends(get_db)):
+def techniques(work_id: str, stage: str | None = None, db=Depends(get_db)):
     """Return the brainstorm codex (all stages or filtered to one)."""
     _get_work_or_404(db, work_id)
     if stage:

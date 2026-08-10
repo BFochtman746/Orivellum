@@ -60,7 +60,7 @@ def _jaccard(a: str, b: str) -> float:
     return len(wa & wb) / len(wa | wb)
 
 
-def detect_gaps(work_id: str, db: "OrivellumDB") -> GapReport:
+def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
     """Analyse a Work's chapters and knowledge items to surface research gaps."""
 
     # ── Gather all data in one lock acquisition ────────────────────────────────
@@ -133,7 +133,7 @@ def detect_gaps(work_id: str, db: "OrivellumDB") -> GapReport:
 
     # Stale-source check
     cutoff_date = (
-        datetime.datetime.now(datetime.timezone.utc)
+        datetime.datetime.now(datetime.UTC)
         - datetime.timedelta(days=_STALE_DAYS)
     ).isoformat()[:10]
     stale_docs = [
@@ -304,5 +304,5 @@ def detect_gaps(work_id: str, db: "OrivellumDB") -> GapReport:
         suggested_queries=suggestions[:8],
         coverage_pct=coverage_pct,
         total_chapters=total,
-        evaluated_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        evaluated_at=datetime.datetime.now(datetime.UTC).isoformat(),
     )

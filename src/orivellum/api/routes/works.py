@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
@@ -203,7 +204,8 @@ async def generate_quiz(work_id: str, count: int = 5):
     learning concepts so that the frontend can call /learning/assess against the exact concept
     the question tests — avoiding cross-concept mastery contamination.
     """
-    import asyncio, json, logging
+    import json
+    import logging
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
@@ -262,9 +264,10 @@ async def generate_quiz(work_id: str, count: int = 5):
         + f'\n\nKnowledge items:\n{knowledge_text}'
     )
 
-    from orivellum.config import get_config
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.capabilities.llm import llm_call
+    from orivellum.config import get_config
     cfg = get_config()
     # Build a valid concept_id set for post-parse validation
     valid_concept_ids = {c["id"] for c in concepts}
@@ -881,7 +884,7 @@ def patch_compass(work_id: str, body: CompassUpdate):
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
-    from orivellum.capabilities.cognition import update_compass, read_compass
+    from orivellum.capabilities.cognition import read_compass, update_compass
     # Pass keyword args so only non-None fields are set
     update_compass(
         db, work_id,
@@ -1125,7 +1128,10 @@ def advance_pipeline(work_id: str):
         raise HTTPException(404, "No pipeline for this Work — call POST /pipeline first")
 
     from orivellum.capabilities.state_machine import (
-        BOOK_SM, apply_transition, InvalidTransitionError, BlockedTransitionError,
+        BOOK_SM,
+        BlockedTransitionError,
+        InvalidTransitionError,
+        apply_transition,
     )
 
     current = pipeline["status"]
@@ -1185,6 +1191,7 @@ async def run_pipeline_stage(work_id: str):
     The endpoint blocks until the LLM call completes (up to 45 s).
     """
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.api._deps import get_config
 
     db = get_db()
@@ -1199,8 +1206,10 @@ async def run_pipeline_stage(work_id: str):
 
     try:
         from orivellum.capabilities.pipeline_workers import (
-            run_stage_worker as _run_worker,
             _STAGE_CFG,
+        )
+        from orivellum.capabilities.pipeline_workers import (
+            run_stage_worker as _run_worker,
         )
     except ImportError as exc:
         raise HTTPException(500, f"Pipeline workers module unavailable: {exc}")
@@ -1260,10 +1269,12 @@ async def run_brainstorm(
     Blocks until complete (up to ~45 s). The session is persisted so history
     is available via ``GET /api/works/{id}/brainstorm``.
     """
+    from datetime import datetime
+
     from starlette.concurrency import run_in_threadpool
+
     from orivellum.api._deps import get_config
     from orivellum.capabilities.brainstorm import run_brainstorm_session
-    from datetime import datetime, timezone
 
     seed_prompt  = (payload.get("seed_prompt") or "").strip()
     context_type = payload.get("context_type") or "general"
@@ -1296,7 +1307,7 @@ async def run_brainstorm(
             session_id,
             status="done",
             ideas=ideas,
-            completed_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=datetime.now(UTC).isoformat(),
         )
     except Exception as exc:
         db.update_brainstorm_session(session_id, status="failed", ideas=[])
@@ -1323,8 +1334,6 @@ async def approve_brainstorm_idea(work_id: str, session_id: str, idea_id: str):
     The knowledge item is created with review_status='approved' so it appears
     in the standard knowledge list immediately.
     """
-    import json as _json
-    from datetime import datetime, timezone
 
     db = get_db()
     if not db.get_work(work_id):
@@ -1386,6 +1395,7 @@ async def evidence_rescore(work_id: str):
     conflict pairs detected, and elapsed wall-clock time.
     """
     import time
+
     from starlette.concurrency import run_in_threadpool
 
     db = get_db()
@@ -1397,13 +1407,13 @@ async def evidence_rescore(work_id: str):
         raise HTTPException(422, "This Work has no knowledge items to rescore.")
 
     t0 = time.monotonic()
-    from orivellum.capabilities.evidence import rescore_work, detect_contradictions
+    from orivellum.capabilities.evidence import detect_contradictions, rescore_work
     rescored = await run_in_threadpool(rescore_work, work_id, db)
     conflict_count = await run_in_threadpool(detect_contradictions, work_id, db)
 
     # Stamp the rescore time so the nightshift pass can skip recently-rescored works
-    from datetime import datetime, timezone
-    db.set_setting(f"evidence_rescore:{work_id}", datetime.now(timezone.utc).isoformat())
+    from datetime import datetime
+    db.set_setting(f"evidence_rescore:{work_id}", datetime.now(UTC).isoformat())
 
     elapsed_ms = round((time.monotonic() - t0) * 1000)
     return {

@@ -10,9 +10,10 @@ This is a deterministic policy service — NOT an LLM call.
 ENF-REQ-002: adapters expose narrow typed operations, never 'run_any_command'.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
 
-from .authority import AuthorityTier, ConflictType
+from dataclasses import dataclass
+
+from .authority import AuthorityTier
 
 
 @dataclass(frozen=True)

@@ -71,9 +71,9 @@ def _cap_phrases(text: str) -> list[str]:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def harvest(result: "ExtractionResult", doc_id: str,
+def harvest(result: ExtractionResult, doc_id: str,
             work_id: str | None, doc_title: str,
-            db: "OrivellumDB") -> int:
+            db: OrivellumDB) -> int:
     """Harvest knowledge from *result* and write to DB.
 
     Returns count of items created.
@@ -218,7 +218,7 @@ _EXTRACTION_TIMEOUT_SEC = 30
 
 
 def _call_llm_sync(prompt: str, base_url: str, model: str, timeout: int,
-                   db: "OrivellumDB | None" = None) -> str | None:
+                   db: OrivellumDB | None = None) -> str | None:
     """Make a synchronous (blocking) call to the LLM endpoint.
 
     Routes through the central ``llm_call`` gateway.  Returns the raw text
@@ -256,9 +256,9 @@ def _parse_extraction(raw: str) -> dict:
         return {}
 
 
-def llm_harvest(result: "ExtractionResult", doc_id: str,
+def llm_harvest(result: ExtractionResult, doc_id: str,
                 work_id: str | None, doc_title: str,
-                db: "OrivellumDB",
+                db: OrivellumDB,
                 kind: str | None = None) -> int:
     """LLM-powered knowledge extraction for a single document.
 
@@ -551,7 +551,7 @@ def llm_harvest_by_chapters(
     doc_id: str,
     work_id: str | None,
     doc_title: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
 ) -> int:
     """Fiction-aware LLM knowledge extraction for chapter-structured documents.
 

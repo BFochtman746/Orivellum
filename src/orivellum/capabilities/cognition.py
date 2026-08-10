@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC
 from typing import Any
 
 logger = logging.getLogger("orivellum.cognition")
@@ -180,8 +181,8 @@ def update_compass(db: Any, work_id: str,
     for omitted (None) fields are preserved.  This prevents a council call that
     doesn't infer a next_step from accidentally clearing one the user set.
     """
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
+    from datetime import datetime
+    now = datetime.now(UTC).isoformat()
     try:
         with db._lock:
             # Ensure the row exists first (INSERT OR IGNORE)

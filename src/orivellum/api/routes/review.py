@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
@@ -33,7 +33,7 @@ _VALID_TYPES = {"knowledge", "reclassify", "suggestion", "duplicate", "quarantin
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _active_deferrals(db) -> set[str]:
@@ -254,7 +254,7 @@ _PENDING_SQL = {
 def _defer(db, item_type: str, item_id: str, reason: str) -> dict:
     """Snooze a still-pending item. Validation + insert run under one lock so a
     concurrent resolution cannot leave an orphaned deferral."""
-    until = (datetime.now(timezone.utc) + timedelta(days=_DEFER_DAYS)).isoformat()
+    until = (datetime.now(UTC) + timedelta(days=_DEFER_DAYS)).isoformat()
     key = f"{item_type}:{item_id}"
     now = _now_iso()
     with db._lock:

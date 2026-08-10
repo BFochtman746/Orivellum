@@ -8,6 +8,7 @@ code when no model endpoint is configured or when the caller explicitly
 requests offline mode.
 """
 from __future__ import annotations
+
 import json
 import logging
 import os

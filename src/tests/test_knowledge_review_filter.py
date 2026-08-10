@@ -12,15 +12,8 @@ Both scope="work" and scope="all" paths are covered.
 """
 from __future__ import annotations
 
-import sqlite3
-import tempfile
-import os
 import uuid
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
-
-import pytest
-
 
 # ── Minimal DB stub ───────────────────────────────────────────────────────────
 

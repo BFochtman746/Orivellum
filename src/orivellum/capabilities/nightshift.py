@@ -30,13 +30,15 @@ import os
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from orivellum.api.executor import submit_bg
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.nightshift")
 
@@ -73,14 +75,14 @@ def try_start() -> bool:
         if _status.get("running"):
             return False
         _status["running"] = True
-        _status["started_at"] = datetime.now(timezone.utc).isoformat()
+        _status["started_at"] = datetime.now(UTC).isoformat()
         _status["finished_at"] = None
         return True
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_docs_needing_work(db: "OrivellumDB") -> list[dict]:
+def _get_docs_needing_work(db: OrivellumDB) -> list[dict]:
     with db._lock:
         rows = db._conn.execute(
             """SELECT d.id, d.work_id, d.title, d.source,
@@ -97,7 +99,7 @@ def _get_docs_needing_work(db: "OrivellumDB") -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _get_stuck_docs(db: "OrivellumDB", max_docs: int = 20) -> list[dict]:
+def _get_stuck_docs(db: OrivellumDB, max_docs: int = 20) -> list[dict]:
     with db._lock:
         rows = db._conn.execute(
             """SELECT d.id, d.work_id, d.title, d.source, d.content_path,
@@ -113,10 +115,10 @@ def _get_stuck_docs(db: "OrivellumDB", max_docs: int = 20) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _record_run(db: "OrivellumDB", docs_processed: int, items_added: int,
+def _record_run(db: OrivellumDB, docs_processed: int, items_added: int,
                 report_path: str | None) -> None:
     run_id = str(uuid.uuid4())
-    now    = datetime.now(timezone.utc).isoformat()
+    now    = datetime.now(UTC).isoformat()
     with db._lock:
         try:
             db._conn.execute(
@@ -149,7 +151,7 @@ def _write_report(data_dir: Path, date_str: str, items: list[str]) -> str:
 
 # ── Testable helpers for the DB optimise pass ─────────────────────────────────
 
-def _get_freelist_ratio(conn: "Any") -> "tuple[float, int, int]":
+def _get_freelist_ratio(conn: Any) -> tuple[float, int, int]:
     """Return ``(ratio, freelist_count, page_count)`` for *conn*.
 
     Extracted so tests can monkeypatch this function to simulate arbitrary
@@ -161,7 +163,7 @@ def _get_freelist_ratio(conn: "Any") -> "tuple[float, int, int]":
     return ratio, freelist, page_cnt
 
 
-def _run_vacuum(conn: "Any") -> None:
+def _run_vacuum(conn: Any) -> None:
     """Execute VACUUM on *conn*.
 
     Extracted so tests can monkeypatch this function to simulate a slow
@@ -170,7 +172,7 @@ def _run_vacuum(conn: "Any") -> None:
     conn.execute("VACUUM")
 
 
-def _pass_db_optimise(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_db_optimise(db: OrivellumDB, report: list[str]) -> None:
     """WAL checkpoint + ANALYZE + conditional VACUUM + integrity check.
 
     All work runs inside a single ``with db._lock`` block so the implementation
@@ -266,7 +268,7 @@ def _pass_db_optimise(db: "OrivellumDB", report: list[str]) -> None:
         report.append(f"⚠ DB optimise: {exc}")
 
 
-def _pass_cleanup_outputs(cfg: "OrivellumConfig", report: list[str]) -> None:
+def _pass_cleanup_outputs(cfg: OrivellumConfig, report: list[str]) -> None:
     """Delete zero-byte temp files from the outputs directory."""
     try:
         out_dir = Path(cfg.data_dir) / "outputs"
@@ -295,7 +297,7 @@ def _pass_cleanup_outputs(cfg: "OrivellumConfig", report: list[str]) -> None:
         logger.warning("Output cleanup pass failed: %s", exc)
 
 
-def _pass_prune_old_reports(cfg: "OrivellumConfig", keep: int = 30) -> None:
+def _pass_prune_old_reports(cfg: OrivellumConfig, keep: int = 30) -> None:
     """Keep only the most recent `keep` night reports."""
     try:
         report_dir = Path(cfg.data_dir) / "nightshift"
@@ -311,7 +313,7 @@ def _pass_prune_old_reports(cfg: "OrivellumConfig", keep: int = 30) -> None:
         logger.warning("Report pruning failed: %s", exc)
 
 
-def _pass_orphan_cleanup(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_orphan_cleanup(db: OrivellumDB, report: list[str]) -> None:
     """Remove knowledge items and chunks whose parent document no longer exists."""
     try:
         with db._lock:
@@ -374,7 +376,7 @@ def _pass_orphan_cleanup(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Orphan cleanup pass failed: %s", exc)
 
 
-def _pass_stuck_docs(db: "OrivellumDB", cfg: "OrivellumConfig",
+def _pass_stuck_docs(db: OrivellumDB, cfg: OrivellumConfig,
                      report: list[str]) -> None:
     """Re-queue all stuck documents (imported/error/no_text) that have a file.
 
@@ -429,15 +431,14 @@ def _pass_stuck_docs(db: "OrivellumDB", cfg: "OrivellumConfig",
                 except Exception as rec_exc:
                     logger.warning("Recovery failed for %s: %s", it["id"], rec_exc)
 
-        threading.Thread(target=_worker, args=(queue,),
-                         name="nightshift-recovery", daemon=True).start()
+        submit_bg(_worker, queue, kind="nightshift", label="recovery")
         report.append(f"Recovery: re-queued {len(queue)} stuck document(s) (sequential)")
         logger.info("Nightshift: queued %d stuck docs for sequential recovery", len(queue))
     except Exception as exc:
         logger.warning("Stuck-doc pass failed: %s", exc)
 
 
-def _pass_no_text_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
+def _pass_no_text_reextract(db: OrivellumDB, cfg: OrivellumConfig,
                             report: list[str]) -> None:
     """Re-extract PDF/image docs stuck in no_text when a vision model is now configured.
 
@@ -499,8 +500,7 @@ def _pass_no_text_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
                 except Exception as exc:
                     logger.warning("VLM re-extract failed for %s: %s", it["id"], exc)
 
-        threading.Thread(target=_worker, args=(queue,),
-                         name="nightshift-vlm-reextract", daemon=True).start()
+        submit_bg(_worker, queue, kind="nightshift", label="vlm-reextract")
         report.append(
             f"VLM re-extract: queued {len(queue)} no_text PDF/image doc(s) "
             f"(vision_model={vision_model})"
@@ -511,7 +511,7 @@ def _pass_no_text_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
         logger.warning("VLM re-extract pass failed (non-fatal): %s", exc)
 
 
-def _pass_audio_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
+def _pass_audio_reextract(db: OrivellumDB, cfg: OrivellumConfig,
                           report: list[str]) -> None:
     """Re-transcribe audio docs that previously got only a metadata-only placeholder.
 
@@ -579,8 +579,7 @@ def _pass_audio_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
                 except Exception as exc:
                     logger.warning("Audio re-transcription failed for %s: %s", it["id"], exc)
 
-        threading.Thread(target=_worker, args=(queue,),
-                         name="nightshift-audio-reextract", daemon=True).start()
+        submit_bg(_worker, queue, kind="nightshift", label="audio-reextract")
         from orivellum.capabilities.extraction import _resolve_asr_local_model
         asr_size = _resolve_asr_local_model(
             db, getattr(cfg.serving, "asr_local_model", "large-v3-turbo"))
@@ -594,15 +593,15 @@ def _pass_audio_reextract(db: "OrivellumDB", cfg: "OrivellumConfig",
         logger.warning("Audio re-transcription pass failed (non-fatal): %s", exc)
 
 
-def _pass_sparse_harvest(db: "OrivellumDB", report: list[str]) -> int:
+def _pass_sparse_harvest(db: OrivellumDB, report: list[str]) -> int:
     """Re-harvest documents with few knowledge items; returns items added."""
     items_added = 0
     docs = _get_docs_needing_work(db)
     if not docs:
         return 0
     try:
-        from orivellum.capabilities.knowledge_harvest import harvest
         from orivellum.capabilities.extraction import ExtractionResult, PageSegment
+        from orivellum.capabilities.knowledge_harvest import harvest
         ai_enabled = db.get_setting("ai_extraction_enabled", "false").lower() == "true"
 
         for doc in docs:
@@ -656,7 +655,7 @@ def _pass_sparse_harvest(db: "OrivellumDB", report: list[str]) -> int:
     return items_added
 
 
-def _pass_gap_analysis(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_gap_analysis(db: OrivellumDB, report: list[str]) -> None:
     """Detect research gaps for every active Work and cache results."""
     try:
         from orivellum.capabilities.gaps import detect_gaps
@@ -694,21 +693,21 @@ def _pass_gap_analysis(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Gap analysis pass failed: %s", exc)
 
 
-def _pass_evidence(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_evidence(db: OrivellumDB, report: list[str]) -> None:
     """Rescore confidence and detect contradictions for stale Works.
 
     Only processes Works whose last rescore is >24 h old (tracked via the
     ``evidence_rescore:{work_id}`` settings key).  Capped at 5 Works per run
     so the pass stays bounded regardless of library size.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
 
     _STALE_HOURS = 24
     _MAX_WORKS   = 5
 
     try:
-        from orivellum.capabilities.evidence import rescore_work, detect_contradictions
-        now = datetime.now(timezone.utc)
+        from orivellum.capabilities.evidence import detect_contradictions, rescore_work
+        now = datetime.now(UTC)
         cutoff = now - timedelta(hours=_STALE_HOURS)
 
         rescored = conflicts = skipped = 0
@@ -745,7 +744,7 @@ def _pass_evidence(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Evidence pass failed: %s", exc)
 
 
-def _pass_context_prefix_backfill(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_context_prefix_backfill(db: OrivellumDB, report: list[str]) -> None:
     """Generate AI context prefixes for up to 100 un-prefixed chunks.
 
     Implements the Anthropic Contextual Retrieval technique: each chunk
@@ -839,7 +838,7 @@ def _pass_context_prefix_backfill(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Context-prefix backfill pass failed: %s", exc)
 
 
-def _pass_embeddings(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_embeddings(db: OrivellumDB, report: list[str]) -> None:
     """Embed up to 300 unembedded knowledge items."""
     try:
         from orivellum.capabilities.embeddings import backfill_embeddings
@@ -850,7 +849,7 @@ def _pass_embeddings(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Embedding pass failed: %s", exc)
 
 
-def _pass_work_stats(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_work_stats(db: OrivellumDB, report: list[str]) -> None:
     """Refresh cached stats for every active Work so the UI is always current."""
     try:
         works = db.list_works(status="active")
@@ -868,7 +867,7 @@ def _pass_work_stats(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Work stats pass failed: %s", exc)
 
 
-def _pass_mcos(db: "OrivellumDB", cfg: "OrivellumConfig", report: list[str]) -> None:
+def _pass_mcos(db: OrivellumDB, cfg: OrivellumConfig, report: list[str]) -> None:
     """Seed benchmarks and run MCOS evaluations.
 
     Gated by the ``mcos_nightly_enabled`` setting (default on).  Retrieval-kind
@@ -880,7 +879,9 @@ def _pass_mcos(db: "OrivellumDB", cfg: "OrivellumConfig", report: list[str]) -> 
         if db.get_setting("mcos_nightly_enabled", "true").lower() != "true":
             return
         from orivellum.capabilities.mcos import (
-            seed_default_benchmarks, run_benchmark, is_ai_reachable,
+            is_ai_reachable,
+            run_benchmark,
+            seed_default_benchmarks,
         )
         seed_default_benchmarks(db)
 
@@ -975,7 +976,7 @@ def _pass_mcos(db: "OrivellumDB", cfg: "OrivellumConfig", report: list[str]) -> 
 
 # ── Main runner ───────────────────────────────────────────────────────────────
 
-def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig",
+def run_nightshift(db: OrivellumDB, cfg: OrivellumConfig,
                    _preacquired: bool = False) -> None:
     """Execute one complete nightshift pass synchronously.
 
@@ -993,10 +994,10 @@ def run_nightshift(db: "OrivellumDB", cfg: "OrivellumConfig",
     finally:
         with _status_lock:
             _status["running"] = False
-            _status["finished_at"] = datetime.now(timezone.utc).isoformat()
+            _status["finished_at"] = datetime.now(UTC).isoformat()
 
 
-def _pass_dispatch_outbox(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_dispatch_outbox(db: OrivellumDB, report: list[str]) -> None:
     """Drain the transactional outbox by marking all pending events dispatched.
 
     The outbox (schema v56) records every governed write atomically.  Until a
@@ -1025,7 +1026,7 @@ def _pass_dispatch_outbox(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Nightshift outbox drain failed: %s", exc)
 
 
-def _pass_verify_audit_chain(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_verify_audit_chain(db: OrivellumDB, report: list[str]) -> None:
     """Verify the hash-chained audit ledger is intact.
 
     Calls ``db.verify_audit_chain()`` and appends a ✓ or ✗ line to the
@@ -1044,17 +1045,17 @@ def _pass_verify_audit_chain(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Nightshift audit-chain check error: %s", exc)
 
 
-def _pass_version_suggestions(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_version_suggestions(db: OrivellumDB, report: list[str]) -> None:
     """Cross-check document pairs in every Work for similar filename stems and
     create version-relationship suggestions for any new matches found.
 
     Mirrors the same logic run at upload time (_maybe_suggest_version in library.py)
     so that documents imported before the feature was introduced also get covered.
     """
-    import re as _re
-    import json as _json
-    import uuid as _uuid_mod
     import datetime as _dt
+    import json as _json
+    import re as _re
+    import uuid as _uuid_mod
     from difflib import SequenceMatcher
     from pathlib import Path as _Path
 
@@ -1113,7 +1114,7 @@ def _pass_version_suggestions(db: "OrivellumDB", report: list[str]) -> None:
                     ).fetchone()
                     if already:
                         continue
-                    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+                    now_iso = _dt.datetime.now(_dt.UTC).isoformat()
                     meta_payload = _json.dumps({
                         "doc_a_id": doc_a["id"],
                         "doc_b_id": doc_b["id"],
@@ -1143,7 +1144,7 @@ def _pass_version_suggestions(db: "OrivellumDB", report: list[str]) -> None:
         report.append("Version suggestions: no new version pairs found")
 
 
-def _pass_zip_provenance_backfill(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_zip_provenance_backfill(db: OrivellumDB, report: list[str]) -> None:
     """Back-fill object_provenance rows for ZIP child documents that were created
     before this feature was introduced (or on runs where record_provenance failed).
 
@@ -1197,7 +1198,7 @@ def _pass_zip_provenance_backfill(db: "OrivellumDB", report: list[str]) -> None:
         report.append(f"ZIP provenance backfill: failed — {exc}")
 
 
-def _pass_clustering(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_clustering(db: OrivellumDB, report: list[str]) -> None:
     """Rebuild topic clusters over all vectorised documents.
 
     Skips gracefully if there are no vectors (embeddings not yet generated or
@@ -1219,7 +1220,7 @@ def _pass_clustering(db: "OrivellumDB", report: list[str]) -> None:
         logger.warning("Nightshift clustering pass failed: %s", exc, exc_info=True)
 
 
-def _pass_knowledge_semantic_dedup(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_knowledge_semantic_dedup(db: OrivellumDB, report: list[str]) -> None:
     """Find near-duplicate knowledge items across different source documents within
     each Work by comparing their stored embedding vectors (no new LLM calls).
 
@@ -1243,9 +1244,9 @@ def _pass_knowledge_semantic_dedup(db: "OrivellumDB", report: list[str]) -> None
     Capped at _MAX_PER_WORK items per Work (400) so the O(n²) comparison
     stays bounded.  Works with fewer than 2 embedded items are skipped.
     """
+    import datetime as _dt
     import json as _json
     import uuid as _uuid_mod
-    import datetime as _dt
 
     _HIGH = 0.88          # auto-retire threshold
     _LOW  = 0.75          # suggest-for-review threshold
@@ -1271,8 +1272,8 @@ def _pass_knowledge_semantic_dedup(db: "OrivellumDB", report: list[str]) -> None
         logger.debug("Knowledge semantic dedup: vector count check failed: %s", exc)
         return
 
-    from orivellum.capabilities.embeddings import unpack_vector, cosine as _cosine
-    from orivellum.capabilities.embeddings import bump_vector_cache_version
+    from orivellum.capabilities.embeddings import bump_vector_cache_version, unpack_vector
+    from orivellum.capabilities.embeddings import cosine as _cosine
 
     try:
         works = db.list_works()
@@ -1325,7 +1326,7 @@ def _pass_knowledge_semantic_dedup(db: "OrivellumDB", report: list[str]) -> None
                 continue
 
             superseded_ids: set[str] = set()
-            now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            now_iso = _dt.datetime.now(_dt.UTC).isoformat()
 
             for i in range(len(items)):
                 if items[i]["id"] in superseded_ids:
@@ -1419,7 +1420,7 @@ def _pass_knowledge_semantic_dedup(db: "OrivellumDB", report: list[str]) -> None
         )
 
 
-def _pass_cold_item_detection(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_cold_item_detection(db: OrivellumDB, report: list[str]) -> None:
     """Surface knowledge items that have never been injected into chat, or not
     injected in the last 60 days, as ``cold_knowledge_item`` governance
     suggestions so the user can decide whether to keep, archive, or delete them.
@@ -1444,9 +1445,9 @@ def _pass_cold_item_detection(db: "OrivellumDB", report: list[str]) -> None:
       yet (old schema before v102).  This prevents nightshift from crashing on
       instances that have not yet run the migration.
     """
+    import datetime as _dt
     import json as _json
     import uuid as _uuid_mod
-    import datetime as _dt
 
     _COLD_THRESHOLD_DAYS      = 60   # days since last retrieval → cold
     _NEW_ITEM_GRACE_DAYS      = 30   # items younger than this are never flagged
@@ -1466,13 +1467,13 @@ def _pass_cold_item_detection(db: "OrivellumDB", report: list[str]) -> None:
         return
 
     try:
-        now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        now_iso = _dt.datetime.now(_dt.UTC).isoformat()
         cutoff_new = (
-            _dt.datetime.now(_dt.timezone.utc)
+            _dt.datetime.now(_dt.UTC)
             - _dt.timedelta(days=_NEW_ITEM_GRACE_DAYS)
         ).isoformat()
         cutoff_cold = (
-            _dt.datetime.now(_dt.timezone.utc)
+            _dt.datetime.now(_dt.UTC)
             - _dt.timedelta(days=_COLD_THRESHOLD_DAYS)
         ).isoformat()
 
@@ -1567,7 +1568,7 @@ def _pass_cold_item_detection(db: "OrivellumDB", report: list[str]) -> None:
         report.append(f"Cold-item detection: failed — {exc}")
 
 
-def _run_nightshift_passes(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
+def _run_nightshift_passes(db: OrivellumDB, cfg: OrivellumConfig) -> None:
     date_str = datetime.now().strftime("%Y-%m-%d")
     start_ts = time.time()
     logger.info("Nightshift starting for %s", date_str)
@@ -1782,7 +1783,7 @@ def _memory_text_similarity(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
-def _pass_memory_dedup(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_memory_dedup(db: OrivellumDB, report: list[str]) -> None:
     """Deduplicate current memory facts; flag contradictions in memory_conflicts.
 
     Algorithm
@@ -1808,7 +1809,7 @@ def _pass_memory_dedup(db: "OrivellumDB", report: list[str]) -> None:
     _CROSS_NEAR_THRESH= 0.85   # cross-key near-dup → merge
 
     try:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         with db._lock:
             rows = db._conn.execute(
@@ -1920,7 +1921,7 @@ def _pass_memory_dedup(db: "OrivellumDB", report: list[str]) -> None:
         report.append(f"⚠ Memory dedup: {exc}")
 
 
-def _pass_memory_promote(db: "OrivellumDB", report: list[str]) -> None:
+def _pass_memory_promote(db: OrivellumDB, report: list[str]) -> None:
     """Promote episodic memories to semantic after ≥ 3 observations.
 
     An episodic memory key that has been observed 3 or more times (counting
@@ -1957,7 +1958,7 @@ def _pass_memory_promote(db: "OrivellumDB", report: list[str]) -> None:
         if not rows:
             return
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         promoted = 0
 
         for row in rows:
@@ -2031,8 +2032,8 @@ def _pass_memory_promote(db: "OrivellumDB", report: list[str]) -> None:
         report.append(f"⚠ Memory promote: {exc}")
 
 
-def start_nightshift_daemon(db: "OrivellumDB",
-                            cfg: "OrivellumConfig") -> threading.Thread:
+def start_nightshift_daemon(db: OrivellumDB,
+                            cfg: OrivellumConfig) -> threading.Thread:
     """Start the nightshift daemon thread.  Returns the thread (daemon=True)."""
     nightshift_hour = int(db.get_setting("nightshift_hour", "3"))
 

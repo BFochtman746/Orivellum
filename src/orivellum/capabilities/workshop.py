@@ -16,15 +16,14 @@ import re
 import subprocess
 import sys
 import tempfile
-import textwrap
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.workshop")
 
@@ -144,8 +143,8 @@ def plan_document(
     request: str,
     format_hint: str | None,
     work_id: str | None,
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
 ) -> dict:
     """Generate clarifying questions for a document request.
 
@@ -225,7 +224,7 @@ def plan_document(
         "format": detected,
         "detected_intent": plan.get("detected_intent", request[:120]),
         "questions": plan.get("questions", []),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     _SESSIONS[session_id] = session
     logger.info("Workshop plan created: session=%s format=%s q=%d",
@@ -239,8 +238,8 @@ def execute_workshop(
     format: str,
     work_id: str | None,
     answers: dict[str, str],
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
 ) -> dict:
     """Generate the document: write code → execute safely → critique → register.
 
@@ -290,7 +289,7 @@ def execute_workshop(
     out_dir = Path(cfg.data_dir) / "outputs" / "generate" / (work_id or "workshop")
     out_dir.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^\w]", "_", request[:40].strip().lower())
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M")
     fname = f"{slug}_{ts}.{fmt}"
     output_path = str(out_dir / fname)
 
@@ -399,8 +398,8 @@ def _run_script_safely(
     script: str,
     output_path: str,
     max_retries: int,
-    cfg: "OrivellumConfig",
-    db: "OrivellumDB",
+    cfg: OrivellumConfig,
+    db: OrivellumDB,
     request: str,
 ) -> dict:
     """Execute generated script in a temp dir. Retry with LLM correction on failure."""
@@ -471,8 +470,8 @@ def _critique_output(
     answers_text: str,
     script: str,
     exec_output: str,
-    cfg: "OrivellumConfig",
-    db: "OrivellumDB",
+    cfg: OrivellumConfig,
+    db: OrivellumDB,
 ) -> dict | None:
     """Run the write.critic evaluation on the generated document."""
     from orivellum.capabilities.llm import llm_call

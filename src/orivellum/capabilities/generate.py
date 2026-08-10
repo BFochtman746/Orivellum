@@ -13,26 +13,25 @@ ARTIFACT tier — they are never promoted into a Work's canonical corpus.
 from __future__ import annotations
 
 import hashlib
-import io
 import logging
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.generate")
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 def _now_label() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M")
 
 
-def _ensure_dir(cfg: "OrivellumConfig", work_id: str) -> Path:
+def _ensure_dir(cfg: OrivellumConfig, work_id: str) -> Path:
     """Return (and create) data/outputs/generate/{work_id}/"""
     d = Path(cfg.data_dir) / "outputs" / "generate" / work_id
     d.mkdir(parents=True, exist_ok=True)
@@ -44,9 +43,9 @@ _CHUNK_SIZE = 1_000  # characters per FTS chunk
 
 def _register_output(
     doc_path: Path,
-    work_id: "str | None",
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    work_id: str | None,
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
     format_label: str,
     title: str,
     text_content: str = "",
@@ -82,7 +81,7 @@ def _register_output(
             "provenance": "generation",
             "origin_id": work_id,
             "format": format_label,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         },
         tier="artifact",
     )
@@ -126,6 +125,7 @@ def _register_output(
     # are semantically searchable without waiting for the nightly backfill.
     # Wrapped in a try/except so thread failures are logged, never raised.
     import threading as _t
+
     from orivellum.capabilities.persist import record_provenance as _prov
 
     def _embed_bg(_doc_id=doc_id, _db=db) -> None:
@@ -160,10 +160,10 @@ def _slug(text: str, max_len: int = 40) -> str:
 
 # ── Excel ──────────────────────────────────────────────────────────────────────
 
-def generate_excel(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig") -> tuple[Path, str]:
+def generate_excel(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[Path, str]:
     """Generate an xlsx workbook summarising a Work; return (file_path, doc_id)."""
     import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
     work = db.get_work(work_id)
@@ -211,7 +211,7 @@ def generate_excel(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig") -> t
     ws["A2"] = work.get("description") or ""
     ws["A2"].font = sub_font
     ws["A4"] = "Generated"
-    ws["B4"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ws["B4"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     ws["A5"] = "Documents"
     ws["B5"] = len(doc_list)
     ws["A6"] = "Knowledge items"
@@ -291,11 +291,11 @@ def generate_excel(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig") -> t
 
 # ── DOCX ───────────────────────────────────────────────────────────────────────
 
-def generate_docx_report(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig") -> tuple[Path, str]:
+def generate_docx_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[Path, str]:
     """Generate a .docx research report from a Work; return (file_path, doc_id)."""
     from docx import Document
-    from docx.shared import Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, RGBColor
 
     work = db.get_work(work_id)
     if not work:
@@ -325,7 +325,7 @@ def generate_docx_report(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig"
         p.runs[0].font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
         p.runs[0].font.italic = True
 
-    meta_p = document.add_paragraph(f"Generated {datetime.now(timezone.utc).strftime('%B %d, %Y')}")
+    meta_p = document.add_paragraph(f"Generated {datetime.now(UTC).strftime('%B %d, %Y')}")
     meta_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     meta_p.runs[0].font.size = Pt(9)
     meta_p.runs[0].font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
@@ -405,15 +405,20 @@ def generate_docx_report(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig"
 
 # ── PDF ────────────────────────────────────────────────────────────────────────
 
-def generate_pdf_report(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig") -> tuple[Path, str]:
+def generate_pdf_report(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[Path, str]:
     """Generate a PDF research report from a Work; return (file_path, doc_id)."""
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import cm
     from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-        PageBreak, HRFlowable,
+        HRFlowable,
+        PageBreak,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
     )
 
     work = db.get_work(work_id)
@@ -487,7 +492,7 @@ def generate_pdf_report(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig")
     if desc:
         story.append(Paragraph(f"<i>{_xml(desc[:300])}</i>", meta_style))
     story.append(Paragraph(
-        f"Generated {datetime.now(timezone.utc).strftime('%B %d, %Y')}",
+        f"Generated {datetime.now(UTC).strftime('%B %d, %Y')}",
         meta_style,
     ))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#E2E8F0")))
@@ -587,12 +592,12 @@ def generate_pdf_report(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig")
 
 # ── PPTX ───────────────────────────────────────────────────────────────────────
 
-def generate_pptx(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig") -> tuple[Path, str]:
+def generate_pptx(work_id: str, db: OrivellumDB, cfg: OrivellumConfig) -> tuple[Path, str]:
     """Generate a PowerPoint deck from a Work; return (file_path, doc_id)."""
     from pptx import Presentation
-    from pptx.util import Inches, Pt, Emu
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches, Pt
 
     work = db.get_work(work_id)
     if not work:
@@ -663,7 +668,7 @@ def generate_pptx(work_id: str, db: "OrivellumDB", cfg: "OrivellumConfig") -> tu
         )
     _add_text_box(
         slide1,
-        f"Generated {datetime.now(timezone.utc).strftime('%B %d, %Y')}",
+        f"Generated {datetime.now(UTC).strftime('%B %d, %Y')}",
         Inches(1), Inches(6.6), Inches(11.33), Inches(0.5),
         size=11, bold=False, color=GRAY, align=PP_ALIGN.CENTER,
     )
@@ -814,8 +819,8 @@ def bundle_files(
     file_paths: list[str],
     output_name: str,
     work_id: str,
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
 ) -> tuple[Path, str]:
     """Zip a list of file paths into a single archive; return (zip_path, doc_id)."""
     out_dir = _ensure_dir(cfg, work_id)
@@ -876,7 +881,6 @@ def bundle_files(
 def _build_docx_from_data(data: dict, out_path: Path) -> str:
     """Create a DOCX from LLM-structured JSON and return plain-text content."""
     from docx import Document as _Doc
-    from docx.shared import Pt, RGBColor
 
     doc = _Doc()
 
@@ -903,7 +907,7 @@ def _build_pdf_from_data(data: dict, out_path: Path) -> str:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
     doc = SimpleDocTemplate(
         str(out_path), pagesize=A4,
@@ -938,8 +942,7 @@ def _build_pdf_from_data(data: dict, out_path: Path) -> str:
 def _build_pptx_from_data(data: dict, out_path: Path) -> str:
     """Create a PPTX from LLM-structured JSON and return plain-text content."""
     from pptx import Presentation
-    from pptx.util import Inches, Pt, Emu
-    from pptx.dml.color import RGBColor
+    from pptx.util import Inches
 
     prs = Presentation()
     prs.slide_width  = Inches(13.33)
@@ -988,7 +991,7 @@ def _build_pptx_from_data(data: dict, out_path: Path) -> str:
 def _build_xlsx_from_data(data: dict, out_path: Path) -> str:
     """Create an XLSX from LLM-structured JSON and return plain-text content."""
     import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Alignment, Font, PatternFill
 
     wb = openpyxl.Workbook()
     default_ws = wb.active
@@ -1032,11 +1035,11 @@ def _build_xlsx_from_data(data: dict, out_path: Path) -> str:
 def generate_from_prompt(
     prompt: str,
     format: str,
-    filename: "str | None",
-    work_id: "str | None",
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
-) -> "tuple[Path, str]":
+    filename: str | None,
+    work_id: str | None,
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
+) -> tuple[Path, str]:
     """Generate a document from a free-form text prompt using the LLM.
 
     Steps:
@@ -1044,7 +1047,8 @@ def generate_from_prompt(
     2. Build the actual file with the appropriate library.
     3. Register it in the library (ARTIFACT tier) and return (path, doc_id).
     """
-    import json, re
+    import json
+    import re
 
     from orivellum.capabilities.llm import llm_call
 

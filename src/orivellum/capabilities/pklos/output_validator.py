@@ -22,13 +22,11 @@ a silent guarantee failure.
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .authority import ClaimStatus
 from .fact_router import is_checkable_fact
 
 logger = logging.getLogger("orivellum.pklos.output_validator")

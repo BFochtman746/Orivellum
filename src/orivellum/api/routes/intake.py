@@ -10,13 +10,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
-from orivellum.capabilities.intake import run_intake, IntakeProfile
+from orivellum.api._deps import get_config, get_db
+from orivellum.capabilities.intake import IntakeProfile, run_intake
 
 logger = logging.getLogger("orivellum.api.intake")
 
@@ -71,7 +70,7 @@ class IntakeRequest(BaseModel):
 
 class ResearchRequest(BaseModel):
     doc_id: str
-    query: Optional[str] = None
+    query: str | None = None
     confirmed: bool = False   # user must explicitly confirm egress
 
 
@@ -87,26 +86,26 @@ class IntakeProfileOut(BaseModel):
     what_it_is: str
     kind: str
     tier: str
-    filed_to: Optional[str]
-    filed_to_id: Optional[str]
+    filed_to: str | None
+    filed_to_id: str | None
     confidence: float
     summary: str
     word_count: int
     headings: list[str]
-    text_snippet: Optional[str]   # first ~500 chars of extracted text for client-side chat grounding
+    text_snippet: str | None   # first ~500 chars of extracted text for client-side chat grounding
     suggested_actions: list[SuggestedActionOut]
-    research_summary: Optional[str]
+    research_summary: str | None
     research_sources: list[dict]
-    error: Optional[str]
+    error: str | None
 
 
 class ResearchJobOut(BaseModel):
     """Response shape for the async research endpoint and status poll."""
     job_id: str        # same as doc_id
     status: str        # pending | running | done | error
-    research_summary: Optional[str] = None
+    research_summary: str | None = None
     research_sources: list[dict] = []
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def _profile_to_out(p: IntakeProfile) -> IntakeProfileOut:
@@ -136,7 +135,7 @@ def _profile_to_out(p: IntakeProfile) -> IntakeProfileOut:
 
 def _run_research_background(
     doc_id: str,
-    query: Optional[str],
+    query: str | None,
     db,
     cfg,
 ) -> None:

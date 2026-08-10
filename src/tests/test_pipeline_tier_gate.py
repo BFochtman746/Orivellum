@@ -8,14 +8,10 @@ Verifies two things without touching the real database or filesystem:
 """
 import sys
 from pathlib import Path
-import zipfile
-import tempfile
-import io
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from orivellum.capabilities.classify import Tier, classify_object, EXCLUDED_FROM_WORKS
-
+from orivellum.capabilities.classify import EXCLUDED_FROM_WORKS, Tier, classify_object
 
 # ── Tests that don't need a live DB ────────────────────────────────────────────
 

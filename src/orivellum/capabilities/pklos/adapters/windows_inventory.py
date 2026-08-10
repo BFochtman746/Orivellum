@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..authority import AuthorityTier, ClaimStatus, SUBJECT_DEVICE_A01
+from ..authority import SUBJECT_DEVICE_A01, ClaimStatus
 from ..authority_resolver import AuthorityResolver
 from ..claim_verifier import ClaimVerifier
 from .base import AdapterBase, Evidence, Recipe

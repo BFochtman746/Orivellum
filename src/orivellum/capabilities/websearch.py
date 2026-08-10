@@ -314,6 +314,8 @@ def _rank_passages(
     try:
         from orivellum.capabilities.rerank import (
             cross_encoder_scores as _ce,
+        )
+        from orivellum.capabilities.rerank import (
             cross_reranker_enabled as _ce_enabled,
         )
         _ce_on = True

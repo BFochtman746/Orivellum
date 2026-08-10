@@ -9,32 +9,33 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import fastapi
+
     from orivellum.configuration.config import OrivellumConfig
     from orivellum.database.db import OrivellumDB
 
-_DB: "OrivellumDB | None" = None
-_CFG: "OrivellumConfig | None" = None
+_DB: OrivellumDB | None = None
+_CFG: OrivellumConfig | None = None
 
 
-def init(db: "OrivellumDB", cfg: "OrivellumConfig") -> None:
+def init(db: OrivellumDB, cfg: OrivellumConfig) -> None:
     global _DB, _CFG
     _DB = db
     _CFG = cfg
 
 
-def get_db() -> "OrivellumDB":
+def get_db() -> OrivellumDB:
     if _DB is None:
         raise RuntimeError("Database not initialized — call init() first")
     return _DB
 
 
-def get_config() -> "OrivellumConfig":
+def get_config() -> OrivellumConfig:
     if _CFG is None:
         raise RuntimeError("Config not initialized — call init() first")
     return _CFG
 
 
-def require_auth(request: "fastapi.Request") -> None:
+def require_auth(request: fastapi.Request) -> None:
     """FastAPI dependency that enforces API key authentication.
 
     Raises HTTP 401 when the request does not carry a valid bearer token or
@@ -43,6 +44,7 @@ def require_auth(request: "fastapi.Request") -> None:
     routes by default.
     """
     import os
+
     from fastapi import HTTPException  # noqa: F401
     from fastapi.security.utils import get_authorization_scheme_param
 

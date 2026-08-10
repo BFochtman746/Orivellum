@@ -27,7 +27,6 @@ import logging
 import random
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -116,7 +115,7 @@ def _domain_worker(
     seed: str,
     context_type: str,
     work_knowledge: list[str],
-    db: "OrivellumDB",
+    db: OrivellumDB,
     cfg: Any,
     negative_constraint: str = "",
 ) -> str | None:
@@ -184,14 +183,14 @@ def _bigram_dissimilarity(idea_text: str, corpus_texts: list[str]) -> float:
 def _score_originality(
     idea_texts: list[str],
     work_id: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
 ) -> list[float]:
     """Score each idea's originality against the Work's knowledge baseline.
 
     Primary: cosine distance from mean knowledge embedding vector.
     Fallback: bigram dissimilarity from knowledge text corpus.
     """
-    from orivellum.capabilities.embeddings import embed_texts, unpack_vector, cosine, pack_vector
+    from orivellum.capabilities.embeddings import cosine, embed_texts, unpack_vector
 
     with db._lock:
         kn_rows = db._conn.execute(
@@ -258,7 +257,7 @@ def _score_usefulness(
     idea_texts: list[str],
     seed: str,
     context_type: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     cfg: Any,
 ) -> list[int]:
     """Single-call usefulness judge.  Returns list of ints 1-5."""
@@ -375,7 +374,7 @@ def run_brainstorm_session(
     work_id: str,
     seed_prompt: str,
     context_type: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     cfg: Any,
     n_domains: int = 5,
 ) -> list[dict]:

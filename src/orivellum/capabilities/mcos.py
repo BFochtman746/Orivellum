@@ -19,7 +19,7 @@ import logging
 import math
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from orivellum.capabilities.llm import llm_call
@@ -28,7 +28,7 @@ logger = logging.getLogger("orivellum.mcos")
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _uuid() -> str:

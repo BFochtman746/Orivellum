@@ -128,7 +128,7 @@ _STOPWORDS: frozenset[str] = frozenset({
 # ─── Channel implementations ──────────────────────────────────────────────────
 
 
-def _channel_semantic(query: str, db: "OrivellumDB") -> list[dict]:
+def _channel_semantic(query: str, db: OrivellumDB) -> list[dict]:
     """Semantic channel: conv_chunk vectors → source_conv_id cross-reference.
 
     1. Embed the query and find the most similar conversation chunks.
@@ -195,7 +195,7 @@ def _channel_semantic(query: str, db: "OrivellumDB") -> list[dict]:
         return []
 
 
-def _channel_lexical(query: str, db: "OrivellumDB", limit: int = 20) -> list[dict]:
+def _channel_lexical(query: str, db: OrivellumDB, limit: int = 20) -> list[dict]:
     """Lexical channel: BM25/FTS5 search over user_memory_fts.
 
     Delegates to ``db.search_memories_lexical`` which handles both the FTS5
@@ -208,7 +208,7 @@ def _channel_lexical(query: str, db: "OrivellumDB", limit: int = 20) -> list[dic
         return []
 
 
-def _channel_graph(query: str, db: "OrivellumDB", limit: int = 20) -> list[dict]:
+def _channel_graph(query: str, db: OrivellumDB, limit: int = 20) -> list[dict]:
     """Graph channel: entity traversal → memory fact mention match.
 
     Delegates to ``db.search_memories_graph`` which handles entity lookup,
@@ -301,7 +301,7 @@ def _merge(
 
 def search_memories(
     query: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     limit: int = 20,
     *,
     semantic_weight: float = _W_SEMANTIC,
@@ -417,7 +417,7 @@ def _memory_text(fact: dict) -> str:
 def _graph_boost_scores(
     query: str,
     candidates: list[dict],
-    db: "OrivellumDB",
+    db: OrivellumDB,
 ) -> list[dict]:
     """Boost candidates whose text mentions entities extracted from the query.
 
@@ -658,7 +658,7 @@ class ReActMemoryAgent:
 
     MAX_ITER: int = 4
 
-    def __init__(self, db: "OrivellumDB", cfg: Any) -> None:
+    def __init__(self, db: OrivellumDB, cfg: Any) -> None:
         self.db  = db
         self.cfg = cfg
 
@@ -764,7 +764,7 @@ class ReActMemoryAgent:
 def rerank_memories(
     query: str,
     candidates: list[dict],
-    db: "OrivellumDB",
+    db: OrivellumDB,
     *,
     top_k: int = _RERANK_TOP_K,
 ) -> tuple[list[dict], dict]:
@@ -784,7 +784,7 @@ def rerank_memories(
         ``reranked_list``  — up to *top_k* deduplicated memory fact dicts.
         ``stages_meta``    — dict with a ``stages`` list for observability.
     """
-    from orivellum.capabilities.rerank import bm25_rerank, _llm_rerank
+    from orivellum.capabilities.rerank import _llm_rerank, bm25_rerank
 
     if not candidates or not query.strip():
         return candidates[:top_k], {"stages": []}
@@ -904,7 +904,7 @@ def rerank_memories(
 
 def search_and_rerank_memories(
     query: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     *,
     limit: int = _RERANK_TOP_K,
     semantic_weight: float = _W_SEMANTIC,

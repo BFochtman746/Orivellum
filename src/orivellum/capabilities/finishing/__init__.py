@@ -6,7 +6,7 @@ from pathlib import Path
 
 def configure(data_dir: str) -> None:
     """Point both subsystems at their DB files inside *data_dir*."""
-    from . import press, atelier
+    from . import atelier, press
     press.configure(data_dir)
     atelier.configure(data_dir)
     press.cmd_init(None)

@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 router = APIRouter(prefix="/api")
 
@@ -83,8 +83,12 @@ async def learning_question(
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.learning import (
-        next_concept_id, get_question, select_interleaved_concept,
-        _VALID_QUESTION_TYPES, _VALID_SESSION_MODES, _INTERLEAVED_MIN_CONCEPTS,
+        _INTERLEAVED_MIN_CONCEPTS,
+        _VALID_QUESTION_TYPES,
+        _VALID_SESSION_MODES,
+        get_question,
+        next_concept_id,
+        select_interleaved_concept,
     )
     if type not in _VALID_QUESTION_TYPES:
         raise HTTPException(422, f"Invalid type {type!r}. Must be one of: recall, transfer, auto")
@@ -242,8 +246,11 @@ async def learning_assess(work_id: str, body: AssessBody):
         raise HTTPException(404, f"Concept {body.concept_id!r} not found in work {work_id!r}")
     base_url, model = _cfg()
     from orivellum.capabilities.learning import (
-        assess_answer, next_concept_id, get_mastery_summary, _resolve_question_type,
         _VALID_SESSION_MODES,
+        _resolve_question_type,
+        assess_answer,
+        get_mastery_summary,
+        next_concept_id,
     )
     # Re-derive question_type server-side from the concept's current streak using
     # the same "auto" logic as get_question.  This prevents clients from forging a

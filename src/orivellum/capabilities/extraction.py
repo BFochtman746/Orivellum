@@ -14,7 +14,6 @@ import io
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +312,7 @@ _VLM_OCR_PROMPT = (
 )
 
 
-def _vlm_pdf_ocr(path: Path, db=None) -> "ExtractionResult | None":
+def _vlm_pdf_ocr(path: Path, db=None) -> ExtractionResult | None:
     """Use the configured vision LLM to OCR a scanned (image-only) PDF.
 
     Renders each page with pdf2image at 150 DPI, encodes as JPEG base64,
@@ -343,6 +342,7 @@ def _vlm_pdf_ocr(path: Path, db=None) -> "ExtractionResult | None":
 
         import base64
         import io
+
         from orivellum.capabilities.llm import llm_call
 
         pages_pil = convert_from_path(str(path), dpi=150)
@@ -417,6 +417,7 @@ def _probe_tesseract() -> None:
     """
     import shutil
     import subprocess as _sp
+
     import pytesseract as _pt
 
     if shutil.which("tesseract"):
@@ -454,7 +455,7 @@ def _probe_tesseract() -> None:
             return
 
 
-def _extract_image_vision(path: Path, db=None) -> "ExtractionResult | None":
+def _extract_image_vision(path: Path, db=None) -> ExtractionResult | None:
     """Use the configured vision LLM to describe image content.
 
     Returns an ExtractionResult when the vision model is configured and
@@ -477,6 +478,7 @@ def _extract_image_vision(path: Path, db=None) -> "ExtractionResult | None":
 
         import base64
         import io
+
         from PIL import Image as _PIL
 
         from orivellum.capabilities.llm import llm_call
@@ -535,8 +537,8 @@ def _extract_image(path: Path, db=None) -> ExtractionResult:
 
     # --- pytesseract (fallback: requires tesseract binary) ---
     try:
-        from PIL import Image
         import pytesseract
+        from PIL import Image
         _probe_tesseract()
         img = Image.open(path)
         # Pre-process: convert to RGB so tesseract handles all modes
@@ -833,7 +835,7 @@ def _resolve_asr_local_model(db=None, cfg_default: str = "large-v3-turbo") -> st
     return cfg_default or "large-v3-turbo"
 
 
-def _fw_effective_size(model_size: str) -> "tuple[str, str | None]":
+def _fw_effective_size(model_size: str) -> tuple[str, str | None]:
     """Apply the low-memory guard; returns (size_to_load, fallback_reason)."""
     if model_size not in _FW_HEAVY_SIZES:
         return model_size, None
@@ -852,7 +854,7 @@ def _fw_effective_size(model_size: str) -> "tuple[str, str | None]":
     return model_size, None
 
 
-def _fw_snapshot_for(model_size: str) -> "tuple[object, str, str | None] | None":
+def _fw_snapshot_for(model_size: str) -> tuple[object, str, str | None] | None:
     """Return (model, loaded_size, fallback_reason) when the current singleton
     state satisfies *model_size*, or None when a (re)load is needed.
 
@@ -875,7 +877,7 @@ def _fw_snapshot_for(model_size: str) -> "tuple[object, str, str | None] | None"
     return None
 
 
-def _get_faster_whisper_snapshot(model_size: str = "large-v3-turbo") -> "tuple[object | None, str, str | None]":
+def _get_faster_whisper_snapshot(model_size: str = "large-v3-turbo") -> tuple[object | None, str, str | None]:
     """Return (model | None, loaded_size, fallback_reason) atomically.
 
     The singleton reloads when a DIFFERENT size is requested (settings change),
@@ -968,7 +970,7 @@ _FW_MAX_SEGMENTS_META = 2000
 _FW_MAX_WORDS_META = 6000
 
 
-def _transcribe_faster_whisper(path: Path, model_size: str = "large-v3-turbo") -> "ExtractionResult | None":
+def _transcribe_faster_whisper(path: Path, model_size: str = "large-v3-turbo") -> ExtractionResult | None:
     """Transcribe *path* locally using faster-whisper.
 
     Captures per-segment AND per-word timestamps into the result meta
@@ -1051,9 +1053,9 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
 
     ``db`` (optional) is threaded from the public extract() entry point.
     """
-    import urllib.request as _urlr
     import json as _json
     import mimetypes as _mt
+    import urllib.request as _urlr
 
     base_url: str = ""
     asr_model: str = "whisper-1"
@@ -1095,7 +1097,8 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
     # Pre-process the audio before Whisper to remove background noise, room
     # reverb, and non-stationary interference.  Best-effort — any failure
     # silently falls back to the original file so transcription always runs.
-    import tempfile as _tf_enh, shutil as _sh_enh  # noqa: E401
+    import shutil as _sh_enh
+    import tempfile as _tf_enh  # noqa: E401
     _enh_tmp: str | None = None
     transcribe_path = path
     try:
@@ -1103,6 +1106,8 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                 db.get_setting("audio_enhance_enabled", "false").lower() == "true":
             from orivellum.capabilities.enhancement import (  # noqa: PLC0415
                 enhance_audio as _enhance_audio,
+            )
+            from orivellum.capabilities.enhancement import (
                 is_available as _dfn_available,
             )
             if _dfn_available():
@@ -1137,13 +1142,13 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                     f"--{boundary}\r\n"
                     f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
                     f"Content-Type: {mime_type}\r\n\r\n"
-                    .encode("utf-8") + file_bytes + b"\r\n"
+                    .encode() + file_bytes + b"\r\n"
                 )
                 body_parts.append(
                     f"--{boundary}\r\n"
                     'Content-Disposition: form-data; name="model"\r\n\r\n'
                     f"{asr_model}\r\n"
-                    .encode("utf-8")
+                    .encode()
                 )
                 file_and_model = b"".join(body_parts)
 
@@ -1163,9 +1168,9 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
                             f"--{boundary}\r\n"
                             'Content-Disposition: form-data; name="timestamp_granularities[]"\r\n\r\n'
                             "word\r\n"
-                            .encode("utf-8")
+                            .encode()
                         )
-                    body = file_and_model + extra + f"--{boundary}--\r\n".encode("utf-8")
+                    body = file_and_model + extra + f"--{boundary}--\r\n".encode()
                     req = _urlr.Request(
                         f"{base_url}/audio/transcriptions",
                         data=body,
@@ -1255,7 +1260,7 @@ def _extract_audio(path: Path, db=None) -> ExtractionResult:
             _sh_enh.rmtree(_enh_tmp, ignore_errors=True)
 
 
-def _extract_email(path: Path) -> "ExtractionResult":
+def _extract_email(path: Path) -> ExtractionResult:
     """Extract text from an .eml (RFC 2822) or Outlook .msg email file.
 
     For .eml files, Python's stdlib ``email`` module parses headers and body

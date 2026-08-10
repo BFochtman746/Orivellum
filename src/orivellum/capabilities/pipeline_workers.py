@@ -19,8 +19,8 @@ import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.pipeline_workers")
 
@@ -60,7 +60,7 @@ def _parse_json(text: str | None, fallback: Any = None) -> Any:
 
 # ── Context compiler ──────────────────────────────────────────────────────────
 
-def compile_stage_context(pipeline_id: str, stage: str, db: "OrivellumDB") -> dict:
+def compile_stage_context(pipeline_id: str, stage: str, db: OrivellumDB) -> dict:
     """Assemble a bounded context package for a stage worker.
 
     Returns a dict with:
@@ -314,7 +314,7 @@ _PROMPT_BUILDERS = {
 
 # ── Stage workers ─────────────────────────────────────────────────────────────
 
-def _call_llm(user_prompt: str, db: "OrivellumDB", cfg: "OrivellumConfig",
+def _call_llm(user_prompt: str, db: OrivellumDB, cfg: OrivellumConfig,
               purpose: str, timeout: float = 45.0) -> dict | None:
     """Call the LLM and return parsed JSON, or None on failure."""
     from orivellum.capabilities.llm import llm_call
@@ -338,7 +338,7 @@ def _call_llm(user_prompt: str, db: "OrivellumDB", cfg: "OrivellumConfig",
     return parsed
 
 
-def _post_b4(pipeline_id: str, content: dict, db: "OrivellumDB") -> None:
+def _post_b4(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
     """Create high-severity findings for each B4 continuity issue."""
     for issue in content.get("issues", []):
         sev = issue.get("severity", "medium").lower()
@@ -356,7 +356,7 @@ def _post_b4(pipeline_id: str, content: dict, db: "OrivellumDB") -> None:
         )
 
 
-def _post_b5(pipeline_id: str, content: dict, db: "OrivellumDB") -> None:
+def _post_b5(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
     """Create findings for each B5 unverified claim."""
     for claim in content.get("unverified_claims", []):
         sev = claim.get("severity", "medium").lower()
@@ -379,8 +379,8 @@ def _post_b5(pipeline_id: str, content: dict, db: "OrivellumDB") -> None:
 def run_stage_worker(
     pipeline_id: str,
     stage: str,
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
 ) -> dict:
     """Compile context, call LLM, store artifact, return artifact dict.
 

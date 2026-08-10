@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/write")
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/write")
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 def _uuid() -> str:
     return str(uuid.uuid4())
@@ -285,8 +285,10 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
     # This endpoint forwards SSE chunks to the editor, so it keeps its own
     # streaming request loop (llm_call is non-streaming). Telemetry is recorded
     # via record_llm_call() when the stream ends, mirroring the chat stream path.
-    import httpx
     import time as _time
+
+    import httpx
+
     from orivellum.capabilities.llm import record_llm_call
 
     # Build user message content — plain text or multimodal (with image)
@@ -355,6 +357,7 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
 def export_txt(doc_id: str):
     """Export write document as plain text."""
     import re
+
     from fastapi.responses import PlainTextResponse
 
     with get_db()._lock:

@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 from orivellum.capabilities.actions import ActionBase
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.actions.report_assembler")
 
@@ -44,7 +44,7 @@ class ReportPackageAction(ActionBase):
             f"into a formatted **{fmt}** research report you can download."
         )
 
-    def _execute_impl(self, inputs: dict, db: "OrivellumDB", cfg: "OrivellumConfig") -> dict:
+    def _execute_impl(self, inputs: dict, db: OrivellumDB, cfg: OrivellumConfig) -> dict:
         work_id: str = inputs["work_id"]
         fmt: str = inputs.get("format", "docx").lower()
 

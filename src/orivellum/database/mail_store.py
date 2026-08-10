@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 import uuid
+from datetime import UTC
 from typing import Any
 
 logger = logging.getLogger("orivellum.mail.store")
@@ -30,8 +30,8 @@ class MailStore:
         return self._db._lock
 
     def _now(self) -> str:
-        from datetime import datetime, timezone
-        return datetime.now(timezone.utc).isoformat()
+        from datetime import datetime
+        return datetime.now(UTC).isoformat()
 
     # ── Delta links ────────────────────────────────────────────────────────────
 

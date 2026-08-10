@@ -22,16 +22,15 @@ Usage
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
-from orivellum.capabilities.classify import Tier, classify_object, EXCLUDED_FROM_WORKS
+from orivellum.capabilities.classify import Tier, classify_object
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.intake")
 
@@ -54,17 +53,17 @@ class IntakeProfile:
     what_it_is: str            # "PDF research paper", "Manuscript chapter", etc.
     kind: str                  # pdf, docx, image, …
     tier: str                  # canon | source | artifact | system | conversation
-    filed_to: Optional[str]    # Work title if the doc is already linked, else None
-    filed_to_id: Optional[str] # Work ID if linked
+    filed_to: str | None    # Work title if the doc is already linked, else None
+    filed_to_id: str | None # Work ID if linked
     confidence: float          # 0.0–1.0 from classifier
     summary: str               # short extractive summary (<200 words)
     word_count: int
     headings: list[str]
-    text_snippet: Optional[str] = None       # first ~500 chars of extracted text for chat grounding
+    text_snippet: str | None = None       # first ~500 chars of extracted text for chat grounding
     suggested_actions: list[SuggestedAction] = field(default_factory=list)
-    research_summary: Optional[str] = None   # filled when stage 4 ran
+    research_summary: str | None = None   # filled when stage 4 ran
     research_sources: list[dict] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # ── Stage helpers ──────────────────────────────────────────────────────────────
@@ -135,7 +134,7 @@ def _build_summary(text: str, headings: list[str], word_count: int) -> str:
 
 
 def _suggest_actions(
-    tier: str, kind: str, title: str, text: str, filed_to_id: Optional[str]
+    tier: str, kind: str, title: str, text: str, filed_to_id: str | None
 ) -> list[SuggestedAction]:
     """Return type-aware suggested actions.
 
@@ -253,10 +252,10 @@ def _suggest_actions(
 def run_intake(
     doc_id: str,
     *,
-    db: "OrivellumDB",
-    cfg: "OrivellumConfig",
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
     research: bool = False,
-    research_query: Optional[str] = None,
+    research_query: str | None = None,
 ) -> IntakeProfile:
     """Run the 5-stage intake pipeline for an already-stored document.
 
@@ -441,7 +440,7 @@ def run_intake(
         logger.debug("Intake embed failed for %s (non-fatal): %s", doc_id, exc)
 
     # ── Stage 4: Research (on-demand, user-confirmed) ─────────────────────────
-    research_summary: Optional[str] = None
+    research_summary: str | None = None
     research_sources: list[dict] = []
 
     if research:
@@ -543,7 +542,7 @@ def run_intake(
     # ── Stage 5: Profile + Actions ───────────────────────────────────────────
     # Resolve work title
     work_id = doc.get("work_id")
-    filed_to: Optional[str] = None
+    filed_to: str | None = None
     if work_id:
         try:
             work = db.get_work(work_id)
@@ -556,7 +555,7 @@ def run_intake(
     actions = _suggest_actions(tier, kind, title, full_text, work_id)
 
     # Build a short text snippet for chat grounding when the doc is not linked to a Work
-    text_snippet: Optional[str] = None
+    text_snippet: str | None = None
     if full_text.strip():
         text_snippet = full_text.strip()[:500]
 

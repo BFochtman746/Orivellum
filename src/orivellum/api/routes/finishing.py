@@ -6,7 +6,6 @@ Both subsystems use their own SQLite stores in config.data_dir.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel

@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger("orivellum.learning")
@@ -56,7 +56,7 @@ _DEEP_REVIEW_THRESHOLD = 2
 # ─── Internal helpers ──────────────────────────────────────────────────────────
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _uuid() -> str:
@@ -520,7 +520,7 @@ def select_interleaved_concept(db: Any, work_id: str) -> str | None:
     if len(pool) < _INTERLEAVED_MIN_CONCEPTS:
         return None
 
-    now_dt = datetime.now(timezone.utc)
+    now_dt = datetime.now(UTC)
     weights: list[float] = []
     for c in pool:
         mastery_fraction = min(1.0, c["consecutive_passes"] / max(1, _PASSES_TO_GRAD))
@@ -866,7 +866,7 @@ def get_learning_analytics(db: Any, work_id: str) -> dict:
     """
     from datetime import timedelta
 
-    now_dt = datetime.now(timezone.utc)
+    now_dt = datetime.now(UTC)
     now_str = now_dt.isoformat()
     seven_days_ago     = (now_dt - timedelta(days=7)).isoformat()
     twentyeight_days_ago = (now_dt - timedelta(days=28)).isoformat()
@@ -1082,7 +1082,7 @@ def get_learn_health(db: Any) -> dict:
     """
     from datetime import timedelta
 
-    now_dt  = datetime.now(timezone.utc)
+    now_dt  = datetime.now(UTC)
     now_str = now_dt.isoformat()
     seven_days_ago = (now_dt - timedelta(days=7)).isoformat()
 

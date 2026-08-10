@@ -2,7 +2,8 @@
 GENESIS seal + ledger verification.
 """
 from __future__ import annotations
-from .gates import STAGE_CODES, sha256_text, canonical, now_iso, GENESIS_HASH
+
+from .gates import GENESIS_HASH, STAGE_CODES, canonical, now_iso, sha256_text
 
 
 def compute_seal(conn, book_id: str, title: str, length: int, acts: int,

@@ -12,13 +12,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 
 logger = logging.getLogger("orivellum.api.generate")
 
@@ -39,22 +38,22 @@ class GenerateReportRequest(BaseModel):
 class BundleRequest(BaseModel):
     work_id: str
     paths: list[str]
-    name: Optional[str] = None
+    name: str | None = None
 
 
 # ── Workshop request models ────────────────────────────────────────────────────
 
 class WorkshopPlanRequest(BaseModel):
     request: str
-    format: Optional[str] = None   # xlsx | docx | pdf | pptx
-    work_id: Optional[str] = None
+    format: str | None = None   # xlsx | docx | pdf | pptx
+    work_id: str | None = None
 
 
 class WorkshopExecuteRequest(BaseModel):
-    session_id: Optional[str] = None
+    session_id: str | None = None
     request: str
     format: str = "docx"
-    work_id: Optional[str] = None
+    work_id: str | None = None
     answers: dict[str, str] = {}
 
 
@@ -214,9 +213,9 @@ def download_generated_file(path: str):
 class GenerateFromPromptRequest(BaseModel):
     prompt: str
     format: str = "docx"          # docx | pdf | pptx | xlsx
-    filename: Optional[str] = None
-    work_id: Optional[str] = None
-    conversation_id: Optional[str] = None   # informational only (not used server-side)
+    filename: str | None = None
+    work_id: str | None = None
+    conversation_id: str | None = None   # informational only (not used server-side)
 
 
 @router.post("/generate/from-prompt")

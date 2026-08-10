@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel
 
-from orivellum.api._deps import get_db, get_config
+from orivellum.api._deps import get_config, get_db
 from orivellum.capabilities.mail.models import MailStewardError
 
 logger = logging.getLogger(__name__)
@@ -80,8 +80,8 @@ def mail_summary():
     """Counts, connection state, and feed freshness."""
     db = get_db()
     connected = db.get_setting("mail_steward.connected", "false") == "true"
-    from orivellum.database.mail_store import MailStore
     from orivellum.capabilities.mail.threat_intel import feed_status
+    from orivellum.database.mail_store import MailStore
     store = MailStore(db)
     counts = store.summary() if connected else {}
     return {
@@ -131,10 +131,11 @@ def connect_poll(body: ConnectPollBody):
     if not device_code:
         raise HTTPException(404, "Handle not found or already used")
 
-    from orivellum.capabilities.mail import oauth
-    from orivellum.capabilities.mail.token_vault import store_token
-    from orivellum.capabilities.mail.graph_client import GraphClient
     import time
+
+    from orivellum.capabilities.mail import oauth
+    from orivellum.capabilities.mail.graph_client import GraphClient
+    from orivellum.capabilities.mail.token_vault import store_token
 
     try:
         token_data = oauth.poll_for_token(device_code, interval=0, max_wait=2)
@@ -286,9 +287,9 @@ def create_draft(record_id: str, body: DraftBody):
 def update_draft(action_request_id: str, body: DraftUpdateBody):
     """Update the draft body/recipients before sending."""
     db = get_db()
-    from orivellum.database.mail_store import MailStore
     from orivellum.capabilities.mail.steward import _get_fresh_client
     from orivellum.capabilities.mail.token_vault import decrypt_str
+    from orivellum.database.mail_store import MailStore
 
     store  = MailStore(db)
     action = store.get_action_request(action_request_id)
@@ -344,8 +345,8 @@ def send_mail(record_id: str, body: SendBody):
 def move_message(record_id: str, body: MoveBody):
     """Move a message to a folder (reversible)."""
     db = get_db()
-    from orivellum.capabilities.mail.steward import _get_fresh_client, _ensure_review_folder
-    from orivellum.capabilities.mail.token_vault import encrypt_str, decrypt_str
+    from orivellum.capabilities.mail.steward import _ensure_review_folder, _get_fresh_client
+    from orivellum.capabilities.mail.token_vault import encrypt_str
     from orivellum.database.mail_store import MailStore
 
     client = _get_fresh_client(db)

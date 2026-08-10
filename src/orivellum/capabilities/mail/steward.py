@@ -18,7 +18,11 @@ import uuid
 from typing import Any
 
 from orivellum.capabilities.mail.models import (
-    MailStewardError, ACTION_CREATE_DRAFT, ACTION_MOVE, ACTION_UNDO_MOVE, ACTION_SEND,
+    ACTION_CREATE_DRAFT,
+    ACTION_MOVE,
+    ACTION_SEND,
+    ACTION_UNDO_MOVE,
+    MailStewardError,
 )
 
 logger = logging.getLogger("orivellum.mail.steward")
@@ -30,9 +34,9 @@ _DEFAULT_REVIEW_FOLDER = "A-01 Review"
 
 def _get_fresh_client(db: Any):
     """Return a GraphClient with a live access token, or None if not connected."""
-    from orivellum.capabilities.mail.token_vault import load_token, store_token
-    from orivellum.capabilities.mail.oauth import refresh_access_token
     from orivellum.capabilities.mail.graph_client import GraphClient
+    from orivellum.capabilities.mail.oauth import refresh_access_token
+    from orivellum.capabilities.mail.token_vault import load_token, store_token
 
     token_data = load_token(db)
     if not token_data:
@@ -167,9 +171,9 @@ def _sync_folder(client: Any, store: Any, folder_id: str, delta_link: str | None
 
 def assess_message(db: Any, cfg: Any, mail_record_id: str) -> dict[str, Any]:
     """Full pipeline: fetch from Graph → threat intel → Lemonade → persist."""
-    from orivellum.database.mail_store import MailStore
-    from orivellum.capabilities.mail import threat_intel
     from orivellum.capabilities.mail import lemonade_analyzer as lemonade
+    from orivellum.capabilities.mail import threat_intel
+    from orivellum.database.mail_store import MailStore
 
     store  = MailStore(db)
     record = store.get_mail_record(mail_record_id)
@@ -221,9 +225,9 @@ def create_draft(db: Any, mail_record_id: str, nonce: str) -> dict[str, Any]:
     The user reviews and edits it in the compose view before sending.
     Nothing is sent automatically.
     """
-    from orivellum.database.mail_store import MailStore
-    from orivellum.capabilities.mail.token_vault import decrypt_str, encrypt_str
     from orivellum.capabilities.mail import action_policy as policy
+    from orivellum.capabilities.mail.token_vault import decrypt_str, encrypt_str
+    from orivellum.database.mail_store import MailStore
 
     store  = MailStore(db)
     record = store.get_mail_record(mail_record_id)
@@ -294,9 +298,9 @@ def send_draft(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
 
     Requires mail_steward.send_enabled = true and a valid single-use nonce.
     """
-    from orivellum.database.mail_store import MailStore
-    from orivellum.capabilities.mail.token_vault import decrypt_str
     from orivellum.capabilities.mail import action_policy as policy
+    from orivellum.capabilities.mail.token_vault import decrypt_str
+    from orivellum.database.mail_store import MailStore
 
     send_enabled = db.get_setting("mail_steward.send_enabled", "false") == "true"
     decision = policy.evaluate(
@@ -359,8 +363,8 @@ def send_draft(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
 
 def move_message(db: Any, mail_record_id: str, destination_folder_id_enc: str, nonce: str) -> dict[str, Any]:
     """Reversible move to a folder."""
-    from orivellum.database.mail_store import MailStore
     from orivellum.capabilities.mail.token_vault import decrypt_str, encrypt_str
+    from orivellum.database.mail_store import MailStore
 
     store  = MailStore(db)
     if not store.consume_nonce(nonce, mail_record_id, ACTION_MOVE):
@@ -409,8 +413,8 @@ def move_message(db: Any, mail_record_id: str, destination_folder_id_enc: str, n
 
 def undo_move(db: Any, action_request_id: str, nonce: str) -> dict[str, Any]:
     """Reverse a previous move operation."""
-    from orivellum.database.mail_store import MailStore
     from orivellum.capabilities.mail.token_vault import decrypt_str, encrypt_str
+    from orivellum.database.mail_store import MailStore
 
     store  = MailStore(db)
     action = store.get_action_request(action_request_id)

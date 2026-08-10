@@ -22,7 +22,7 @@ import re
 import struct
 import uuid
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -44,7 +44,7 @@ _LABEL_TERMS = 4         # top TF-IDF terms to use in topic label
 # --------------------------------------------------------------------------- #
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _uid() -> str:
@@ -65,7 +65,7 @@ def _norm(v: np.ndarray) -> np.ndarray:
 # Load vectors                                                                 #
 # --------------------------------------------------------------------------- #
 
-def _load_doc_vectors(db: "OrivellumDB") -> dict[str, np.ndarray]:
+def _load_doc_vectors(db: OrivellumDB) -> dict[str, np.ndarray]:
     """Return {doc_id: normalised document embedding} by averaging chunk vecs.
 
     Documents without any chunk vectors are excluded.
@@ -216,7 +216,7 @@ def _tfidf_labels(cluster_texts: dict[int, list[str]], n_terms: int = _LABEL_TER
 # DB helpers (topics / topic_members / doc_links)                              #
 # --------------------------------------------------------------------------- #
 
-def _clear_topics(db: "OrivellumDB") -> None:
+def _clear_topics(db: OrivellumDB) -> None:
     """Remove all clustering output rows (idempotent rebuild)."""
     with db._lock:
         db._conn.execute("DELETE FROM topic_members")
@@ -226,7 +226,7 @@ def _clear_topics(db: "OrivellumDB") -> None:
 
 
 def _write_topics(
-    db: "OrivellumDB",
+    db: OrivellumDB,
     clusters: dict[int, list[str]],      # cluster_id → [doc_id, …]
     labels: dict[int, str],              # cluster_id → label
 ) -> dict[int, str]:
@@ -268,7 +268,7 @@ def _write_topics(
     return cluster_to_topic
 
 
-def _write_doc_links(db: "OrivellumDB", doc_ids: list[str], X: np.ndarray) -> int:
+def _write_doc_links(db: OrivellumDB, doc_ids: list[str], X: np.ndarray) -> int:
     """Compute pairwise cosine similarity and store top-K links per doc."""
     n = len(doc_ids)
     if n < 2:
@@ -310,7 +310,7 @@ def _write_doc_links(db: "OrivellumDB", doc_ids: list[str], X: np.ndarray) -> in
 # Chunk text loading                                                            #
 # --------------------------------------------------------------------------- #
 
-def _load_chunk_texts(db: "OrivellumDB", doc_ids: list[str]) -> dict[str, list[str]]:
+def _load_chunk_texts(db: OrivellumDB, doc_ids: list[str]) -> dict[str, list[str]]:
     """Return {doc_id: [chunk_text, …]} for the given documents."""
     if not doc_ids:
         return {}
@@ -330,7 +330,7 @@ def _load_chunk_texts(db: "OrivellumDB", doc_ids: list[str]) -> dict[str, list[s
 # Main entry point                                                              #
 # --------------------------------------------------------------------------- #
 
-def run_clustering(db: "OrivellumDB") -> dict:
+def run_clustering(db: OrivellumDB) -> dict:
     """Cluster all vectorised documents and rebuild topic/link tables.
 
     Returns a summary dict with clustering statistics.

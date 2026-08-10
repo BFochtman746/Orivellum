@@ -16,15 +16,14 @@ source on unified-memory architecture.  This endpoint enforces it at the boundar
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_db
 from orivellum.capabilities.pklos.adapters.windows_inventory import WindowsInventoryAdapter
-from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
 from orivellum.capabilities.pklos.authority import SUBJECT_DEVICE_A01
+from orivellum.capabilities.pklos.policy_enforcer import PolicyEnforcer
 
 router = APIRouter(prefix="/api/pklos", tags=["pklos"])
 logger = logging.getLogger("orivellum.pklos.routes")

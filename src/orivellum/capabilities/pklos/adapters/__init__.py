@@ -17,9 +17,9 @@ Available adapters:
   web           — Adapter 3: governed web / external sources (A5/A6)
   calculator    — Adapter 5: derived / computed facts (A5)
 """
-from .base import AdapterBase, Evidence, Recipe, AdapterRegistry
-from .recollection import RecollectionAdapter
+from .base import AdapterBase, AdapterRegistry, Evidence, Recipe
 from .library import LibraryAdapter
+from .recollection import RecollectionAdapter
 from .windows_inventory import WindowsInventoryAdapter
 
 __all__ = [

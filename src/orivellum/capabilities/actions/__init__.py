@@ -19,26 +19,26 @@ import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from orivellum.database.db import OrivellumDB
     from orivellum.configuration.config import OrivellumConfig
+    from orivellum.database.db import OrivellumDB
 
 logger = logging.getLogger("orivellum.actions")
 
 # ── Registry ───────────────────────────────────────────────────────────────────
 
-ACTION_REGISTRY: dict[str, "ActionBase"] = {}
+ACTION_REGISTRY: dict[str, ActionBase] = {}
 
 
 def _register_all() -> None:
     """Import and register every action implementation."""
-    from orivellum.capabilities.actions.tax_package import TaxPackageAction
-    from orivellum.capabilities.actions.report_assembler import ReportPackageAction
     from orivellum.capabilities.actions.book_export import BookExportAction
+    from orivellum.capabilities.actions.report_assembler import ReportPackageAction
     from orivellum.capabilities.actions.study_plan import StudyPlanAction
+    from orivellum.capabilities.actions.tax_package import TaxPackageAction
     from orivellum.capabilities.actions.template_fill import TemplateFillAction
 
     for cls in [
@@ -52,7 +52,7 @@ def _register_all() -> None:
         ACTION_REGISTRY[inst.name] = inst
 
 
-def get_registry() -> dict[str, "ActionBase"]:
+def get_registry() -> dict[str, ActionBase]:
     if not ACTION_REGISTRY:
         _register_all()
     return ACTION_REGISTRY
@@ -61,14 +61,14 @@ def get_registry() -> dict[str, "ActionBase"]:
 # ── DB helpers (raw SQL — avoids touching db.py) ───────────────────────────────
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _uid() -> str:
     return str(uuid.uuid4())
 
 
-def create_run(db: "OrivellumDB", action_name: str, inputs: dict, work_id: str | None = None) -> str:
+def create_run(db: OrivellumDB, action_name: str, inputs: dict, work_id: str | None = None) -> str:
     """Insert a new action_runs row; return run_id."""
     run_id = _uid()
     with db._lock:
@@ -83,7 +83,7 @@ def create_run(db: "OrivellumDB", action_name: str, inputs: dict, work_id: str |
 
 
 def complete_run(
-    db: "OrivellumDB",
+    db: OrivellumDB,
     run_id: str,
     output_path: str | None = None,
     output_label: str | None = None,
@@ -98,7 +98,7 @@ def complete_run(
         db._conn.commit()
 
 
-def fail_run(db: "OrivellumDB", run_id: str, error: str) -> None:
+def fail_run(db: OrivellumDB, run_id: str, error: str) -> None:
     with db._lock:
         db._conn.execute(
             "UPDATE action_runs SET status='error', error=?, completed_at=? WHERE id=?",
@@ -107,7 +107,7 @@ def fail_run(db: "OrivellumDB", run_id: str, error: str) -> None:
         db._conn.commit()
 
 
-def list_runs(db: "OrivellumDB", limit: int = 30, work_id: str | None = None) -> list[dict]:
+def list_runs(db: OrivellumDB, limit: int = 30, work_id: str | None = None) -> list[dict]:
     with db._lock:
         if work_id:
             rows = db._conn.execute(
@@ -122,7 +122,7 @@ def list_runs(db: "OrivellumDB", limit: int = 30, work_id: str | None = None) ->
     return [dict(r) for r in rows]
 
 
-def get_run(db: "OrivellumDB", run_id: str) -> dict | None:
+def get_run(db: OrivellumDB, run_id: str) -> dict | None:
     with db._lock:
         row = db._conn.execute(
             "SELECT * FROM action_runs WHERE id=?", (run_id,)
@@ -153,8 +153,8 @@ class ActionBase(ABC):
     def _execute_impl(
         self,
         inputs: dict,
-        db: "OrivellumDB",
-        cfg: "OrivellumConfig",
+        db: OrivellumDB,
+        cfg: OrivellumConfig,
     ) -> dict:
         """Carry out the action.
 
@@ -168,8 +168,8 @@ class ActionBase(ABC):
     def execute(
         self,
         inputs: dict,
-        db: "OrivellumDB",
-        cfg: "OrivellumConfig",
+        db: OrivellumDB,
+        cfg: OrivellumConfig,
     ) -> dict:
         """Public entry point.  Wraps impl with run tracking and audit logging."""
         run_id = create_run(db, self.name, inputs, work_id=inputs.get("work_id"))

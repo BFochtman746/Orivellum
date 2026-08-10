@@ -45,7 +45,7 @@ _OVERLAP_WORDS = 50
 _TARGET_MIN, _TARGET_MAX = 100, 2000
 
 
-def _resolve_chunk_params(db: "OrivellumDB") -> tuple[int, int]:
+def _resolve_chunk_params(db: OrivellumDB) -> tuple[int, int]:
     """Read chunk_target_words / chunk_overlap_words settings with safe int
     parsing + bounds clamping.
 
@@ -135,7 +135,7 @@ def _sliding_chunks_with_spans(
 
 def generate_context_prefixes_for_doc(
     doc_id: str,
-    db: "OrivellumDB",
+    db: OrivellumDB,
     *,
     doc_title: str = "",
     doc_text_excerpt: str = "",
@@ -253,7 +253,7 @@ def _find_page_for_offset(
     return page_boundaries[-1][0] if page_boundaries else 0
 
 
-def chunk_and_store(result: "ExtractionResult", doc_id: str, db: "OrivellumDB") -> int:
+def chunk_and_store(result: ExtractionResult, doc_id: str, db: OrivellumDB) -> int:
     """Chunk *result* and write all chunks to the DB. Returns chunk count.
 
     **Offset invariant**: ``char_start`` / ``char_end`` are Unicode code-point

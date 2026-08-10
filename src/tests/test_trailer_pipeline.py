@@ -15,10 +15,7 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-import pytest
-
 from orivellum.database.db import OrivellumDB
-
 
 # ---------------------------------------------------------------------------
 # The 9 expected keys in package['docs'] for a 'full' format package
@@ -152,6 +149,7 @@ def test_post_trailer_returns_422_when_work_has_no_eligible_documents():
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from orivellum.api.routes.works import router
 
     db = _make_db()
@@ -183,6 +181,7 @@ def test_post_trailer_returns_422_when_document_has_no_extracted_text():
     the guard checks both readiness AND text presence."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from orivellum.api.routes.works import router
 
     db = _make_db()

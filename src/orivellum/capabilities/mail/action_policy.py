@@ -10,12 +10,15 @@ reconstruct which rules were active when an action was applied.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
 
 from orivellum.capabilities.mail.models import (
-    ACTION_CREATE_DRAFT, ACTION_MOVE, ACTION_UNDO_MOVE, ACTION_SEND, ACTION_DELETE,
+    ACTION_CREATE_DRAFT,
+    ACTION_DELETE,
+    ACTION_MOVE,
+    ACTION_SEND,
+    ACTION_UNDO_MOVE,
 )
 
 POLICY_VERSION = "1.0.0"

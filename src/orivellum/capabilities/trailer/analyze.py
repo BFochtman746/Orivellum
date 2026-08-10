@@ -4,6 +4,7 @@ Read representative passages and produce a grounded Book Brief.
 (Ported from media_studio; uses OrivellumLLM instead of urllib LLM.)
 """
 from __future__ import annotations
+
 from .io_orivellum import sample_passages
 
 SYSTEM = (

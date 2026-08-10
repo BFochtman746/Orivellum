@@ -225,7 +225,7 @@ _SHORT_FACTUAL_THRESHOLD = 8
 
 def classify_query(
     text: str,
-    db: "OrivellumDB | None" = None,
+    db: OrivellumDB | None = None,
 ) -> QueryType:
     """Classify *text* into a :class:`QueryType` using rule-based heuristics.
 
