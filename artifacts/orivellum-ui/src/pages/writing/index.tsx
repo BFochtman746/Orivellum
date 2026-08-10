@@ -34,6 +34,23 @@ interface BookEntry {
   stage_label: string;
   word_count: number;
   chapter_count: number;
+  chapters_extracted: number;
+  chapters_drafted: number;
+  chapters_approved: number;
+}
+
+/** Compact "how far along" label: approved chapters have necessarily been
+ *  drafted, so the drafted figure counts both. Null when there are no
+ *  chapters or nothing beyond extraction has happened yet. */
+function chapterProgressLabel(b: BookEntry): string | null {
+  const total = b.chapter_count ?? 0;
+  if (!total) return null;
+  const approved = b.chapters_approved ?? 0;
+  const drafted = (b.chapters_drafted ?? 0) + approved;
+  if (approved >= total) return `All ${total} chapters approved`;
+  if (drafted === 0) return null;
+  const base = `${drafted} of ${total} drafted`;
+  return approved > 0 ? `${base} · ${approved} approved` : base;
 }
 
 function stagePct(status: string): number {
@@ -286,6 +303,15 @@ export default function WritingHub() {
                       style={{ width: `${stagePct(book.pipeline_status)}%`, background: "var(--gd-bronze)" }}
                     />
                   </div>
+                  {chapterProgressLabel(book) && (
+                    <div
+                      className="text-[11px] mt-1"
+                      style={{ color: "var(--gd-muted)" }}
+                      data-testid={`chapter-progress-${w.id}`}
+                    >
+                      {chapterProgressLabel(book)}
+                    </div>
+                  )}
                 </div>
               )}
               {!book && (w.doc_count ?? 0) > 0 && w.id && (

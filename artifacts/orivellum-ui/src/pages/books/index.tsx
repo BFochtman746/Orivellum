@@ -24,8 +24,29 @@ interface BookEntry {
   stage_label: string;
   word_count: number;
   chapter_count: number;
+  chapters_extracted: number;
+  chapters_drafted: number;
+  chapters_approved: number;
   doc_count: number;
   updated_at?: string;
+}
+
+/** Compact "how far along" label: approved chapters have necessarily been
+ *  drafted, so the drafted figure counts both. Returns null when there are
+ *  no chapters or nothing beyond extraction has happened yet. */
+export function chapterProgressLabel(b: {
+  chapter_count: number;
+  chapters_drafted?: number;
+  chapters_approved?: number;
+}): string | null {
+  const total = b.chapter_count ?? 0;
+  if (!total) return null;
+  const approved = b.chapters_approved ?? 0;
+  const drafted = (b.chapters_drafted ?? 0) + approved;
+  if (approved >= total) return `All ${total} chapters approved`;
+  if (drafted === 0) return null;
+  const base = `${drafted} of ${total} drafted`;
+  return approved > 0 ? `${base} · ${approved} approved` : base;
 }
 
 const STAGE_COLOR: Record<string, string> = {
@@ -151,7 +172,9 @@ function BookCard({ book }: { book: BookEntry }) {
                 </span>
               )}
               {book.chapter_count > 0 && (
-                <span>{book.chapter_count} ch</span>
+                <span data-testid={`chapter-progress-${book.id}`}>
+                  {chapterProgressLabel(book) ?? `${book.chapter_count} ch`}
+                </span>
               )}
               {book.doc_count > 0 && (
                 <span>{book.doc_count} doc{book.doc_count !== 1 ? "s" : ""}</span>

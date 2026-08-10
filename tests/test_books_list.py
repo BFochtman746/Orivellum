@@ -123,6 +123,50 @@ class TestBooksList(unittest.TestCase):
         self.assertEqual(book["pipeline_status"], "B5")
         self.assertEqual(book["stage_label"], "Chapter Drafting")
 
+    def test_per_status_chapter_counts_are_exposed_and_match_canonical(self):
+        """The Books page shows "4 of 12 drafted · 2 approved" — the list
+        endpoint must expose the same per-status breakdown the canonical
+        aggregation (get_book_pipeline_for_work) computes."""
+        work = self.db.create_work(title="Progress Book", work_type="writing")
+        _make_chapters(self.db, work["id"], 6)
+        pipeline = self.db.create_book_pipeline(work["id"], "Progress Book")
+
+        # Move some chapters along: 3 drafted, 2 approved, 1 still extracted
+        with self.db._lock:
+            rows = self.db._conn.execute(
+                "SELECT id FROM book_chapters WHERE pipeline_id=? ORDER BY seq",
+                (pipeline["id"],),
+            ).fetchall()
+            ids = [r["id"] for r in rows]
+            for cid in ids[0:3]:
+                self.db._conn.execute(
+                    "UPDATE book_chapters SET status='drafted' WHERE id=?", (cid,))
+            for cid in ids[3:5]:
+                self.db._conn.execute(
+                    "UPDATE book_chapters SET status='approved' WHERE id=?", (cid,))
+            self.db._conn.commit()
+
+        book = self.client.get("/api/books").json()["books"][0]
+        self.assertEqual(book["chapters_extracted"], 1)
+        self.assertEqual(book["chapters_drafted"], 3)
+        self.assertEqual(book["chapters_approved"], 2)
+        self.assertEqual(book["chapter_count"], 6)
+
+        canonical = self.db.get_book_pipeline_for_work(work["id"])
+        for key in ("chapter_count", "chapters_extracted",
+                    "chapters_drafted", "chapters_approved"):
+            self.assertEqual(book[key], canonical[key], key)
+
+    def test_book_without_progress_reports_zero_drafted_and_approved(self):
+        work = self.db.create_work(title="Fresh Book", work_type="writing")
+        _make_chapters(self.db, work["id"], 2)
+        self.db.create_book_pipeline(work["id"], "Fresh Book")
+
+        book = self.client.get("/api/books").json()["books"][0]
+        self.assertEqual(book["chapters_drafted"], 0)
+        self.assertEqual(book["chapters_approved"], 0)
+        self.assertEqual(book["chapters_extracted"], 2)
+
     def test_reprocessing_a_document_does_not_double_count(self):
         """upsert_book_chapters replaces rows idempotently — a reprocess must
         not inflate the count on the Books page."""

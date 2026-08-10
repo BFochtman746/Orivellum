@@ -67,6 +67,12 @@ def books_list():
                       bp.status    AS pipeline_status,
                       (SELECT COUNT(*) FROM book_chapters bc
                        WHERE bc.pipeline_id=bp.id)                             AS chapter_count,
+                      (SELECT COUNT(*) FROM book_chapters bc
+                       WHERE bc.pipeline_id=bp.id AND bc.status='extracted')   AS chapters_extracted,
+                      (SELECT COUNT(*) FROM book_chapters bc
+                       WHERE bc.pipeline_id=bp.id AND bc.status='drafted')     AS chapters_drafted,
+                      (SELECT COUNT(*) FROM book_chapters bc
+                       WHERE bc.pipeline_id=bp.id AND bc.status='approved')    AS chapters_approved,
                       (SELECT COUNT(*) FROM documents d WHERE d.work_id=w.id) AS doc_count,
                       (SELECT COALESCE(SUM(d.word_count),0) FROM documents d
                        WHERE d.work_id=w.id AND d.readiness='ready')          AS word_count
