@@ -1834,6 +1834,15 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
 
         return FileResponse(str(mp3_path), media_type="audio/mpeg", filename=mp3_path.name)
 
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        # Deliberate no-robot-voice failures (premium engine died with no
+        # local fallback, no neural engine available, …) carry our OWN
+        # controlled, user-actionable message — surface it verbatim so the
+        # client knows what to fix, unlike raw library exceptions below.
+        logger.exception("work audiobook generation failed")
+        raise HTTPException(500, str(exc)) from exc
     except Exception as exc:
         raise internal_error(logger, exc, "work audiobook generation") from exc
     finally:
