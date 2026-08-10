@@ -83,6 +83,13 @@ def try_start() -> bool:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_docs_needing_work(db: OrivellumDB) -> list[dict]:
+    """Return up to ``_MAX_DOCS_PER_RUN`` ready documents with too few knowledge items.
+
+    Read-only query: selects 'ready' documents whose harvested knowledge count
+    is below ``_MIN_KNOWLEDGE_ITEMS``, newest first. Used to size the sparse
+    harvest and to record how much work remained. Returns a list of dicts (may
+    be empty); does not mutate anything.
+    """
     with db._lock:
         rows = db._conn.execute(
             """SELECT d.id, d.work_id, d.title, d.source,
@@ -100,6 +107,13 @@ def _get_docs_needing_work(db: OrivellumDB) -> list[dict]:
 
 
 def _get_stuck_docs(db: OrivellumDB, max_docs: int = 20) -> list[dict]:
+    """Return up to ``max_docs`` documents stuck in a non-terminal state.
+
+    Read-only query: selects non-zip documents whose readiness is
+    imported/error/no_text/reprocessing and that are older than 10 minutes
+    (so in-flight imports aren't disturbed), oldest first. Returns a list of
+    dicts; does not mutate anything.
+    """
     with db._lock:
         rows = db._conn.execute(
             """SELECT d.id, d.work_id, d.title, d.source, d.content_path,
@@ -117,6 +131,15 @@ def _get_stuck_docs(db: OrivellumDB, max_docs: int = 20) -> list[dict]:
 
 def _record_run(db: OrivellumDB, docs_processed: int, items_added: int,
                 report_path: str | None) -> None:
+    """Persist a summary row for the completed run and emit an audit entry.
+
+    Side effects: inserts/replaces a ``nightshift_runs`` row (run id, timestamp,
+    counts, report path) and writes a ``system.nightshift_run`` audit entry.
+
+    Failure behaviour: logs-and-continues — a DB error while recording the run
+    is logged at WARNING and the audit write is best-effort (swallowed on
+    error). Never raises; a bookkeeping failure must not abort the run.
+    """
     run_id = str(uuid.uuid4())
     now    = datetime.now(UTC).isoformat()
     with db._lock:
@@ -138,6 +161,15 @@ def _record_run(db: OrivellumDB, docs_processed: int, items_added: int,
 
 
 def _write_report(data_dir: Path, date_str: str, items: list[str]) -> str:
+    """Write the markdown Night Report for ``date_str`` and return its path.
+
+    Side effects: creates ``<data_dir>/nightshift/`` if needed and writes
+    ``<date_str>.md`` (overwriting any existing file for that date). An empty
+    ``items`` list produces a "Nothing to report" body.
+
+    Failure behaviour: raises on filesystem errors (mkdir / write) — the caller
+    runs this at the end of the run, outside per-pass try/except.
+    """
     report_dir = data_dir / "nightshift"
     report_dir.mkdir(parents=True, exist_ok=True)
     path = report_dir / f"{date_str}.md"
@@ -1569,6 +1601,18 @@ def _pass_cold_item_detection(db: OrivellumDB, report: list[str]) -> None:
 
 
 def _run_nightshift_passes(db: OrivellumDB, cfg: OrivellumConfig) -> None:
+    """Run every maintenance pass in order and write the Night Report.
+
+    Executes the numbered passes sequentially, appending a line to ``report``
+    for each. Every pass is wrapped in its own try/except (either inside the
+    pass function or here at the call site) so one pass failing never blocks
+    the rest — failures are logged and noted in the report.
+
+    Side effects: mutates the database (each pass), spawns background workers
+    for re-extraction passes, writes the markdown report, and records the run
+    via ``_record_run``. Returns None; only an unexpected error in the trailing
+    report/record step (outside a per-pass guard) can propagate.
+    """
     date_str = datetime.now().strftime("%Y-%m-%d")
     start_ts = time.time()
     logger.info("Nightshift starting for %s", date_str)
@@ -2034,7 +2078,14 @@ def _pass_memory_promote(db: OrivellumDB, report: list[str]) -> None:
 
 def start_nightshift_daemon(db: OrivellumDB,
                             cfg: OrivellumConfig) -> threading.Thread:
-    """Start the nightshift daemon thread.  Returns the thread (daemon=True)."""
+    """Start the nightshift daemon thread.  Returns the thread (daemon=True).
+
+    Reads the configured ``nightshift_hour`` (default 3) and launches a daemon
+    thread running ``_loop``: it sleeps until the next occurrence of that hour,
+    then — if ``nightshift_enabled`` is true — invokes ``run_nightshift`` and
+    repeats forever. A crashing run is caught and logged at ERROR so the loop
+    survives and fires again the next night; the thread never blocks shutdown.
+    """
     nightshift_hour = int(db.get_setting("nightshift_hour", "3"))
 
     def _loop() -> None:

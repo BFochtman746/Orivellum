@@ -24,12 +24,13 @@ jobs:
         env:
           SESSION_SECRET: ci-test-secret-not-a-real-key
         # --cov-fail-under is a ratchet: it must never be lowered, only raised.
-        # Baseline measured 2026-08-10; see CONTRIBUTING.md.
+        # Baseline measured 2026-08-10: 55% line coverage (gate set 1pt below
+        # to absorb run-to-run variance). See CONTRIBUTING.md.
         run: >
           uv run --with pytest --with pytest-cov python -m pytest tests/ -q
           -p no:cacheprovider
           --cov=src/orivellum --cov-report=term
-          --cov-fail-under=__COVERAGE_BASELINE__
+          --cov-fail-under=54
 
   javascript:
     name: Typecheck + audit (JS/TS)

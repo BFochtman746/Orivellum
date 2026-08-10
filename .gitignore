@@ -98,3 +98,4 @@ data/library/
 # Neural TTS model assets — fetch with scripts/fetch_tts_model.sh|.ps1
 kokoro-v0_19.onnx
 voices.bin
+.coverage

@@ -52,6 +52,18 @@ def create_backup():
         db_path = Path(cfg.db_path)
         if db_path.exists():
             zf.write(db_path, "orivellum.db")
+        # Sidecar databases (Studio / Pressworks) — part of a full restore.
+        for side in ("atelier.db", "press.db"):
+            sp = data_dir / side
+            if sp.exists():
+                zf.write(sp, side)
+        # Serving configuration — restoring without it loses model endpoints.
+        # Resolve against the repo ROOT (same anchor load_config uses), never
+        # the process CWD, which differs under workflow runners.
+        from orivellum.configuration.config import ROOT as _root
+        cfg_file = _root / "config.yaml"
+        if cfg_file.exists():
+            zf.write(cfg_file, "config.yaml")
         lib_dir = data_dir / "library"
         if lib_dir.exists():
             for f in lib_dir.rglob("*"):

@@ -103,7 +103,7 @@ function ProfileCard() {
               <div className="space-y-1.5">
                 <label className="text-xs font-mono text-muted-foreground uppercase">Communication style</label>
                 <Select value={style} onValueChange={setStyle}>
-                  <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
+                  <SelectTrigger aria-label="Communication style"><SelectValue placeholder="Default" /></SelectTrigger>
                   <SelectContent>
                     {COMM_STYLES.map(s => (
                       <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
@@ -803,6 +803,7 @@ function AutoDedupCard() {
               checked={enabled ?? false}
               onCheckedChange={toggleEnabled}
               disabled={saving || enabled === null}
+              aria-label="Enable automatic deduplication"
             />
             <span className="text-sm">
               {enabled === null ? "Loading…" : enabled ? "Runs automatically at import and each night" : "Manual only — use Run now to process pending pairs"}

@@ -152,7 +152,23 @@ class OrivellumDB:
         return conn
 
     def _run_migrations(self) -> None:
-        """Apply any pending migrations in version order."""
+        """Apply any pending schema migrations in ascending version order.
+
+        Ensures the ``settings`` table exists, reads the stored
+        ``schema_version``, then applies every migration from
+        :data:`MIGRATIONS` whose version is greater than the current one.
+        Each migration's SQL is split on ``;`` and executed statement by
+        statement; the ``schema_version`` bump and the migration's statements
+        are committed together per migration.
+
+        Side effects: mutates the on-disk schema and advances the persisted
+        ``schema_version`` setting.
+
+        Failure behaviour: ``duplicate column`` OperationalErrors are swallowed
+        (ALTER TABLE is treated as idempotent). Any other error aborts the run
+        immediately — it is logged at ERROR and re-raised, leaving the schema
+        at the last successfully committed version.
+        """
         with self._lock:
             self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -1177,6 +1193,17 @@ class OrivellumDB:
         return self.get_work(work_id)
 
     def delete_work(self, work_id: str) -> bool:
+        """Soft-delete a work by flipping its object lifecycle to 'deleted'.
+
+        This is a destructive, audited write: it does not remove the row but
+        marks it 'deleted' so it disappears from all lifecycle-filtered listing
+        queries. The change plus its audit/outbox entries commit atomically via
+        ``governed_write``.
+
+        Returns True if a non-deleted work was found and marked; False if the
+        work was missing or already deleted. Raises only if the underlying
+        transaction fails (the write is then rolled back).
+        """
         now = _now()
         _deleted = False
         with self.governed_write(
@@ -2012,6 +2039,18 @@ class OrivellumDB:
         return self.get_conversation(conv_id)
 
     def delete_conversation(self, conv_id: str) -> bool:
+        """Hard-delete a conversation and cascade-remove its messages.
+
+        Destructive, audited write. The messages_fts index is purged first
+        (before the ON DELETE CASCADE removes the messages rows and their IDs
+        become unqueryable), then the conversations row is deleted, which
+        cascades to messages. The FTS purge, delete, and audit/outbox entries
+        all commit atomically via ``governed_write``.
+
+        Failure behaviour: a missing messages_fts table (pre-v72 DB) is
+        silently ignored. Returns True if the conversation existed and was
+        deleted, False otherwise.
+        """
         _deleted = False
         with self.governed_write(
             operation="conversation.deleted",
@@ -2183,6 +2222,19 @@ class OrivellumDB:
         return _updated
 
     def delete_document(self, doc_id: str) -> bool:
+        """Hard-delete a document row and mark its object 'deleted'.
+
+        Destructive, audited write. Deletes the ``documents`` row and flips the
+        matching ``objects`` lifecycle to 'deleted' atomically via
+        ``governed_write``. On success it also invalidates the chunk and
+        knowledge vector caches and evicts the document from the in-memory LSH
+        near-duplicate index.
+
+        Failure behaviour: returns False if the document does not exist. The
+        post-delete cache/LSH cleanup is best-effort — any error there is
+        swallowed so it cannot fail an otherwise-committed delete. Returns True
+        when a row was deleted.
+        """
         # Capture title before entering governed_write (read-only, outside TX)
         with self._lock:
             _row = self._conn.execute(
@@ -4764,7 +4816,16 @@ class OrivellumDB:
         word_count: int = 0, notes: str | None = None,
         is_canonical: bool = False, created_by: str = "user",
     ) -> dict:
-        """Snapshot the current state of a document as a new version row."""
+        """Snapshot the current state of a document as a new version row.
+
+        Assigns the next sequential ``version_num`` and inserts a
+        ``doc_versions`` row inside an audited ``governed_write``. When
+        ``is_canonical`` is True, all other versions of the same document are
+        first demoted (is_canonical=0) so exactly one canonical version exists.
+
+        Returns the created version as a dict. Raises only if the underlying
+        transaction fails (the insert and demotion are then rolled back).
+        """
         vid = _uuid()
         now = _now()
         # Pre-read: find next version_num (outside the write transaction)
@@ -4807,6 +4868,14 @@ class OrivellumDB:
         return [dict(r) for r in rows]
 
     def set_canonical_version(self, doc_id: str, version_id: str) -> bool:
+        """Promote one document version to canonical, demoting the rest.
+
+        Audited write: inside a single ``governed_write`` it clears
+        is_canonical on every version of the document, then sets it on the
+        target version. Returns False (no write) if the version_id does not
+        belong to the document. Returns True on success. Raises only if the
+        transaction fails (all changes then roll back).
+        """
         with self._lock:
             exists = self._conn.execute(
                 "SELECT 1 FROM doc_versions WHERE id=? AND doc_id=?", (version_id, doc_id)
@@ -5772,6 +5841,12 @@ class OrivellumDB:
             self._conn.commit()
 
     def delete_forge_project(self, project_id: str) -> None:
+        """Hard-delete a forge project row by id.
+
+        Destructive write committed directly under ``_lock`` (not audited via
+        governed_write). A non-existent id is a no-op. Returns None; raises only
+        if the DELETE/commit itself fails.
+        """
         with self._lock:
             self._conn.execute("DELETE FROM forge_projects WHERE id=?", (project_id,))
             self._conn.commit()

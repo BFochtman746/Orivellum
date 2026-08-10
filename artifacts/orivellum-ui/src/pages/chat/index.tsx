@@ -198,7 +198,7 @@ function ModelPicker({ convId, currentModel, models, defaultModel, onChanged }: 
 
   return (
     <Select value={effective} onValueChange={handleChange} disabled={updateConv.isPending}>
-      <SelectTrigger className="h-6 gap-1 border-0 bg-muted/60 hover:bg-muted text-xs font-mono px-2 focus:ring-0 w-auto min-w-[90px]">
+      <SelectTrigger aria-label="Model" className="h-6 gap-1 border-0 bg-muted/60 hover:bg-muted text-xs font-mono px-2 focus:ring-0 w-auto min-w-[90px]">
         <Cpu className="w-3 h-3 shrink-0 opacity-60" />
         <SelectValue>{modelLabel(effective, models, defaultModel)}</SelectValue>
       </SelectTrigger>
@@ -2269,7 +2269,7 @@ export default function Chat() {
               >
                 <Archive className="w-3.5 h-3.5" />
               </button>
-              <Button size="icon" variant="ghost" onClick={() => handleCreate()} disabled={createConv.isPending || showArchived}>
+              <Button size="icon" variant="ghost" aria-label="New conversation" onClick={() => handleCreate()} disabled={createConv.isPending || showArchived}>
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
@@ -3004,7 +3004,7 @@ export default function Chat() {
               <div className="mt-4 w-full max-w-sm space-y-2 text-left">
                 <label className="text-xs font-mono uppercase text-muted-foreground">Model</label>
                 <Select value={newConvModel || defaultModel} onValueChange={setNewConvModel}>
-                  <SelectTrigger className="text-sm">
+                  <SelectTrigger aria-label="Model" className="text-sm">
                     <SelectValue placeholder="Default model" />
                   </SelectTrigger>
                   <SelectContent>

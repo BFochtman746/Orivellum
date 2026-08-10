@@ -1122,6 +1122,7 @@ export default function Library() {
               onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
               className="h-9 rounded-md border border-input bg-background px-2 text-xs font-mono text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring shrink-0"
               title="Sort order"
+              aria-label="Sort order"
             >
               <option value="newest">Newest</option>
               <option value="oldest">Oldest</option>
@@ -1340,7 +1341,7 @@ export default function Library() {
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             {hasError && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
+                              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
                                 <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
                               </Button>
                             )}
@@ -1348,7 +1349,7 @@ export default function Library() {
                               onClick={(e) => { e.stopPropagation(); window.open(`${BASE}/library/${doc.id}/download`, "_blank"); }}>
                               <Download className="w-3.5 h-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
+                            <Button variant="ghost" size="icon" aria-label="Delete document" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           </div>
@@ -1475,7 +1476,7 @@ export default function Library() {
                         {hasError && (
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
+                              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
                                 <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
                               </Button>
                             </TooltipTrigger>
@@ -1484,7 +1485,7 @@ export default function Library() {
                         )}
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                            <Button variant="ghost" size="icon" aria-label="Download original file" className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
                               onClick={(e) => { e.stopPropagation(); window.open(`${BASE}/library/${doc.id}/download`, "_blank"); }}>
                               <Download className="w-3.5 h-3.5" />
                             </Button>
@@ -1493,7 +1494,7 @@ export default function Library() {
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
+                            <Button variant="ghost" size="icon" aria-label="Delete document" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           </TooltipTrigger>

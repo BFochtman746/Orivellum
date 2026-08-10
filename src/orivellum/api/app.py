@@ -93,7 +93,23 @@ class SPAStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Governed startup: config → db → migrations → deps → serve."""
+    """Governed startup/shutdown: config → db → migrations → key → deps → serve.
+
+    On startup: loads config, opens the DB (which runs pending migrations),
+    then provisions the API key. Key precedence is
+    ``SESSION_SECRET`` env var > DB-stored ``api_key`` > a newly generated
+    key. The env-var path never persists to disk; otherwise the key is stored
+    in the DB (generating one if absent) and mirrored to
+    ``<data_dir>/api_key.txt`` so the operator can find it.
+
+    Side effects: opens the SQLite connection, may write to the DB and to
+    ``api_key.txt``, and wires runtime dependencies before yielding.
+
+    Failure behaviour: config/DB/migration errors propagate and abort startup.
+    Failure to write ``api_key.txt`` is logged at WARNING and tolerated (the
+    key is still valid via the DB/env). The ``yield`` hands control to the
+    server; shutdown steps run after it.
+    """
     # Step 1-2: Config and DB path
     cfg = load_config()
     logger.info("Orivellum %s starting — data_dir=%s", __version__, cfg.data_dir)
@@ -234,6 +250,20 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
+        """Enforce authentication on ``/api/*`` requests.
+
+        Accepts a request if any of: it is a CORS ``OPTIONS`` preflight; the
+        (BASE_URL-stripped) path is in ``_AUTH_EXEMPT`` (health/version/login);
+        it is not an ``/api/*`` path (static assets); the session cookie is
+        authenticated; or a ``Bearer``/``X-Api-Key`` token matches the expected
+        key via constant-time ``key_matches``.
+
+        Side effects: none beyond logging. Does not mutate the request/session.
+
+        Failure behaviour: fails CLOSED. Returns 503 if no API key is resolvable
+        after startup (should not happen normally), and 401 when a token is
+        present but does not match. Otherwise forwards to the next handler.
+        """
         path = request.url.path
 
         # PWA API calls arrive with BASE_URL prefix (/orivellum-ui/api/…).

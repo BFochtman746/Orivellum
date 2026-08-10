@@ -97,11 +97,11 @@ export function AppFrame({ app, children }: { app: AppDef; children: React.React
       {/* Content host — mirrors the legacy AppLayout content surface exactly
           (overflow-auto + padding + max-width), so unmigrated pages keep the
           same scrolling contract they had under the old sidebar shell. */}
-      <div className="gd-content">
+      <main className="gd-content">
         <div className="flex-1 min-h-0 overflow-auto w-full max-w-[1400px] mx-auto px-4 @[560px]:px-6 @[1024px]:px-8 py-4 @[560px]:py-6 @[1024px]:py-8 flex flex-col">
           {children}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

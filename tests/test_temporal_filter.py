@@ -608,8 +608,10 @@ class TestBuildSystemPromptFiltered:
         """
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         now = _dt.now(_tz.utc)
-        # Use a timestamp a few hours ago (safely inside this week)
-        recent = (now - _td(hours=2)).isoformat()
+        # Seed at *now* — "this week" starts at Monday 00:00, so any offset into
+        # the past (even 2 hours) crosses into last week when the suite runs
+        # early on a Monday. now itself is always inside the current week.
+        recent = now.isoformat()
         db = _make_db(tmp_path)
         wid_a = "w-aaaa-0000-0000-000000000001"
         wid_b = "w-bbbb-0000-0000-000000000002"
