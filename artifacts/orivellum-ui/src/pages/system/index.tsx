@@ -3,7 +3,8 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2, Network, Server, Plug, ExternalLink, ListOrdered, Gauge } from "lucide-react";
+import { Activity, Database, Cpu, CheckCircle2, XCircle, AlertCircle, AlertTriangle, Terminal, Sparkles, Moon, Brain, Trash2, ScrollText, User, Settings, Image as ImageIcon, Eye, Loader2, FileSearch, ClipboardCopy, ChevronDown, ChevronRight, Zap, Download, RotateCcw, FolderOpen, FolderPlus, Plus, X, GitMerge, Archive, Save, Mic2, Network, Server, Plug, ExternalLink, ListOrdered, Gauge, Bell } from "lucide-react";
+import { alertsEnabled, setAlertsEnabled, requestNotificationPermission, notificationsSupported } from "@/lib/notifications";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -2822,6 +2823,9 @@ export default function System() {
       {/* Audio Enhancement (DeepFilterNet3) */}
       <AudioEnhancementCard />
 
+      {/* Browser alerts (document / audiobook ready notifications) */}
+      <BrowserAlertsCard />
+
       {/* AI Extraction Setting */}
       <Card>
         <CardContent className="p-6">
@@ -4158,5 +4162,75 @@ function AuditLogCard() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Browser Alerts card ───────────────────────────────────────────────────────
+// Opt-in browser notifications for "document ready" / "audiobook ready".
+// Per-device toggle (localStorage) because notification permission itself is
+// per-browser; enabling requests permission in the same user gesture.
+function BrowserAlertsCard() {
+  const supported = notificationsSupported();
+  const [enabled, setEnabled] = useState(alertsEnabled());
+  const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
+    supported ? Notification.permission : "unsupported",
+  );
+
+  const handleToggle = async (next: boolean) => {
+    if (!next) {
+      setAlertsEnabled(false);
+      setEnabled(false);
+      return;
+    }
+    const perm = await requestNotificationPermission();
+    setPermission(perm);
+    if (perm !== "granted") {
+      toast.error("Notifications are blocked in your browser", {
+        description: "Allow notifications for this site in your browser settings, then try again.",
+      });
+      return;
+    }
+    setAlertsEnabled(true);
+    setEnabled(true);
+    toast.success("Browser alerts on", {
+      description: "You'll be notified when documents and audiobooks finish — even if this tab is in the background.",
+    });
+  };
+
+  return (
+    <Card data-testid="browser-alerts-card">
+      <CardContent className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <Bell className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">Browser Alerts</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Get a notification when a document or audiobook finishes
+                processing, even while this tab is in the background. Applies to
+                this device only.
+              </p>
+              {!supported && (
+                <p className="text-xs text-amber-500 mt-2">
+                  This browser doesn't support notifications.
+                </p>
+              )}
+              {supported && permission === "denied" && (
+                <p className="text-xs text-amber-500 mt-2">
+                  Notifications are blocked for this site — re-enable them in
+                  your browser's site settings.
+                </p>
+              )}
+            </div>
+          </div>
+          <Switch
+            checked={enabled && permission === "granted"}
+            onCheckedChange={handleToggle}
+            disabled={!supported || permission === "denied"}
+            data-testid="switch-browser-alerts"
+          />
+        </div>
+      </CardContent>
+    </Card>
   );
 }

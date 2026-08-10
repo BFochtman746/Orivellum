@@ -17,6 +17,19 @@ from orivellum.api.errors import internal_error
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+@router.get("/system/notifications")
+def system_notifications(after: int = 0):
+    """Poll feed for browser notifications (document ready, audiobook ready).
+
+    Clients pass their last-seen event id as ``after``; ``boot_id`` changes on
+    server restart so clients can resynchronise their cursor instead of
+    replaying stale alerts.
+    """
+    from orivellum.api import notifications as notif
+    events, latest = notif.list_after(after)
+    return {"boot_id": notif.BOOT_ID, "latest_id": latest, "notifications": events}
+
+
 @router.get("/system/health")
 def system_health():
     db = get_db()

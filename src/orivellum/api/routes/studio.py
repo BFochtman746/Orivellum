@@ -2194,6 +2194,16 @@ def _run_work_tts_job(
                 },
             })
 
+        # Notify only AFTER the durable done transition — a failure between
+        # render and state update must never produce a false "ready" alert.
+        from orivellum.api import notifications as _notif_wj
+        _notif_wj.emit(
+            "audiobook_ready",
+            "Audiobook ready",
+            f"“{work_title}” finished rendering.",
+            url="/studio",
+        )
+
     except Exception as exc:
         logger.exception("Work TTS job %s failed", job_id)
         with _work_tts_jobs_lock:
@@ -3088,6 +3098,15 @@ def _run_doc_tts_job(
                 "mp3_path": rel_path,
                 "filename": mp3_name,
             })
+        # Notify only AFTER the durable done transition — a failure between
+        # render and state update must never produce a false "ready" alert.
+        from orivellum.api import notifications as _notif_dt
+        _notif_dt.emit(
+            "audiobook_ready",
+            "Audiobook ready",
+            f"“{doc_title}” finished rendering.",
+            url="/studio",
+        )
 
     except Exception as exc:
         logger.exception("Document TTS job %s failed", job_id)

@@ -6,6 +6,7 @@ import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
 import { CommandPalette } from '@/components/command-palette';
 import { ErrorBoundary, RouteErrorFallback } from '@/components/error-boundary';
 import { checkAuth, login } from '@/lib/auth';
+import { useBrowserNotifications } from '@/hooks/use-browser-notifications';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -93,6 +94,13 @@ function Shell({ children }: { children: React.ReactNode }) {
   const app = getAppForPath(path);
   if (app) return <AppFrame app={app}>{children}</AppFrame>;
   return <>{children}</>;
+}
+
+/** Mounted once (authenticated tree only): polls the server's notification
+ * feed and shows browser alerts / toasts for finished documents & audiobooks. */
+function BrowserNotificationsWatcher() {
+  useBrowserNotifications();
+  return null;
 }
 
 function Router() {
@@ -285,6 +293,7 @@ function App() {
             <ReadAloudDock />
           </ReadAloudProvider>
           <CommandPalette />
+          <BrowserNotificationsWatcher />
         </WouterRouter>
         {/* Sonner is the app's single toast system — every page's toast()
             renders through this one Toaster. Keep it mounted or all

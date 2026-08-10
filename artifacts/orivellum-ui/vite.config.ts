@@ -43,6 +43,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Deep-link handler for browser notifications (notificationclick) —
+        // lives in public/ so it ships next to the generated service worker.
+        importScripts: ['sw-notifications.js'],
         // Return index.html for any navigate request that doesn't match a file
         navigateFallback: `${basePath}index.html`,
         // Don't intercept API calls with the service worker

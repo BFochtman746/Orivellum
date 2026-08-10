@@ -513,6 +513,16 @@ def process_document(doc_id: str, file_path: str, kind: str,
         )
         logger.info("Doc %s processed — %d words, ready", doc_id, result.word_count)
 
+        # Browser notification: the PWA polls this feed and alerts the user
+        # even when the tab is backgrounded (replaces retired mobile push).
+        from orivellum.api import notifications as _notif
+        _notif.emit(
+            "document_ready",
+            "Document ready",
+            f"“{title or 'Untitled'}” finished processing ({result.word_count:,} words).",
+            url=f"/library/{doc_id}",
+        )
+
         # Record upload provenance so recall queries ("find everything I added
         # about X") can surface this document.  origin_id is the document's
         # sha256 — the most stable identifier for the physical file.
