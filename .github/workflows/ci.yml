@@ -41,13 +41,13 @@ jobs:
       # ── Gate 5: OpenAPI spec must match the live app ──
       - name: OpenAPI drift check
         env:
-          SESSION_SECRET: ci-test-secret-not-a-real-key
+          SESSION_SECRET: ci-test-secret-not-a-real-key-padding-to-32-plus-chars
         run: uv run --with pyyaml python scripts/check_openapi_drift.py
 
       # ── Gate 6 runs inside the test suite (tests/test_property_based.py) ──
       - name: Tests with coverage gate
         env:
-          SESSION_SECRET: ci-test-secret-not-a-real-key
+          SESSION_SECRET: ci-test-secret-not-a-real-key-padding-to-32-plus-chars
         # --cov-fail-under is a ratchet: it must never be lowered, only raised.
         # Baseline measured 2026-08-10: 55% line coverage (gate set 1pt below
         # to absorb run-to-run variance). See CONTRIBUTING.md.

@@ -25,7 +25,7 @@ jobs:
 
       - name: Run mutation testing
         env:
-          SESSION_SECRET: ci-test-secret-not-a-real-key
+          SESSION_SECRET: ci-test-secret-not-a-real-key-padding-to-32-plus-chars
         # mutmut exits non-zero when mutants survive; the gate below decides.
         run: >
           uv run --with mutmut --with pytest --with pytest-asyncio
