@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SpatialSettingsSync, SpatialSettings } from "../spatialSettings";
+import { SpatialSettingsSync, shouldRollback, SpatialSettings } from "../spatialSettings";
 
 const s = (enabled: boolean, mode: "subtle" | "wide" = "subtle"): SpatialSettings => ({
   enabled,
@@ -96,6 +96,43 @@ describe("SpatialSettingsSync — save ordering", () => {
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(r1).toEqual({ ok: false, latest: false });
     expect(r2).toEqual({ ok: true, latest: true });
+  });
+
+  it("a failed save for a previous Work never rolls back the new Work's state", async () => {
+    // Scenario: save on Work A hangs → user switches to Work B → B's settings
+    // load → A's save finally fails.  B's state must remain untouched.
+    const sync = new SpatialSettingsSync();
+    const gate = deferred();
+    let currentWork: string | null = "A";
+
+    const saveA = sync.save("A", s(true, "wide"), async () => {
+      await gate.promise;
+      throw new Error("500"); // A's save fails after the switch
+    });
+
+    // User switches to Work B; B's load starts and (no save intervened for
+    // this component since the switch reset) applies.
+    currentWork = "B";
+    const token = sync.beginLoad();
+
+    gate.reject(new Error("500"));
+    const resultA = await saveA;
+
+    // A's failed save may not clobber B: rollback must be suppressed.
+    expect(resultA.ok).toBe(false);
+    expect(shouldRollback(resultA, "A", currentWork)).toBe(false);
+    // B's load is still valid — a save for A counts, so the component's
+    // Work-change reset (new load token after the switch) is what gates it;
+    // a load begun AFTER A's save was queued applies cleanly.
+    expect(sync.shouldApplyLoad(token)).toBe(true);
+  });
+
+  it("shouldRollback allows rollback only for a latest failure on the same Work", () => {
+    expect(shouldRollback({ ok: false, latest: true }, "A", "A")).toBe(true);
+    expect(shouldRollback({ ok: false, latest: true }, "A", "B")).toBe(false);  // switched Work
+    expect(shouldRollback({ ok: false, latest: true }, "A", null)).toBe(false); // no Work selected
+    expect(shouldRollback({ ok: false, latest: false }, "A", "A")).toBe(false); // superseded
+    expect(shouldRollback({ ok: true, latest: true }, "A", "A")).toBe(false);   // success
   });
 
   it("a failure does not block later saves", async () => {

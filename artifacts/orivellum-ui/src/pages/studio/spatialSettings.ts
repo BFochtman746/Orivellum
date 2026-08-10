@@ -36,6 +36,23 @@ export interface SaveResult {
   latest: boolean;
 }
 
+/**
+ * Whether a failed save should roll component state back to its pre-save
+ * snapshot.  Rollback is only correct when:
+ *  - the save actually failed,
+ *  - no newer save superseded it (its optimistic state is current), and
+ *  - the user is STILL on the Work the save targeted — after switching
+ *    Works, the state belongs to the new Work and must not be clobbered
+ *    with the old Work's values.
+ */
+export function shouldRollback(
+  result: SaveResult,
+  targetWork: string,
+  currentWork: string | null,
+): boolean {
+  return !result.ok && result.latest && currentWork === targetWork;
+}
+
 export class SpatialSettingsSync {
   private chain: Promise<unknown> = Promise.resolve();
   private saveSeq = 0;

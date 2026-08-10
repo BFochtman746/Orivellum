@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
-import { SpatialSettingsSync, type SpatialSettings } from "./spatialSettings";
+import { SpatialSettingsSync, shouldRollback, type SpatialSettings } from "./spatialSettings";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -1267,6 +1267,10 @@ function AudiobookTab({
   // overrides so the server-saved settings apply.
   const [spatialLoadedFor, setSpatialLoadedFor] = useState<string | null>(null);
   const spatialSync = useRef(new SpatialSettingsSync()).current;
+  // Live view of the selected Work — closures in async save handlers must
+  // compare against this ref, not the workId they captured at call time.
+  const currentWorkRef = useRef(workId);
+  currentWorkRef.current = mode === "work" ? workId : "";
   const [loading, setLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioName, setAudioName] = useState("audiobook.mp3");
@@ -1377,9 +1381,10 @@ function AudiobookTab({
     });
     if (!ok) {
       toast.error("Couldn't save spatial settings — reverted to the last saved values");
-      // Roll back only if no newer save superseded this one and the user is
-      // still on the same Work.
-      if (latest && targetWork === workId) {
+      // Roll back only if no newer save superseded this one AND the user is
+      // still on the Work this save targeted (checked via the live ref — the
+      // captured workId is stale after a Work switch and must not be used).
+      if (shouldRollback({ ok, latest }, targetWork, currentWorkRef.current)) {
         setSpatialOn(prev.enabled);
         setSpatialMode(prev.mode);
         setAmbienceDocId(prev.ambience_doc_id ?? "");
