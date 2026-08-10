@@ -284,8 +284,15 @@ class TestOCRConcurrency(unittest.TestCase):
 
     def test_concurrent_ocr_requests_run_in_parallel(self):
         """Two OCR requests submitted simultaneously both complete faster than
-        if they ran sequentially (2 × 0.3 s ≈ 0.6 s sequential; parallel ≈ 0.35 s).
+        if they ran sequentially.
+
+        On CI the simulated OCR is slowed to 1.0 s each and the budget widened
+        so runner jitter (~0.4 s observed) can never blur the parallel (~1x)
+        vs sequential (~2x) distinction.
         """
+        import os
+        ocr_duration = 1.0 if os.environ.get("CI") else 0.5
+        budget = 1.7 if os.environ.get("CI") else 0.85
         results: list[float] = []
 
         async def _run_two():
@@ -297,7 +304,7 @@ class TestOCRConcurrency(unittest.TestCase):
             ) as client:
 
                 def _slow(_img):
-                    time.sleep(0.5)
+                    time.sleep(ocr_duration)
                     return "text"
 
                 fake_img = MagicMock()
@@ -323,13 +330,13 @@ class TestOCRConcurrency(unittest.TestCase):
         self._run(_run_two())
 
         elapsed = results[0]
-        # Sequential would take ≥ 1.0 s; parallel ≈ 0.5 s. The 0.85 s budget
-        # leaves headroom for slow shared CI runners while still clearly
-        # distinguishing parallel from sequential execution.
+        # Sequential would take >= 2 x ocr_duration; the budget sits well
+        # below that while leaving generous headroom for slow shared runners.
         self.assertLess(
-            elapsed, 0.85,
-            f"Two 0.5 s OCR calls took {elapsed:.2f}s — expected parallel execution (~0.5 s), "
-            "not sequential (~1.0 s). asyncio.to_thread isolation may be broken.",
+            elapsed, budget,
+            f"Two {ocr_duration:.1f} s OCR calls took {elapsed:.2f}s — expected parallel "
+            f"execution (~{ocr_duration:.1f} s), not sequential (~{2*ocr_duration:.1f} s). "
+            "asyncio.to_thread isolation may be broken.",
         )
 
 
