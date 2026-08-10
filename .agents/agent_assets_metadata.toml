@@ -21,3 +21,10 @@ uri = "file://docs/manual/Orivellum_Installation_Guide.docx"
 type = "word_document"
 title = "Orivellum Installation Guide"
 description = "Complete setup guide with installation steps, Lemonade AI server setup, 12 recommended LLM models table, environment variables reference, and illustrated sections."
+
+[[outputs]]
+id = "TlVOx9zlYA-XYPziyy6ik"
+uri = "file://reports/task-cleanup-2026-08-10.md"
+type = "text"
+title = "Task cleanup — full review of all 518 open tasks"
+description = "Every open task classified: 97 recommended for archiving (retired phone app, duplicates, already built) and 421 keepers ranked in 5 priority tiers."

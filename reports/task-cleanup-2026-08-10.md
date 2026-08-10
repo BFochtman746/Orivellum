@@ -1,0 +1,577 @@
+# Project Task Cleanup — August 10, 2026
+
+**518 open tasks reviewed.** Recommendation: archive 97, keep 421 (prioritized below).
+
+## Summary
+
+| Bucket | Count | Action |
+|---|---|---|
+| Obsolete — retired phone app | 85 | Archive |
+| Exact/near duplicates | 7 | Archive (keep the twin) |
+| Already built | 5 | Archive |
+| Keep — Tier 1: data safety & security | 26 | Do first |
+| Keep — Tier 2: broken or confusing experiences | 24 | Do second |
+| Keep — Tier 3: already-accepted work in the queue | 47 | Continue as scheduled |
+| Keep — Tier 4: verification & testing | 91 | Batch alongside related work |
+| Keep — Tier 5: polish & nice-to-haves | 233 | As time allows |
+
+---
+
+## Archive: obsolete — the phone app was retired (85)
+
+These were written for the old phone app (deleted August 2026; the web app is now the only client). The need is either gone, device-specific (haptics, camera, Files app, iOS/Android share sheets), or already covered by the web version these days.
+
+- **#58** — Strip markdown symbols from conversation preview snippets on mobile
+- **#59** — Let users long-press an AI reply to copy it on mobile
+- **#66** — Apply the same dark code-block style to the mobile chat screen
+- **#68** — Show which AI model sent each reply in the mobile chat
+- **#69** — Keep the last-used AI model as the default for new conversations on mobile
+- **#70** — Let mobile users review AI-extracted knowledge (approve or dismiss) from their phone
+- **#75** — Pull-to-refresh on the document detail screen so users can see processing status update live
+- **#76** — Make document search on mobile work offline using cached results
+- **#140** — Show a failed-send indicator on mobile when a chat message can't reach the server *(accepted)*
+- **#161** — Show lifecycle badges on document cards in the mobile app so users can manage canonical status on the go
+- **#164** — Let mobile users see and dismiss near-duplicate document warnings from their phone
+- **#167** — Show entity graph in the mobile app so users can explore connections on the go
+- **#176** — Let users force-reprocess a single document from the mobile app when it's stuck or failed *(accepted)*
+- **#187** — Show which sources fed each AI reply in the mobile app too *(accepted)*
+- **#208** — Make pull-to-refresh on the mobile Gaps tab fetch a fresh analysis instead of hour-old cache
+- **#214** — Let mobile users run maintenance and see the last night report from their phone
+- **#244** — Let users find and restore archived conversations on mobile
+- **#245** — Let users filter the mobile conversation list to a specific Work
+- **#246** — Show web search sources in the mobile chat so users can tap through to the original pages
+- **#270** — Let the mobile library search remember results between app restarts, not just the current session
+- **#271** — Let users approve or dismiss all AI knowledge from a Work's detail page on mobile
+- **#316** — Let each screen add its own action button to the mobile header so key operations are always within thumb reach
+- **#320** — Port the activity strip and progressive disclosure to the Expo mobile chat screen
+- **#354** — Bring citation chips and staleness nudges to mobile so phone users get the same safety signals
+- **#438** — Add web search to mobile chat so phone users can also get live web answers
+- **#480** — Show TTS engine quality on mobile so iPhone users know when they're hearing basic synthesis
+- **#485** — Let users open and share the generated Workshop document file on their phone
+- **#487** — Keep Workshop generation running when iOS suspends the app mid-generation
+- **#488** — Show conflicting knowledge claims on mobile so users can choose which version to keep
+- **#490** — Let mobile users acknowledge MCOS benchmark regressions without opening a browser
+- **#549** — Let users swipe to archive conversations from the main Chats list on mobile, not just the Work tab
+- **#552** — Let mobile users scan for duplicate documents from their phone
+- **#559** — Add share/export to audio outputs in the mobile Audiobook section too
+- **#561** — Confirm sharing a Studio audio file works end-to-end on iOS and Android
+- **#602** — Make sure generated files open correctly on Android and don't silently fail
+- **#608** — Show topic profile descriptions on the mobile topic browser too
+- **#636** — Show CPU and RAM sparklines on the mobile home screen too
+- **#637** — Accelerate the mobile hardware poll when a conversation is actively streaming
+- **#643** — Cache offline messages per conversation so switching tabs doesn't lose them before delivery
+- **#644** — Let users clear the offline cache to free phone storage
+- **#649** — Warn users on mobile when their library needs a re-index after the embedder changes
+- **#692** — Show download progress while preparing to share a large audiobook so users aren't left staring at a frozen spinner
+- **#694** — Warn users before they try to share when their device storage is too low to download the file
+- **#699** — Prevent a stale 'interrupted' screen from appearing when an old saved job has naturally expired
+- **#700** — Apply the same background-resilient polling to single-document audiobook jobs so they also survive screen lock
+- **#710** — Let users download action output files directly from their phone after a run completes
+- **#712** — Confirm the mobile progress bar stops spinning when the server drops mid-extraction
+- **#743** — Bring the image backend status card to the mobile System screen to match the web *(accepted)*
+- **#748** — Let mobile users link each file to a different Work when importing multiple at once
+- **#749** — Show a 'Retry all failed' button in the mobile import flow so phone users get the same bulk-retry experience
+- **#754** — Add haptic feedback when a swipe crosses the approve/reject threshold on mobile
+- **#757** — Let users copy a suggested search query to the clipboard with a long-press
+- **#771** — Show the same generation-time estimate on the mobile Download MP3 button
+- **#772** — Apply the same smart search to the mobile Works knowledge screen so large Works search accurately on phone
+- **#774** — Let mobile users run the AI stage worker from the Intelligence screen without switching to web
+- **#777** — Prevent the AI panel from covering the cursor when the keyboard opens on iPhone
+- **#778** — Let users swipe a gap card to open a discussion without tapping into the button row
+- **#786** — Show scanning feedback on the chat screen's camera button too
+- **#787** — Show a text preview after scanning so users know the photo was readable
+- **#794** — Confirm the summary is passed to the LLM on mobile chat so phone users get the same context guarantee
+- **#799** — Confirm the mobile Trailer tab handles a running pipeline gracefully when the app is backgrounded
+- **#800** — Show a Canon-lifecycle warning on the mobile Trailer tab when the Work isn't ready to package
+- **#803** — Show a Canon-lifecycle warning on the mobile Trailer tab when the Work isn't ready to package
+- **#804** — Let mobile users copy any shot prompt — not just the first one — from the Trailer package
+- **#805** — Show the square 1:1 format option in the mobile Trailer tab so phone users can generate Feed posts from their phone
+- **#841** — Let users reorder or rename book pipeline stages from mobile so they can customise the production flow
+- **#852** — Confirm the audiobook saves cleanly to Files when the file is large (multi-chapter works)
+- **#854** — Prevent the Save to Files button from appearing on Android until the saved location is user-accessible
+- **#859** — Let mobile users toggle AI extraction and re-ranking with PUT instead of POST so settings actually save
+- **#860** — Show the DeepFilterNet3 install command as a copyable prompt so users on mobile can act on it
+- **#890** — Remember the last-downloaded audiobook so users can play it again after leaving and returning to the screen
+- **#891** — Show a seek bar under the audiobook player so users can jump to any position
+- **#892** — Show the same percentage progress bar when downloading the audiobook file so the full flow has consistent status feedback
+- **#902** — Let mobile users see what the AI remembered from their conversations — with the source passage
+- **#904** — Let users resolve memory conflicts from their phone
+- **#927** — Show the ready banner on the lock screen when the audiobook finishes while the phone is locked
+- **#941** — Let users feel haptic feedback when a chat message fails or retries
+- **#942** — Confirm haptic calls never freeze the UI when the device has haptics disabled
+- **#981** — Remember the AI panel preference on mobile too so the panel doesn't reset between sessions
+- **#1006** — Show a 'not found' error on the library document detail screen when a stale notification deep-links to a deleted document
+- **#1032** — Confirm the mail badge survives app backgrounding and foreground restore *(accepted)*
+- **#1041** — Confirm the hourly sheet handles device back-button and mid-animation close without freezing
+- **#1048** — Close any open action tray when a new card's tray is opened
+- **#1050** — Prevent a stale animation callback firing after a sheet's screen is navigated away
+- **#1055** — Confirm the Edit Work sheet slides in and out smoothly when the keyboard is open *(accepted)*
+
+## Archive: duplicates (7)
+
+- **#99** — duplicate of **#19** — Confirm the retry button reliably clears the error state and re-extracts the document
+- **#100** — duplicate of **#18** — Make extraction failures describe what went wrong so users know whether to fix the file or just retry
+- **#106** — duplicate of **#443** — Find and replace other hand-rolled fetch calls that bypass generated hooks
+- **#128** — duplicate of **#48** — Confirm rule-based harvesting never silently drops summaries, headings, or entity mentions
+- **#129** — duplicate of **#49** — Make sure the LLM chunk limit is respected so large documents don't silently over-extract
+- **#587** — duplicate of **#586** — Remove the raw filesystem API endpoints now that the /files page is gone
+- **#906** — duplicate of **#903** — Prune orphaned evidence rows left when inference fails after writing evidence
+
+## Archive: already built (5)
+
+- **#61** — Show which knowledge was injected so users can trace where AI answers came from
+  - Why: Sources panel already shows injected knowledge (task #247 exists to clean up the old inline block)
+- **#130** — Show which documents the AI drew from so users can trust its answers
+  - Why: Sources panel already shows which documents fed each answer
+- **#227** — Build the state-machine engine so every lifecycle change is controlled and blocked transitions are impossible
+  - Why: State-machine engine was built (declarative SM + blocked transitions)
+- **#479** — Replace espeak samples with Kokoro quality automatically when the model becomes available
+  - Why: espeak was removed entirely; samples now always use the real voice engine
+- **#491** — Let users trigger an embeddings probe and see the result without leaving the app
+  - Why: Embeddings probe button + status card already on the System page
+
+---
+
+## Tier 1 — Data safety, security & correctness (26) — highest priority
+
+Things that can silently lose, corrupt, or leak data. Do these before feature work.
+
+- **#78** — Prevent duplicate uploads from silently discarding a new work assignment
+- **#90** — Confirm the streaming path never saves a duplicate assistant turn if the connection drops right at [DONE]
+- **#96** — Persist the 'cut short' marker in message meta so truncated replies survive a page refresh *(accepted)*
+- **#112** — Make backup and file downloads work when the server requires a login
+- **#113** — Let users rotate their API key in case it was accidentally exposed
+- **#114** — Confirm the API rejects requests without a valid token on every route
+- **#139** — Confirm duplicate message guard works without crashing when db._lock is unavailable *(accepted)*
+- **#157** — Make sure every write operation actually appears in the audit log — confirm nothing slips through
+- **#268** — Mark a reply as cut-short the moment it finishes streaming, not after the next page load
+- **#401** — Prevent background threads from committing outside governed_write
+- **#402** — Confirm the governed audit trail stays intact under concurrent writes
+- **#405** — Warn users in the app when their session secret isn't set so they know sessions will reset on restart
+- **#406** — Make sure the API refuses to start with a weak secret even when the server is started from scripts
+- **#411** — Make sure no messages are silently dropped from search when streaming replies are still in progress
+- **#519** — Prevent stale vectors after re-processing a document that already had context prefixes
+- **#525** — Prevent the SSE progress stream from leaving connections open if the API server restarts mid-processing
+- **#624** — Confirm uploaded documents stay findable when the server restarts mid-extraction
+- **#625** — Heal ready documents that have no searchable chunks due to a past registration bug
+- **#626** — Verify the FTS shadow table stays in sync with the chunks table for every document kind
+- **#630** — Cap simultaneous scans so a burst of uploads can't exhaust the server thread pool
+- **#725** — Prevent the AI harvest from repeating the same knowledge items when a document is reprocessed
+- **#792** — Confirm the summariser never overwrites a good summary when its cursor message is deleted
+- **#793** — Prevent the summariser from being triggered multiple times in a single busy conversation
+- **#901** — Confirm memory capture doesn't silently lose facts when the evidence write fails mid-capture
+- **#905** — Confirm the dedup pass never silently merges memories that only look similar
+- **#973** — Confirm the semantic dedup pass never retires items from the same document and stops cleanly when embeddings are offline
+
+## Tier 2 — Broken or confusing experiences (24)
+
+Visible problems on screens used every day (login wall, 404 on shared links, stuck retries, import feedback).
+
+- **#40** — Keep the chat screen usable when the server comes back after being offline
+- **#41** — Show a connection-status indicator in the tab bar so users always know if the server is reachable
+- **#62** — Auto-dismiss the Progress panel when all jobs finish so it doesn't stay open on an empty queue
+- **#63** — Let users jump from a running job in the Progress panel straight to its document in the Library
+- **#64** — Keep clarification context so the AI answers correctly once the user replies
+- **#77** — Let the import dialog surface a 'retry' option when a duplicate is stuck or failed
+- **#91** — Make sure a truncated reply shows a re-send button so users can easily complete it
+- **#95** — Make sure the Re-send button works correctly when switching conversations mid-stream *(accepted)*
+- **#118** — Show a progress bar when importing large files so users know it's working *(accepted)*
+- **#192** — Make search reflect new chunks immediately after a re-chunk instead of waiting overnight
+- **#193** — Let users cancel a library re-chunk that's taking too long
+- **#230** — Make sure every error in the app shows a clean message instead of a crash or blank screen *(accepted)*
+- **#407** — Let users jump from a failed job straight to the document that caused it
+- **#408** — Keep job history across server restarts so processing failures aren't lost
+- **#489** — Keep the review queue readable when the server is offline so pending items don't disappear
+- **#515** — Fix direct URL navigation for the web app so bookmarked or shared links don't land on a 404
+- **#524** — Show live import progress on the Library list page, not just the detail page
+- **#633** — Confirm the Retry button clears the timed-out bubble and re-sends cleanly without duplicating the user message
+- **#635** — Carry the partial reply text into the retry so the AI can pick up where it left off
+- **#645** — Confirm the app never shows a blank screen when the phone goes offline mid-session
+- **#872** — Make the type badge in the work header tappable so users can change type without scrolling to the Overview tab
+- **#873** — Keep the work title in the navigation bar in sync after an inline rename
+- **#1067** — Show users which documents have missing source files so they can re-upload them *(accepted)*
+- **#1079** — Confirm the app never shows a login wall after restarts, cookie loss, or on the installed iPhone app
+
+## Tier 3 — Already-accepted work in the queue (47)
+
+You've already accepted these; the newest batches (audio cleanup, listening progress, transcription, audiobook rendering) are the freshest and most relevant.
+
+- **#92** — Confirm nightshift re-extracts sparse documents correctly and never silently fails *(accepted)*
+- **#93** — Let users trigger a nightshift pass from the System page without waiting until 3 AM *(accepted)*
+- **#94** — Show a subtle hint in chat when Orivellum silently saves a new memory fact *(accepted)*
+- **#101** — Add per-concept reset buttons to the Learn tab concept map so users can re-study individual topics *(accepted)*
+- **#102** — Show Windows-friendly commands on the System setup page so Windows users can copy-paste them *(accepted)*
+- **#103** — Show recently completed documents in the Progress panel so users get confirmation their files processed *(accepted)*
+- **#104** — Let users start a conversation from the Works detail page dashboard area *(accepted)*
+- **#105** — Confirm the Import Document quick-action clears the URL param after the dialog closes so refreshing doesn't reopen it *(accepted)*
+- **#107** — Catch type-drift build failures automatically so they never reach the app *(accepted)*
+- **#111** — Let users swipe a Work card to quickly start a chat or open its detail *(accepted)*
+- **#131** — Confirm document passages actually appear in chat after a file is imported *(accepted)*
+- **#141** — Let users hide or show reasoning blocks so long chain-of-thought doesn't clutter the chat *(accepted)*
+- **#142** — Confirm that asking a current-events question triggers a live Tavily search and shows cited sources in chat *(accepted)*
+- **#171** — Confirm all seven gap detectors catch real problems without false alarms *(accepted)*
+- **#172** — Stop the Research Gaps panel from slowing down the dashboard with many Works *(accepted)*
+- **#174** — Confirm bulk reprocess actually recovers stuck and ZIP documents end-to-end *(accepted)*
+- **#175** — Confirm the gap cache always stays fresh so the dashboard never shows outdated research problems *(accepted)*
+- **#185** — Show the last nightshift report in System Settings so users can see what maintenance ran *(accepted)*
+- **#216** — Show a nightly score trend in the Prompt Lab so users can see prompt quality drifting before it regresses *(accepted)*
+- **#218** — Show a vision-ready badge in chat so users know before they try to attach an image *(accepted)*
+- **#228** — Make every record change produce a reliable audit trail, not just work and conversation updates *(accepted)*
+- **#229** — Show whether the audit trail is intact on the governance page so tampering is visible *(accepted)*
+- **#231** — Show a live activity panel so users can see what the AI is doing step-by-step *(accepted)*
+- **#234** — Stop the AI from guessing hardware specs even when its own answer doesn't match the verified record *(accepted)*
+- **#235** — Prove the full verification guarantee holds end-to-end with the spec's seven acceptance tests *(accepted)*
+- **#410** — Alert users when RAM or VRAM is nearly full so they know why the AI is slow *(accepted)*
+- **#742** — Probe image backends on a background schedule so the status stays fresh without a manual refresh *(accepted)*
+- **#753** — Add a swipe hint label ('← Reject / Approve →') on the first review card so users discover the gesture *(accepted)*
+- **#936** — Finish VELLUM token sweep across remaining web pages *(accepted)*
+- **#1031** — Prevent the review badge from showing stale counts after the user resolves items *(accepted)*
+- **#1103** — Give audiobooks and trailers immersive spatial depth *(accepted)*
+- **#1104** — Confirm the one-click audio cleanup setup finishes on Nimo *(accepted)*
+- **#1105** — Show download progress while audio cleanup sets itself up *(accepted)*
+- **#1106** — Show how far along each book is (chapters drafted vs approved) on the Books page *(accepted)*
+- **#1107** — Use one notification style everywhere so pop-up messages look and behave consistently *(accepted)*
+- **#1108** — Split the remaining Works detail tabs into their own modules *(accepted)*
+- **#1112** — Transcribe existing Library audio from the Studio Transcription tool *(accepted)*
+- **#1113** — Record from the microphone as a transcription source *(accepted)*
+- **#1114** — Add tests for transcription upload limits and job-registry edge cases *(accepted)*
+- **#1120** — Keep your listening spot when switching between phone and desktop *(accepted)*
+- **#1121** — Show which Library documents you're partway through listening to *(accepted)*
+- **#1122** — Show accurate progress on the lock-screen scrubber while listening *(accepted)*
+- **#1123** — Confirm resume and lock-screen controls can't corrupt Read Aloud playback *(accepted)*
+- **#1124** — Hear a short sample of a cloned voice before building a whole audiobook *(accepted)*
+- **#1126** — Pause and resume long audiobook renders instead of starting over *(accepted)*
+- **#1127** — Show a per-chapter quality report after each audiobook render *(accepted)*
+- **#1128** — Suggest chapter voice casting automatically from the story's characters *(accepted)*
+
+## Tier 4 — Verification & testing (91)
+
+"Confirm X works" tasks. Valid but not urgent on their own — best batched together whenever the related feature is touched.
+
+- **#19** — Confirm the retry button reliably clears the error state and re-extracts the document
+- **#48** — Confirm rule-based harvesting never silently drops summaries, headings, or entity mentions
+- **#49** — Make sure the LLM chunk limit is respected so large documents don't silently over-extract
+- **#79** — Confirm images without readable text land in 'no_text' instead of silently failing
+- **#80** — Make sure non-UTF-8 encoded text files are readable instead of silently garbled
+- **#81** — Confirm the one-command launcher works end-to-end before each release
+- **#82** — Confirm old messages without a stored model show a clean fallback instead of nothing
+- **#85** — Confirm intent routing falls back cleanly so chat never breaks when search or weather is down
+- **#88** — Confirm the assessment critic gives honest scores when AI replies with bad JSON
+- **#125** — Confirm confidence scores are stored correctly so the tooltip always shows the right tier
+- **#201** — Make sure deferred review items come back after 7 days and old deferrals get cleaned up
+- **#221** — Confirm harvest.extract and mcos.judge prompt edits can't silently break extraction or scoring
+- **#269** — Confirm the Continue button resumes exactly where the reply stopped, even after a page reload
+- **#273** — Confirm the Sources panel appears correctly for both Work-scoped and general chat replies
+- **#285** — Confirm the Search tab opens pre-filled when navigating from Intelligence gap cards
+- **#303** — Confirm the Book view handles works with no processed documents gracefully end-to-end
+- **#308** — Add API-level tests for quiz generation concept attribution and hallucination stripping
+- **#340** — Confirm fact capture and recall survive an AI endpoint being offline
+- **#343** — Confirm the Books and Learn scorecard numbers always match the library so users can trust the dashboard
+- **#351** — Confirm topic clustering runs end-to-end without crashing on real data
+- **#353** — Confirm the abstain-or-cite spine never lets the AI invent library content
+- **#399** — Confirm a stalled LLM stream closes within 30 seconds and never leaves a stuck spinner
+- **#403** — Confirm ZIP provenance links survive re-import so users never lose document lineage
+- **#422** — Confirm the system correctly refuses to guess specs when the collector hasn't run yet
+- **#424** — Confirm transcription works end-to-end and the player loads the right audio file
+- **#427** — Confirm confidence tiers display correctly on every screen and don't show NaN when confidence is missing
+- **#428** — Confirm folder watch imports files end-to-end and clears the 'seen' list when a dir is removed
+- **#432** — Confirm temporal chat queries never return stale or wrong-window results
+- **#434** — Confirm re-harvest respects template priority and never silently skips documents
+- **#437** — Make sure web search stays fast enough that it never visibly delays a chat reply
+- **#444** — Confirm the generated API client stays in sync after backend changes
+- **#493** — Confirm the System Health card accurately reflects real outage states
+- **#498** — Confirm the graph tap-to-select finds nodes reliably across zoom levels
+- **#504** — Confirm topics refresh correctly after nightshift runs without manual intervention
+- **#513** — Confirm retry correctly creates a fresh run row and clears the error state so the feed doesn't show the old failure forever
+- **#517** — Confirm context prefixes generate for new imports and improve retrieval for real queries
+- **#520** — Confirm re-ranking orders results correctly for real queries without slowing down chat
+- **#530** — Confirm late-chunked documents are found more reliably in search than standard-embedded ones
+- **#547** — Confirm resetting a concept streak actually puts it back in the study queue
+- **#558** — Confirm completeness scores never silently stay at defaults when custom targets fail to save
+- **#574** — Confirm cached gap results always include suggested queries so the Gaps tab shows search suggestions reliably
+- **#583** — Confirm knowledge search returns correct results and never silently fails on large documents
+- **#585** — Confirm the Project Compass updates correctly after each AI reply in a Work-scoped chat
+- **#593** — Confirm the quiz still tags the right concept when a Work has more than 20 concepts
+- **#596** — Confirm brainstorm ideas seeded from gap cards are scoped and relevant
+- **#605** — Make sure generated files stay valid after a Work's knowledge is edited or deleted
+- **#607** — Confirm topic profiles survive a full cluster rebuild without going stale
+- **#632** — Confirm corrupt, oversized, or unusual image formats fail with a clear error instead of crashing
+- **#638** — Confirm the hardware sparklines don't leak memory when the System page stays open for hours
+- **#650** — Confirm re-indexing survives a server restart mid-run and resumes cleanly
+- **#670** — Confirm the social clip always produces exactly 3 beats with vertical framing notes — no shots silently missing beat_type after a real run
+- **#711** — Confirm the action launcher works end-to-end so a broken API response never silently freezes the Run button
+- **#713** — Confirm the progress bar disappears once extraction finishes without a page reload
+- **#716** — Confirm the narrator preference is preserved correctly across app restarts
+- **#720** — Confirm the merged MP3 plays back correctly and isn't corrupted when segments use different audio settings
+- **#723** — Confirm AI knowledge items appear for chapters beyond the first five when a novel is reprocessed
+- **#728** — Confirm chapter title detection in chat correctly finds chapters when the user asks about a scene or plot point by name
+- **#736** — Confirm the scan still finds pairs correctly when the library has documents from multiple Works
+- **#739** — Make sure saving new targets never silently clobbers other metadata keys the user has already set
+- **#769** — Confirm each VRAM detection strategy returns the right value and never silently fails
+- **#795** — Confirm the 'both' format produces valid full and short packages in a single job
+- **#797** — Confirm the trailer package survives a round-trip through the GET endpoint without data loss
+- **#802** — Confirm the ComfyUI prompt copy button on the web Trailer panel copies clean text with no extra whitespace
+- **#806** — Confirm the 'All three formats' job never silently drops the square package when the full or short plan partially fails
+- **#808** — Confirm spaced-repetition reviews fire at the right time and never lose a session
+- **#811** — Confirm prerequisite sequencing never blocks the queue or silently routes past a locked concept
+- **#818** — Confirm the auto transfer-mode switch works end-to-end in a live study session
+- **#823** — Confirm interleaved mode never serves the same concept twice in a row
+- **#839** — Confirm gate decisions survive offline and sync when connectivity returns
+- **#842** — Confirm the Promote button still works for Works that were created with a non-standard type
+- **#856** — Make sure the generating dot disappears within one poll cycle after cancelling — not after a full 5-second wait
+- **#861** — Confirm the Voice Recommender LLM path also returns enriched voices — not just the Designer
+- **#863** — Confirm the web TTS panel also shows a partial label when the merged file fails — not just mobile
+- **#866** — Confirm duration appears correctly for audiobook files and single-segment TTS clips
+- **#871** — Confirm the memory edit endpoint preserves history and rejects bad inputs
+- **#874** — Confirm the mini-player stays above the tab bar when the device is rotated or window is resized on web
+- **#877** — Confirm skip buttons stay reachable on narrow screens when a long document title is displayed
+- **#878** — Confirm Read Aloud survives a full app backgrounding and return without stopping
+- **#879** — Extend the test suite to cover applySettings keeping the session alive mid-listen
+- **#880** — Confirm voice and speed picked in the mini-player show up correctly next time the user opens the document
+- **#885** — Confirm memory edits persist and the previous-value trail shows correctly after correcting a fact
+- **#887** — Confirm the Overview pipeline card stays in sync when the Book tab advances the stage
+- **#896** — Confirm the dep-map graph and concept list stay consistent after a concept is reset or graduated
+- **#929** — Confirm all VELLUM-styled badges and status chips display correctly when the app is in dark mode
+- **#963** — Confirm the chapter knowledge endpoint stays fast when a chapter has thousands of items across many works
+- **#975** — Confirm retrieval logging never slows down chat or loses messages when the DB is busy
+- **#996** — Confirm the knowledge arrival flash still works when a Work has hundreds of items and the target is far down the list
+- **#998** — Confirm the Gaps tab stops polling correctly when the pipeline finishes so it doesn't keep hitting the server after B17
+- **#1023** — Confirm the chat context block respects the configured recency window end-to-end
+- **#1027** — Confirm the send flow still works correctly when the user edits the draft while it is being saved
+- **#1080** — Prove rapid stop/restart during audio loading never plays stale or doubled audio
+
+## Tier 5 — Polish & nice-to-haves (233)
+
+- **#18** — Make extraction failures describe what went wrong so users know whether to fix the file or just retry
+- **#60** — Let users paste files into chat (not just drag and drop)
+- **#65** — Add an Auto-gate mode that silently improves ambiguous replies without user toggling Deep mode
+- **#67** — Add a copy-to-clipboard button on code blocks so users can grab code instantly
+- **#71** — Let users approve or dismiss all AI suggestions at once instead of one by one
+- **#72** — Remember the last model you used so new conversations default to it
+- **#73** — Show which model a new conversation will use in the sidebar + button tooltip
+- **#83** — Let users see which model answered each message when reviewing a shared or exported conversation
+- **#86** — Make web search results richer by letting the AI summarise and contextualise them
+- **#87** — Show learning mastery in the Work stats bar so progress is always visible
+- **#108** — Show the last message preview in each Work chat row so users can tell conversations apart
+- **#110** — Prevent duplicate Work chats from a double-tap on the Chat button
+- **#124** — Show confidence scores in the Work knowledge tab so users get the same insight everywhere
+- **#158** — Let users filter and search the audit log from the System page
+- **#159** — Show version-relationship suggestions in Works so users know when to declare a canonical document
+- **#160** — Group document cards by filename family in Works so version history is easy to read at a glance
+- **#165** — Backfill the entity graph for documents imported before graph support was added
+- **#166** — Let users tag an entity's kind (person, place, concept) so the graph colors make sense
+- **#168** — Show each Work's readiness level on the Works list so users can see what needs attention without clicking in
+- **#169** — Cache completeness scores so large Works load instantly instead of recalculating every time
+- **#196** — Highlight the matching words in search results so users can see why each result matched
+- **#203** — Show semantic-search readiness so users know why results are keyword-only
+- **#206** — Let users tell the system how many chapters their book should have
+- **#207** — Merge the old Intelligence page into the Book tab so there aren't two competing dashboards
+- **#213** — Show which maintenance step is running so users know what's happening during a run
+- **#222** — Prevent a broken mcos.judge prompt from corrupting benchmark scores without warning
+- **#223** — Show prompt health status on the MCOS governance page so teams can act on regressions
+- **#224** — Let users edit or crop a photo before attaching it to chat
+- **#242** — Show matching document passages alongside knowledge items when the API search finds them
+- **#247** — Remove the duplicate inline sources block from web search answers now that the panel shows them
+- **#272** — Extract the markdown renderer and code-block copy component into a shared file so other pages can reuse them
+- **#276** — Clean up evidence-rescore timestamps when a Work is deleted so the settings table doesn't accumulate stale entries
+- **#277** — Show a conflict banner in the Knowledge tab when contradictions exist so users don't have to visit Governance to notice them
+- **#296** — Fill the Review Queue with version suggestions for documents already in the library
+- **#302** — Refresh the book health card automatically as documents finish processing
+- **#304** — Stop checking embeddings health in the background after the user dismisses the notice
+- **#305** — Show a live result-count and active search mode label so users always know why their results look sparse
+- **#306** — Show users which concept each quiz question is building mastery for
+- **#309** — Fix global _deps state leak between TestClient tests
+- **#310** — Show an in-session progress indicator so users know how many correct answers are left before the break
+- **#311** — Let users choose their session length (3, 5, or 10 correct) before starting a learn session
+- **#312** — Sort the concept mastery list by tier so the most actionable items appear first
+- **#313** — Refresh the concept mastery list automatically after each study answer so mastery updates appear without switching tabs
+- **#314** — Let users track low-priority gaps as tasks too, not just high and medium ones
+- **#315** — Prevent accidentally creating the same gap task twice after a page refresh
+- **#317** — Show recent conversations in the navigation sheet so users can jump to a chat without leaving the current screen
+- **#319** — Audit all icon-only buttons on the mobile web sidebar and popover menus for 44pt touch targets
+- **#321** — Emit structured activity events from the backend so the strip reflects real processing steps
+- **#323** — Mark approved brainstorm ideas in the Knowledge tab so users can trace where they came from
+- **#324** — Prevent duplicate approvals when a user taps 'Use idea' twice before the server responds
+- **#339** — Backfill conversation embeddings nightly so older chats are searchable too
+- **#342** — Let users jump directly into a study session from the Learn home without clicking into the Work first
+- **#344** — Show the Intake Profile on the Library document detail page so users never need to navigate to /intake separately
+- **#352** — Add source references section to generated reports so readers can trace every claim
+- **#404** — Show users which document each library item came from in ZIP batches
+- **#413** — Let users filter message search by Work or date range so they can narrow down large result sets
+- **#416** — Make context-window trimming visible so users know when old messages are being dropped
+- **#419** — Prevent API slowdowns during nightshift by finishing the read-connection rollout
+- **#421** — Show verified hardware specs in the app so users can confirm what the system actually read from their machine
+- **#423** — Prevent the collector from silently reporting stale specs after a RAM upgrade
+- **#425** — Show a waveform or timestamp while a long recording is playing so users can navigate it
+- **#426** — Prevent silent failure when Whisper times out on very long recordings
+- **#429** — Migrate seen-file registry from a flat JSON blob to a dedicated DB table
+- **#430** — Show users which time range or file type was used to answer their question
+- **#431** — Let users ask for content from a specific named Work or document in chat
+- **#433** — Let users see which extraction template was used when reviewing AI knowledge items
+- **#435** — Let users assign a template to a specific Work directly from the Work detail page
+- **#436** — Show a 'Web search active' badge on AI replies so users know which answers used live data
+- **#442** — Auto-generate the OpenAPI spec from FastAPI so it never drifts again
+- **#443** — Replace the remaining manual fetch calls in Works detail with generated hooks
+- **#445** — Keep the deep-link scroll working when the matched message is far back in a long conversation
+- **#478** — Warm up the Kokoro voice model at startup so the first sample isn't slow
+- **#486** — Let users choose the output format before the Workshop generates their document
+- **#492** — Make the diagnostics sheet work when the server is temporarily unreachable
+- **#496** — Let users search nodes by name so large graphs are easy to navigate
+- **#497** — Keep the graph layout stable when toggling filters so nodes don't jump
+- **#509** — Remember the last voice a user chose so the Designer result stays selected after closing
+- **#511** — Show which document or Work triggered each automation run so users can trace failures back to their source
+- **#514** — Keep the Playwright suite green when the CI server has no AI — skip Chat gracefully if the model is offline
+- **#516** — Run the Playwright suite automatically on every code push so regressions are caught before they reach users
+- **#518** — Show AI-generated chunk context in the document detail page so users can see how their content is indexed
+- **#521** — Let users turn on LLM-powered re-ranking from System Settings without touching the database
+- **#522** — Apply re-ranking to time-filtered and source-filtered queries so 'last week's PDFs' also get the best results
+- **#529** — Re-embed existing documents with late chunking so older content benefits from the richer vectors
+- **#531** — Show the late-chunking toggle and probe status on the System settings page so users can enable it without the API
+- **#532** — Let users get AI narrator picks from the Work detail screen without opening Studio
+- **#543** — Show which Work each document belongs to in the Library list
+- **#546** — Let users correct a stored memory without having to delete and rephrase it
+- **#548** — Let users reset all concept streaks at once from the concept map, not just the all-done screen
+- **#550** — Let users see and restore archived conversations from the Work chats list
+- **#551** — Run the duplicate scan automatically on a schedule so new imports are always checked
+- **#554** — Persist the LSH index to disk so a server restart doesn't need to re-scan all signatures
+- **#555** — Drop the hard cap on work-scoped duplicate candidates so large Works don't miss pairs
+- **#557** — Carry targets forward when users merge or clone a Work so scores start correctly
+- **#560** — Let users rename a shared audio file before exporting it
+- **#562** — Let users test whether a custom image backend URL is reachable before saving it
+- **#564** — Persist the last-used image size so users don't re-pick it every session
+- **#586** — Remove the raw filesystem API endpoints now that no page uses them
+- **#590** — Add a timeout guard so a single slow LLM worker can't block the brainstorm beyond the 45-second budget
+- **#598** — Show a subtle recall badge in the web chat too when a memory was used
+- **#600** — Pre-seed the intake chat with an AI reply so users see value immediately without sending a message
+- **#601** — Persist research job state to DB so results survive an API server restart
+- **#603** — Show previously generated files in the Work so users don't re-generate duplicates
+- **#604** — Prevent corrupt files from reaching users when the Work has no knowledge items
+- **#606** — Let users trigger profile generation for a single topic without rebuilding all clusters
+- **#621** — Search document content not just titles when recalling outputs
+- **#622** — Show recalled outputs as rich cards in web chat instead of plain links
+- **#623** — Let users filter recalled outputs by kind or date in natural language
+- **#628** — Show a friendly error when the audiobook job is lost after a server restart
+- **#629** — Prune stale completed audiobook job entries from the in-memory registry
+- **#639** — Extend the same oversized-item truncation guard to raw document chunks
+- **#640** — Fix the stale default context-window assertion so the test suite stays green
+- **#641** — Bring the same smooth highlight fade to the web chat when jumping to a linked message
+- **#647** — Let users read the conversation summary so they can see what the AI remembers
+- **#648** — Prevent stale summaries from misleading the AI after a conversation is edited or cleared
+- **#651** — Show a nightshift pass that quietly re-indexes when the embedder model changes
+- **#663** — Keep the trailer package readable when the LLM falls back to offline stubs mid-run
+- **#664** — Let users regenerate a trailer from a different concept without losing the original
+- **#671** — Let users regenerate just the social clip from an existing full trailer without re-running the full 6-stage pipeline
+- **#686** — Show which topics a document belongs to in its header so users don't have to open Related first
+- **#687** — Scroll the Topics screen to the right cluster when arriving from a document so users don't have to hunt for it
+- **#688** — Add related-document discovery to the web library too so both surfaces stay in sync
+- **#689** — Bring the same cross-topic search to the web app so desktop users can find knowledge by theme too
+- **#690** — Show which document matched inside a search result so users can tell why a topic appeared
+- **#691** — Let users search the knowledge graph directly so they can find entities and claims, not just documents and topics
+- **#701** — Tell users when voice recommendations come from keyword matching instead of AI analysis
+- **#702** — Let users refresh narrator recommendations after updating a Work's documents
+- **#708** — Show an amber warning instead of a blue info box in the Voice Designer when keyword fallback is active
+- **#709** — Show a confirmation before running an action so users don't trigger expensive jobs by accident
+- **#714** — Stream the actual pipeline stage names from the extraction worker so pct matches real work done
+- **#715** — Keep the last-used narrator as the default when creating a new Work
+- **#719** — Prevent the TTS share button from offering a file while the concat is still being written
+- **#721** — Prevent a very long narration from hitting the rotation limit and deleting the merged file before the user can download it
+- **#724** — Let users choose how thoroughly long documents are analysed — fast (sample) vs. deep (full scan)
+- **#726** — Let users search knowledge by chapter so they can find who appears in Chapter 12 without reading the whole book
+- **#729** — Remember which Work filter was active so it doesn't reset every time you leave the Library
+- **#730** — Show how many documents are in each Work so users know which filter is worth tapping
+- **#731** — Show more than 6 Works in the Library filter so large projects aren't silently cut off
+- **#733** — Show a memory count badge on the System Settings row so users know facts have been captured
+- **#734** — Keep the memory list accurate when the AI captures a new fact mid-session without requiring a manual refresh
+- **#735** — Show scan progress so users know the backfill is still running on large libraries
+- **#737** — Prevent the scan from re-queuing documents that failed to index on a previous run
+- **#741** — Show a test image button on the Image Backend card so users can confirm generation works before relying on it
+- **#744** — Remember cancelled files between stop and re-import so users can restart only what was skipped
+- **#745** — Show a running total of bytes uploaded so users know how much data is in flight before stopping
+- **#746** — Prevent the browser tab close from silently abandoning an active upload without warning
+- **#750** — Keep the Import button enabled so users can add more pending files alongside a partially-failed queue
+- **#751** — Persist the active Work filter on the review queue so it survives navigation away and back
+- **#752** — Show the item count per Work in the Work filter chips so users can prioritise the biggest backlog
+- **#755** — Bring the same review-count tile to the web dashboard so desktop users see it too
+- **#756** — Let the review tile refresh instantly after the user resolves an item, so the count updates without waiting 60 seconds
+- **#758** — Show suggested searches on the intelligence page gap section so users see them in both places
+- **#759** — Add sample preview playback to the Read Aloud voice picker so users can hear a voice before choosing it
+- **#760** — Show the current voice and speed label on the Listen button so users know what's selected at a glance
+- **#770** — Show which VRAM detection method succeeded so users can tell if their value was measured or estimated
+- **#775** — Pre-load the Intelligence tab badge count without requiring the user to open the tab first
+- **#788** — Bring the same stall indicator to the web chat so desktop users get the same feedback
+- **#789** — Show elapsed send time on the stall caption so users know exactly how long they've been waiting
+- **#790** — Show the same 'Generating…' label on the web voice browser so desktop users get the same feedback
+- **#791** — Show estimated wait time on the 'Generating sample…' label so users know how long to expect
+- **#796** — Prevent the trailer pipeline from starting on a Work that is still being processed
+- **#801** — Catch a missing render-settings field before it silently produces 'None' in a shot prompt
+- **#807** — Let the Trailer Architect re-use the same book analysis and concept when regenerating — so only the plan changes, not the whole pipeline
+- **#809** — Show half-life strength bar on each concept so users can see how well they remember it
+- **#810** — Nightly review digest: email or push users when overdue concepts pile up
+- **#813** — Let authors edit prerequisite links between concepts so they can fix AI-assigned edges
+- **#814** — Show learners a breakdown of their mistake patterns so they know where to focus
+- **#815** — Let teachers see which concepts most students keep getting wrong
+- **#816** — Prevent Socratic follow-ups from appearing stale when the learner retries the same concept
+- **#817** — Show learners which questions were application-style so they can see how they perform under harder testing
+- **#819** — Let learners request an application question on demand so they can self-challenge before the auto threshold
+- **#824** — Let learners lock an interleaved session to specific concepts they want to drill together
+- **#825** — Show a rolling accuracy trend chart in the interleaved session summary so learners can see if they improved across the 10 questions
+- **#838** — Let authors pass a gate with a fill-placeholder warning so partially complete artifacts aren't quietly blocked
+- **#840** — Show which gate is currently open on the Work detail overview card so users don't miss the next step
+- **#857** — Prevent the web narrator picker from silently showing generic picks when a Work has no documents
+- **#858** — Warn users when a Work has too little content for a reliable narrator recommendation
+- **#862** — Prevent a single bad match card from silently collapsing the whole Voice Designer result
+- **#864** — Prevent the share button from silently delivering silence when synthesis produced zero usable segments
+- **#865** — Hide raw TTS segment clips from Recent Outputs so only the full narration and audiobooks appear
+- **#875** — Prevent the mini-player from covering tab labels by giving page content enough bottom padding when TTS is active
+- **#876** — Remember the user's last playback position so they can resume from where they left off after closing the app
+- **#883** — Pre-fill the first message when opening a Discuss chat from a research query so users don't start with a blank conversation
+- **#884** — Let web users correct a wrong memory fact inline too — not just mobile
+- **#886** — Show a blocker count badge on the Advance button so users know why the stage is stuck before tapping
+- **#889** — Show total word count and scene count for the whole book at the top of the chapter outline
+- **#893** — Let users pick a voice and speed for the trailer narration before playing it
+- **#894** — Prevent the narration from continuing after leaving the Trailer tab
+- **#895** — Let users expand concept nodes into a detailed study card directly from the dependency map
+- **#897** — Highlight the learning path from a locked concept back to its unlocking prerequisites on the dep map
+- **#898** — Give users a way to correct or delete individual memory entries from the chat panel
+- **#899** — Show the full bi-temporal history for any memory fact so users can see how it evolved
+- **#900** — Classify working-memory facts from long-lived ones so the system never retains session-only context
+- **#903** — Prune orphaned evidence rows nightly so unlinked source passages don't accumulate
+- **#912** — Prevent accidentally deleted audiobooks from being permanently lost with no way to recover them
+- **#918** — Show a filename and thumbnail while a file uploads so users know which file is in flight
+- **#919** — Cancel an in-progress import without waiting for all files to finish
+- **#920** — Let web users correct memory facts from the Settings page too, not just the chat panel
+- **#921** — Keep 'Previously:' visible after a page refresh when a memory is corrected
+- **#922** — Warn users before a rename silently overwrites another saved audiobook
+- **#923** — Let users queue saved audiobooks to play in sequence like a playlist
+- **#925** — Sort saved audiobooks by duration so users can find short or long chapters at a glance
+- **#926** — Prevent the 'ready' banner from disappearing before the user sees it if they switch apps again mid-dismiss
+- **#928** — Style the Approved and Rejected knowledge badges consistently with the rest of the VELLUM design
+- **#947** — Honour browser-level 'Reduce Motion' on web so users who set it in their browser (not OS) get static icons
+- **#948** — Let users swipe down to close the navigation menu instead of only tapping the backdrop
+- **#949** — Skip nav sheet animations for users who have motion sensitivity turned on
+- **#961** — Keep the Books card stage badge current when advancing a pipeline gate from the Work detail page
+- **#965** — Show a mini hover-card with the top knowledge items when the author pauses over the chapter badge
+- **#968** — Pre-seed the chapter research chat with actual knowledge items so the AI has context from the start
+- **#969** — Show the same word-count and chapter bars on the Work overview header so they're visible without opening the Completeness tab
+- **#972** — Show superseded duplicate knowledge items in the governance page so users can undo auto-retirements they disagree with
+- **#974** — Show cold knowledge items in the governance page so users can clean up their index
+- **#976** — Prune retrieval rows older than 90 days during nightshift so the table doesn't grow forever
+- **#977** — Prevent the chapter search from firing a new batch of fetches every time the user clears and re-types the same query
+- **#983** — Add equivalent polling tests for the web CompletenessTab so the refetchInterval guard has the same coverage
+- **#984** — Audit remaining VELLUM inline-styled interactive elements across works/ and system/ pages for missing hover states
+- **#986** — Dim (rather than fully hide) non-matching chapters during search so users can still see the full chapter list at a glance
+- **#995** — Let users jump to a specific knowledge item directly from the Governance audit log
+- **#1000** — Keep the Forge project status badge on the hub live while a build is running so it updates without pulling to refresh
+- **#1002** — Refresh the Governance prompt health card automatically when a new MCOS benchmark run finishes
+- **#1003** — Let users acknowledge a regression directly from the Governance prompt health card without navigating to MCOS
+- **#1005** — Copy the Forge preview URL to clipboard as a fallback when Share is unavailable on web
+- **#1009** — Apply the same inline validation pattern to other numeric inputs in the app so users get consistent real-time feedback everywhere
+- **#1017** — Show the full audit trail for any email so users can see every AI decision and action taken on it
+- **#1026** — Prevent a retry from sending if the nonce already expired — show a clear error instead of a silent failure
+- **#1028** — Prevent invalid context window values from being saved — reject negative numbers and non-numeric input before they reach the API
+- **#1081** — Roll out actionable error details and schema self-checks to the other MCOS panels
+- **#1092** — Let the weather card show temperatures in Celsius for metric users
+- **#1109** — Warn the learner up front when the AI is offline in a study session
+- **#1115** — Factor the repeated TTS test teardown into a shared helper
+- **#1119** — Alert users in their browser when documents and audiobooks finish processing
+- **#1125** — Show which engine actually narrated each finished audiobook
