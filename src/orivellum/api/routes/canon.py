@@ -76,6 +76,38 @@ def get_fact(fact_id: str, db=Depends(get_db)):
     return fact
 
 
+@router.get("/facts/{fact_id}/ripple")
+def fact_ripple(
+    fact_id: str,
+    work_id: str | None = Query(default=None),
+    depth: int | None = Query(default=None, ge=1, le=6),
+    db=Depends(get_db),
+):
+    """RIPPLE preview (E12): what changing/retracting this fact would cost.
+
+    Read-only — walks the ATLAS world graph from every node whose evidence
+    is linked to this fact and reports affected chapters, characters, and
+    downstream facts BEFORE any change is committed.  Series-scoped facts
+    (no work of their own) require an explicit ``work_id``.
+    """
+    from orivellum.capabilities.ripple import RippleError, simulate_ripple
+
+    fact = CanonStore(db).get_fact(fact_id)
+    if not fact:
+        raise HTTPException(404, f"Canon fact {fact_id!r} not found")
+    scope = work_id or fact.get("work_id")
+    if not scope:
+        raise HTTPException(
+            422,
+            "this fact is series-scoped — pass ?work_id= to choose the work "
+            "whose graph the ripple should walk",
+        )
+    try:
+        return simulate_ripple(db, scope, canon_fact_id=fact_id, depth=depth)
+    except RippleError as e:
+        raise HTTPException(422, str(e)) from e
+
+
 @router.post("/facts")
 def create_fact(req: FactCreate, db=Depends(get_db)):
     try:

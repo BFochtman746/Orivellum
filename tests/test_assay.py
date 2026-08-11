@@ -39,7 +39,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from orivellum.capabilities import assay
-from orivellum.capabilities.assay import drift, judge, metrics
+from orivellum.capabilities.assay import drift, force, judge, metrics
 from orivellum.database.db import OrivellumDB, _now
 
 # ── Fixture chapters ─────────────────────────────────────────────────────────
@@ -181,7 +181,10 @@ class TestRegistry(AssayBase):
         instruments = {i["key"]: i for i in self.db.list_assay_instruments()}
         self.assertEqual(set(instruments), set(assay.INSTRUMENT_KEYS))
         for inst in instruments.values():
-            self.assertEqual(inst["certification"], "advisory")
+            # FORCE detectors enter shadow on first registration (M16);
+            # everything else starts plain advisory.
+            expected = "shadow" if inst["key"] in force.FORCE_KEYS else "advisory"
+            self.assertEqual(inst["certification"], expected)
             self.assertIn(inst["tier"], (1, 2, 3))
             self.assertTrue(inst["purpose"])
             self.assertTrue(inst["allowed_ops"])

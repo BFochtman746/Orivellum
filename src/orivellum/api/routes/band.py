@@ -54,6 +54,30 @@ def band_chapter_overview(chapter_id: str):
         raise HTTPException(404, str(e)) from e
 
 
+@router.get("/band/chapters/{chapter_id}/ripple")
+def band_chapter_ripple(chapter_id: str, depth: int | None = None):
+    """Blast radius of editing this chapter (RIPPLE, E12) — read-only.
+
+    Called by the surgical-edit flow BEFORE an edit is applied: seeds the
+    world-graph walk with every node evidenced in this chapter and reports
+    the downstream chapters, characters, and canon facts whose evidence
+    depends on it.
+    """
+    from orivellum.capabilities.ripple import RippleError, ripple_for_chapter
+
+    db = get_db()
+    if depth is not None and not (1 <= depth <= 6):
+        raise HTTPException(422, "depth must be between 1 and 6")
+    try:
+        overview = get_chapter_overview(db, chapter_id)
+    except BandError as e:
+        raise HTTPException(404, str(e)) from e
+    try:
+        return ripple_for_chapter(db, overview["work_id"], chapter_id, depth=depth)
+    except RippleError as e:
+        raise HTTPException(422, str(e)) from e
+
+
 @router.get("/band/revisions/{revision_id}")
 def band_revision_detail(revision_id: str):
     db = get_db()

@@ -960,6 +960,38 @@ def get_entity(entity_id: str):
     return entity
 
 
+class RippleRequest(BaseModel):
+    node_id: str | None = None
+    canon_fact_id: str | None = None
+    name: str | None = Field(default=None, max_length=300)
+    depth: int | None = Field(default=None, ge=1, le=6)
+
+
+@router.post("/works/{work_id}/ripple")
+def works_ripple(work_id: str, req: RippleRequest):
+    """RIPPLE simulation (E12): blast radius of a proposed change.
+
+    Seed by exactly one of ``node_id``, ``canon_fact_id``, or ``name`` and
+    walk the ATLAS world graph outward.  Read-only — nothing is mutated;
+    the report shows what a change would cost before it is made.
+    """
+    from orivellum.capabilities.ripple import RippleError, simulate_ripple
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    try:
+        return simulate_ripple(
+            db, work_id,
+            node_id=req.node_id,
+            canon_fact_id=req.canon_fact_id,
+            name=req.name,
+            depth=req.depth,
+        )
+    except RippleError as e:
+        raise HTTPException(422, str(e)) from e
+
+
 @router.get("/graph")
 def global_graph(
     work_id: str | None = None,

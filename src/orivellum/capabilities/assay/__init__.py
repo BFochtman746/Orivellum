@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import drift, gates, judge, metrics, promotion
+from . import drift, force, gates, judge, metrics, promotion
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +312,101 @@ CONTRACTS: list[dict] = [
     },
 ]
 
+# ── FORCE — the Story Force engines 11–17 (archive E11 / M16) ────────────────
+#
+# All seven are Tier-2 advisory Engine Contracts recovered from the archive.
+# Per ENGINE_12's contract they are advisory/enforcement engines that
+# *escalate instead of mutating* — forbidden operations include authority
+# override, merge, lock, and silent mutation.  They enter shadow mode on
+# first registration (seed_instruments) and may block only after promotion.
+
+_FORCE_CONTRACT = {
+    "tier": 2,
+    "variance": "deterministic",
+    "allowed_ops": [
+        "read chapter text (per chapter and whole book)",
+        "compute deterministic story-force measures and curves",
+        "emit findings with verbatim quoted evidence and measures",
+        "escalate to author review — never mutate",
+    ],
+    "forbidden_ops": [
+        "authority override",
+        "merge, lock, or silent mutation of prose",
+        "block any transition while certification != certified",
+        "assert a detection without quoted evidence or measures",
+    ],
+    "authority_relationship": (
+        "Subordinate to the author; advisory/enforcement engine that "
+        "escalates instead of mutating. Tier 2: findings are evidence-"
+        "backed and dispositionable; blocks only once certified."
+    ),
+    "output_schema": _FINDING_SCHEMA,
+    "scope": {},
+    "origin": "Archive Story Force engines 11–17 (E11 / M16)",
+}
+
+_FORCE_SPECS: list[tuple[str, str, str, dict]] = [
+    (
+        "force.structural_enforcement",
+        "Force 11: Structural Enforcement",
+        "Detect chapter-length outliers against the book median and "
+        "monolithic chapters with no scene relief.",
+        {"max_length_ratio": 3.0, "min_length_ratio": 0.25, "monolith_min_words": 3000},
+    ),
+    (
+        "force.narrative_physics",
+        "Force 12: Narrative Physics",
+        "Actions must have visible consequences: flag long chapters whose "
+        "causal-connective density falls below floor.",
+        {"min_causal_per_1000_words": 1.5, "min_chapter_words": 800},
+    ),
+    (
+        "force.pressure_curve",
+        "Force 13: Pressure Curve",
+        "Trace the tension curve across the book; flag a flat curve and "
+        "mid-book pressure sags against the rolling mean.",
+        {"min_chapters_for_curve": 5, "flat_curve_max_cv": 0.25,
+         "sag_below_rolling_pct": 60.0},
+    ),
+    (
+        "force.conflict_escalation",
+        "Force 14: Conflict Escalation",
+        "Conflict density must rise into the final third; flag books that "
+        "never escalate and middle chapters with zero conflict signal.",
+        {"min_chapters_for_trend": 6, "min_chapter_words": 600},
+    ),
+    (
+        "force.scene_purpose",
+        "Force 15: Scene Purpose",
+        "Flag chapters that introduce nothing new, carry no conflict or "
+        "tension, and contain no dialogue — no visible purpose signal.",
+        {"min_chapter_words": 400},
+    ),
+    (
+        "force.story_momentum",
+        "Force 16: Story Momentum",
+        "Flag stalled chapters (long sentences, no dialogue, no tension) "
+        "and consecutive-stall flatlines at story level.",
+        {"min_chapter_words": 600, "stall_mean_sentence_words": 22.0,
+         "stall_max_dialogue_ratio": 0.02, "stall_max_tension_per_1k": 1.0,
+         "flatline_consecutive": 3},
+    ),
+    (
+        "force.theme_integrity",
+        "Force 17: Theme Integrity",
+        "Derive recurring motifs from the opening third and flag later "
+        "chapters where every motif has vanished.",
+        {"min_chapters_for_theme": 6, "min_chapter_words": 400,
+         "motif_min_word_length": 5, "motif_presence_ratio": 0.5, "max_motifs": 8},
+    ),
+]
+
+CONTRACTS.extend(
+    {"key": key, "name": name, "purpose": purpose, "thresholds": thresholds,
+     **_FORCE_CONTRACT}
+    for key, name, purpose, thresholds in _FORCE_SPECS
+)
+
 INSTRUMENT_KEYS = [c["key"] for c in CONTRACTS]
 
 
@@ -326,7 +421,30 @@ def seed_instruments(db: Any) -> int:
     for contract in CONTRACTS:
         db.upsert_assay_instrument(contract)
         count += 1
+    _enter_force_shadow(db)
     return count
+
+
+def _enter_force_shadow(db: Any) -> None:
+    """FORCE detectors start in shadow mode, not plain advisory (M16).
+
+    Only an instrument that has NEVER had a certification transition is
+    moved — an author's deliberate demotion to advisory (which leaves a
+    ledger row) is never overridden by a re-seed.
+    """
+    for key in force.FORCE_KEYS:
+        instrument = db.get_assay_instrument(key)
+        if instrument is None or instrument["certification"] != "advisory":
+            continue
+        if db.list_assay_certification_events(instrument["id"]):
+            continue
+        try:
+            db.set_assay_certification(
+                key, "shadow", actor="system",
+                note="FORCE detectors shadow-test before certification (M16)",
+            )
+        except (ValueError, RuntimeError) as exc:  # lost race — next seed retries
+            logger.warning("assay: force shadow entry for %s skipped: %s", key, exc)
 
 
 # ── Chapter access ───────────────────────────────────────────────────────────
@@ -505,6 +623,8 @@ def _dispatch(
         return _run_signature_gate(db, cfg, key, work_id, scope, thresholds)
     if key == "judge.hierarchical":
         return _run_judge(db, cfg, work_id, chapter_id, thresholds)
+    if key in force.DETECTORS:
+        return _run_force(db, key, work_id, chapter_id, thresholds)
     raise AssayError(f"instrument {key!r} has no runner")
 
 
@@ -594,6 +714,19 @@ def _run_drift(
         "evidence": {"chapters_checked": len(chapters), "chapters_flagged": flagged},
         "findings": findings,
     }
+
+
+def _run_force(
+    db: Any, key: str, work_id: str, chapter_id: str | None, thresholds: dict
+) -> dict:
+    # FORCE curves are book-level: always load the WHOLE book (a chapter-
+    # scoped run still needs the full context, it just reports one chapter).
+    if chapter_id is not None:
+        _load_chapters(db, work_id, chapter_id)  # 404 the bad chapter early
+    chapters = _load_chapters(db, work_id)
+    if not chapters:
+        return {"verdict": "no_chapters", "score": None, "evidence": {}, "findings": []}
+    return force.run_detector(key, chapters, thresholds, chapter_id=chapter_id)
 
 
 def _run_d13(db: Any, work_id: str, scope: dict, thresholds: dict) -> dict:

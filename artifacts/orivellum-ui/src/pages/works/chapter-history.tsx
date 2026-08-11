@@ -33,6 +33,9 @@ import {
   Sparkles,
   User,
   Bookmark,
+  Waves,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -77,6 +80,24 @@ interface EditResult {
   };
   revision?: { rev: number };
   demoted_from_approved?: boolean;
+}
+
+interface RippleChapter {
+  chapter_id: string;
+  seq: number | null;
+  title: string;
+  nodes: string[];
+  evidence: string[];
+}
+
+interface RippleReport {
+  seeds: { name: string }[];
+  affected_chapters: RippleChapter[];
+  affected_characters: { name: string; depth: number }[];
+  affected_facts: { canon_fact_id: string; statement?: string; via_nodes: string[] }[];
+  counts: { nodes: number; chapters: number; characters: number; facts: number };
+  truncated: boolean;
+  note?: string;
 }
 
 // ─── Sentence-level diff (LCS on sentence units — chapters stay tractable) ───
@@ -252,6 +273,101 @@ function utf16ToCodePoints(text: string, utf16Offset: number): number {
   return cp;
 }
 
+/** Blast radius of editing this chapter (RIPPLE, E12) — shown BEFORE the
+ *  edit is applied so the author can see what downstream prose depends on
+ *  what they are about to change. Read-only; failure to load never blocks
+ *  the edit itself. */
+function RippleSummary({ chapterId }: { chapterId: string }) {
+  const [open, setOpen] = useState(false);
+  const { data: ripple, isLoading, isError } = useQuery<RippleReport>({
+    queryKey: ["band-ripple", chapterId],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/band/chapters/${chapterId}/ripple`);
+      if (!r.ok) throw new Error(`ripple failed (${r.status})`);
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="text-[11px] font-mono text-muted-foreground flex items-center gap-1.5">
+        <Loader2 className="w-3 h-3 animate-spin" /> Simulating ripple…
+      </div>
+    );
+  }
+  if (isError || !ripple) {
+    return (
+      <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+        <Waves className="w-3 h-3" /> Ripple simulation unavailable — editing is not blocked.
+      </div>
+    );
+  }
+  const { counts } = ripple;
+  const empty = counts.chapters === 0 && counts.characters === 0 && counts.facts === 0;
+  return (
+    <div className="border rounded-lg p-2.5 space-y-1.5 bg-card/40">
+      <button
+        type="button"
+        className="w-full flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Waves className="w-3.5 h-3.5" style={{ color: "var(--gilt, #b8952e)" }} />
+        Blast radius
+        <span className="normal-case tracking-normal font-sans text-[11px] text-foreground/80 ml-1">
+          {empty
+            ? ripple.note
+              ? "no graph evidence for this chapter"
+              : "nothing outside this chapter depends on it"
+            : `${counts.chapters} chapter${counts.chapters === 1 ? "" : "s"} · ${counts.characters} character${counts.characters === 1 ? "" : "s"} · ${counts.facts} fact${counts.facts === 1 ? "" : "s"}`}
+          {ripple.truncated ? " (truncated)" : ""}
+        </span>
+        {!empty && (open
+          ? <ChevronUp className="w-3 h-3 ml-auto" />
+          : <ChevronDown className="w-3 h-3 ml-auto" />)}
+      </button>
+      {open && !empty && (
+        <div className="space-y-1.5 pl-5">
+          {ripple.affected_chapters.length > 0 && (
+            <div className="text-[11px]">
+              <span className="font-mono uppercase tracking-widest text-[9px] text-muted-foreground">Chapters · </span>
+              {ripple.affected_chapters.slice(0, 12).map((c) => (
+                <span key={c.chapter_id} className="mr-2">
+                  {c.seq != null ? `Ch. ${c.seq}` : c.title || c.chapter_id.slice(0, 6)}
+                  <span className="text-muted-foreground"> ({c.nodes.slice(0, 3).join(", ")}{c.nodes.length > 3 ? "…" : ""})</span>
+                </span>
+              ))}
+              {ripple.affected_chapters.length > 12 && (
+                <span className="text-muted-foreground">+{ripple.affected_chapters.length - 12} more</span>
+              )}
+            </div>
+          )}
+          {ripple.affected_characters.length > 0 && (
+            <div className="text-[11px]">
+              <span className="font-mono uppercase tracking-widest text-[9px] text-muted-foreground">Characters · </span>
+              {ripple.affected_characters.slice(0, 10).map((c) => c.name).join(", ")}
+              {ripple.affected_characters.length > 10 ? "…" : ""}
+            </div>
+          )}
+          {ripple.affected_facts.length > 0 && (
+            <div className="text-[11px] space-y-0.5">
+              <span className="font-mono uppercase tracking-widest text-[9px] text-muted-foreground">Canon facts</span>
+              {ripple.affected_facts.slice(0, 5).map((f) => (
+                <div key={f.canon_fact_id} className="font-serif italic text-muted-foreground truncate">
+                  “{f.statement || f.canon_fact_id}”
+                </div>
+              ))}
+              {ripple.affected_facts.length > 5 && (
+                <div className="text-muted-foreground">+{ripple.affected_facts.length - 5} more</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EditPanel({ data, onDone }: { data: ChapterOverview; onDone: () => void }) {
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
   const [instruction, setInstruction] = useState("");
@@ -310,6 +426,7 @@ function EditPanel({ data, onDone }: { data: ChapterOverview; onDone: () => void
 
   return (
     <div className="space-y-3">
+      <RippleSummary chapterId={data.chapter_id} />
       <div>
         <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-1">
           1 · Select the passage to change (the band)
