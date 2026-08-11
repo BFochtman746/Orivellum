@@ -85,6 +85,7 @@
 - [No-robot-voice policy](orivellum-no-robot-voice.md) — espeak banned from all audible paths; 503 + client pause-and-retry; never relabel/serve legacy espeak audio; segment failure must raise, not skip.
 - [Book & trailer packaging](orivellum-packaging.md) — stdlib EPUB rules (mimetype first/stored, strip C0 chars); idle-guarded stale-run recovery; downloads via apiFetch blob, never bare window.open.
 - [Commonplace notes](orivellum-commonplace.md) — server-owned category policy; marker-idempotent vault; approval = atomic claim + replayable complete_approval; action provenance guard.
+- [Per-Work Studio settings](orivellum-studio-settings.md) — works.meta prefs auto-persist via debounced latest-wins sync classes with load-baseline guards; casting PUT allows narrator-only partial saves.
 - [Spatial audiobook rendering](orivellum-spatial-audio.md) — pan per-render temp copies at concat (dry cache untouched, all-or-nothing); spatial failures always fall back to plain render; UI must gate overrides on settings resolution.
 - [GitHub CI rules](orivellum-ci.md) — runners lack ffmpeg/kokoro/secrets; pnpm needs packageManager pin + lib build before tsc; never patch one target from concurrent coroutines (leaks mocks).
 - [Quality gates (8-phase CI)](orivellum-quality-gates.md) — shrink-only baselines + lint ratchet; mutmut 3 config quirks; fail-closed gate rule; GENESIS ledger hash bug lesson.
