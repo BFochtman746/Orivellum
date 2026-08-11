@@ -172,6 +172,50 @@ class TestSimulateRipple(RippleBase):
         with self.assertRaises(RippleError):
             simulate_ripple(self.db, self.work_id, name="Mara", depth=0)
 
+    def test_output_identical_when_loader_order_is_scrambled(self):
+        """Determinism must not depend on the DB's edge/node ordering —
+        a reversed loader feed yields the byte-identical report."""
+        from unittest.mock import patch
+
+        baseline = simulate_ripple(self.db, self.work_id,
+                                   canon_fact_id=self.fact_id, depth=4)
+        real_edges = self.db.list_graph_edges
+        real_nodes = self.db.list_graph_nodes
+
+        def rev_edges(**kw):
+            return list(reversed(real_edges(**kw)))
+
+        def rev_nodes(**kw):
+            return list(reversed(real_nodes(**kw)))
+
+        with patch.object(self.db, "list_graph_edges", rev_edges), \
+             patch.object(self.db, "list_graph_nodes", rev_nodes):
+            scrambled = simulate_ripple(self.db, self.work_id,
+                                        canon_fact_id=self.fact_id, depth=4)
+        self.assertEqual(baseline, scrambled)
+
+    def test_saturated_edge_load_is_reported_truncated(self):
+        """The DB clamps edge queries at 20 000: a graph at or beyond that
+        ceiling must NEVER be reported as a complete blast radius."""
+        rows = [
+            (
+                f"bulk-{i:06d}", self.work_id, self.ch[1],
+                self.mara, self.key, "references", "inter_event",
+                "bulk evidence.", 0, f"2026-01-01T00:00:{i % 60:02d}",
+            )
+            for i in range(20_001)
+        ]
+        with self.db._lock:
+            self.db._conn.executemany(
+                """INSERT INTO graph_edge(id, work_id, chapter_id, src, dst,
+                   edge_type, edge_group, evidence_quote, evidence_offset,
+                   created_at) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                rows,
+            )
+            self.db._conn.commit()
+        r = simulate_ripple(self.db, self.work_id, node_id=self.mara, depth=2)
+        self.assertTrue(r["truncated"])
+
     def test_output_is_deterministic(self):
         # Multi-seed walks must not depend on set/hash iteration order.
         runs = [

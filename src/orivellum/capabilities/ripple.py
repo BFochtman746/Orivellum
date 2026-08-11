@@ -27,8 +27,12 @@ from typing import Any
 DEFAULT_DEPTH = 3
 MAX_DEPTH = 6
 MAX_NODES = 500
+# These MUST match the hard clamps inside OrivellumDB.list_graph_nodes /
+# list_graph_edges (10 000 / 20 000).  Asking for more than the DB will
+# ever return would make saturation undetectable — a load that fills the
+# effective ceiling must always be reported as truncated.
 _NODE_LIMIT = 10_000
-_EDGE_LIMIT = 40_000
+_EDGE_LIMIT = 20_000
 
 
 class RippleError(ValueError):
@@ -245,7 +249,7 @@ def _report(
 
     characters = sorted(
         (_node_view(nid) for nid in affected if nodes[nid]["node_type"] == "Character"),
-        key=lambda c: (c["depth"], c["name"]),
+        key=lambda c: (c["depth"], c["name"], c["node_id"]),
     )
 
     fact_ids = {
@@ -277,10 +281,13 @@ def _report(
                    key=lambda f: f["canon_fact_id"])
 
     return {
-        "seeds": [_node_view(nid) for nid in seed_ids if nid in nodes],
+        # Deterministic output everywhere: unique id tie-breakers so
+        # same-depth / same-name rows and set iteration order can never
+        # change the report between runs or interpreter processes.
+        "seeds": [_node_view(nid) for nid in sorted(seed_ids) if nid in nodes],
         "affected_nodes": sorted(
             (_node_view(nid) for nid in affected),
-            key=lambda v: (v["depth"], v["name"]),
+            key=lambda v: (v["depth"], v["name"], v["node_id"]),
         ),
         "affected_chapters": chapters,
         "affected_characters": characters,
