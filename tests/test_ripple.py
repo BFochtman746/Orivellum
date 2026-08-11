@@ -134,6 +134,10 @@ class TestSimulateRipple(RippleBase):
         ch3 = next(c for c in r["affected_chapters"] if c["seq"] == 3)
         self.assertIn("Tobin", ch3["nodes"])
         self.assertTrue(ch3["evidence"])
+        # Every affected chapter carries an evidence PATH back to the seed.
+        for c in r["affected_chapters"]:
+            self.assertTrue(c["path"])
+            self.assertTrue(all(h["evidence_quote"] for h in c["path"]))
         self.assertEqual(
             {c["name"] for c in r["affected_characters"]}, {"Mara", "Tobin"}
         )
@@ -147,6 +151,9 @@ class TestSimulateRipple(RippleBase):
         self.assertEqual(facts[0]["canon_fact_id"], self.fact_id)
         self.assertEqual(facts[0]["statement"], "The Iron Key opens the Gate.")
         self.assertIn("Iron Key", facts[0]["via_nodes"])
+        # The fact carries the evidence path of its shallowest carrier node.
+        self.assertTrue(facts[0]["path"])
+        self.assertEqual(facts[0]["path"][0]["from_name"], "Tobin")
 
     def test_refusals_are_loud(self):
         with self.assertRaises(RippleError):
@@ -164,6 +171,15 @@ class TestSimulateRipple(RippleBase):
             simulate_ripple(self.db, empty_work, name="Mara")
         with self.assertRaises(RippleError):
             simulate_ripple(self.db, self.work_id, name="Mara", depth=0)
+
+    def test_output_is_deterministic(self):
+        # Multi-seed walks must not depend on set/hash iteration order.
+        runs = [
+            simulate_ripple(self.db, self.work_id, canon_fact_id=self.fact_id, depth=4)
+            for _ in range(3)
+        ]
+        self.assertEqual(runs[0], runs[1])
+        self.assertEqual(runs[1], runs[2])
 
     def test_truncation_is_reported(self):
         r = simulate_ripple(self.db, self.work_id, node_id=self.mara,

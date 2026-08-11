@@ -228,6 +228,23 @@ def _curve(profiles: list[dict], key: str) -> list[dict]:
     ]
 
 
+def _story_evidence(p: dict, hits_key: str | None = None) -> dict:
+    """Grounded evidence for a story-level finding: a verbatim quote from a
+    representative chapter (never an empty quote — the contract forbids
+    asserting a detection without quoted evidence)."""
+    ev: dict = {
+        "evidence_chapter": p["seq"],
+        "evidence_chapter_id": p["chapter_id"],
+    }
+    hits = p.get(hits_key) if hits_key else None
+    if hits:
+        off, _ = hits[0]
+        ev.update(_quote_at(p["text"], off))
+    else:
+        ev.update(_opening_quote(p["text"]))
+    return ev
+
+
 # ── Engine 11 — Structural Enforcement ───────────────────────────────────────
 
 
@@ -309,12 +326,14 @@ def detect_pressure_curve(profiles: list[dict], th: dict) -> tuple[list[dict], d
             summary["mean"] = round(mean, 2)
             summary["cv"] = round(cv, 3)
             if cv < flat_cv:
+                live_now = [p for p in profiles if p["words"] > 0]
+                rep = min(live_now, key=lambda p: abs(p["tension_per_1k"] - mean))
                 findings.append(
                     _finding(None, "flat_pressure_curve", "medium",
                              {"measures": {"coefficient_of_variation": round(cv, 3),
                                            "flat_ceiling": flat_cv,
                                            "mean_tension_per_1k": round(mean, 2)},
-                              "quote": "", "offset": 0})
+                              **_story_evidence(rep, "tension_hits")})
                 )
         # Mid-book sag against the rolling mean of the previous 3 chapters.
         live = [p for p in profiles if p["words"] > 0]
@@ -351,11 +370,12 @@ def detect_conflict_escalation(profiles: list[dict], th: dict) -> tuple[list[dic
         summary["first_third_mean"] = round(first_mean, 2)
         summary["final_third_mean"] = round(final_mean, 2)
         if final_mean <= first_mean and first_mean > 0:
+            rep = min(live[-third:], key=lambda p: p["conflict_per_1k"])
             findings.append(
                 _finding(None, "no_conflict_escalation", "medium",
                          {"measures": {"first_third_mean": round(first_mean, 2),
                                        "final_third_mean": round(final_mean, 2)},
-                          "quote": "", "offset": 0})
+                          **_story_evidence(rep, "conflict_hits")})
             )
         # Middle-third chapters with zero conflict signal.
         for p in live[third : len(live) - third]:
@@ -408,6 +428,7 @@ def detect_story_momentum(profiles: list[dict], th: dict) -> tuple[list[dict], d
     flatline_run = int(th.get("flatline_consecutive", 3))
     findings: list[dict] = []
     stalled_seqs: list[int] = []
+    stalled_by_seq: dict[int, dict] = {}
     for p in profiles:
         if p["words"] < min_words:
             continue
@@ -418,6 +439,7 @@ def detect_story_momentum(profiles: list[dict], th: dict) -> tuple[list[dict], d
         )
         if is_stalled:
             stalled_seqs.append(p["seq"])
+            stalled_by_seq[p["seq"]] = p
             findings.append(
                 _finding(p, "momentum_stall", "medium",
                          {"measures": {"mean_sentence_words": p["sentences"]["mean"],
@@ -434,7 +456,7 @@ def detect_story_momentum(profiles: list[dict], th: dict) -> tuple[list[dict], d
                 _finding(None, "momentum_flatline", "high",
                          {"measures": {"consecutive_stalled": flatline_run,
                                        "ending_chapter": b},
-                          "quote": "", "offset": 0})
+                          **_story_evidence(stalled_by_seq[b])})
             )
             break
     return findings, {"stalled_chapters": stalled_seqs}

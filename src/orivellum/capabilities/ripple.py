@@ -35,10 +35,14 @@ class RippleError(ValueError):
     """The simulation cannot run as requested (bad seed / no graph)."""
 
 
-def _load_graph(db: Any, work_id: str) -> tuple[dict[str, dict], list[dict]]:
+def _load_graph(db: Any, work_id: str) -> tuple[dict[str, dict], list[dict], bool]:
+    """Load the work's graph.  The third value reports whether either
+    loader ceiling was hit — a capped load means the blast radius may be
+    incomplete and the report must say so (never a silently partial walk)."""
     nodes = {n["id"]: n for n in db.list_graph_nodes(work_ids=[work_id], limit=_NODE_LIMIT)}
     edges = db.list_graph_edges(work_ids=[work_id], limit=_EDGE_LIMIT)
-    return nodes, edges
+    capped = len(nodes) >= _NODE_LIMIT or len(edges) >= _EDGE_LIMIT
+    return nodes, edges, capped
 
 
 def _resolve_seeds(
@@ -56,7 +60,10 @@ def _resolve_seeds(
             raise RippleError(f"graph node {node_id!r} not found in this work")
         return [node]
     if canon_fact_id is not None:
-        seeds = [n for n in nodes.values() if n.get("canon_fact_id") == canon_fact_id]
+        seeds = sorted(
+            (n for n in nodes.values() if n.get("canon_fact_id") == canon_fact_id),
+            key=lambda n: n["id"],
+        )
         if not seeds:
             raise RippleError(
                 "no graph nodes are linked to that canon fact in this work — "
@@ -66,7 +73,10 @@ def _resolve_seeds(
     low = (name or "").strip().lower()
     if not low:
         raise RippleError("name must not be empty")
-    seeds = [n for n in nodes.values() if (n.get("name") or "").strip().lower() == low]
+    seeds = sorted(
+        (n for n in nodes.values() if (n.get("name") or "").strip().lower() == low),
+        key=lambda n: n["id"],
+    )
     if not seeds:
         raise RippleError(f"no graph node named {name!r} in this work")
     return seeds
@@ -87,16 +97,18 @@ def _walk(
     stored direction so the path stays readable.
     """
     adjacency: dict[str, list[tuple[str, dict, str]]] = {}
-    for e in edges:
+    # Deterministic walk: edges sorted by (created_at, id), seeds sorted by
+    # id — hash order must never decide which shortest path is retained.
+    for e in sorted(edges, key=lambda e: (e.get("created_at") or "", e["id"])):
         src, dst = e.get("src"), e.get("dst")
         if src in nodes and dst in nodes:
             adjacency.setdefault(src, []).append((dst, e, "out"))
             adjacency.setdefault(dst, []).append((src, e, "in"))
     reached: dict[str, dict] = {
-        nid: {"depth": 0, "path": []} for nid in seed_ids if nid in nodes
+        nid: {"depth": 0, "path": []} for nid in sorted(seed_ids) if nid in nodes
     }
+    truncated = len(reached) > max_nodes
     queue: deque[str] = deque(reached)
-    truncated = False
     while queue:
         cur = queue.popleft()
         entry = reached[cur]
@@ -188,24 +200,32 @@ def _report(
 
     # Affected chapters: every chapter that holds an affected node or an
     # evidence hop on a path — that prose depends on the changed thing.
+    # Each chapter carries the evidence PATH of its shallowest affected
+    # node, so every reported impact traces back to the seed.
     chapter_hits: dict[str, dict] = {}
 
-    def _touch_chapter(cid: str | None, *, node_name: str | None, quote: str) -> None:
+    def _touch_chapter(
+        cid: str | None, *, node_name: str | None, quote: str, via_nid: str
+    ) -> None:
         if not cid or cid == exclude_chapter_id:
             return
-        hit = chapter_hits.setdefault(cid, {"nodes": set(), "evidence": []})
+        hit = chapter_hits.setdefault(
+            cid, {"nodes": set(), "evidence": [], "best_nid": via_nid}
+        )
         if node_name:
             hit["nodes"].add(node_name)
         if quote and len(hit["evidence"]) < 5 and quote not in hit["evidence"]:
             hit["evidence"].append(quote)
+        if reached[via_nid]["depth"] < reached[hit["best_nid"]]["depth"]:
+            hit["best_nid"] = via_nid
 
-    for nid, r in affected.items():
-        n = nodes[nid]
+    for nid in sorted(affected, key=lambda i: (reached[i]["depth"], i)):
+        n, r = nodes[nid], affected[nid]
         _touch_chapter(n.get("chapter_id"), node_name=n["name"],
-                       quote=n.get("evidence_quote") or "")
+                       quote=n.get("evidence_quote") or "", via_nid=nid)
         for hop in r["path"]:
             _touch_chapter(hop["chapter_id"], node_name=hop["to_name"],
-                           quote=hop["evidence_quote"])
+                           quote=hop["evidence_quote"], via_nid=nid)
 
     meta = _chapter_meta(db, set(chapter_hits))
     chapters = sorted(
@@ -216,10 +236,11 @@ def _report(
                 "title": meta.get(cid, {}).get("title", ""),
                 "nodes": sorted(hit["nodes"]),
                 "evidence": hit["evidence"],
+                "path": reached[hit["best_nid"]]["path"],
             }
             for cid, hit in chapter_hits.items()
         ),
-        key=lambda c: (c["seq"] is None, c["seq"]),
+        key=lambda c: (c["seq"] is None, c["seq"], c["chapter_id"]),
     )
 
     characters = sorted(
@@ -238,20 +259,22 @@ def _report(
     }
     fact_ids -= seed_fact_ids
     fmeta = _fact_meta(db, fact_ids)
-    facts = sorted(
-        (
-            {
-                "canon_fact_id": fid,
-                **fmeta.get(fid, {}),
-                "via_nodes": sorted(
-                    nodes[nid]["name"] for nid in affected
-                    if nodes[nid].get("canon_fact_id") == fid
-                ),
-            }
-            for fid in fact_ids
-        ),
-        key=lambda f: f["canon_fact_id"],
-    )
+
+    def _fact_view(fid: str) -> dict:
+        via = sorted(
+            (nid for nid in affected if nodes[nid].get("canon_fact_id") == fid),
+            key=lambda nid: (reached[nid]["depth"], nid),
+        )
+        return {
+            "canon_fact_id": fid,
+            **fmeta.get(fid, {}),
+            "via_nodes": sorted(nodes[nid]["name"] for nid in via),
+            # Evidence path of the shallowest node carrying this fact.
+            "path": reached[via[0]]["path"] if via else [],
+        }
+
+    facts = sorted((_fact_view(fid) for fid in fact_ids),
+                   key=lambda f: f["canon_fact_id"])
 
     return {
         "seeds": [_node_view(nid) for nid in seed_ids if nid in nodes],
@@ -284,7 +307,7 @@ def simulate_ripple(
 ) -> dict:
     """Blast radius of changing one node / canon fact / named entity."""
     max_depth = _clamp(depth, DEFAULT_DEPTH, MAX_DEPTH)
-    nodes, edges = _load_graph(db, work_id)
+    nodes, edges, capped = _load_graph(db, work_id)
     if not nodes:
         raise RippleError(
             "this work has no ATLAS graph yet — build the world graph first"
@@ -293,7 +316,7 @@ def simulate_ripple(
     seed_ids = {s["id"] for s in seeds}
     reached, truncated = _walk(nodes, edges, seed_ids, max_depth=max_depth,
                                max_nodes=max_nodes)
-    report = _report(db, nodes, reached, seed_ids, truncated=truncated)
+    report = _report(db, nodes, reached, seed_ids, truncated=truncated or capped)
     report["work_id"] = work_id
     report["depth"] = max_depth
     return report
@@ -310,8 +333,11 @@ def ripple_for_chapter(
     """Blast radius of editing one chapter: seed with every node evidenced
     there and report only what lies OUTSIDE the chapter being edited."""
     max_depth = _clamp(depth, 2, MAX_DEPTH)
-    nodes, edges = _load_graph(db, work_id)
-    seeds = [n for n in nodes.values() if n.get("chapter_id") == chapter_id]
+    nodes, edges, capped = _load_graph(db, work_id)
+    seeds = sorted(
+        (n for n in nodes.values() if n.get("chapter_id") == chapter_id),
+        key=lambda n: n["id"],
+    )
     if not seeds:
         return {
             "work_id": work_id,
@@ -333,7 +359,7 @@ def ripple_for_chapter(
     seed_ids = {s["id"] for s in seeds}
     reached, truncated = _walk(nodes, edges, seed_ids, max_depth=max_depth,
                                max_nodes=max_nodes)
-    report = _report(db, nodes, reached, seed_ids, truncated=truncated,
+    report = _report(db, nodes, reached, seed_ids, truncated=truncated or capped,
                      exclude_chapter_id=chapter_id)
     report["work_id"] = work_id
     report["chapter_id"] = chapter_id

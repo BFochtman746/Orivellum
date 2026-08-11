@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useGdDark } from "@/lib/useGdDark";
 import { toast } from "sonner";
 import {
-  ScrollText, Loader2, Plus, X, ShieldCheck, Landmark, Sparkles, GitBranch,
+  ScrollText, Loader2, Plus, X, ShieldCheck, Landmark, Sparkles, GitBranch, Waves,
 } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -59,7 +59,89 @@ const CLASS_META: Record<Classification, { label: string; icon: typeof Landmark;
 
 const CLASSIFICATIONS: Classification[] = ["HISTORICAL", "INFERRED", "INVENTED"];
 
-function FactCard({ fact }: { fact: CanonFact }) {
+interface RippleReport {
+  affected_chapters: { chapter_id: string; seq: number | null; title: string; nodes: string[] }[];
+  affected_characters: { name: string }[];
+  affected_facts: { canon_fact_id: string; statement?: string }[];
+  counts: { nodes: number; chapters: number; characters: number; facts: number };
+  truncated: boolean;
+}
+
+/** Blast radius of changing this canon fact (RIPPLE, E12): which chapters,
+ *  characters, and downstream facts depend on it — reported BEFORE any
+ *  change is committed. Loaded on demand; a fact with no graph link
+ *  reports that refusal verbatim. */
+function FactRipple({ fact, fallbackWorkId }: { fact: CanonFact; fallbackWorkId: string | null }) {
+  const [open, setOpen] = useState(false);
+  const workId = fact.work_id ?? fallbackWorkId;
+  const { data, isLoading, error } = useQuery<RippleReport>({
+    queryKey: ["canon-ripple", fact.id, workId],
+    enabled: open && !!workId,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      const params = workId && !fact.work_id ? `?work_id=${workId}` : "";
+      const r = await apiFetch(`${BASE}/canon/facts/${fact.id}/ripple${params}`);
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        throw new Error(j?.detail || `ripple failed (${r.status})`);
+      }
+      return r.json();
+    },
+  });
+
+  if (!workId) return null; // series fact with no book selected — no scope to walk
+  return (
+    <div className="pt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-muted-foreground hover:text-foreground"
+        data-testid={`ripple-${fact.id}`}
+      >
+        <Waves className="w-3 h-3" style={{ color: "var(--gilt)" }} />
+        {open ? "Hide ripple" : "Preview ripple"}
+      </button>
+      {open && (
+        <div className="mt-1.5 text-[11px] space-y-1">
+          {isLoading && (
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+              <Loader2 className="w-3 h-3 animate-spin" /> Walking the world graph…
+            </span>
+          )}
+          {error instanceof Error && (
+            <span className="text-muted-foreground">{error.message}</span>
+          )}
+          {data && (
+            <>
+              <div className="text-foreground/80">
+                {data.counts.chapters} chapter{data.counts.chapters === 1 ? "" : "s"} ·{" "}
+                {data.counts.characters} character{data.counts.characters === 1 ? "" : "s"} ·{" "}
+                {data.counts.facts} downstream fact{data.counts.facts === 1 ? "" : "s"}
+                {data.truncated ? " (truncated)" : ""}
+              </div>
+              {data.affected_chapters.length > 0 && (
+                <div className="text-muted-foreground">
+                  {data.affected_chapters.slice(0, 8).map((c) =>
+                    c.seq != null ? `Ch. ${c.seq}` : c.title || c.chapter_id.slice(0, 6)
+                  ).join(", ")}
+                  {data.affected_chapters.length > 8 ? ` +${data.affected_chapters.length - 8} more` : ""}
+                </div>
+              )}
+              {data.affected_characters.length > 0 && (
+                <div className="text-muted-foreground">
+                  Characters: {data.affected_characters.map((c) => c.name).join(", ")}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FactCard({ fact, fallbackWorkId }: { fact: CanonFact; fallbackWorkId: string | null }) {
   const meta = CLASS_META[fact.classification];
   const Icon = meta.icon;
   const dimmed = fact.status !== "active";
@@ -99,6 +181,7 @@ function FactCard({ fact }: { fact: CanonFact }) {
         )}
         {fact.superseded_by && <span className="font-mono text-[11px]">revised</span>}
       </div>
+      {fact.status === "active" && <FactRipple fact={fact} fallbackWorkId={fallbackWorkId} />}
     </div>
   );
 }
@@ -241,7 +324,7 @@ export default function CanonPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {facts.map((f) => <FactCard key={f.id} fact={f} />)}
+          {facts.map((f) => <FactCard key={f.id} fact={f} fallbackWorkId={workFilter} />)}
         </div>
       )}
     </div>

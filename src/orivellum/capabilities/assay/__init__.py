@@ -443,8 +443,19 @@ def _enter_force_shadow(db: Any) -> None:
                 key, "shadow", actor="system",
                 note="FORCE detectors shadow-test before certification (M16)",
             )
-        except (ValueError, RuntimeError) as exc:  # lost race — next seed retries
-            logger.warning("assay: force shadow entry for %s skipped: %s", key, exc)
+        except (ValueError, RuntimeError) as exc:
+            # Only a genuinely lost race is tolerable: someone else moved
+            # the instrument out of plain-advisory concurrently.  Anything
+            # else (a real write failure leaving the instrument advisory)
+            # must fail the seed loudly — "starting in shadow" is a
+            # guarantee, not a hope.
+            current = db.get_assay_instrument(key)
+            if current is not None and current["certification"] != "advisory":
+                logger.info("assay: force shadow entry for %s lost race: %s", key, exc)
+                continue
+            raise AssayError(
+                f"FORCE instrument {key!r} could not enter shadow mode: {exc}"
+            ) from exc
 
 
 # ── Chapter access ───────────────────────────────────────────────────────────

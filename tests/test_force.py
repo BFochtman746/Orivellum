@@ -105,6 +105,9 @@ class TestForceDetectorsUnit(unittest.TestCase):
         story = next(f for f in r["findings"] if f["issue_type"] == "flat_pressure_curve")
         self.assertEqual(story["unit"], "story")
         self.assertIsNone(story["chapter_id"])
+        # Story-level detections still carry grounded, quoted evidence.
+        self.assertTrue(story["evidence"]["quote"])
+        self.assertIn("evidence_chapter", story["evidence"])
         self.assertIn("curve", r["evidence"]["summary"])
 
     def test_pressure_sag_against_rolling_mean(self):
@@ -123,6 +126,8 @@ class TestForceDetectorsUnit(unittest.TestCase):
         issues = _issues(r)
         self.assertIn("no_conflict_escalation", issues)
         self.assertIn("conflict_absent", issues)
+        for f in r["findings"]:
+            self.assertTrue(f["evidence"]["quote"], f["issue_type"])
 
     def test_conflict_escalation_clean_when_rising(self):
         chapters = [_chapter(i, STALLED) for i in range(1, 3)]
@@ -150,6 +155,7 @@ class TestForceDetectorsUnit(unittest.TestCase):
         flat = next(f for f in r["findings"] if f["issue_type"] == "momentum_flatline")
         self.assertEqual(flat["unit"], "story")
         self.assertEqual(flat["severity"], "high")
+        self.assertTrue(flat["evidence"]["quote"])
 
     def test_theme_dropout(self):
         themed = LIVELY + (" The covenant held them; the covenant was water and "
