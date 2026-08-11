@@ -161,15 +161,20 @@ def setup_in_progress() -> bool:
 
 
 # ── Setup progress (streamed from uv's output) ───────────────────────────────
-# uv prints its lifecycle to stderr in non-TTY mode, one line per event:
-#   "Resolved 25 packages in 1.2s"        → resolution done
-#   "Downloading torch (184.3MiB)"        → one line per package fetch
-#   "Prepared 25 packages in 90s"         → wheels unpacked into the cache
-#   "Installed 25 packages in 1.1s"       → env ready; the import check runs
-# We map those onto coarse stages the UI can show.  Anything unrecognized is
+# uv prints its lifecycle to stderr in non-TTY mode, one line per event.
+# Observed on a real cold install (uv 0.x, piped/non-TTY):
+#   "Downloading torch (170.4MiB)"        → one line per fetch, all up front
+#   " Downloaded torch"                   → one line as each fetch completes
+#   "Installed 24 packages in 467ms"      → env ready; the import check runs
+# "Resolved N packages" / "Prepared N packages" lines only appear in some
+# uv versions/flows, so the stage machine must not depend on them.  The
+# "Downloaded" completion lines matter: all "Downloading" lines print at the
+# start, so without them the detail would sit on the last (often smallest)
+# package for the whole multi-minute torch fetch.  Anything unrecognized is
 # kept as `last_line` so a stall or error is still visible live.
 
 _DL_RE = re.compile(r"^\s*Downloading\s+(\S+)(?:\s+\(([\d.]+)\s*(KiB|MiB|GiB)\))?")
+_DONE_RE = re.compile(r"^\s*Downloaded\s+(\S+)")
 _SIZE_TO_MB = {"KiB": 1.0 / 1024, "MiB": 1.0, "GiB": 1024.0}
 
 
@@ -186,6 +191,15 @@ def _apply_setup_line(line: str, prog: dict) -> None:
             )
             size_txt = f" ({m.group(2)} {m.group(3)})"
         prog["detail"] = f"Downloading {m.group(1)}{size_txt}"
+        return
+    m = _DONE_RE.match(line)
+    if m:
+        prog["stage"] = "downloading"
+        done = prog.get("done", 0) + 1
+        prog["done"] = done
+        total = prog.get("packages", 0)
+        counter = f" ({done}/{total})" if total else ""
+        prog["detail"] = f"Downloaded {m.group(1)}{counter}"
         return
     stripped = line.strip()
     if stripped.startswith("Resolved"):
@@ -207,6 +221,7 @@ def _progress_begin() -> None:
             "stage": "resolving",
             "detail": "Resolving the helper environment…",
             "packages": 0,
+            "done": 0,
             "total_mb": 0.0,
             "last_line": None,
             "started_at": time.time(),

@@ -401,6 +401,42 @@ class TestSidecar(unittest.TestCase):
         enhancement._apply_setup_line("warning: something odd", prog)
         self.assertEqual(prog["last_line"], "warning: something odd")
 
+    def test_apply_setup_line_real_cold_install_sequence(self):
+        """The exact line sequence observed on a real cold install (piped,
+        non-TTY uv): all "Downloading" lines print up front, " Downloaded"
+        lines follow as each fetch completes, and there are NO Resolved or
+        Prepared lines — the stage machine must still progress cleanly."""
+        prog = {
+            "stage": "resolving",
+            "detail": None,
+            "packages": 0,
+            "done": 0,
+            "total_mb": 0.0,
+            "last_line": None,
+        }
+        for line in (
+            "Downloading torchaudio (1.7MiB)",
+            "Downloading torch (170.4MiB)",
+            "Downloading soundfile (1.3MiB)",
+        ):
+            enhancement._apply_setup_line(line, prog)
+        self.assertEqual(prog["stage"], "downloading")
+        self.assertEqual(prog["packages"], 3)
+        self.assertAlmostEqual(prog["total_mb"], 173.4, delta=0.5)
+        # Completion lines have a leading space and advance the detail so the
+        # UI doesn't sit on the last "Downloading" line during the torch fetch.
+        enhancement._apply_setup_line(" Downloaded soundfile", prog)
+        enhancement._apply_setup_line(" Downloaded torchaudio", prog)
+        self.assertEqual(prog["stage"], "downloading")
+        self.assertEqual(prog["done"], 2)
+        self.assertEqual(prog["detail"], "Downloaded torchaudio (2/3)")
+        self.assertIsNone(prog["last_line"])
+        enhancement._apply_setup_line(" Downloaded torch", prog)
+        self.assertEqual(prog["detail"], "Downloaded torch (3/3)")
+        # Straight to Installed — no Prepared line in this flow.
+        enhancement._apply_setup_line("Installed 24 packages in 467ms", prog)
+        self.assertEqual(prog["stage"], "verifying")
+
     def test_enhance_audio_timeout_does_not_invalidate(self):
         enhancement._sidecar_ok = True
         self._marker.write_text(enhancement._marker_spec(), encoding="utf-8")
