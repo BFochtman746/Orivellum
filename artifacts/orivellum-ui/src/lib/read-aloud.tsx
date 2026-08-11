@@ -412,6 +412,9 @@ export interface NowPlaying {
   /** In-app route to jump back to the source (document, chat, studio). */
   href?: string;
   kind: "tts" | "url";
+  /** Lock-screen cover image URL (e.g. a per-Work cover). Falls back to the
+   *  branded Orivellum cover in public/ when absent. */
+  artwork?: string;
 }
 
 interface ReadAloudCtx {
@@ -428,13 +431,13 @@ interface ReadAloudCtx {
   /** Start reading text aloud (chunked TTS). Resolves when part 1 is ready.
    *  Pass `resumeKey` (e.g. the document id) to remember the listening
    *  position and offer to resume next time. */
-  startText: (opts: { title: string; href?: string; text: string; resumeKey?: string }) => Promise<void>;
+  startText: (opts: { title: string; href?: string; text: string; resumeKey?: string; artwork?: string }) => Promise<void>;
   /** A saved position exists for this session — the dock offers to resume. */
   resumeOffer: { part: number; time: number } | null;
   acceptResume: () => void;
   declineResume: () => void;
   /** Play a ready audio file URL in the dock (starts immediately). */
-  startUrl: (opts: { title: string; href?: string; url: string }) => void;
+  startUrl: (opts: { title: string; href?: string; url: string; artwork?: string }) => void;
   /** Begin a LIVE spoken-reply session (chat voice mode). MUST be called
    *  synchronously inside a user gesture — it primes the shared audio element
    *  so later, asynchronously-enqueued parts are allowed to auto-play.
@@ -692,7 +695,7 @@ export function ReadAloudProvider({
     onLiveDoneRef.current = null;
   }, []);
 
-  const startText = useCallback(async ({ title, href, text, resumeKey }: { title: string; href?: string; text: string; resumeKey?: string }) => {
+  const startText = useCallback(async ({ title, href, text, resumeKey, artwork }: { title: string; href?: string; text: string; resumeKey?: string; artwork?: string }) => {
     saveProgress(undefined, undefined, true); // remember the outgoing session's place before replacing it
     reset();
     lastServerSyncRef.current = 0; // new session may sync immediately
@@ -709,7 +712,7 @@ export function ReadAloudProvider({
       chunksRef.current = parts;
       setIndex(0);
       indexRef.current = 0;
-      setNowPlaying({ title, href, kind: "tts" });
+      setNowPlaying({ title, href, kind: "tts", artwork });
       resumeKeyRef.current = resumeKey ?? null;
       if (resumeKey) {
         // A saved position is offerable only when the split still matches
@@ -764,10 +767,10 @@ export function ReadAloudProvider({
     }
   }, [reset, synthesizePart, prefetchPart, fail]);
 
-  const startUrl = useCallback(({ title, href, url }: { title: string; href?: string; url: string }) => {
+  const startUrl = useCallback(({ title, href, url, artwork }: { title: string; href?: string; url: string; artwork?: string }) => {
     saveProgress(undefined, undefined, true); // remember the outgoing TTS session's place, if any
     reset();
-    setNowPlaying({ title, href, kind: "url" });
+    setNowPlaying({ title, href, kind: "url", artwork });
     desiredSrcRef.current = url;
     setMediaUrl(url);
     // Set src + play synchronously inside the tap gesture (iOS Safari).
@@ -958,10 +961,22 @@ export function ReadAloudProvider({
         ms.metadata = null;
         return;
       }
+      // Cover artwork: per-source image (e.g. a Work cover) when provided,
+      // otherwise the branded Orivellum cover — without it iOS/Android show a
+      // generic placeholder among other audio apps. BASE_URL keeps the public/
+      // asset paths correct behind the artifact path prefix.
+      const base = import.meta.env.BASE_URL;
+      const artwork = nowPlaying.artwork
+        ? [{ src: nowPlaying.artwork }]
+        : [
+            { src: `${base}cover-192.png`, sizes: "192x192", type: "image/png" },
+            { src: `${base}cover-512.png`, sizes: "512x512", type: "image/png" },
+          ];
       ms.metadata = new MediaMetadata({
         title: nowPlaying.title,
         artist: "Orivellum",
         album: chunks.length > 1 ? `Part ${index + 1} of ${chunks.length}` : "",
+        artwork,
       });
     } catch { /* unsupported — ignore */ }
   }, [nowPlaying, index, chunks.length]);

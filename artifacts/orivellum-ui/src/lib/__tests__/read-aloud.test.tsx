@@ -347,9 +347,10 @@ function stubMediaSession() {
   };
   Object.defineProperty(navigator, "mediaSession", { configurable: true, value: ms });
   (globalThis as any).MediaMetadata = class {
-    title: string; artist: string; album: string;
+    title: string; artist: string; album: string; artwork: unknown[];
     constructor(init: any) {
       this.title = init?.title; this.artist = init?.artist; this.album = init?.album;
+      this.artwork = init?.artwork;
     }
   };
   return { ms, handlers };
@@ -407,6 +408,30 @@ describe("media session", () => {
     expect(typeof handlers.get("play")).toBe("function");
     expect(handlers.get("nexttrack")).toBeNull();
     expect(handlers.get("previoustrack")).toBeNull();
+  });
+
+  it("passes branded cover artwork so the lock screen isn't a generic placeholder", async () => {
+    const { ms } = stubMediaSession();
+    renderEngine();
+    await act(async () => {
+      await ctx.startText({ title: "My Doc", text: TWO_PART_TEXT });
+    });
+    const artwork = (ms.metadata as any)?.artwork;
+    expect(Array.isArray(artwork)).toBe(true);
+    expect(artwork.map((a: any) => a.sizes)).toEqual(["192x192", "512x512"]);
+    for (const a of artwork) {
+      expect(a.src).toMatch(/cover-(192|512)\.png$/);
+      expect(a.type).toBe("image/png");
+    }
+  });
+
+  it("prefers a per-source artwork URL (e.g. a Work cover) when provided", async () => {
+    const { ms } = stubMediaSession();
+    renderEngine();
+    await act(async () => {
+      await ctx.startText({ title: "My Doc", text: TWO_PART_TEXT, artwork: "/covers/work-7.png" });
+    });
+    expect((ms.metadata as any)?.artwork).toEqual([{ src: "/covers/work-7.png" }]);
   });
 
   it("updates metadata per part and clears everything on close", async () => {
