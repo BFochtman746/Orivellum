@@ -5,6 +5,13 @@ Enforced standards:
   - Chapter opening contract: number -> title -> optional original epigraph.
   - Epigraphs are ORIGINAL only; gateway abstains rather than fabricate.
   - Immutable style lock, hash-chained ledger, author sign-off on seals.
+
+LAW 1 — one manuscript. Chapter prose lives in exactly one place:
+``book_chapters.text`` in the main database. PRESS never stores its own
+chapter rows; it reads the real chapters (read-only) through the book's
+linked Work and computes word counts from the actual text. The only
+chapter-adjacent state PRESS owns is the epigraph slot (``press_epigraph``),
+which is presentation state, not prose.
 """
 
 from __future__ import annotations
@@ -20,8 +27,9 @@ from typing import Any
 
 from . import gateway as gw
 
-# ── configurable DB path (call configure(data_dir) before first use) ──────────
+# ── configurable DB paths (call configure(data_dir) before first use) ─────────
 _DB_PATH: str = ""
+_MAIN_DB_PATH: str = ""
 _PKG_DIR: str = str(Path(__file__).parent)
 
 GENESIS_HASH = "0" * 64
@@ -59,9 +67,9 @@ CREATE TABLE IF NOT EXISTS press_book (
     has_front INTEGER NOT NULL DEFAULT 0, has_back INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS press_chapter (
-    book TEXT NOT NULL, number INTEGER NOT NULL, title TEXT NOT NULL,
-    words INTEGER NOT NULL DEFAULT 0, has_epigraph INTEGER NOT NULL DEFAULT 0,
+CREATE TABLE IF NOT EXISTS press_epigraph (
+    book TEXT NOT NULL, number INTEGER NOT NULL,
+    has_epigraph INTEGER NOT NULL DEFAULT 1,
     epigraph_text TEXT NOT NULL DEFAULT '', epigraph_status TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (book, number)
 );
@@ -78,9 +86,10 @@ CREATE TABLE IF NOT EXISTS press_ledger (
 
 
 def configure(data_dir: str) -> None:
-    global _DB_PATH
+    global _DB_PATH, _MAIN_DB_PATH
     Path(data_dir).mkdir(parents=True, exist_ok=True)
     _DB_PATH = str(Path(data_dir) / "press.db")
+    _MAIN_DB_PATH = str(Path(data_dir) / "orivellum.db")
 
 
 def _db_path() -> str:
@@ -187,6 +196,75 @@ def _connect() -> sqlite3.Connection:
     return c
 
 
+def _main_conn() -> sqlite3.Connection:
+    """Open a READ-ONLY connection to the main Orivellum database.
+
+    PRESS only ever reads ``book_chapters`` from it — the single source of
+    truth for chapter prose (LAW 1). Raises loudly when the main DB is
+    missing rather than silently pretending a linked book has no chapters.
+    """
+    if not _MAIN_DB_PATH:
+        raise RuntimeError("PRESS not configured — call configure(data_dir) first.")
+    if not Path(_MAIN_DB_PATH).exists():
+        raise RuntimeError(
+            f"Main database not found at {_MAIN_DB_PATH} — cannot read real chapters."
+        )
+    c = sqlite3.connect(f"file:{_MAIN_DB_PATH}?mode=ro", uri=True)
+    c.row_factory = sqlite3.Row
+    return c
+
+
+def _real_chapters(work_id: str) -> list[dict]:
+    """Read the authoritative chapters for a Work from ``book_chapters``.
+
+    Word counts are computed from the actual text — never typed by hand.
+    Chapter numbers are the stored ``seq`` normalised to start at 1 (the
+    extractor writes 0-based seqs). Duplicate or gapped seqs surface as a
+    failed contiguity check in :func:`verify` rather than being papered over.
+    """
+    if not work_id:
+        return []
+    mc = _main_conn()
+    try:
+        rows = mc.execute(
+            "SELECT seq, title, text FROM book_chapters WHERE work_id=? ORDER BY seq",
+            (work_id,),
+        ).fetchall()
+    finally:
+        mc.close()
+    if not rows:
+        return []
+    base = min(r["seq"] for r in rows)
+    out = []
+    for r in rows:
+        text = r["text"] or ""
+        out.append(
+            {
+                "seq": r["seq"],
+                "number": r["seq"] - base + 1,
+                "title": (r["title"] or "").strip(),
+                "words": len(text.split()),
+                "has_text": bool(text.strip()),
+            }
+        )
+    return out
+
+
+def _chapters_for_book(conn: sqlite3.Connection, slug: str, work_id: str) -> list[dict]:
+    """Real chapters merged with PRESS epigraph-slot state."""
+    chs = _real_chapters(work_id)
+    slots = {
+        r["number"]: dict(r)
+        for r in conn.execute("SELECT * FROM press_epigraph WHERE book=?", (slug,)).fetchall()
+    }
+    for ch in chs:
+        s = slots.get(ch["number"])
+        ch["has_epigraph"] = bool(s and s["has_epigraph"])
+        ch["epigraph_text"] = s["epigraph_text"] if s else ""
+        ch["epigraph_status"] = s["epigraph_status"] if s else ""
+    return chs
+
+
 def _ledger_append(conn: sqlite3.Connection, scope: str, kind: str, payload: Any) -> str:
     row = conn.execute(
         "SELECT seq,hash FROM press_ledger WHERE scope=? ORDER BY seq DESC LIMIT 1", (scope,)
@@ -202,12 +280,54 @@ def _ledger_append(conn: sqlite3.Connection, scope: str, kind: str, payload: Any
     return h
 
 
+# ── migration: consolidate onto book_chapters (LAW 1) ─────────────────────────
+
+
+def _migrate_legacy_chapters(conn: sqlite3.Connection) -> None:
+    """One-time migration away from the duplicate press-side chapter table.
+
+    The old ``press_chapter`` table held hand-typed titles and word counts —
+    a second, incompatible chapter model. Epigraph slot state (the only part
+    PRESS legitimately owns) is carried into ``press_epigraph``; the legacy
+    table is renamed to ``press_chapter_legacy`` so nothing is silently lost.
+    Idempotent: does nothing once the rename has happened.
+    """
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='press_chapter'"
+    ).fetchone()
+    if not row:
+        return
+    moved = 0
+    for r in conn.execute("SELECT * FROM press_chapter").fetchall():
+        if r["has_epigraph"] or (r["epigraph_text"] or "").strip():
+            conn.execute(
+                "INSERT OR IGNORE INTO press_epigraph "
+                "(book,number,has_epigraph,epigraph_text,epigraph_status) VALUES (?,?,?,?,?)",
+                (
+                    r["book"],
+                    r["number"],
+                    1 if r["has_epigraph"] else 0,
+                    r["epigraph_text"] or "",
+                    r["epigraph_status"] or "",
+                ),
+            )
+            moved += 1
+    conn.execute("ALTER TABLE press_chapter RENAME TO press_chapter_legacy")
+    _ledger_append(
+        conn,
+        "press:migration",
+        "chapters.consolidated",
+        {"epigraph_rows_migrated": moved, "legacy_table": "press_chapter_legacy"},
+    )
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 
 def cmd_init(_a: Any = None) -> int:
     conn = _connect()
     conn.executescript(SCHEMA)
+    _migrate_legacy_chapters(conn)
     conn.commit()
     return 0
 
@@ -230,11 +350,7 @@ def get_book(slug: str) -> dict | None:
         return None
     b = dict(row)
     b["style"] = json.loads(b["style"])
-    # Attach chapters
-    chs = conn.execute(
-        "SELECT * FROM press_chapter WHERE book=? ORDER BY number", (slug,)
-    ).fetchall()
-    b["chapters"] = [dict(c) for c in chs]
+    b["chapters"] = _chapters_for_book(conn, slug, b["work_id"] or "")
     return b
 
 
@@ -252,6 +368,18 @@ def create_book(title: str, author_name: str, series: str = "", work_id: str = "
     )
     conn.commit()
     return get_book(s)  # type: ignore[return-value]
+
+
+def link_work(slug: str, work_id: str) -> dict:
+    """Point a press book at the Work whose real chapters it finalizes."""
+    conn = _connect()
+    row = conn.execute("SELECT * FROM press_book WHERE slug=?", (slug,)).fetchone()
+    if not row:
+        raise KeyError(f"Book '{slug}' not found.")
+    conn.execute("UPDATE press_book SET work_id=? WHERE slug=?", (work_id, slug))
+    _ledger_append(conn, f"book:{slug}", "work.linked", {"work_id": work_id})
+    conn.commit()
+    return get_book(slug)  # type: ignore[return-value]
 
 
 def update_style(slug: str, updates: dict) -> dict:
@@ -290,9 +418,14 @@ def lock_style(slug: str, author: str) -> None:
     conn.commit()
 
 
-def add_chapter(
-    slug: str, number: int, title: str, words: int = 0, has_epigraph: bool = False
-) -> dict:
+def set_epigraph_slot(slug: str, number: int, has_epigraph: bool = True) -> dict:
+    """Declare (or clear) an epigraph slot on a REAL chapter.
+
+    Chapters themselves come from ``book_chapters`` — this only records that
+    chapter *number* opens with an original epigraph. Refuses when the book
+    has no linked Work, when the chapter does not exist in the manuscript,
+    or when the style's epigraph policy is OFF.
+    """
     conn = _connect()
     row = conn.execute("SELECT * FROM press_book WHERE slug=?", (slug,)).fetchone()
     if not row:
@@ -300,19 +433,29 @@ def add_chapter(
     style = json.loads(row["style"])
     if has_epigraph and style.get("epigraphs") == "off":
         raise ValueError("Style epigraph policy is OFF; cannot add an epigraph slot.")
-    if conn.execute(
-        "SELECT 1 FROM press_chapter WHERE book=? AND number=?", (slug, number)
-    ).fetchone():
-        raise ValueError(f"Chapter {number} already exists.")
-    conn.execute(
-        "INSERT INTO press_chapter (book,number,title,words,has_epigraph) VALUES (?,?,?,?,?)",
-        (slug, number, title, words, 1 if has_epigraph else 0),
+    work_id = row["work_id"] or ""
+    if not work_id:
+        raise ValueError("Book is not linked to a Work — there are no real chapters yet.")
+    chs = {c["number"]: c for c in _real_chapters(work_id)}
+    ch = chs.get(number)
+    if not ch:
+        raise KeyError(f"Chapter {number} does not exist in the manuscript.")
+    if has_epigraph:
+        conn.execute(
+            "INSERT INTO press_epigraph (book,number,has_epigraph) VALUES (?,?,1) "
+            "ON CONFLICT(book,number) DO UPDATE SET has_epigraph=1",
+            (slug, number),
+        )
+    else:
+        conn.execute("DELETE FROM press_epigraph WHERE book=? AND number=?", (slug, number))
+    _ledger_append(
+        conn, f"book:{slug}", "epigraph.slot", {"chapter": number, "has_epigraph": has_epigraph}
     )
     conn.commit()
     return {
         "number": number,
-        "title": title,
-        "words": words,
+        "title": ch["title"],
+        "words": ch["words"],
         "has_epigraph": has_epigraph,
         "header": chapter_header(style.get("chapter_style", "arabic"), number),
     }
@@ -327,15 +470,18 @@ def draft_epigraph(
     want_quote: bool = False,
 ) -> dict:
     conn = _connect()
-    row = conn.execute("SELECT 1 FROM press_book WHERE slug=?", (slug,)).fetchone()
+    row = conn.execute("SELECT * FROM press_book WHERE slug=?", (slug,)).fetchone()
     if not row:
         raise KeyError(f"Book '{slug}' not found.")
-    ch = conn.execute(
-        "SELECT * FROM press_chapter WHERE book=? AND number=?", (slug, number)
-    ).fetchone()
+    chs = {c["number"]: c for c in _real_chapters(row["work_id"] or "")}
+    ch = chs.get(number)
     if not ch:
-        raise KeyError(f"Chapter {number} not found.")
-    if not ch["has_epigraph"]:
+        raise KeyError(f"Chapter {number} not found in the manuscript.")
+    slot = conn.execute(
+        "SELECT * FROM press_epigraph WHERE book=? AND number=? AND has_epigraph=1",
+        (slug, number),
+    ).fetchone()
+    if not slot:
         raise ValueError("This chapter has no epigraph slot.")
     engine = gw.get_gateway(gateway_name)
     res = engine.original_epigraph(
@@ -350,7 +496,7 @@ def draft_epigraph(
         return {"status": "ABSTAINED", "reason": res.reason}
     text = res.text + (f"\n— {res.attribution}" if res.attribution else "")
     conn.execute(
-        "UPDATE press_chapter SET epigraph_text=?, epigraph_status=? WHERE book=? AND number=?",
+        "UPDATE press_epigraph SET epigraph_text=?, epigraph_status=? WHERE book=? AND number=?",
         (text, res.status, slug, number),
     )
     _ledger_append(
@@ -362,13 +508,13 @@ def draft_epigraph(
 
 def approve_epigraph(slug: str, number: int, author: str) -> None:
     conn = _connect()
-    ch = conn.execute(
-        "SELECT * FROM press_chapter WHERE book=? AND number=?", (slug, number)
+    slot = conn.execute(
+        "SELECT * FROM press_epigraph WHERE book=? AND number=?", (slug, number)
     ).fetchone()
-    if not ch or not ch["epigraph_text"]:
+    if not slot or not slot["epigraph_text"]:
         raise ValueError("No drafted epigraph to approve.")
     conn.execute(
-        "UPDATE press_chapter SET epigraph_status='APPROVED' WHERE book=? AND number=?",
+        "UPDATE press_epigraph SET epigraph_status='APPROVED' WHERE book=? AND number=?",
         (slug, number),
     )
     _ledger_append(conn, f"book:{slug}", "epigraph.approved", {"chapter": number, "author": author})
@@ -386,12 +532,9 @@ def set_matter(slug: str, front: bool, back: bool) -> None:
     conn.commit()
 
 
-def _page_estimate(
-    conn: sqlite3.Connection, slug: str, has_front: bool, has_back: bool
-) -> tuple[int, int]:
-    total = conn.execute(
-        "SELECT COALESCE(SUM(words),0) w FROM press_chapter WHERE book=?", (slug,)
-    ).fetchone()["w"]
+def _page_estimate(chapters: list[dict], has_front: bool, has_back: bool) -> tuple[int, int]:
+    """Word total and page estimate computed from REAL chapter text."""
+    total = sum(c["words"] for c in chapters)
     body = math.ceil(total / WORDS_PER_PAGE) if total else 0
     pages = body + (8 if has_front else 0) + (4 if has_back else 0)
     if pages % 2:
@@ -406,15 +549,16 @@ def verify(slug: str) -> dict:
         raise KeyError(f"Book '{slug}' not found.")
     b = dict(row)
     style = json.loads(b["style"])
-    chs = conn.execute(
-        "SELECT * FROM press_chapter WHERE book=? ORDER BY number", (slug,)
-    ).fetchall()
+    work_id = b["work_id"] or ""
+    chs = _chapters_for_book(conn, slug, work_id)
     nums = [c["number"] for c in chs]
     checks = {
         "style_locked": bool(b["style_locked"]),
+        "linked_to_work": bool(work_id),
         "has_chapters": len(chs) >= 1,
         "chapters_contiguous": nums == list(range(1, len(nums) + 1)) if nums else False,
-        "chapters_titled": all(c["title"].strip() for c in chs) if chs else False,
+        "chapters_titled": all(c["title"] for c in chs) if chs else False,
+        "chapters_have_text": all(c["has_text"] for c in chs) if chs else False,
         "epigraph_policy": True,
         "front_matter": bool(b["has_front"]),
         "back_matter": bool(b["has_back"]),
@@ -425,7 +569,7 @@ def verify(slug: str) -> dict:
         for c in chs:
             if c["has_epigraph"] and c["epigraph_status"] != "APPROVED":
                 checks["epigraph_policy"] = False
-    total, pages = _page_estimate(conn, slug, bool(b["has_front"]), bool(b["has_back"]))
+    total, pages = _page_estimate(chs, bool(b["has_front"]), bool(b["has_back"]))
     passed = all(checks.values())
     return {"passed": passed, "checks": checks, "word_count": total, "estimated_pages": pages}
 
@@ -442,7 +586,8 @@ def build_package(slug: str, pkg_type: str = "publisher", target: str = "product
         raise ValueError(
             "Pre-flight failed — package blocked. (Only submission MS format is allowed pre-typeset.)"
         )
-    total, pages = _page_estimate(conn, slug, bool(b["has_front"]), bool(b["has_back"]))
+    chs = _chapters_for_book(conn, slug, b["work_id"] or "")
+    total, pages = _page_estimate(chs, bool(b["has_front"]), bool(b["has_back"]))
     if pkg_type == "publisher" and target == "submission":
         spec = {
             "format": "standard-manuscript-format",
@@ -476,7 +621,8 @@ def seal_package(slug: str, pkg_type: str, target: str, author: str, recipient: 
     vr = verify(slug)
     if not vr["passed"] and not (pkg_type == "publisher" and target == "submission"):
         raise ValueError("Pre-flight failed — cannot seal.")
-    total, pages = _page_estimate(conn, slug, bool(b["has_front"]), bool(b["has_back"]))
+    chs = _chapters_for_book(conn, slug, b["work_id"] or "")
+    total, pages = _page_estimate(chs, bool(b["has_front"]), bool(b["has_back"]))
     if pkg_type == "publisher" and target == "submission":
         spec = {
             "format": "standard-manuscript-format",

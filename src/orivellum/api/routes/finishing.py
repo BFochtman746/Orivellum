@@ -81,11 +81,12 @@ class StyleLock(BaseModel):
     author: str
 
 
-class ChapterAdd(BaseModel):
-    number: int
-    title: str
-    words: int = 0
-    has_epigraph: bool = False
+class EpigraphSlot(BaseModel):
+    has_epigraph: bool = True
+
+
+class WorkLink(BaseModel):
+    work_id: str
 
 
 class EpigraphDraft(BaseModel):
@@ -177,20 +178,22 @@ def press_lock_style(slug: str, body: StyleLock):
         raise _http(e)
 
 
-@router.post("/press/books/{slug}/chapters", status_code=201)
-def press_add_chapter(slug: str, body: ChapterAdd):
+@router.post("/press/books/{slug}/link-work")
+def press_link_work(slug: str, body: WorkLink):
+    """Point a press book at the Work whose real chapters it finalizes."""
     try:
-        return {
-            "chapter": _press().add_chapter(
-                slug,
-                body.number,
-                body.title,
-                body.words,
-                body.has_epigraph,
-            )
-        }
+        return {"book": _press().link_work(slug, body.work_id)}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
+
+
+@router.post("/press/books/{slug}/chapters/{number}/epigraph-slot")
+def press_set_epigraph_slot(slug: str, number: int, body: EpigraphSlot):
+    """Declare or clear an epigraph slot on a real (book_chapters) chapter."""
+    try:
+        return {"chapter": _press().set_epigraph_slot(slug, number, body.has_epigraph)}
+    except Exception as e:
+        raise _http(e) from e
 
 
 @router.post("/press/books/{slug}/chapters/{number}/epigraph")

@@ -37,6 +37,19 @@ function useApi<T>(key: string[], path: string) {
   return useQuery<T>({ queryKey: key, queryFn: () => api(path) });
 }
 
+/** Works list (main app) — used to link a press book to its manuscript. */
+function useWorks() {
+  return useQuery<{ works: any[] }>({
+    queryKey: ["press-works-list"],
+    queryFn: () =>
+      apiFetch(`${import.meta.env.BASE_URL}api/works`).then(async (r) => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail ?? "Request failed");
+        return data;
+      }),
+  });
+}
+
 function StatusBadge({ passed }: { passed: boolean }) {
   return passed
     ? <Badge className="border" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>PASS</Badge>
@@ -123,9 +136,9 @@ function PressDetail({ slug }: { slug: string }) {
     queryKey: ["press-book", slug],
     queryFn: () => api(`/press/books/${slug}`),
   });
-  const [addingChapter, setAddingChapter] = useState(false);
-  const [chForm, setChForm] = useState({ number: "", title: "", words: "", has_epigraph: false });
+  const [linkWorkId, setLinkWorkId] = useState("");
   const [lockAuthor, setLockAuthor] = useState("");
+  const { data: worksData } = useWorks();
   const [sealForm, setSealForm] = useState({ pkg_type: "publisher", target: "production", author: "", recipient: "" });
 
   const lockStyle = useMutation({
@@ -137,18 +150,26 @@ function PressDetail({ slug }: { slug: string }) {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const addChapter = useMutation({
-    mutationFn: () => api(`/press/books/${slug}/chapters`, {
+  const linkWork = useMutation({
+    mutationFn: (work_id: string) => api(`/press/books/${slug}/link-work`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        number: parseInt(chForm.number), title: chForm.title,
-        words: parseInt(chForm.words) || 0, has_epigraph: chForm.has_epigraph,
-      }),
+      body: JSON.stringify({ work_id }),
     }),
     onSuccess: () => {
-      toast.success("Chapter added");
-      setAddingChapter(false);
-      setChForm({ number: "", title: "", words: "", has_epigraph: false });
+      toast.success("Work linked — chapters now come from the manuscript");
+      qc.invalidateQueries({ queryKey: ["press-book", slug] });
+      qc.invalidateQueries({ queryKey: ["press-verify", slug] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const setEpigraphSlot = useMutation({
+    mutationFn: ({ number, has_epigraph }: { number: number; has_epigraph: boolean }) =>
+      api(`/press/books/${slug}/chapters/${number}/epigraph-slot`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ has_epigraph }),
+      }),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["press-book", slug] });
       qc.invalidateQueries({ queryKey: ["press-verify", slug] });
     },
@@ -221,55 +242,57 @@ function PressDetail({ slug }: { slug: string }) {
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm">Chapters ({chapters.length})</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setAddingChapter(v => !v)}>
-              <Plus className="h-3 w-3 mr-1" /> Add
-            </Button>
+            <span className="text-[10px] text-muted-foreground">from manuscript</span>
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {addingChapter && (
+          {!b.work_id ? (
             <div className="border border-dashed rounded-lg p-3 space-y-2">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <div>
-                  <Label className="text-xs">Number</Label>
-                  <Input className="h-7 text-xs" value={chForm.number} onChange={e => setChForm(f => ({ ...f, number: e.target.value }))} placeholder="#" />
-                </div>
-                <div className="col-span-2">
-                  <Label className="text-xs">Title</Label>
-                  <Input className="h-7 text-xs" value={chForm.title} onChange={e => setChForm(f => ({ ...f, title: e.target.value }))} placeholder="Chapter title" />
-                </div>
+              <p className="text-xs text-muted-foreground">
+                Link this book to a Work — chapters come from the manuscript, never typed here.
+              </p>
+              <div className="flex gap-2">
+                <select className="flex-1 h-7 text-xs border border-border rounded px-2 bg-background"
+                  value={linkWorkId} onChange={e => setLinkWorkId(e.target.value)}>
+                  <option value="">Select a Work…</option>
+                  {(worksData?.works ?? []).map((w: any) => (
+                    <option key={w.id} value={w.id}>{w.title}</option>
+                  ))}
+                </select>
+                <Button size="sm" className="h-7 text-xs" disabled={!linkWorkId || linkWork.isPending}
+                  onClick={() => linkWork.mutate(linkWorkId)}>
+                  Link
+                </Button>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label className="text-xs">Word count</Label>
-                  <Input className="h-7 text-xs" value={chForm.words} onChange={e => setChForm(f => ({ ...f, words: e.target.value }))} placeholder="0" />
-                </div>
-                <div className="flex items-end gap-2 pb-0.5">
-                  <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                    <input type="checkbox" checked={chForm.has_epigraph}
-                      onChange={e => setChForm(f => ({ ...f, has_epigraph: e.target.checked }))} />
-                    Epigraph slot
-                  </label>
-                </div>
-              </div>
-              <Button size="sm" className="h-7 text-xs w-full" onClick={() => addChapter.mutate()}
-                disabled={!chForm.number || !chForm.title || addChapter.isPending}>
-                Add chapter
-              </Button>
             </div>
-          )}
-          {chapters.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-2">No chapters yet</p>
+          ) : chapters.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              No chapters in the linked Work yet — extract or draft them in the manuscript first.
+            </p>
           ) : chapters.map((ch: any) => (
             <div key={ch.number} className="flex items-center justify-between text-xs border rounded px-2 py-1.5">
-              <span className="font-medium">{ch.number}. {ch.title}</span>
+              <span className="font-medium">
+                {ch.number}. {ch.title || <em className="text-muted-foreground">untitled</em>}
+              </span>
               <div className="flex items-center gap-2 text-muted-foreground">
-                {ch.words > 0 && <span>{ch.words.toLocaleString()} w</span>}
-                {ch.has_epigraph && (
-                  <Badge variant="outline" className="text-[10px] py-0 px-1">
-                    {ch.epigraph_status === "APPROVED" ? "✓ epi" : "epi"}
+                {!ch.has_text && (
+                  <Badge variant="outline" className="text-[10px] py-0 px-1" style={{ color: "var(--rust)" }}>
+                    no text
                   </Badge>
                 )}
+                {ch.words > 0 && <span>{ch.words.toLocaleString()} w</span>}
+                <button
+                  className="text-[10px] underline-offset-2 hover:underline disabled:opacity-50"
+                  disabled={setEpigraphSlot.isPending || style.epigraphs === "off"}
+                  title={ch.has_epigraph ? "Remove epigraph slot" : "Add epigraph slot"}
+                  onClick={() => setEpigraphSlot.mutate({ number: ch.number, has_epigraph: !ch.has_epigraph })}
+                >
+                  {ch.has_epigraph ? (
+                    <Badge variant="outline" className="text-[10px] py-0 px-1">
+                      {ch.epigraph_status === "APPROVED" ? "✓ epi" : "epi"}
+                    </Badge>
+                  ) : "+ epi"}
+                </button>
               </div>
             </div>
           ))}
@@ -351,8 +374,9 @@ function PressTab() {
   const qc = useQueryClient();
   const { data, isLoading } = useApi<any>(["press-books"], "/press/books");
   const [selected, setSelected] = useState<string | null>(null);
-  const [newBook, setNewBook] = useState({ title: "", author_name: "", series: "" });
+  const [newBook, setNewBook] = useState({ title: "", author_name: "", series: "", work_id: "" });
   const [creating, setCreating] = useState(false);
+  const { data: worksData } = useWorks();
 
   const createBook = useMutation({
     mutationFn: () => api("/press/books", {
@@ -362,7 +386,7 @@ function PressTab() {
     onSuccess: (d) => {
       toast.success(`Book "${d.book.title}" created`);
       setCreating(false);
-      setNewBook({ title: "", author_name: "", series: "" });
+      setNewBook({ title: "", author_name: "", series: "", work_id: "" });
       qc.invalidateQueries({ queryKey: ["press-books"] });
       setSelected(d.book.slug);
     },
@@ -393,6 +417,16 @@ function PressTab() {
               <div>
                 <Label className="text-xs">Series (optional)</Label>
                 <Input className="h-7 text-xs" value={newBook.series} onChange={e => setNewBook(f => ({ ...f, series: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Work (manuscript source)</Label>
+                <select className="w-full h-7 text-xs border border-border rounded px-2 bg-background"
+                  value={newBook.work_id} onChange={e => setNewBook(f => ({ ...f, work_id: e.target.value }))}>
+                  <option value="">Link later…</option>
+                  {(worksData?.works ?? []).map((w: any) => (
+                    <option key={w.id} value={w.id}>{w.title}</option>
+                  ))}
+                </select>
               </div>
               <Button size="sm" className="w-full h-7 text-xs" onClick={() => createBook.mutate()}
                 disabled={!newBook.title || !newBook.author_name || createBook.isPending}>

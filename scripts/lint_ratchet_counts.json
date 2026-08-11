@@ -70,7 +70,7 @@
   "C901": 1
  },
  "src/orivellum/api/routes/finishing.py": {
-  "B904": 27,
+  "B904": 26,
   "RET504": 1
  },
  "src/orivellum/api/routes/forge.py": {
