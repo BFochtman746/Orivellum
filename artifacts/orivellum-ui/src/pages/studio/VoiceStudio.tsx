@@ -157,12 +157,112 @@ function useGlobalAudio() {
     }
   }, [playingId]);
 
+  // One-off "try your own line" preview: synthesizes arbitrary text with the
+  // selected voice via POST /studio/tts. Deliberately NOT the /sample endpoint —
+  // custom lines are never written to the voice_samples cache. Clone voices go
+  // through the premium sidecar inside the same route and fail closed (the
+  // server's 503 detail is surfaced verbatim).
+  const playCustomLine = useCallback(async (voiceId: string, text: string) => {
+    const el = audioRef.current;
+    if (!el) return;
+    const key = `custom:${voiceId}`;
+
+    if (playingId === key) {
+      el.pause();
+      setPlayingId(null);
+      return;
+    }
+
+    el.pause();
+    setPlayingId(null);
+    setLoadingId(key);
+
+    try {
+      const resp = await apiFetch(`${BASE}/studio/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // "draft" keeps catalog previews instant (Kokoro ~1 s); clones always
+        // route to the premium engine server-side regardless of quality.
+        body: JSON.stringify({ text: text.slice(0, 200), voice: voiceId, quality: "draft" }),
+      });
+      if (!resp.ok) {
+        let msg = "";
+        try { msg = (await resp.json())?.detail ?? ""; } catch { /* not JSON */ }
+        throw new Error(msg || `HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      el.src = url;
+      await el.play();
+      setPlayingId(key);
+    } catch (e: any) {
+      const detail = typeof e?.message === "string" && e.message && !/^HTTP \d+$/.test(e.message)
+        ? e.message
+        : "Could not synthesize your line with this voice";
+      toast.error(detail);
+    } finally {
+      setLoadingId(null);
+    }
+  }, [playingId]);
+
   const stopAll = useCallback(() => {
     audioRef.current?.pause();
     setPlayingId(null);
   }, []);
 
-  return { playingId, loadingId, playVoiceSample, stopAll, sampleEngines };
+  return { playingId, loadingId, playVoiceSample, playCustomLine, stopAll, sampleEngines };
+}
+
+// ── Custom line preview ───────────────────────────────────────────────────────
+// "Try your own line" — type up to 200 characters and hear the voice speak it.
+// Rendered in the Browse detail panel and on each usable cloned voice.
+
+const CUSTOM_LINE_MAX = 200;
+
+function CustomLinePreview({ voiceId, globalAudio }: {
+  voiceId: string;
+  globalAudio: ReturnType<typeof useGlobalAudio>;
+}) {
+  const [line, setLine] = useState("");
+  const key = `custom:${voiceId}`;
+  const isLoading = globalAudio.loadingId === key;
+  const isPlaying = globalAudio.playingId === key;
+  const trimmed = line.trim();
+
+  function play() {
+    if (!trimmed && !isPlaying) return;
+    globalAudio.playCustomLine(voiceId, trimmed);
+  }
+
+  return (
+    <div>
+      <p className="text-xs font-mono uppercase text-muted-foreground mb-2">Try your own line</p>
+      <div className="flex items-center gap-2">
+        <Input
+          value={line}
+          maxLength={CUSTOM_LINE_MAX}
+          placeholder="Type a sentence from your book…"
+          onChange={e => setLine(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") play(); }}
+          className="h-8 text-sm"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={play}
+          disabled={isLoading || (!trimmed && !isPlaying)}
+          title="Hear this voice speak your line"
+          className="shrink-0"
+        >
+          {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+           isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+        </Button>
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-1">
+        {line.length}/{CUSTOM_LINE_MAX} — one-off preview, not saved
+      </p>
+    </div>
+  );
 }
 
 // ── Dimension bar ─────────────────────────────────────────────────────────────
@@ -330,6 +430,7 @@ function VoiceDetailPanel({
   loadingId,
   onPlay,
   onUseVoice,
+  globalAudio,
 }: {
   voice: VoiceEntry;
   onClose: () => void;
@@ -337,6 +438,7 @@ function VoiceDetailPanel({
   loadingId: string | null;
   onPlay: (id: string) => void;
   onUseVoice: (voice: VoiceEntry) => void;
+  globalAudio: ReturnType<typeof useGlobalAudio>;
 }) {
   const dims = voice.dimensions;
   const isPlaying = playingId === voice.id;
@@ -399,6 +501,9 @@ function VoiceDetailPanel({
               )}
             </button>
           </div>
+
+          {/* Custom line preview */}
+          <CustomLinePreview voiceId={voice.id} globalAudio={globalAudio} />
 
           {/* All dimensions */}
           {dims && (
@@ -733,6 +838,11 @@ function CloneTab({ onUseVoice, globalAudio }: {
                     <X className="w-3.5 h-3.5" />
                   </Button>
                 </div>
+                {v.usable && (
+                  <div className="w-full pt-1">
+                    <CustomLinePreview voiceId={`clone:${v.id}`} globalAudio={globalAudio} />
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -883,6 +993,7 @@ function BrowseTab({
             loadingId={globalAudio.loadingId}
             onPlay={globalAudio.playVoiceSample}
             onUseVoice={onUseVoice}
+            globalAudio={globalAudio}
           />
         </div>
       )}
