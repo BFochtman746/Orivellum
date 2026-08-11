@@ -218,6 +218,33 @@ class TestLifecycle(PromotionBase):
             self.db.get_assay_instrument(inst["key"])["certification"], "shadow"
         )
 
+    def test_concurrent_reseed_bar_change_is_enforced_not_stale(self):
+        # Race from review: a re-seed replaces the promotion bar between the
+        # transition's pre-read and its transaction. The transaction must
+        # re-read the CURRENT contract and enforce the NEW bar — a stale,
+        # weaker bar can never certify.
+        from unittest.mock import patch
+
+        inst = self._register_candidate()
+        self._disposition_n(inst, tp=4, fp=1)  # 0.8 ≥ old 0.75 bar, n=5
+        stale = self.db.get_assay_instrument(inst["key"])  # carries old bar
+        # Re-seed with a stricter bar (as a concurrent re-seed would).
+        stricter = dict(CANDIDATE)
+        stricter["thresholds"] = dict(
+            CANDIDATE["thresholds"],
+            promotion={"min_precision": 0.95, "min_dispositions": 5},
+        )
+        self.db.upsert_assay_instrument(stricter)
+        real_get = self.db.get_assay_instrument
+        with patch.object(
+            self.db, "get_assay_instrument",
+            side_effect=[stale, real_get(inst["key"])],
+        ), self.assertRaises(ValueError):
+            # Pre-read sees the stale weak bar; the in-transaction re-read
+            # must apply the stricter current bar and refuse (0.8 < 0.95).
+            self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        self.assertEqual(real_get(inst["key"])["certification"], "shadow")
+
     def test_caller_supplied_precision_is_ignored_on_certify(self):
         # The ledger records the COMPUTED evidence, never caller claims.
         inst = self._register_candidate()

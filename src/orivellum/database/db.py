@@ -7805,20 +7805,49 @@ class OrivellumDB:
             actor=actor,
             detail=f"{key}: {frm} -> {to_status}",
         ):
+            # Everything authority-relevant is RE-READ inside this
+            # transaction: a concurrent re-seed between the pre-read and
+            # this point may have replaced the contract (thresholds, tier),
+            # so the pre-read values are advisory only.  The transaction
+            # holds the DB lock, so nothing can change between this read
+            # and the update below; the CAS on certification + updated_at
+            # is defense in depth.
+            fresh_row = self._conn.execute(
+                "SELECT * FROM assay_instrument WHERE key=?", (key,)
+            ).fetchone()
+            if fresh_row is None:
+                raise ValueError(f"instrument {key!r} is not registered")
+            fresh = self._assay_instrument_row(fresh_row)
+            if fresh["certification"] != frm:
+                raise RuntimeError(
+                    f"certification of {key!r} changed concurrently — retry"
+                )
+            if to_status not in self._ASSAY_CERT_TRANSITIONS.get(
+                fresh["certification"], frozenset()
+            ):
+                raise ValueError(
+                    f"illegal certification transition "
+                    f"{fresh['certification']!r} -> {to_status!r}"
+                )
             if to_status == "certified":
+                if int(fresh["tier"]) == 3:
+                    raise ValueError(
+                        "Tier 3 instruments are advisory forever and "
+                        "cannot be certified"
+                    )
                 # Certification must be EARNED: the precision evidence is
                 # aggregated over the COMPLETE disposition record inside this
-                # same transaction as the status CAS, never trusted from the
-                # caller and never read from a stale snapshot — no code path
-                # can certify below the instrument's declared bar.
-                bar = (instrument.get("thresholds") or {}).get("promotion") or {}
+                # same transaction as the status CAS, against the CURRENT
+                # contract's declared bar — never trusted from the caller,
+                # never read from a stale snapshot.
+                bar = (fresh.get("thresholds") or {}).get("promotion") or {}
                 min_precision = float(
                     bar.get("min_precision", ASSAY_DEFAULT_MIN_PRECISION)
                 )
                 min_dispositions = int(
                     bar.get("min_dispositions", ASSAY_DEFAULT_MIN_DISPOSITIONS)
                 )
-                tp, fp = self._assay_disposition_counts(instrument["id"])
+                tp, fp = self._assay_disposition_counts(fresh["id"])
                 total = tp + fp
                 if total < min_dispositions:
                     raise ValueError(
@@ -7834,8 +7863,8 @@ class OrivellumDB:
                 sample_size = total
             cur = self._conn.execute(
                 """UPDATE assay_instrument SET certification=?, updated_at=?
-                   WHERE key=? AND certification=?""",
-                (to_status, now, key, frm),
+                   WHERE key=? AND certification=? AND updated_at=?""",
+                (to_status, now, key, frm, fresh["updated_at"]),
             )
             if cur.rowcount != 1:
                 raise RuntimeError(
