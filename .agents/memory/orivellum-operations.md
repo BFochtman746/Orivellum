@@ -17,3 +17,10 @@ description: Behavioral invariants for the operations capability — claim fenci
   **Why:** validating only the planner output left /start as a bypass; a review caught malformed step-shaped input executing directly.
 - **NL planner contract:** LLM plans from the registered-action catalog only; exactly one repair retry with concrete problems fed back, then explicit error — never a silent guess. Work titles and voices resolve server-side; an unverifiable voice (catalog hook unavailable) is a planning error, not a pass-through.
 - `hooks.configure(x=None)` is a deliberate no-op — tests that need an *unset* hook must assign `HOOKS.<name> = None` directly (earlier tests in the session may have configured the real module).
+
+## Scheduled automations (playbook_schedules, schema v120)
+- Occurrence dispatch is fenced by a CAS claim: `UPDATE playbook_schedules SET last_run_at/next_run_at WHERE id=? AND enabled=1 AND next_run_at=<value read>`. Only the winner creates the operation — protects against racing ticks AND disable/delete landing between read and dispatch.
+- **Why:** architect review found the naive read-then-advance version could double-fire and run disabled schedules.
+- Quiet-resource rule: `system_busy()` (any op state='running' OR `hooks.HOOKS.studio.list_active_work_tts_jobs()`) is rechecked before EVERY dispatch in a tick, so at most one heavy automation starts per tick and due schedules keep next_run_at untouched while busy (they fire when free — no drift, no pile-up).
+- Failure alerting is exactly-once and transactional: `failure_alerted` flag claim + suggestions row (kind `automation_failure`, shows in review inbox) commit together under one db._lock; browser notification is best-effort afterwards. Every dispatch failure path (deleted playbook, rejected executor) creates a FAILED operation row so run history is never silent.
+- Times are naive LOCAL ISO strings (nightshift precedent) — lexically comparable; `compute_next_run` is strictly-after semantics.
