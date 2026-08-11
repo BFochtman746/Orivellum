@@ -650,6 +650,7 @@ def create_app() -> FastAPI:
     # Register routers
     from orivellum.api.routes import (
         actions,
+        assay,
         auth,
         backups,
         bench,
@@ -709,6 +710,7 @@ def create_app() -> FastAPI:
         generate,
         topics,
         actions,
+        assay,
         mcp,
         genesis,
         finishing,

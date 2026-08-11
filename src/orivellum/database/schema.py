@@ -2746,4 +2746,100 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_nf_chapter        ON narrative_finding(chapter_id);
     """,
     ),
+    # v126 — ASSAY: the governed quality-instrument registry (E4).
+    #
+    # assay_instrument — every quality check registered as an Engine Contract
+    # record (name, purpose, allowed/forbidden operations, authority
+    # relationship, required output schema) with an honest three-tier
+    # authority level and a certification status.  RULE: no instrument may
+    # block at Tier 1/2 until certification='certified' — new instruments
+    # start 'advisory' (blocking is computed, never stored).
+    # assay_run — one execution of one instrument against a work (optionally
+    # one chapter); records verdict/score + evidence JSON.
+    # assay_finding — standard finding schema shared by ALL instruments:
+    # Unit | Force Check | Issue Type | Severity | Classification | Action,
+    # plus evidence JSON (quotes/offsets/metrics).
+    # assay_signature — author signatures for the D14–D17 gates ('open'
+    # unlocks evidence gathering; 'go'/'no_go' is the author's decision —
+    # the machine never decides these gates).
+    # assay_baseline — per-work stored baselines (voice target envelope,
+    # D13 act targets, judge previous-revision snapshots).
+    (
+        126,
+        "ASSAY instrument registry: engine contracts, runs, standard findings, signatures",
+        """
+        CREATE TABLE IF NOT EXISTS assay_instrument (
+            id                     TEXT PRIMARY KEY,
+            key                    TEXT NOT NULL UNIQUE,
+            name                   TEXT NOT NULL,
+            purpose                TEXT NOT NULL DEFAULT '',
+            tier                   INTEGER NOT NULL CHECK (tier IN (1,2,3)),
+            variance               TEXT NOT NULL CHECK (variance IN
+                ('deterministic','evidence','perspectival')),
+            certification          TEXT NOT NULL DEFAULT 'advisory' CHECK (certification IN
+                ('advisory','shadow','certified','retired')),
+            allowed_ops            TEXT NOT NULL DEFAULT '[]',
+            forbidden_ops          TEXT NOT NULL DEFAULT '[]',
+            authority_relationship TEXT NOT NULL DEFAULT '',
+            output_schema          TEXT NOT NULL DEFAULT '{}',
+            scope                  TEXT NOT NULL DEFAULT '{}',
+            thresholds             TEXT NOT NULL DEFAULT '{}',
+            origin                 TEXT NOT NULL DEFAULT '',
+            created_at             TEXT NOT NULL,
+            updated_at             TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS assay_run (
+            id             TEXT PRIMARY KEY,
+            instrument_id  TEXT NOT NULL REFERENCES assay_instrument(id) ON DELETE CASCADE,
+            work_id        TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            chapter_id     TEXT REFERENCES book_chapters(id) ON DELETE SET NULL,
+            status         TEXT NOT NULL DEFAULT 'running' CHECK (status IN
+                ('running','done','error')),
+            verdict        TEXT,
+            score          REAL,
+            evidence       TEXT NOT NULL DEFAULT '{}',
+            findings_count INTEGER NOT NULL DEFAULT 0,
+            error          TEXT,
+            started_at     TEXT NOT NULL,
+            finished_at    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_assay_run_work ON assay_run(work_id, instrument_id, started_at);
+        CREATE TABLE IF NOT EXISTS assay_finding (
+            id             TEXT PRIMARY KEY,
+            run_id         TEXT NOT NULL REFERENCES assay_run(id) ON DELETE CASCADE,
+            instrument_id  TEXT NOT NULL REFERENCES assay_instrument(id) ON DELETE CASCADE,
+            work_id        TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            chapter_id     TEXT REFERENCES book_chapters(id) ON DELETE SET NULL,
+            unit           TEXT NOT NULL,
+            force_check    TEXT NOT NULL,
+            issue_type     TEXT NOT NULL,
+            severity       TEXT NOT NULL CHECK (severity IN
+                ('critical','high','medium','low','info')),
+            classification TEXT NOT NULL DEFAULT '',
+            action         TEXT NOT NULL DEFAULT '',
+            evidence       TEXT NOT NULL DEFAULT '{}',
+            created_at     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_assay_finding_run  ON assay_finding(run_id);
+        CREATE INDEX IF NOT EXISTS idx_assay_finding_work ON assay_finding(work_id, instrument_id);
+        CREATE TABLE IF NOT EXISTS assay_signature (
+            id        TEXT PRIMARY KEY,
+            work_id   TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            gate_key  TEXT NOT NULL,
+            author    TEXT NOT NULL CHECK (length(trim(author)) > 0),
+            decision  TEXT NOT NULL DEFAULT 'open' CHECK (decision IN ('open','go','no_go')),
+            note      TEXT NOT NULL DEFAULT '',
+            signed_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_assay_sig ON assay_signature(work_id, gate_key, signed_at);
+        CREATE TABLE IF NOT EXISTS assay_baseline (
+            id         TEXT PRIMARY KEY,
+            work_id    TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            key        TEXT NOT NULL,
+            payload    TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            UNIQUE(work_id, key)
+        );
+    """,
+    ),
 ]

@@ -7627,6 +7627,275 @@ class OrivellumDB:
 
     # ── /ConStory ─────────────────────────────────────────────────────────────
 
+    # ── ASSAY instrument registry (schema v126) ──────────────────────────────
+
+    def upsert_assay_instrument(self, contract: dict) -> str:
+        """Register or refresh an instrument's Engine Contract record.
+
+        Contract fields are updated on re-seed, but the certification status
+        is PRESERVED — promotion is a separate governed workflow, never a
+        side effect of registration.  Returns the instrument id.
+        """
+        now = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM assay_instrument WHERE key=?", (contract["key"],)
+            ).fetchone()
+            if row is not None:
+                self._conn.execute(
+                    """UPDATE assay_instrument SET name=?, purpose=?, tier=?, variance=?,
+                       allowed_ops=?, forbidden_ops=?, authority_relationship=?,
+                       output_schema=?, scope=?, thresholds=?, origin=?, updated_at=?
+                       WHERE key=?""",
+                    (
+                        contract["name"], contract.get("purpose", ""),
+                        int(contract["tier"]), contract["variance"],
+                        json.dumps(contract.get("allowed_ops", [])),
+                        json.dumps(contract.get("forbidden_ops", [])),
+                        contract.get("authority_relationship", ""),
+                        json.dumps(contract.get("output_schema", {})),
+                        json.dumps(contract.get("scope", {})),
+                        json.dumps(contract.get("thresholds", {})),
+                        contract.get("origin", ""), now, contract["key"],
+                    ),
+                )
+                self._conn.commit()
+                return row["id"]
+            instrument_id = str(uuid.uuid4())
+            self._conn.execute(
+                """INSERT INTO assay_instrument(id, key, name, purpose, tier, variance,
+                   certification, allowed_ops, forbidden_ops, authority_relationship,
+                   output_schema, scope, thresholds, origin, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,'advisory',?,?,?,?,?,?,?,?,?)""",
+                (
+                    instrument_id, contract["key"], contract["name"],
+                    contract.get("purpose", ""), int(contract["tier"]),
+                    contract["variance"],
+                    json.dumps(contract.get("allowed_ops", [])),
+                    json.dumps(contract.get("forbidden_ops", [])),
+                    contract.get("authority_relationship", ""),
+                    json.dumps(contract.get("output_schema", {})),
+                    json.dumps(contract.get("scope", {})),
+                    json.dumps(contract.get("thresholds", {})),
+                    contract.get("origin", ""), now, now,
+                ),
+            )
+            self._conn.commit()
+            return instrument_id
+
+    @staticmethod
+    def _assay_instrument_row(row: Any) -> dict:
+        d = dict(row)
+        for field in ("allowed_ops", "forbidden_ops"):
+            d[field] = json.loads(d[field] or "[]")
+        for field in ("output_schema", "scope", "thresholds"):
+            d[field] = json.loads(d[field] or "{}")
+        return d
+
+    def get_assay_instrument(self, key: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM assay_instrument WHERE key=?", (key,)
+            ).fetchone()
+        return self._assay_instrument_row(row) if row else None
+
+    def list_assay_instruments(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM assay_instrument ORDER BY tier, key"
+            ).fetchall()
+        return [self._assay_instrument_row(r) for r in rows]
+
+    def create_assay_run(
+        self, *, instrument_id: str, work_id: str, chapter_id: str | None = None
+    ) -> str:
+        """Claim + create a run row.  Refuses (raises RuntimeError) while a
+        run for the same instrument+work is still 'running' — the row IS the
+        claim, taken under the write lock, so double-dispatch is impossible."""
+        run_id = str(uuid.uuid4())
+        with self._lock:
+            busy = self._conn.execute(
+                """SELECT id FROM assay_run
+                   WHERE instrument_id=? AND work_id=? AND status='running'""",
+                (instrument_id, work_id),
+            ).fetchone()
+            if busy is not None:
+                raise RuntimeError("a run for this instrument and work is already running")
+            self._conn.execute(
+                """INSERT INTO assay_run(id, instrument_id, work_id, chapter_id,
+                   status, started_at) VALUES(?,?,?,?,'running',?)""",
+                (run_id, instrument_id, work_id, chapter_id, _now()),
+            )
+            self._conn.commit()
+        return run_id
+
+    def finish_assay_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        verdict: str | None = None,
+        score: float | None = None,
+        evidence: dict | None = None,
+        findings_count: int = 0,
+        error: str | None = None,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """UPDATE assay_run SET status=?, verdict=?, score=?, evidence=?,
+                   findings_count=?, error=?, finished_at=? WHERE id=?""",
+                (
+                    status, verdict, score, json.dumps(evidence or {}),
+                    findings_count, error, _now(), run_id,
+                ),
+            )
+            self._conn.commit()
+
+    def get_assay_run(self, run_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM assay_run WHERE id=?", (run_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["evidence"] = json.loads(d["evidence"] or "{}")
+        return d
+
+    def list_assay_runs(
+        self,
+        work_id: str,
+        *,
+        instrument_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        query = "SELECT * FROM assay_run WHERE work_id=?"
+        params: list[Any] = [work_id]
+        if instrument_id:
+            query += " AND instrument_id=?"
+            params.append(instrument_id)
+        query += " ORDER BY started_at DESC LIMIT ?"
+        params.append(max(1, min(int(limit), 200)))
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["evidence"] = json.loads(d["evidence"] or "{}")
+            out.append(d)
+        return out
+
+    def create_assay_finding(
+        self,
+        *,
+        run_id: str,
+        instrument_id: str,
+        work_id: str,
+        unit: str,
+        force_check: str,
+        issue_type: str,
+        severity: str,
+        chapter_id: str | None = None,
+        classification: str = "",
+        action: str = "",
+        evidence: dict | None = None,
+    ) -> str:
+        finding_id = str(uuid.uuid4())
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO assay_finding(id, run_id, instrument_id, work_id,
+                   chapter_id, unit, force_check, issue_type, severity,
+                   classification, action, evidence, created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    finding_id, run_id, instrument_id, work_id, chapter_id,
+                    unit, force_check, issue_type, severity, classification,
+                    action, json.dumps(evidence or {}), _now(),
+                ),
+            )
+            self._conn.commit()
+        return finding_id
+
+    def list_assay_findings(self, run_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM assay_finding WHERE run_id=? ORDER BY created_at, unit",
+                (run_id,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["evidence"] = json.loads(d["evidence"] or "{}")
+            out.append(d)
+        return out
+
+    def create_assay_signature(
+        self,
+        *,
+        work_id: str,
+        gate_key: str,
+        author: str,
+        decision: str = "open",
+        note: str = "",
+    ) -> str:
+        if not author or not author.strip():
+            raise ValueError("a signature requires a non-blank author")
+        if decision not in ("open", "go", "no_go"):
+            raise ValueError(f"invalid signature decision {decision!r}")
+        sig_id = str(uuid.uuid4())
+        with self.governed_write(
+            operation="assay.signature.created",
+            event_type="assay.signature.created",
+            object_id=sig_id,
+            object_type="assay_signature",
+            payload={"work_id": work_id, "gate_key": gate_key, "decision": decision},
+            actor=author.strip(),
+        ):
+            self._conn.execute(
+                """INSERT INTO assay_signature(id, work_id, gate_key, author,
+                   decision, note, signed_at) VALUES(?,?,?,?,?,?,?)""",
+                (sig_id, work_id, gate_key, author.strip(), decision, note, _now()),
+            )
+        return sig_id
+
+    def latest_assay_signature(self, work_id: str, gate_key: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT * FROM assay_signature WHERE work_id=? AND gate_key=?
+                   ORDER BY signed_at DESC, rowid DESC LIMIT 1""",
+                (work_id, gate_key),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_assay_signatures(self, work_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM assay_signature WHERE work_id=? ORDER BY signed_at DESC",
+                (work_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_assay_baseline(self, work_id: str, key: str, payload: dict) -> None:
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO assay_baseline(id, work_id, key, payload, updated_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(work_id, key) DO UPDATE SET
+                   payload=excluded.payload, updated_at=excluded.updated_at""",
+                (str(uuid.uuid4()), work_id, key, json.dumps(payload), _now()),
+            )
+            self._conn.commit()
+
+    def get_assay_baseline(self, work_id: str, key: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM assay_baseline WHERE work_id=? AND key=?",
+                (work_id, key),
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    # ── /ASSAY ────────────────────────────────────────────────────────────────
+
     def close(self) -> None:
         with self._lock:
             # Close the main writer connection.
