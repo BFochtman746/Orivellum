@@ -2517,4 +2517,66 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE works ADD COLUMN cover_path TEXT;
     """,
     ),
+    # v122 — Writing Architect archive decomposition (Pipeline M0 / DECOMPOSE).
+    #
+    # wa_archive_docs   — coverage inventory: one row per real file in the
+    #                     archive (resource forks excluded), with content hash,
+    #                     duplicate resolution, and an explicit disposition
+    #                     (extracted / deduped / deferred + reason) so the
+    #                     coverage report can prove nothing was silently lost.
+    # wa_records        — machine-readable doctrine records extracted from the
+    #                     archive: engine contracts, runtime policies, record
+    #                     schemas, table specs, voice envelope, POSITION spec,
+    #                     provenance spec.  payload is parsed-section JSON.
+    # wa_canon_proposals— BIBLE_DATA facts staged as PROPOSALS ONLY.  Nothing
+    #                     from the archive writes canon authority; every row
+    #                     starts status='proposed' and waits for author
+    #                     ratification.  id is a deterministic content hash so
+    #                     re-running the decomposer never clobbers a
+    #                     ratification decision (INSERT OR IGNORE).
+    (
+        122,
+        "Writing Architect M0: archive inventory, doctrine records, canon proposals",
+        """
+        CREATE TABLE IF NOT EXISTS wa_archive_docs (
+            id            TEXT PRIMARY KEY,
+            rel_path      TEXT NOT NULL UNIQUE,
+            filename      TEXT NOT NULL,
+            layer         TEXT NOT NULL,
+            sha256        TEXT NOT NULL,
+            size_bytes    INTEGER NOT NULL,
+            duplicate_of  TEXT,
+            status        TEXT NOT NULL,
+            reason        TEXT,
+            target_kind   TEXT,
+            run_id        TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS wa_docs_layer ON wa_archive_docs(layer, status);
+        CREATE TABLE IF NOT EXISTS wa_records (
+            id           TEXT PRIMARY KEY,
+            record_type  TEXT NOT NULL,
+            name         TEXT NOT NULL,
+            payload      TEXT NOT NULL,
+            source_path  TEXT NOT NULL,
+            source_note  TEXT,
+            run_id       TEXT NOT NULL,
+            created_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS wa_records_type ON wa_records(record_type, name);
+        CREATE TABLE IF NOT EXISTS wa_canon_proposals (
+            id             TEXT PRIMARY KEY,
+            fact_title     TEXT NOT NULL,
+            fact_text      TEXT NOT NULL,
+            classification TEXT NOT NULL,
+            scope          TEXT NOT NULL,
+            source_path    TEXT NOT NULL,
+            source_location TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'proposed',
+            decided_at     TEXT,
+            created_at     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS wa_canon_status ON wa_canon_proposals(status, scope);
+    """,
+    ),
 ]
