@@ -12,6 +12,8 @@ Covers:
 - run_analysis publishes ANALYSIS_REPORT.md as a new 'analyzed' version
   and releases the build claim
 - analyze/report routes: guards and report retrieval
+- reverse-Workbench end to end: imported v1 feeds an improvement build that
+  lands as v2+ through the normal sandbox + verification + publish path
 """
 
 from __future__ import annotations
@@ -393,6 +395,63 @@ class TestAnalyzeRoutes(unittest.TestCase):
                 f"/api/workbench/projects/{p2['id']}/analyze", json={}, headers=AUTH_HEADERS
             )
             self.assertEqual(r.status_code, 409)
+
+    def test_import_then_improve_lands_as_v2_with_sandbox_checks(self):
+        """Reverse Workbench end to end: an uploaded workbook becomes v1,
+        and an improvement build reads those files from ./inputs, runs in
+        the real sandbox, passes verification, and publishes v2 with a
+        hash manifest."""
+        import json
+
+        from orivellum.capabilities.llm import LLMResult
+        from orivellum.capabilities.workbench import run_build, version_dir
+
+        improve_script = (
+            "import pathlib\n"
+            "from openpyxl import load_workbook\n"
+            "src = next(pathlib.Path('inputs').glob('*.xlsx'))\n"
+            "wb = load_workbook(src)\n"
+            "ws = wb['Data']\n"
+            "ws['A4'] = '=SUM(A1:A2)'\n"
+            "out = pathlib.Path('out'); out.mkdir(exist_ok=True)\n"
+            "wb.save(out / src.name)\n"
+            "print('improved imported workbook')\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app)
+            with patch("orivellum.api.executor.submit_bg", return_value=False):
+                r = client.post(
+                    "/api/workbench/projects/import",
+                    files={"file": ("ledger.xlsx", _xlsx_bytes(), "application/octet-stream")},
+                    headers=AUTH_HEADERS,
+                )
+            self.assertEqual(r.status_code, 200, r.text)
+            pid = r.json()["id"]
+
+            with patch(
+                "orivellum.capabilities.llm.llm_call",
+                return_value=LLMResult(improve_script, True, "test", 0),
+            ):
+                run_build(db, cfg, pid, "add a total row")
+
+            proj = db.get_wb_project(pid)
+            self.assertEqual(proj["building"], 0)
+            self.assertIsNone(proj["last_error"], proj["last_error"])
+            versions = db.list_wb_versions(pid)
+            self.assertEqual([v["version_no"] for v in versions], [1, 2])
+            self.assertEqual(versions[0]["verdict"], "imported")
+            v2 = versions[1]
+            # improvement went through the xlsx proof gates like any build
+            self.assertEqual(v2["verdict"], "proven")
+            files = json.loads(v2["files_json"])
+            self.assertEqual(files[0]["name"], "ledger.xlsx")
+            self.assertEqual(len(files[0]["sha256"]), 64)
+            # v2 on disk really is the improved copy of the imported workbook
+            from openpyxl import load_workbook
+
+            wb = load_workbook(version_dir(cfg, pid, 2) / "ledger.xlsx")
+            self.assertEqual(wb["Data"]["A4"].value, "=SUM(A1:A2)")
 
     def test_dropped_dispatch_releases_claim(self):
         """If the executor drops the work, the project must not stay
