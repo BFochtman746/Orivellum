@@ -1102,11 +1102,14 @@ export default function DocumentDetail() {
         toast.error("No extracted text available to read aloud.");
         return;
       }
+      // Lock-screen artwork: the linked Work's cover image, when it has one.
+      const coverPath = (workData?.work as any)?.cover_path;
       await readAloud.startText({
         title: doc?.title || doc?.source || "Document",
         href: `/library/${docId}`,
         text,
         resumeKey: docId, // remember the listening position per document
+        artwork: coverPath && workId ? `${BASE}/works/${workId}/cover` : undefined,
       });
     } finally {
       setTtsLoading(false);

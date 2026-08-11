@@ -4012,6 +4012,7 @@ components:
         description: { type: string, nullable: true }
         status: { type: string }
         meta: { type: object }
+        cover_path: { type: string, nullable: true, description: "Data-dir-relative cover image path; serve via GET /works/{id}/cover" }
         doc_count: { type: integer }
         knowledge_count: { type: integer }
         pending_tasks: { type: integer }

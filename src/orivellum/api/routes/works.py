@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import UTC
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from orivellum.api._deps import get_db, require_auth
@@ -183,6 +184,137 @@ def works_delete(work_id: str):
     if not ok:
         raise HTTPException(404, f"Work {work_id!r} not found")
     return {"ok": True}
+
+
+# ── Work cover images ─────────────────────────────────────────────────────────
+# Stored under <data_dir>/covers/<work_id><ext>; works.cover_path holds the
+# data-dir-relative path. Shown on Work cards/detail and passed to the Read
+# Aloud player as lock-screen artwork.
+#
+# Lifecycle safety: all cover mutations serialize on _COVER_MUTATION_LOCK and
+# follow a strict order so cover_path never points at a missing file:
+#   upload — write temp file, atomic os.replace into place, THEN commit the DB
+#            path, THEN remove obsolete other-extension files;
+#   delete — clear the DB path FIRST, then unlink files.
+# A failure mid-sequence can only leave an orphan file (harmless), never a
+# dangling DB reference. Soft-deleting a Work deliberately keeps its cover on
+# disk so restoring the Work restores its artwork.
+
+_COVER_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+_COVER_MAGIC: dict[str, list[tuple[bytes, int]]] = {
+    ".png": [(b"\x89PNG\r\n\x1a\n", 0)],
+    ".jpg": [(b"\xff\xd8\xff", 0)],
+    ".jpeg": [(b"\xff\xd8\xff", 0)],
+    ".webp": [(b"WEBP", 8)],  # RIFF????WEBP
+}
+_COVER_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+_MAX_COVER_BYTES = 10 * 1024 * 1024  # 10 MB is plenty for a cover image
+
+# Serializes upload/replace/delete so interleaved requests can't unlink a file
+# the DB is about to reference. Global (not per-Work) — this is a single-user
+# local server and cover writes are rare, so contention is a non-issue.
+_COVER_MUTATION_LOCK = threading.Lock()
+
+
+def _covers_dir():
+    from pathlib import Path
+
+    from orivellum.api._deps import get_config
+
+    d = Path(get_config().data_dir) / "covers"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@router.post("/works/{work_id}/cover")
+async def works_upload_cover(work_id: str, file: UploadFile):
+    """Upload (or replace) a Work's cover image."""
+    import os
+    from pathlib import Path
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _COVER_EXTS:
+        raise HTTPException(415, "Cover must be a PNG, JPEG, or WebP image.")
+    data = await file.read(_MAX_COVER_BYTES + 1)
+    if not data:
+        raise HTTPException(422, "The uploaded file is empty.")
+    if len(data) > _MAX_COVER_BYTES:
+        raise HTTPException(413, "Cover image is too large (max 10 MB).")
+    if not any(data[off : off + len(sig)] == sig for sig, off in _COVER_MAGIC[ext]):
+        raise HTTPException(
+            415,
+            f"File content does not match its extension ({ext}). "
+            "The file may be corrupt or misnamed.",
+        )
+    covers = _covers_dir()
+    target = covers / f"{work_id}{ext}"
+    with _COVER_MUTATION_LOCK:
+        # 1) Write to a temp file and atomically move into place — the target
+        #    is never observable in a partially-written state.
+        tmp = covers / f".{work_id}{ext}.tmp"
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+        # 2) Commit the DB path only after the file exists.
+        work = db.set_work_cover(work_id, f"covers/{work_id}{ext}")
+        if work is None:
+            target.unlink(missing_ok=True)
+            raise HTTPException(404, f"Work {work_id!r} not found")
+        # 3) Only now remove any previous cover with a different extension —
+        #    a failure above leaves at most an orphan file, never a dangling
+        #    cover_path.
+        for old_ext in _COVER_EXTS - {ext}:
+            (covers / f"{work_id}{old_ext}").unlink(missing_ok=True)
+    return {"work": work}
+
+
+@router.get("/works/{work_id}/cover")
+def works_get_cover(work_id: str):
+    """Serve a Work's cover image, or 404 when it has none."""
+    from pathlib import Path
+
+    from orivellum.api._deps import get_config
+
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    cover_path = work.get("cover_path")
+    if not cover_path:
+        raise HTTPException(404, "This Work has no cover image")
+    data_dir = Path(get_config().data_dir).resolve()
+    target = (data_dir / cover_path).resolve()
+    # cover_path is server-generated, but stay traversal-safe regardless.
+    if not target.is_relative_to(data_dir) or not target.is_file():
+        raise HTTPException(404, "Cover file missing")
+    media_type = _COVER_MEDIA_TYPES.get(target.suffix.lower(), "application/octet-stream")
+    # no-cache (not no-store): the browser may keep a copy but must revalidate,
+    # so a replaced cover shows up without a hard refresh.
+    return FileResponse(str(target), media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+
+@router.delete("/works/{work_id}/cover")
+def works_delete_cover(work_id: str):
+    """Remove a Work's cover image."""
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    covers = _covers_dir()
+    with _COVER_MUTATION_LOCK:
+        # Clear the DB path FIRST, then unlink — if the unlink fails we're
+        # left with an orphan file, never a cover_path to a missing file.
+        updated = db.set_work_cover(work_id, None)
+        for ext in _COVER_EXTS:
+            (covers / f"{work_id}{ext}").unlink(missing_ok=True)
+    return {"work": updated}
 
 
 @router.get("/works/{work_id}/documents")

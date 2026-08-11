@@ -2507,4 +2507,14 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS operations_schedule ON operations(schedule_id);
     """,
     ),
+    # v121 — Per-Work cover image. cover_path is a data-dir-relative path
+    # (e.g. "covers/<work_id>.png") set by POST /api/works/{id}/cover; NULL
+    # means no cover (clients fall back to the branded Orivellum artwork).
+    (
+        121,
+        "Works: cover image path",
+        """
+        ALTER TABLE works ADD COLUMN cover_path TEXT;
+    """,
+    ),
 ]

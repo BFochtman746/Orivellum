@@ -40,6 +40,11 @@ export interface Work {
   description?: string | null;
   status?: string;
   meta?: WorkMeta;
+  /**
+     * Data-dir-relative cover image path; serve via GET /works/{id}/cover
+     * @nullable
+     */
+  cover_path?: string | null;
   doc_count?: number;
   knowledge_count?: number;
   pending_tasks?: number;

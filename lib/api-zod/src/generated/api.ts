@@ -36,6 +36,7 @@ export const GetDashboardSummaryResponse = zod.object({
   "meta": zod.looseObject({
 
 }).optional(),
+  "cover_path": zod.string().nullish().describe('Data-dir-relative cover image path; serve via GET \/works\/{id}\/cover'),
   "doc_count": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "pending_tasks": zod.int().optional(),
@@ -108,6 +109,7 @@ export const ListWorksResponse = zod.object({
   "meta": zod.looseObject({
 
 }).optional(),
+  "cover_path": zod.string().nullish().describe('Data-dir-relative cover image path; serve via GET \/works\/{id}\/cover'),
   "doc_count": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "pending_tasks": zod.int().optional(),
@@ -141,6 +143,7 @@ export const CreateWorkResponse = zod.object({
   "meta": zod.looseObject({
 
 }).optional(),
+  "cover_path": zod.string().nullish().describe('Data-dir-relative cover image path; serve via GET \/works\/{id}\/cover'),
   "doc_count": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "pending_tasks": zod.int().optional(),
@@ -222,6 +225,7 @@ export const GetWorkResponse = zod.object({
   "meta": zod.looseObject({
 
 }).optional(),
+  "cover_path": zod.string().nullish().describe('Data-dir-relative cover image path; serve via GET \/works\/{id}\/cover'),
   "doc_count": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "pending_tasks": zod.int().optional(),
@@ -258,6 +262,7 @@ export const UpdateWorkResponse = zod.object({
   "meta": zod.looseObject({
 
 }).optional(),
+  "cover_path": zod.string().nullish().describe('Data-dir-relative cover image path; serve via GET \/works\/{id}\/cover'),
   "doc_count": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "pending_tasks": zod.int().optional(),
@@ -1313,6 +1318,7 @@ export const GetBriefingResponse = zod.object({
   "meta": zod.looseObject({
 
 }).optional(),
+  "cover_path": zod.string().nullish().describe('Data-dir-relative cover image path; serve via GET \/works\/{id}\/cover'),
   "doc_count": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "pending_tasks": zod.int().optional(),
@@ -2035,6 +2041,7 @@ export const ListLearnWorksResponse = zod.object({
   "meta": zod.looseObject({
 
 }).optional(),
+  "cover_path": zod.string().nullish().describe('Data-dir-relative cover image path; serve via GET \/works\/{id}\/cover'),
   "doc_count": zod.int().optional(),
   "knowledge_count": zod.int().optional(),
   "pending_tasks": zod.int().optional(),

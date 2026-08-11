@@ -87,6 +87,7 @@ import {
   Zap,
   Film,
   Scroll,
+  ImagePlus,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -116,6 +117,111 @@ import { GapsTab } from "./gaps-tab";
 import { CompletenessTab } from "./completeness-tab";
 import { GraphTab } from "./graph-tab";
 import { QuizTab } from "./quiz-tab";
+// ─── Work cover image ─────────────────────────────────────────────────────────
+// Upload / replace / remove a Work's cover. Shown beside the title and used as
+// lock-screen artwork when listening to this Work's documents.
+
+function WorkCover({ workId, coverPath }: { workId: string; coverPath?: string | null }) {
+  const queryClient = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  // Bump to cache-bust the <img> after a replace (server sends no-cache, but
+  // a fresh URL guarantees the new cover shows immediately).
+  const [version, setVersion] = useState(0);
+  const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId) });
+    queryClient.invalidateQueries({ queryKey: getListWorksQueryKey() });
+    setVersion((v) => v + 1);
+  };
+
+  const handleFile = async (file: File) => {
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const resp = await apiFetch(`${BASE}/works/${workId}/cover`, { method: "POST", body: form });
+      if (!resp.ok) {
+        const detail = (await resp.json().catch(() => null))?.detail;
+        throw new Error(typeof detail === "string" ? detail : "Upload failed");
+      }
+      refresh();
+      toast.success("Cover image updated");
+    } catch (e: any) {
+      toast.error(e?.message || "Could not upload the cover image");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const handleRemove = async () => {
+    setBusy(true);
+    try {
+      const resp = await apiFetch(`${BASE}/works/${workId}/cover`, { method: "DELETE" });
+      if (!resp.ok) throw new Error("Remove failed");
+      refresh();
+      toast.success("Cover image removed");
+    } catch (e: any) {
+      toast.error(e?.message || "Could not remove the cover image");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="shrink-0">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+      />
+      {coverPath ? (
+        <div className="relative group/cover w-24">
+          <img
+            src={`${BASE}/works/${workId}/cover?v=${version}`}
+            alt="Work cover"
+            className="w-24 h-36 object-cover rounded-md border border-border/60 shadow-md"
+          />
+          <div className="absolute inset-0 rounded-md bg-background/70 opacity-0 group-hover/cover:opacity-100 focus-within:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5">
+            {busy ? (
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            ) : (
+              <>
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded bg-muted/80 hover:bg-muted text-foreground transition-colors"
+                >
+                  Replace
+                </button>
+                <button
+                  onClick={handleRemove}
+                  className="text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                >
+                  Remove
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          title="Add a cover image (PNG, JPEG, or WebP)"
+          className="w-24 h-36 rounded-md border border-dashed border-border/60 flex flex-col items-center justify-center gap-1.5 text-muted-foreground/50 hover:text-muted-foreground hover:border-border hover:bg-muted/30 transition-colors"
+        >
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
+          <span className="text-[10px] font-mono uppercase tracking-wider">Cover</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Work detail shell ────────────────────────────────────────────────────────
 
 export default function WorkDetail() {
@@ -325,7 +431,9 @@ export default function WorkDetail() {
               </div>
             </div>
           ) : (
-            <div>
+            <div className="flex items-start gap-5">
+              <WorkCover workId={workId!} coverPath={(work as any).cover_path} />
+              <div className="flex-1 min-w-0">
               <div className="flex items-start gap-3">
                 <h1 className="vellum-h1">{work.title}</h1>
                 <button
@@ -349,6 +457,7 @@ export default function WorkDetail() {
                   Add a description…
                 </button>
               )}
+              </div>
             </div>
           )}
           <div className="flex items-center gap-3 flex-wrap">

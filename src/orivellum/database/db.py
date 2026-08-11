@@ -1217,6 +1217,28 @@ class OrivellumDB:
             )
         return self.get_work(work_id)
 
+    def set_work_cover(self, work_id: str, cover_path: str | None) -> dict | None:
+        """Set or clear a Work's cover image path (relative to the data dir).
+
+        Returns the refreshed work dict, or None if the work does not exist.
+        """
+        if not self.get_work(work_id):
+            return None
+        now = _now()
+        with self.governed_write(
+            operation="work.cover_updated",
+            event_type="work.cover_updated",
+            object_id=work_id,
+            object_type="work",
+            detail=cover_path or "cleared",
+        ):
+            self._conn.execute("UPDATE works SET cover_path=? WHERE id=?", (cover_path, work_id))
+            self._conn.execute(
+                "UPDATE objects SET updated_at=?, version=version+1 WHERE id=?",
+                (now, work_id),
+            )
+        return self.get_work(work_id)
+
     def delete_work(self, work_id: str) -> bool:
         """Soft-delete a work by flipping its object lifecycle to 'deleted'.
 

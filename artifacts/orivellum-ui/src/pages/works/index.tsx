@@ -24,6 +24,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
+const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
 // ── Import-from-Library dialog ────────────────────────────────────────────────
 
 function ImportFromLibraryDialog({
@@ -354,6 +356,15 @@ export default function WorksList() {
               <Card className="vellum-card tap spring-scale cursor-pointer group" data-interactive>
                 <CardContent className="p-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    {(work as any).cover_path && (
+                      <img
+                        src={`${BASE}/works/${work.id}/cover`}
+                        alt=""
+                        loading="lazy"
+                        className="hidden md:block w-14 h-20 object-cover rounded border border-border/50 shadow-sm shrink-0"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="space-y-2 flex-1 min-w-0">
                       <div className="flex items-center gap-3 flex-wrap">
                         <h2 className="text-2xl font-serif font-medium group-hover:text-primary transition-colors truncate text-balance">
