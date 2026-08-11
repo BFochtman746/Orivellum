@@ -942,6 +942,111 @@ class PartialRebuildReverifyTests(AtlasBase):
         self.assertEqual(self.db.list_graph_inconsistencies(work_id=self.work_id), [])
 
 
+class PartialRebuildAtomicityTests(AtlasBase):
+    """A failed partial rebuild must leave EVERY prior row untouched —
+    including downstream chapters whose re-verification fails mid-run."""
+
+    def _snapshot(self):
+        return (
+            sorted(
+                (n["chapter_id"], n["name"], n["evidence_offset"])
+                for n in self.db.list_graph_nodes(work_ids=[self.work_id])
+            ),
+            sorted(
+                (e["chapter_id"], e["edge_type"])
+                for e in self.db.list_graph_edges(work_ids=[self.work_id])
+            ),
+            sorted(
+                (r["chapter_id"], r["description"])
+                for r in self.db.list_graph_inconsistencies(work_id=self.work_id)
+            ),
+        )
+
+    def test_downstream_verify_failure_preserves_everything(self):
+        from orivellum.capabilities.atlas import AtlasLLMError
+
+        doc_a = self.db.create_document(
+            title="Part One", source="a.txt", kind="book", work_id=self.work_id
+        )["id"]
+        doc_b = self.db.create_document(
+            title="Part Two", source="b.txt", kind="book", work_id=self.work_id
+        )["id"]
+        t0 = _FILLER + " The gate of Uz was made of cedar."
+        t1 = _FILLER + " The gate of Uz was made of iron."
+        t2 = _FILLER + " The gate of Uz was made of bronze."
+        # Doc A owns chapter 0; doc B owns TWO downstream chapters (1, 2).
+        _seed_chapter(self.db, self.work_id, 0, "One", t0, doc_id=doc_a)
+        _seed_chapter(self.db, self.work_id, 1, "Two", t1, doc_id=doc_b)
+        _seed_chapter(self.db, self.work_id, 2, "Three", t2, doc_id=doc_b)
+
+        def propose(prompt):
+            if "seq 1)" in prompt:
+                return [
+                    {
+                        "description": "Gate material vs ch1",
+                        "current_quote": "The gate of Uz was made of iron.",
+                        "prior_chapter_seq": 0,
+                        "prior_quote": "The gate of Uz was made of cedar.",
+                        "reasoning": "conflict",
+                    }
+                ]
+            if "seq 2)" in prompt:
+                return [
+                    {
+                        "description": "Gate material vs ch2",
+                        "current_quote": "The gate of Uz was made of bronze.",
+                        "prior_chapter_seq": 0,
+                        "prior_quote": "The gate of Uz was made of cedar.",
+                        "reasoning": "conflict",
+                    }
+                ]
+            return []
+
+        base = {
+            "atlas.events": [],
+            "atlas.entities": [
+                {
+                    "name": "Job of Uz",
+                    "node_type": "Character",
+                    "description": "…",
+                    "evidence_quote": "Job of Uz rose before dawn",
+                }
+            ],
+            "atlas.relations": [],
+            "atlas.attributes": {},
+        }
+        good = {**base, "atlas.propose": propose, "atlas.verify": {"verdict": "confirmed"}}
+        with patch("orivellum.capabilities.llm.llm_call", _StubLLM(good)):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        before = self._snapshot()
+        # Sanity: both downstream chapters raised a stored inconsistency.
+        self.assertEqual(len(before[2]), 2)
+
+        # Partial rebuild of doc A: extraction and chapter-1 re-verification
+        # would succeed, but the SECOND downstream re-verification (chapter 2)
+        # hits a gateway failure — its verify calls error out.
+        calls = {"verify": 0}
+
+        def flaky_verify(prompt):
+            calls["verify"] += 1
+            if "vs ch2" in prompt:
+                return None  # -> ok=False -> AtlasLLMError
+            return {"verdict": "confirmed"}
+
+        flaky = _StubLLM({**base, "atlas.propose": propose, "atlas.verify": flaky_verify})
+        with (
+            patch("orivellum.capabilities.llm.llm_call", flaky),
+            self.assertRaises(AtlasLLMError),
+        ):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id, doc_id=doc_a)
+        # Chapter 2's verify was actually reached (the failure happened
+        # mid-plan, after chapter 1 staged successfully) …
+        self.assertGreaterEqual(calls["verify"], 2)
+        # … and NOTHING changed: nodes, edges, and both downstream
+        # inconsistencies are exactly as before the failed rebuild.
+        self.assertEqual(self._snapshot(), before)
+
+
 class FirstImportOrderingTests(AtlasBase):
     """Real production ordering: chapters written via upsert_book_chapters
     (as the pipeline does BEFORE invoking harvest), then harvest runs and

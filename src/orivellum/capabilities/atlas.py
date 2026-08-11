@@ -689,8 +689,14 @@ def _stage_verify(
     work_id: str,
     chapter: dict,
     prior_chapters: list[dict],
+    staged_views: dict[str, tuple[list[dict], list[dict]]] | None = None,
 ) -> tuple[list[dict], dict]:
-    """Stage verified inconsistencies without writing them."""
+    """Stage verified inconsistencies without writing them.
+
+    ``staged_views`` maps chapter_id -> (nodes, edges) for chapters whose
+    rebuilt graph is staged but not yet committed, so the rendered prior
+    world state reflects the PLANNED graph, not stale stored rows.
+    """
     staged: list[dict] = []
     counts = {"proposed": 0, "kept": 0, "discarded": 0}
     # NEVER strip: offsets must index into the text exactly as stored.
@@ -701,7 +707,7 @@ def _stage_verify(
     by_seq = {c["seq"]: c for c in prior_chapters}
     title = chapter.get("title") or f"Chapter {chapter.get('seq', 0) + 1}"
 
-    state = _render_world_state(db, work_id, prior_chapters)
+    state = _render_world_state(db, work_id, prior_chapters, staged_views=staged_views)
     proposals: list[dict] = []
     seen_props: set[tuple] = set()
     for window in _windows(text):
@@ -779,13 +785,21 @@ def _stage_verify(
     return staged, counts
 
 
-def _render_world_state(db: OrivellumDB, work_id: str, prior_chapters: list[dict]) -> str:
+def _render_world_state(
+    db: OrivellumDB,
+    work_id: str,
+    prior_chapters: list[dict],
+    staged_views: dict[str, tuple[list[dict], list[dict]]] | None = None,
+) -> str:
     """Compact, budget-capped render of prior chapters' graph state."""
     lines: list[str] = []
     node_names: dict[str, str] = {}
     for ch in prior_chapters:
-        nodes = db.list_graph_nodes(chapter_id=ch["id"])
-        edges = db.list_graph_edges(chapter_id=ch["id"])
+        if staged_views is not None and ch["id"] in staged_views:
+            nodes, edges = staged_views[ch["id"]]
+        else:
+            nodes = db.list_graph_nodes(chapter_id=ch["id"])
+            edges = db.list_graph_edges(chapter_id=ch["id"])
         for n in nodes:
             node_names[n["id"]] = n["name"]
         header = f"[seq {ch['seq']}] {ch.get('title') or ''}".strip()
@@ -844,7 +858,50 @@ def build_work_graph(
         return _build_work_graph_locked(db, cfg, work_id=work_id, doc_id=doc_id)
 
 
-def _reverify_downstream(
+def _commit_plan(db: OrivellumDB, *, work_id: str, plan: list[tuple]) -> None:
+    """Apply a fully staged rebuild plan.
+
+    Runs only after EVERY LLM call in the plan succeeded — deletions happen
+    here, never during staging, so a gateway failure can't leave the work
+    partially rebuilt.
+    """
+    for op in plan:
+        if op[0] == "purge":
+            db.delete_graph_for_chapter(op[1])
+        elif op[0] == "replace":
+            _, chapter_id, staged_nodes, staged_edges, staged_incs = op
+            _commit_chapter(
+                db, work_id=work_id, chapter_id=chapter_id,
+                staged_nodes=staged_nodes, staged_edges=staged_edges,
+                staged_incs=staged_incs,
+            )
+        else:  # reverify
+            _, chapter_id, staged_incs = op
+            db.delete_graph_inconsistencies_for_chapter(chapter_id)
+            for inc in staged_incs:
+                db.create_graph_inconsistency(**inc)
+
+
+def _staged_view(
+    staged_nodes: list[dict], staged_edges: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Project staged nodes/edges into the row shape _render_world_state reads."""
+    nodes = [
+        {
+            "id": n["sid"],
+            "name": n["name"],
+            "node_type": n["node_type"],
+            "attributes": n["attributes"],
+        }
+        for n in staged_nodes
+    ]
+    edges = [
+        {"src": e["src"], "dst": e["dst"], "edge_type": e["edge_type"]} for e in staged_edges
+    ]
+    return nodes, edges
+
+
+def _stage_reverify_downstream(
     db: OrivellumDB,
     cfg: Any,
     *,
@@ -852,21 +909,22 @@ def _reverify_downstream(
     chapters: list[dict],
     rebuilt: set[str],
     first_rebuilt_idx: int,
+    staged_views: dict[str, tuple[list[dict], list[dict]]],
     totals: dict,
-) -> None:
-    """Drop and re-verify inconsistencies of chapters after a partial rebuild."""
+) -> list[tuple]:
+    """Stage re-verification of chapters after a partial rebuild (no writes)."""
+    ops: list[tuple] = []
     for i, ch in enumerate(chapters):
         if i <= first_rebuilt_idx or ch["id"] in rebuilt:
             continue
-        # Stage first — only replace stored rows once verification succeeded.
         staged, v = _stage_verify(
-            db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i]
+            db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i],
+            staged_views=staged_views,
         )
-        db.delete_graph_inconsistencies_for_chapter(ch["id"])
-        for inc in staged:
-            db.create_graph_inconsistency(**inc)
+        ops.append(("reverify", ch["id"], staged))
         totals["inconsistencies"] += v["kept"]
         totals["discarded"] += v["discarded"]
+    return ops
 
 
 def _build_work_graph_locked(
@@ -887,35 +945,40 @@ def _build_work_graph_locked(
     if not chapters:
         return {"chapters": 0, "nodes": 0, "edges": 0, "inconsistencies": 0, "discarded": 0}
 
+    # ── Phase 1: stage the ENTIRE rebuild plan — no writes yet ────────────
+    # Every LLM call (extraction, verification, downstream re-verification)
+    # must succeed before ANY stored row is deleted; a gateway failure
+    # raises AtlasLLMError here and leaves the whole prior graph intact.
     totals = {"chapters": 0, "nodes": 0, "edges": 0, "inconsistencies": 0, "discarded": 0}
     rebuilt: set[str] = set()
     first_rebuilt_idx: int | None = None
+    staged_views: dict[str, tuple[list[dict], list[dict]]] = {}
+    plan: list[tuple] = []
     for i, ch in enumerate(chapters):
         if doc_id and ch.get("source_doc_id") != doc_id:
             continue
         totals["chapters"] += 1
         if not (ch.get("text") or "").strip():
-            # Chapter was emptied since the last build — purge its graph
-            # rows and (via rebuilt/first_rebuilt_idx) re-verify downstream.
-            db.delete_graph_for_chapter(ch["id"])
+            # Chapter was emptied since the last build — plan a purge and
+            # (via rebuilt/first_rebuilt_idx) downstream re-verification.
+            plan.append(("purge", ch["id"]))
+            staged_views[ch["id"]] = ([], [])
             rebuilt.add(ch["id"])
             if first_rebuilt_idx is None:
                 first_rebuilt_idx = i
             continue
-        # Stage ALL LLM work for this chapter first; commit (delete+replace)
-        # only after every call succeeded — a gateway failure raises
-        # AtlasLLMError and leaves the chapter's prior graph rows intact.
         staged_nodes, staged_edges, c = _stage_chapter(db, cfg, work_id=work_id, chapter=ch)
+        staged_views[ch["id"]] = _staged_view(staged_nodes, staged_edges)
         staged_incs: list[dict] = []
         v = {"kept": 0, "discarded": 0}
         if i > 0:
+            # Prior world state must reflect the PLANNED graph for chapters
+            # staged earlier in this run, not their stale stored rows.
             staged_incs, v = _stage_verify(
-                db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i]
+                db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i],
+                staged_views=staged_views,
             )
-        _commit_chapter(
-            db, work_id=work_id, chapter_id=ch["id"],
-            staged_nodes=staged_nodes, staged_edges=staged_edges, staged_incs=staged_incs,
-        )
+        plan.append(("replace", ch["id"], staged_nodes, staged_edges, staged_incs))
         totals["nodes"] += c["nodes"]
         totals["edges"] += c["edges"]
         totals["discarded"] += c["discarded"] + v["discarded"]
@@ -926,12 +989,18 @@ def _build_work_graph_locked(
 
     # Partial rebuild: chapters AFTER the rebuilt ones were verified against
     # a prior world state that just changed, so their stored inconsistencies
-    # may no longer be evidence-valid.  Drop and re-verify them.
+    # may no longer be evidence-valid.  Stage their re-verification too.
     if doc_id and first_rebuilt_idx is not None:
-        _reverify_downstream(
-            db, cfg, work_id=work_id, chapters=chapters,
-            rebuilt=rebuilt, first_rebuilt_idx=first_rebuilt_idx, totals=totals,
+        plan.extend(
+            _stage_reverify_downstream(
+                db, cfg, work_id=work_id, chapters=chapters,
+                rebuilt=rebuilt, first_rebuilt_idx=first_rebuilt_idx,
+                staged_views=staged_views, totals=totals,
+            )
         )
+
+    # ── Phase 2: commit the whole plan (all LLM work already succeeded) ──
+    _commit_plan(db, work_id=work_id, plan=plan)
     logger.info(
         "atlas: work %s graph built — %d chapters, %d nodes, %d edges, "
         "%d verified inconsistencies, %d discarded",
