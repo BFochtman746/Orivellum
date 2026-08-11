@@ -501,9 +501,14 @@ def _graph_boost_scores(
     try:
         with db._lock:
             for token in q_tokens:
+                # Legacy entities store + ATLAS-O typed graph (fiction
+                # harvest writes graph_node, not entities).
                 rows = db._conn.execute(
-                    "SELECT name FROM entities WHERE LOWER(name) LIKE ? LIMIT 5",
-                    (f"%{token.lower()}%",),
+                    """SELECT name FROM entities WHERE LOWER(name) LIKE ?
+                       UNION
+                       SELECT name FROM graph_node WHERE LOWER(name) LIKE ?
+                       LIMIT 10""",
+                    (f"%{token.lower()}%", f"%{token.lower()}%"),
                 ).fetchall()
                 for r in rows:
                     matched_entities.add(r["name"].lower())

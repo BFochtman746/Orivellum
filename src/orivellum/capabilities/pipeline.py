@@ -849,6 +849,7 @@ def _process_document_reserved(
                     len(_chapter_dicts),
                 )
                 try:
+                    from orivellum.capabilities.atlas import AtlasLLMError
                     from orivellum.capabilities.knowledge_harvest import llm_harvest_by_chapters
 
                     llm_harvest_by_chapters(
@@ -856,6 +857,16 @@ def _process_document_reserved(
                         work_id=work_id,
                         doc_title=title,
                         db=db,
+                    )
+                except AtlasLLMError as atlas_exc:
+                    # Harvest items were committed; the world-graph rebuild
+                    # failed and was recorded on the per-work marker
+                    # (atlas_build_error:<work_id>) — retried on next harvest.
+                    logger.error(
+                        "atlas graph build failed for doc %s (harvest kept, "
+                        "prior graph preserved, marker set): %s",
+                        doc_id,
+                        atlas_exc,
                     )
                 except Exception as llm_exc:
                     logger.warning(

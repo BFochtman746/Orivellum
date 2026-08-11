@@ -989,6 +989,64 @@ class FirstImportOrderingTests(AtlasBase):
         self.assertEqual([n["name"] for n in nodes], ["Job of Uz"])
         self.assertEqual(nodes[0]["evidence_offset"], _CH_TEXT.find("Job of Uz rose before dawn"))
 
+        # Legacy entity double-writes were removed for fiction, so the
+        # GLOBAL graph must surface ATLAS rows too — otherwise harvested
+        # characters vanish from the cross-work graph view.
+        g = self.db.get_global_graph()
+        labels = {n["label"] for n in g["nodes"]}
+        self.assertIn("Job of Uz", labels)
+        node_ids = {n["id"] for n in g["nodes"]}
+        for e in g["edges"]:
+            self.assertIn(e["source"], node_ids)
+            self.assertIn(e["target"], node_ids)
+        # Kind filter applies to ATLAS kinds (lowercase node types).
+        g2 = self.db.get_global_graph(entity_kinds=["character"])
+        self.assertIn("Job of Uz", {n["label"] for n in g2["nodes"]})
+        g3 = self.db.get_global_graph(entity_kinds=["location"])
+        self.assertNotIn("Job of Uz", {n["label"] for n in g3["nodes"]})
+
+
+class HarvestFailureBoundaryTests(AtlasBase):
+    """A gateway failure during the graph build must reach the harvest
+    caller and leave an observable per-work marker — never a silent
+    'successful' harvest."""
+
+    def _harvest(self, stub):
+        from orivellum.capabilities import knowledge_harvest as kh
+
+        doc_id = self.db.create_document(
+            title="Manuscript", source="ms.txt", kind="book", work_id=self.work_id
+        )["id"]
+        _seed_chapter(self.db, self.work_id, 0, "One", _CH_TEXT, doc_id=doc_id)
+        with (
+            patch("orivellum.capabilities.llm.llm_call", stub),
+            patch("orivellum.api._deps.get_config", return_value=_cfg()),
+        ):
+            kh.llm_harvest_by_chapters(doc_id, self.work_id, "Manuscript", self.db)
+
+    def test_atlas_failure_propagates_and_sets_marker(self):
+        from orivellum.capabilities.atlas import AtlasLLMError
+
+        with self.assertRaises(AtlasLLMError):
+            self._harvest(_StubLLM({}))  # every call fails, incl. atlas.*
+        marker = self.db.get_setting(f"atlas_build_error:{self.work_id}")
+        self.assertTrue(marker)
+
+    def test_marker_cleared_on_successful_rebuild(self):
+        self.db.set_setting(f"atlas_build_error:{self.work_id}", "stale failure")
+        self._harvest(
+            _StubLLM(
+                {
+                    "atlas.events": [],
+                    "atlas.entities": [],
+                    "atlas.relations": [],
+                    "atlas.attributes": {},
+                    "atlas.propose": [],
+                }
+            )
+        )
+        self.assertEqual(self.db.get_setting(f"atlas_build_error:{self.work_id}"), "")
+
 
 class HarvestHookTests(AtlasBase):
     def _run_harvest(self):

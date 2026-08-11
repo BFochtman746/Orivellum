@@ -2865,21 +2865,38 @@ class OrivellumDB:
     def _merge_atlas_graph(
         self, work_id: str, nodes: list[dict], edges: list[dict], seen: set[str], limit: int
     ) -> None:
-        """Merge ATLAS-O typed graph rows into a work-graph payload.
+        """Work-scoped ATLAS merge — see :meth:`_merge_atlas_into`."""
+        self._merge_atlas_into(nodes, edges, seen, limit, work_ids=[work_id])
 
-        Keeps the graph view showing fiction characters/relationships now
+    def _merge_atlas_into(
+        self,
+        nodes: list[dict],
+        edges: list[dict],
+        seen: set[str],
+        limit: int,
+        *,
+        work_ids: list[str] | None = None,
+        entity_kinds: list[str] | None = None,
+    ) -> None:
+        """Merge ATLAS-O typed graph rows into a graph payload.
+
+        Keeps graph views showing fiction characters/relationships now
         that the chapter harvest feeds graph_node/graph_edge instead of the
-        legacy entities store.
+        legacy entities store.  ``work_ids=None`` merges across all works
+        (global graph); ``entity_kinds`` optionally filters by lowercase
+        node type.
 
         Enforces the payload contract IN PLACE: the final node list fits the
         limit with room reserved for ATLAS nodes even when the legacy
         portion has already saturated the budget, and every edge (legacy or
         ATLAS) references only nodes that survive the budget.
         """
+        allowed = {k.lower() for k in entity_kinds} if entity_kinds else None
         atlas_nodes = [
             n
-            for n in self.list_graph_nodes(work_ids=[work_id], limit=max(1, limit))
+            for n in self.list_graph_nodes(work_ids=work_ids, limit=max(1, limit))
             if n["id"] not in seen
+            and (allowed is None or n["node_type"].lower() in allowed)
         ]
         if atlas_nodes:
             # Reserve up to half the budget (min 10 slots) for ATLAS nodes so
@@ -2900,7 +2917,7 @@ class OrivellumDB:
                         "kind": n["node_type"].lower(),
                     }
                 )
-        for e in self.list_graph_edges(work_ids=[work_id], limit=limit * 2):
+        for e in self.list_graph_edges(work_ids=work_ids, limit=limit * 2):
             if e["src"] in seen and e["dst"] in seen:
                 edges.append(
                     {
@@ -3037,6 +3054,12 @@ class OrivellumDB:
                             }
                         )
 
+            # ATLAS-O typed graph rows (fiction harvest writes here, not to
+            # the legacy entities store) — merge before bounding.
+            self._merge_atlas_into(
+                nodes, candidate_edges, seen, limit, entity_kinds=entity_kinds
+            )
+
             # Truncate nodes first, then build the edge set so no dangling edges
             bounded_nodes = nodes[:limit]
             bounded_ids = {n["id"] for n in bounded_nodes}
@@ -3122,6 +3145,10 @@ class OrivellumDB:
                         "type": r["relation"],
                     }
                 )
+
+        # ATLAS-O typed graph rows (fiction harvest writes here, not to the
+        # legacy entities store) — merge before bounding.
+        self._merge_atlas_into(nodes, edges, seen, limit, entity_kinds=entity_kinds)
 
         # Truncate nodes first so edges can never reference a missing node
         bounded_nodes = nodes[:limit]

@@ -943,20 +943,31 @@ def _llm_harvest_by_chapters_inner(
     # ── ATLAS-O world graph (LAW 2) ───────────────────────────────────────────
     # The chapter harvest is the single flow that feeds the typed world graph
     # — the graph is built here, from the same chapters, rather than growing
-    # a parallel entity store.  Gated by atlas_enabled; never breaks harvest.
+    # a parallel entity store.  Gated by atlas_enabled.  A gateway failure
+    # must NOT look like a successful harvest: the knowledge items above are
+    # already committed, so the error is recorded on a per-work marker and
+    # re-raised for the caller/job to observe.
     if work_id and db.get_setting("atlas_enabled", "true").lower() == "true":
-        try:
-            from orivellum.capabilities.atlas import build_work_graph  # noqa: PLC0415
+        from orivellum.capabilities.atlas import (  # noqa: PLC0415
+            AtlasLLMError,
+            build_work_graph,
+        )
 
+        marker = f"atlas_build_error:{work_id}"
+        try:
             build_work_graph(db, cfg, work_id=work_id, doc_id=doc_id)
-        except Exception as exc:
+            db.set_setting(marker, "")  # clear any prior failure marker
+        except AtlasLLMError as exc:
             # Staging in build_work_graph guarantees prior graph data is
-            # preserved on failure — surface loudly, never silently succeed.
+            # preserved — record the failure so it is observable/retryable,
+            # then propagate instead of silently succeeding.
+            db.set_setting(marker, str(exc)[:500])
             logger.error(
                 "llm_harvest_by_chapters: atlas graph build failed for work %s "
                 "(prior graph data preserved): %s",
                 work_id,
                 exc,
             )
+            raise
 
     return total_created
