@@ -23,7 +23,14 @@ import {
   FolderOpen, Sparkles, GitMerge, Star, GitBranch, Download, Network, StopCircle,
   BookHeadphones,
 } from "lucide-react";
-import { listSavedListeningProgress, RA_POS_CHANGED_EVENT, type ListeningProgress } from "@/lib/read-aloud";
+import {
+  fetchServerListeningPositions,
+  listSavedListeningProgress,
+  mergeListeningProgress,
+  RA_POS_CHANGED_EVENT,
+  type ListeningProgress,
+  type ServerListeningPositions,
+} from "@/lib/read-aloud";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogTrigger, DialogFooter,
@@ -966,22 +973,43 @@ export default function Library() {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
 
-  // Saved Read Aloud positions (localStorage). Refreshed when the player
-  // saves/clears a position in THIS tab (the dock is global, so a listen can
-  // finish while the Library is visible), when the tab regains focus, and via
-  // the storage event for changes made in other tabs.
+  // Saved Read Aloud positions: localStorage (fast, always available) merged
+  // with the server-synced copies so a listen started on another device shows
+  // a resume badge here too (freshest saved_at wins per document). Refreshed
+  // when the player saves/clears a position in THIS tab (the dock is global,
+  // so a listen can finish while the Library is visible), when the tab
+  // regains focus, and via the storage event for changes made in other tabs.
+  // Position changes also re-fetch the server batch, so a position deleted on
+  // either side clears the badge within one round-trip.
   const [listenProgress, setListenProgress] = useState<Record<string, ListeningProgress>>(() => listSavedListeningProgress());
+  const serverPosRef = useRef<ServerListeningPositions | null>(null);
   useEffect(() => {
-    const refresh = () => setListenProgress(listSavedListeningProgress());
-    window.addEventListener(RA_POS_CHANGED_EVENT, refresh);
-    window.addEventListener("storage", refresh);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
+    let disposed = false;
+    let fetching = false;
+    const refresh = (refetchServer = true) => {
+      // Instant re-merge from the last known server copy + current local state.
+      setListenProgress(mergeListeningProgress(serverPosRef.current));
+      if (!refetchServer || fetching) return;
+      fetching = true;
+      void fetchServerListeningPositions().then((server) => {
+        fetching = false;
+        if (disposed || !server) return; // unreachable — keep previous copy
+        serverPosRef.current = server;
+        setListenProgress(mergeListeningProgress(server));
+      });
+    };
+    const onEvent = () => refresh();
+    refresh();
+    window.addEventListener(RA_POS_CHANGED_EVENT, onEvent);
+    window.addEventListener("storage", onEvent);
+    window.addEventListener("focus", onEvent);
+    document.addEventListener("visibilitychange", onEvent);
     return () => {
-      window.removeEventListener(RA_POS_CHANGED_EVENT, refresh);
-      window.removeEventListener("storage", refresh);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
+      disposed = true;
+      window.removeEventListener(RA_POS_CHANGED_EVENT, onEvent);
+      window.removeEventListener("storage", onEvent);
+      window.removeEventListener("focus", onEvent);
+      document.removeEventListener("visibilitychange", onEvent);
     };
   }, []);
   const searchStr = useSearch();

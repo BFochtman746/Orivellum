@@ -80,7 +80,7 @@ const RA_SERVER_SYNC_MS = 30_000;
 // Don't offer resume for trivial progress (a few seconds into part 1).
 const RA_MIN_RESUME_SECS = 20;
 
-interface SavedPos {
+export interface SavedPos {
   part: number;
   time: number;       // seconds into the part (approximate)
   partCount: number;  // for validation — text may have changed since saving
@@ -166,6 +166,53 @@ export function listSavedListeningProgress(): Record<string, ListeningProgress> 
 // The document id doubles as the resume key, so positions are keyed per
 // document on the server too. All calls are best-effort: a network failure
 // never breaks playback — localStorage remains the fast, always-available path.
+
+/** Server-synced listening positions, keyed by document id. */
+export type ServerListeningPositions = Record<string, SavedPos>;
+
+/** Fetch ALL server-synced positions in one batch call (no per-doc N+1).
+ *  Returns null when the server is unreachable or replies malformed, so
+ *  callers can keep their previous copy instead of wrongly clearing badges. */
+export async function fetchServerListeningPositions(): Promise<ServerListeningPositions | null> {
+  try {
+    const resp = await apiFetch(`${BASE}/library/read-positions`);
+    if (!resp.ok) return null;
+    const data = await resp.json().catch(() => null);
+    if (!data || !Array.isArray(data.positions)) return null;
+    const out: ServerListeningPositions = {};
+    for (const raw of data.positions) {
+      const key = raw?.doc_id;
+      if (typeof key !== "string" || !key) continue;
+      const pos = {
+        part: raw.part, time: raw.time,
+        partCount: raw.part_count, savedAt: raw.saved_at,
+      };
+      if (isValidPos(pos)) out[key] = pos;
+    }
+    return out;
+  } catch { return null; }
+}
+
+/** Merge local (localStorage) and server positions into badge shape.
+ *  Per key the freshest `savedAt` wins — the same rule the resume offer
+ *  uses — and the trivial-progress gate applies to the winner, so a listen
+ *  finished/reset on either side clears the badge everywhere. */
+export function mergeListeningProgress(
+  server: ServerListeningPositions | null,
+): Record<string, ListeningProgress> {
+  const out = listSavedListeningProgress();
+  if (!server) return out;
+  for (const [key, sp] of Object.entries(server)) {
+    const local = loadSavedPos(key);
+    const pos = local && local.savedAt >= sp.savedAt ? local : sp;
+    if (pos.part === 0 && pos.time < RA_MIN_RESUME_SECS) {
+      delete out[key]; // freshest copy says "barely started" — not resumable
+      continue;
+    }
+    out[key] = { part: pos.part, partCount: pos.partCount };
+  }
+  return out;
+}
 
 async function fetchServerPos(key: string): Promise<SavedPos | null> {
   try {

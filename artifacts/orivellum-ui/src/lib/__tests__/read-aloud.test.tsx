@@ -21,6 +21,8 @@ import {
   useReadAloud,
   getSavedListeningProgress,
   listSavedListeningProgress,
+  fetchServerListeningPositions,
+  mergeListeningProgress,
   splitTextForTts,
 } from "@/lib/read-aloud";
 
@@ -485,5 +487,72 @@ describe("media session", () => {
     await act(async () => { ctx.onEnded(); });
     await act(async () => { ctx.close(); });
     expect(ctx.nowPlaying).toBeNull();
+  });
+});
+
+// ── Cross-device badge merge (server batch + localStorage) ───────────────────
+
+describe("cross-device listening progress merge", () => {
+  const serverResp = (positions: unknown[]) =>
+    ({ ok: true, status: 200, json: async () => ({ positions }) }) as unknown as Response;
+
+  it("fetches and validates the server batch", async () => {
+    apiFetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith("/library/read-positions")) {
+        return serverResp([
+          { doc_id: "a", part: 2, time: 10, part_count: 5, saved_at: 100 },
+          { doc_id: "bad", part: -1, time: 10, part_count: 5, saved_at: 100 }, // invalid — dropped
+          { doc_id: "done", part: 5, time: 0, part_count: 5, saved_at: 100 }, // finished — dropped
+        ]);
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+    });
+    const server = await fetchServerListeningPositions();
+    expect(server).toEqual({ a: { part: 2, time: 10, partCount: 5, savedAt: 100 } });
+  });
+
+  it("returns null when the server is unreachable or malformed", async () => {
+    apiFetchMock.mockImplementation(async () => {
+      throw new Error("offline");
+    });
+    expect(await fetchServerListeningPositions()).toBeNull();
+    apiFetchMock.mockImplementation(
+      async () => ({ ok: true, status: 200, json: async () => ({}) }) as unknown as Response,
+    );
+    expect(await fetchServerListeningPositions()).toBeNull();
+  });
+
+  it("shows a badge for a server-only position (started on another device)", () => {
+    const merged = mergeListeningProgress({
+      phoneDoc: { part: 3, time: 0, partCount: 8, savedAt: 100 },
+    });
+    expect(merged).toEqual({ phoneDoc: { part: 3, partCount: 8 } });
+  });
+
+  it("freshest savedAt wins when both sides have a position", () => {
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 4, savedAt: 200 }); // local fresher
+    seedSavedPos("doc2", { part: 1, time: 0, partCount: 4, savedAt: 50 }); // server fresher
+    const merged = mergeListeningProgress({
+      doc1: { part: 3, time: 0, partCount: 4, savedAt: 100 },
+      doc2: { part: 2, time: 0, partCount: 4, savedAt: 150 },
+    });
+    expect(merged.doc1).toEqual({ part: 1, partCount: 4 });
+    expect(merged.doc2).toEqual({ part: 2, partCount: 4 });
+  });
+
+  it("clears the badge when the freshest copy says barely-started", () => {
+    // Local shows meaningful progress, but a FRESHER server copy was reset to
+    // the start (e.g. the listen was restarted on another device).
+    seedSavedPos("doc1", { part: 2, time: 0, partCount: 4, savedAt: 100 });
+    const merged = mergeListeningProgress({
+      doc1: { part: 0, time: 2, partCount: 4, savedAt: 300 },
+    });
+    expect(merged.doc1).toBeUndefined();
+  });
+
+  it("keeps local-only badges when the server has no copy", () => {
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: 100 });
+    expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
+    expect(mergeListeningProgress(null)).toEqual({ doc1: { part: 1, partCount: 3 } });
   });
 });

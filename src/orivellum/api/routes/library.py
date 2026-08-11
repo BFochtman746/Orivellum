@@ -465,6 +465,19 @@ def library_missing_files():
     return {"documents": missing, "count": len(missing)}
 
 
+@router.get("/library/read-positions")
+def library_list_read_positions():
+    """Return ALL server-synced Read Aloud listening positions in one call.
+
+    Backs the Library's cross-device resume badges: the client merges these
+    with its localStorage copies (freshest ``saved_at`` wins) instead of
+    issuing one GET per document.
+    """
+    db = get_db()
+    positions = db.list_read_positions()
+    return {"positions": positions, "count": len(positions)}
+
+
 @router.get("/library/{doc_id}")
 def library_get(doc_id: str):
     db = get_db()

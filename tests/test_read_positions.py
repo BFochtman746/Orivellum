@@ -124,3 +124,49 @@ class ReadPositionApiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BatchListTest(unittest.TestCase):
+    """GET /api/library/read-positions — batch endpoint for Library badges."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.app, self.db, self.cfg = _make_app(self._tmp.name)
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.db.close()
+        self._tmp.cleanup()
+
+    def test_empty_list(self):
+        r = self.client.get("/api/library/read-positions", headers=AUTH_HEADERS)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"positions": [], "count": 0})
+
+    def test_returns_all_positions(self):
+        a = {"part": 2, "time": 12.5, "part_count": 9, "saved_at": 111}
+        b = {"part": 0, "time": 45.0, "part_count": 3, "saved_at": 222}
+        self.client.put("/api/library/doc-a/read-position", json=a, headers=AUTH_HEADERS)
+        self.client.put("/api/library/doc-b/read-position", json=b, headers=AUTH_HEADERS)
+        r = self.client.get("/api/library/read-positions", headers=AUTH_HEADERS)
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["count"], 2)
+        by_id = {p["doc_id"]: p for p in body["positions"]}
+        self.assertEqual(by_id["doc-a"]["part"], 2)
+        self.assertEqual(by_id["doc-a"]["part_count"], 9)
+        self.assertEqual(by_id["doc-b"]["saved_at"], 222)
+
+    def test_not_swallowed_by_doc_id_route(self):
+        # Route-ordering guard: the literal path must not be captured by
+        # GET /library/{doc_id} (which would 404 for a missing document).
+        r = self.client.get("/api/library/read-positions", headers=AUTH_HEADERS)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("positions", r.json())
+
+    def test_deleted_position_disappears_from_batch(self):
+        p = {"part": 4, "time": 3.0, "part_count": 8, "saved_at": 50}
+        self.client.put("/api/library/doc-c/read-position", json=p, headers=AUTH_HEADERS)
+        self.client.delete("/api/library/doc-c/read-position", headers=AUTH_HEADERS)
+        r = self.client.get("/api/library/read-positions", headers=AUTH_HEADERS)
+        self.assertEqual(r.json()["count"], 0)

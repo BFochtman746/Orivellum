@@ -2207,6 +2207,21 @@ class OrivellumDB:
         )
         return dict(row) if row else None
 
+    def list_read_positions(self) -> list[dict]:
+        """Return ALL saved Read Aloud positions (one row per document).
+
+        Backs the Library's resume badges: a single batch read instead of one
+        request per document. Read-path only; safe under concurrency.
+        """
+        rows = (
+            self.read_conn()
+            .execute(
+                "SELECT doc_id, part, time, part_count, saved_at, updated_at FROM read_positions"
+            )
+            .fetchall()
+        )
+        return [dict(r) for r in rows]
+
     def set_read_position(
         self, doc_id: str, part: int, time: float, part_count: int, saved_at: int
     ) -> None:
