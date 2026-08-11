@@ -742,13 +742,14 @@ def _resolve_position(db, item_id: str, body: ResolveBody) -> dict:
 
 
 def _resolve_loom_persona(db, item_id: str, body: ResolveBody) -> dict:
-    """Approve/reject a LOOM persona.  Personas ground every character agent,
-    so they are authority — an author signature is mandatory (LAW 4) and the
-    resolution is an atomic claim."""
+    """Approve/reject a LOOM persona.  An approved persona grounds every
+    character agent, so APPROVAL requires the author signature (LAW 4);
+    rejection grants no authority and needs none.  The resolution is an
+    atomic claim."""
     author = (body.author or "").strip()
-    if not author:
-        raise HTTPException(422, "Approving a persona requires your signature (author)")
     decision = "approved" if body.decision == "approve" else "rejected"
+    if decision == "approved" and not author:
+        raise HTTPException(422, "Approving a persona requires your signature (author)")
     result = db.resolve_loom_persona(item_id, decision=decision, author=author)
     if result == "not_found":
         raise HTTPException(404, f"Persona {item_id!r} not found")

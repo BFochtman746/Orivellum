@@ -8126,19 +8126,22 @@ class OrivellumDB:
             rows = self._conn.execute(sql, params).fetchall()
         return [self._loom_persona_row(r) for r in rows]
 
-    def resolve_loom_persona(self, persona_id: str, *, decision: str, author: str) -> str:
+    def resolve_loom_persona(self, persona_id: str, *, decision: str, author: str = "") -> str:
         """Atomic conditional resolution — 'ok' | 'conflict' | 'not_found'.
-        The author signature is mandatory (LAW 4)."""
+        APPROVAL requires the author signature (an approved persona is
+        drafting authority, LAW 4); rejection does not grant authority and
+        may be signed 'user'."""
         if decision not in ("approved", "rejected"):
             raise ValueError(f"invalid persona decision {decision!r}")
-        if not author or not author.strip():
-            raise ValueError("persona resolution requires an author signature")
+        if decision == "approved" and not (author or "").strip():
+            raise ValueError("persona approval requires an author signature")
+        author = (author or "").strip() or "user"
         now = _now()
         with self._lock:
             cur = self._conn.execute(
                 """UPDATE loom_persona SET status=?, resolved_by=?, resolved_at=?,
                    updated_at=? WHERE id=? AND status='proposed'""",
-                (decision, author.strip(), now, now, persona_id),
+                (decision, author, now, now, persona_id),
             )
             self._conn.commit()
             if cur.rowcount > 0:

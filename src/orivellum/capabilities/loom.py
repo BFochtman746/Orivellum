@@ -783,16 +783,21 @@ def _narrate(db, cfg, ctx, accepted, *, drafter, llm_ids) -> tuple[str, list[dic
     if not prose:
         raise LoomError("narrator returned no prose (malformed response)")
     sel = (out or {}).get("selected")
-    if not isinstance(sel, list):
+    # Strict: a list of exact JSON integers, all in range.  ANY invalid item
+    # (float, bool, string, negative, out of range) rejects the whole
+    # response — a coerced 0.9 must never commit action 0's world updates.
+    if not isinstance(sel, list) or not all(
+        isinstance(i, int) and not isinstance(i, bool) for i in sel
+    ):
         raise LoomError(
             "narrator selection missing or malformed — refusing to default "
             "to all actions (only SELECTED actions may commit world updates)"
         )
-    selected_idx = sorted({
-        int(i) for i in sel
-        if isinstance(i, (int, float)) and not isinstance(i, bool)
-        and 0 <= int(i) < len(accepted)
-    })
+    if any(i < 0 or i >= len(accepted) for i in sel):
+        raise LoomError(
+            "narrator selection index out of range — rejecting the response"
+        )
+    selected_idx = sorted(set(sel))
     if not selected_idx:
         raise LoomError("narrator selected no valid actions — nothing to commit")
     return prose, [accepted[i] for i in selected_idx], n.logprobs

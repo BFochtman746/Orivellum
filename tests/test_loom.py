@@ -360,6 +360,23 @@ class TestRefusals(LoomBase):
         self.assertIn("no valid actions", str(result))
         self.assertEqual(self.db.get_world_state(self.work_id), {})
 
+    def test_fractional_negative_and_mixed_selections_rejected_whole(self):
+        # A coerced 0.9 must never commit action 0's world updates; ANY
+        # invalid item rejects the entire response — including mixed lists
+        # that also contain valid indices.
+        for bad in ([0.9], [1.9], [-1], [5], [0, 1.5], [0, -2], [True], ["0"]):
+            with self.subTest(selected=bad):
+                cid = self._seed_chapter(1)
+                run_id, result, _ = self._draft(cid, StubLLM(narrator_selected=bad))
+                self.assertIsInstance(result, loom.LoomError, bad)
+                self.assertEqual(self.db.get_loom_run(run_id)["status"], "error")
+                self.assertEqual(self.db.list_chapter_revisions(cid), [])
+                self.assertEqual(self.db.get_world_state(self.work_id), {})
+                with self.db._lock:  # release chapter for next subtest
+                    self.db._conn.execute(
+                        "DELETE FROM book_chapters WHERE id=?", (cid,))
+                    self.db._conn.commit()
+
     def test_approval_mid_run_discards_everything(self):
         cid = self._seed_chapter(1, text="the sacred text")
         chapter = loom._get_chapter(self.db, self.work_id, cid)
@@ -574,7 +591,7 @@ class TestRunClaimAndPersonaGate(LoomBase):
 
     def test_persona_resolution_is_an_atomic_claim_with_signature(self):
         pid = self.db.create_loom_persona(self.work_id, "Vex", {})
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError):  # approval needs a signature
             self.db.resolve_loom_persona(pid, decision="approved", author="  ")
         self.assertEqual(
             self.db.resolve_loom_persona(pid, decision="approved", author="Brian"),
@@ -585,6 +602,12 @@ class TestRunClaimAndPersonaGate(LoomBase):
         self.assertEqual(
             self.db.resolve_loom_persona("nope", decision="approved", author="B"),
             "not_found")
+
+    def test_persona_rejection_needs_no_signature(self):
+        pid = self.db.create_loom_persona(self.work_id, "Discard", {})
+        self.assertEqual(
+            self.db.resolve_loom_persona(pid, decision="rejected"), "ok")
+        self.assertEqual(self.db.get_loom_persona(pid)["resolved_by"], "user")
 
     def test_duplicate_persona_name_refused(self):
         self.db.create_loom_persona(self.work_id, "Vex", {})
