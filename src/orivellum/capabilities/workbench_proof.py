@@ -24,7 +24,10 @@ runner config or store) via a lazy path insert.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import math
 import os
 import pathlib
 import re
@@ -34,6 +37,8 @@ from collections import defaultdict
 from typing import Any
 
 logger = logging.getLogger("orivellum.workbench.proof")
+
+MANIFEST_FILENAME = "workbook_tests.json"
 
 GATE_NAMES = (
     "G1_recalc_covers_all",
@@ -72,8 +77,17 @@ def _load_runner_modules():
         return _runner_cache
     try:
         import importlib.util
+        import types
 
         jobs = _runner_dir() / "runner" / "jobs"
+
+        # Synthetic parent package so the modules' own relative imports
+        # (e.g. structural_checks' ``from . import xlsx_surgery``) resolve —
+        # still never touches ``sys.path``.
+        pkg_name = "_orivellum_runner_jobs"
+        pkg = types.ModuleType(pkg_name)
+        pkg.__path__ = [str(jobs)]
+        sys.modules[pkg_name] = pkg
 
         def _load(alias: str, path: pathlib.Path):
             spec = importlib.util.spec_from_file_location(alias, path)
@@ -86,8 +100,8 @@ def _load_runner_modules():
 
         # surgery first — engine's structural helpers reference it lazily,
         # but the functions we call (recalculate/compare/ERRVALS) do not.
-        surgery = _load("_orivellum_runner_xlsx_surgery", jobs / "xlsx_surgery.py")
-        engine = _load("_orivellum_runner_xlsx_engine", jobs / "xlsx_engine.py")
+        surgery = _load(f"{pkg_name}.xlsx_surgery", jobs / "xlsx_surgery.py")
+        engine = _load(f"{pkg_name}.xlsx_engine", jobs / "xlsx_engine.py")
         _runner_cache = (engine, surgery)
     except Exception:  # noqa: BLE001
         logger.warning("Orivellum Runner proof modules unavailable", exc_info=True)
@@ -270,6 +284,11 @@ def _run_gates(engine, surgery, path, edits, reordered, refreshed, promote):
         }
         if all(gates.values()):
             result["verdict"] = _passing_verdict(path, candidate, promote, bool(edits), problems)
+            if result["verdict"] == "proven":
+                # Regression manifest for the exact gated bytes: every formula
+                # cell with its engine-computed expected value. Private key —
+                # prove_outputs pops it before the result is persisted.
+                result["_manifest"] = engine.build_test_manifest(path, recalc2, cmp2)
         else:
             result["failed_gates"] = sorted(k for k, v in gates.items() if not v)
     except Exception as exc:  # noqa: BLE001
@@ -289,12 +308,144 @@ def prove_outputs(
     provable   — gates pass, but only after repairs a verbatim file never got
     failed     — at least one workbook failed a gate
     unverified — none failed, but at least one could not be recalculated
+
+    When every workbook is proven AND promotion is allowed, a regression
+    manifest (``workbook_tests.json``) is written into *out_dir* so it ships
+    with the version's files: every formula cell with its engine-computed
+    expected value, re-runnable against any future edit. Its sha256 is
+    returned as ``manifest_sha256`` — PROVENANCE RULE: only a manifest whose
+    bytes still match a digest recorded at proving time may ever be treated
+    as a regression authority (a filename alone proves nothing; an import
+    zip may carry an arbitrary file of the same name). Imports
+    (promote=False) never get one — an imported version stays verbatim.
     """
     per_file: dict[str, dict] = {}
+    manifests: dict[str, dict] = {}
     for p in workbooks:
-        per_file[str(p.relative_to(out_dir))] = prove_workbook(p, promote=promote)
+        rel = str(p.relative_to(out_dir))
+        res = prove_workbook(p, promote=promote)
+        manifest = res.pop("_manifest", None)
+        if manifest is not None:
+            manifests[rel] = manifest
+        per_file[rel] = res
     verdicts = {r["verdict"] for r in per_file.values()}
     for worst in ("failed", "unverified", "provable"):
         if worst in verdicts:
             return {"verdict": worst, "workbooks": per_file}
+    if promote and manifests:
+        doc = {
+            "format": 1,
+            "generated_by": "orivellum workbench six-gate proof",
+            "workbooks": manifests,
+        }
+        # allow_nan=False: a non-finite expectation must fail loudly here,
+        # never become non-standard JSON that a re-run parses differently.
+        payload = json.dumps(doc, indent=1, sort_keys=True, allow_nan=False)
+        (out_dir / MANIFEST_FILENAME).write_text(payload, encoding="utf-8")
+        return {
+            "verdict": "proven",
+            "workbooks": per_file,
+            "manifest_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        }
     return {"verdict": "proven", "workbooks": per_file}
+
+
+def _safe_rel_xlsx(rel: str) -> bool:
+    """True only for a normalized, relative, confinement-safe .xlsx path."""
+    if not isinstance(rel, str) or not rel or "\\" in rel or ":" in rel or "\x00" in rel:
+        return False
+    p = pathlib.PurePosixPath(rel)
+    return (
+        not p.is_absolute()
+        and p.suffix.lower() == ".xlsx"
+        and all(part not in ("", ".", "..") for part in p.parts)
+    )
+
+
+def _json_scalar_ok(v) -> bool:
+    if isinstance(v, float):
+        return math.isfinite(v)
+    return v is None or isinstance(v, (bool, int, str))
+
+
+def validate_manifest_doc(doc) -> None:
+    """Strict format-1 schema check — raises ValueError on anything off.
+
+    A manifest is an executable expectation set; a malformed or hostile one
+    must be REFUSED, never partially run: paths confined to relative .xlsx
+    (no traversal, no absolutes), cases are {sheet, cell, expected} with
+    finite JSON-scalar expectations.
+    """
+    if not isinstance(doc, dict) or doc.get("format") != 1:
+        raise ValueError(f"not a format-1 {MANIFEST_FILENAME} document")
+    wbs = doc.get("workbooks")
+    if not isinstance(wbs, dict) or not wbs:
+        raise ValueError("manifest lists no workbooks")
+    for rel, manifest in wbs.items():
+        if not _safe_rel_xlsx(rel):
+            raise ValueError(f"unsafe workbook path in manifest: {rel!r}")
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("cases"), list):
+            raise ValueError(f"malformed manifest entry for {rel}")
+        for case in manifest["cases"]:
+            if (
+                not isinstance(case, dict)
+                or not isinstance(case.get("sheet"), str)
+                or not isinstance(case.get("cell"), str)
+                or not _json_scalar_ok(case.get("expected"))
+            ):
+                raise ValueError(f"malformed test case in manifest entry for {rel}")
+
+
+def run_saved_manifest(files_dir: pathlib.Path, doc: dict) -> dict[str, Any]:
+    """Re-run a saved ``workbook_tests.json`` against the workbooks in
+    *files_dir* — the regression check for a proven version's descendants.
+
+    Returns {status: PASS|FAIL|UNAVAILABLE, workbooks: {rel: run_manifest
+    result}}. HONESTY RULE: a missing workbook or unavailable engine is
+    never a pass. Aggregate is FAIL if anything failed, else UNAVAILABLE if
+    anything could not be recalculated, else PASS. Raises ValueError for a
+    malformed or unsafe manifest document (never partially runs one).
+    """
+    validate_manifest_doc(doc)
+    engine, _surgery = _load_runner_modules()
+    if engine is None:
+        return {
+            "status": "UNAVAILABLE",
+            "error": "proving harness unavailable (orivellum-runner not found)",
+            "workbooks": {},
+        }
+    results: dict[str, dict] = {}
+    root = files_dir.resolve()
+    for rel, manifest in doc["workbooks"].items():
+        target = (files_dir / rel).resolve()
+        if root != target and root not in target.parents:
+            # validate_manifest_doc already refuses traversal; belt over
+            # suspenders for symlinked version dirs
+            raise ValueError(f"manifest workbook path escapes the version files: {rel!r}")
+        if not target.is_file():
+            results[rel] = {
+                "status": "FAIL",
+                "error": "workbook missing from this version",
+                "passed": 0,
+                "failed": [],
+                "total": len(manifest.get("cases") or []),
+            }
+            continue
+        try:
+            results[rel] = engine.run_manifest(target, manifest)
+        except Exception as exc:  # noqa: BLE001 - explicit, never a silent pass
+            logger.exception("Manifest re-run crashed for %s", target)
+            results[rel] = {
+                "status": "FAIL",
+                "error": f"re-run crashed: {type(exc).__name__}: {exc}"[:400],
+                "passed": 0,
+                "failed": [],
+                "total": len(manifest.get("cases") or []),
+            }
+    statuses = {r["status"] for r in results.values()}
+    if not results:
+        return {"status": "UNAVAILABLE", "error": "manifest lists no workbooks", "workbooks": {}}
+    status = (
+        "FAIL" if "FAIL" in statuses else ("UNAVAILABLE" if "UNAVAILABLE" in statuses else "PASS")
+    )
+    return {"status": status, "workbooks": results}

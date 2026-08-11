@@ -409,6 +409,25 @@ def repair_prove_project(project_id: str, body: RevertBody):
     return _version_out(row)
 
 
+@router.post("/projects/{project_id}/verify")
+def verify_project(project_id: str):
+    """Re-run the saved workbook_tests.json regression manifest against the
+    latest version's workbooks. Read-only — recalculates in a temp engine
+    run, never touches version files. Reports PASS/FAIL with failed cells."""
+    db, cfg = get_db(), get_config()
+    _get_or_404(db, project_id)
+    try:
+        from orivellum.capabilities.workbench import verify_latest
+
+        return verify_latest(db, cfg, project_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise internal_error(logger, exc, "workbench verify") from exc
+
+
 @router.get("/projects/{project_id}/rundown")
 def project_rundown(project_id: str):
     """Health breakdown + cached needs assessment + close-out record."""

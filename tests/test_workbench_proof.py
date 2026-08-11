@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -520,6 +521,209 @@ class TestRepairProveRoute(unittest.TestCase):
                 json={"version_no": 1},
             )
             self.assertEqual(r.status_code, 409, r.text)
+
+
+def _publish_proven_build(db, cfg, project_id: str) -> dict:
+    """Mimic run_build's accept path: prove with promotion (which writes the
+    workbook_tests.json regression manifest), then snapshot + publish."""
+    from orivellum.capabilities.workbench import _publish_version, _snapshot
+    from orivellum.capabilities.workbench_proof import prove_outputs
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "out"
+        src.mkdir()
+        _good_workbook(src / "model.xlsx")
+        proof = prove_outputs(src, [src / "model.xlsx"], promote=True)
+        assert proof["verdict"] == "proven", proof
+        return _publish_version(
+            db, cfg, project_id, src, "build", _snapshot(src), {"proof": proof}, verdict="proven"
+        )
+
+
+class TestRegressionManifest(unittest.TestCase):
+    def test_proven_build_ships_manifest_import_does_not(self):
+        from orivellum.capabilities.workbench_proof import MANIFEST_FILENAME, prove_outputs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            _good_workbook(out / "model.xlsx")
+            # promote=False (import): verbatim rule — no manifest file
+            prove_outputs(out, [out / "model.xlsx"], promote=False)
+            self.assertFalse((out / MANIFEST_FILENAME).exists())
+
+            proof = prove_outputs(out, [out / "model.xlsx"], promote=True)
+            self.assertEqual(proof["verdict"], "proven")
+            doc = json.loads((out / MANIFEST_FILENAME).read_text())
+            manifest = doc["workbooks"]["model.xlsx"]
+            self.assertEqual(manifest["formula_cells"], 2)
+            cases = {(c["sheet"], c["cell"]): c["expected"] for c in manifest["cases"]}
+            self.assertEqual(cases[("DATA", "A3")], 42)
+            self.assertEqual(cases[("DATA", "B1")], 20)
+            # the manifest never leaks into the persisted proof result
+            self.assertNotIn("_manifest", proof["workbooks"]["model.xlsx"])
+            # provenance: the proof records the digest of the exact bytes written
+            payload = (out / MANIFEST_FILENAME).read_bytes()
+            self.assertEqual(proof["manifest_sha256"], hashlib.sha256(payload).hexdigest())
+
+    def test_manifest_included_in_published_version_and_verify_passes(self):
+        from orivellum.capabilities.workbench import verify_latest, version_dir
+        from orivellum.capabilities.workbench_proof import MANIFEST_FILENAME
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            v1 = _publish_proven_build(db, cfg, p["id"])
+            names = [f["name"] for f in json.loads(v1["files_json"])]
+            self.assertIn(MANIFEST_FILENAME, names)
+            self.assertTrue((version_dir(cfg, p["id"], 1) / MANIFEST_FILENAME).is_file())
+
+            res = verify_latest(db, cfg, p["id"])
+            self.assertEqual(res["status"], "PASS", res)
+            self.assertEqual(res["manifest_version"], 1)
+            self.assertEqual(res["target_version"], 1)
+            self.assertEqual(res["workbooks"]["model.xlsx"]["passed"], 2)
+
+    def test_broken_formula_in_later_version_fails_manifest(self):
+        from orivellum.capabilities.workbench import (
+            _publish_version,
+            _snapshot,
+            verify_latest,
+            version_dir,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            _publish_proven_build(db, cfg, p["id"])
+
+            # someone edits the workbook and publishes v2 without re-proving
+            with tempfile.TemporaryDirectory() as tmp2:
+                src = Path(tmp2) / "out"
+                shutil.copytree(version_dir(cfg, p["id"], 1), src)
+                wb = load_workbook(src / "model.xlsx")  # keeps formulas
+                wb["Data"]["A1"] = 11  # A3 now computes 43, manifest expects 42
+                wb.save(src / "model.xlsx")
+                _publish_version(db, cfg, p["id"], src, "manual edit", _snapshot(src), {})
+
+            res = verify_latest(db, cfg, p["id"])
+            self.assertEqual(res["status"], "FAIL", res)
+            self.assertEqual(res["target_version"], 2)
+            run = res["workbooks"]["model.xlsx"]
+            failed_refs = {(f["sheet"], f["cell"]) for f in run["failed"]}
+            self.assertIn(("DATA", "A3"), failed_refs)
+
+    def test_verify_refuses_without_manifest_or_versions(self):
+        from orivellum.capabilities.workbench import verify_latest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            with self.assertRaises(FileNotFoundError):
+                verify_latest(db, cfg, p["id"])  # no versions
+            _publish_provable_import(db, cfg, p["id"])  # import: no manifest
+            with self.assertRaises(ValueError) as ctx:
+                verify_latest(db, cfg, p["id"])
+            self.assertIn("workbook_tests.json", str(ctx.exception))
+            code = db.create_wb_project("Tool", "code", "t")
+            with self.assertRaises(ValueError):
+                verify_latest(db, cfg, code["id"])
+
+    def test_verify_route(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+
+            r = client.post("/api/workbench/projects/nope/verify", headers=AUTH_HEADERS)
+            self.assertEqual(r.status_code, 404)
+
+            _publish_provable_import(db, cfg, p["id"])
+            r = client.post(f"/api/workbench/projects/{p['id']}/verify", headers=AUTH_HEADERS)
+            self.assertEqual(r.status_code, 422, r.text)
+
+            _publish_proven_build(db, cfg, p["id"])
+            r = client.post(f"/api/workbench/projects/{p['id']}/verify", headers=AUTH_HEADERS)
+            self.assertEqual(r.status_code, 200, r.text)
+            body = r.json()
+            self.assertEqual(body["status"], "PASS")
+            self.assertEqual(body["manifest_version"], 2)
+
+    def test_forged_import_manifest_is_never_trusted(self):
+        """An import zip can carry a file named workbook_tests.json — chosen
+        expectations must never become a regression authority."""
+        from orivellum.capabilities.workbench import _publish_version, _snapshot, verify_latest
+        from orivellum.capabilities.workbench_proof import MANIFEST_FILENAME
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            with tempfile.TemporaryDirectory() as tmp2:
+                src = Path(tmp2) / "out"
+                src.mkdir()
+                _error_workbook(src / "model.xlsx")
+                forged = {
+                    "format": 1,
+                    "workbooks": {"model.xlsx": {"cases": []}},  # passes anything
+                }
+                (src / MANIFEST_FILENAME).write_text(json.dumps(forged))
+                _publish_version(
+                    db, cfg, p["id"], src, "import", _snapshot(src), {}, verdict="imported"
+                )
+            with self.assertRaises(ValueError) as ctx:
+                verify_latest(db, cfg, p["id"])
+            self.assertIn("no proven version", str(ctx.exception))
+
+    def test_tampered_manifest_is_refused(self):
+        from orivellum.capabilities.workbench import verify_latest, version_dir
+        from orivellum.capabilities.workbench_proof import MANIFEST_FILENAME
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            _publish_proven_build(db, cfg, p["id"])
+            mp = version_dir(cfg, p["id"], 1) / MANIFEST_FILENAME
+            doc = json.loads(mp.read_text())
+            doc["workbooks"]["model.xlsx"]["cases"] = []  # weaken the tests
+            mp.write_text(json.dumps(doc))
+            with self.assertRaises(ValueError) as ctx:
+                verify_latest(db, cfg, p["id"])
+            self.assertIn("digest", str(ctx.exception))
+
+    def test_malformed_and_hostile_manifests_refused(self):
+        from orivellum.capabilities.workbench_proof import validate_manifest_doc
+
+        good_case = {"sheet": "DATA", "cell": "A1", "expected": 1}
+        for bad in [
+            None,
+            [],
+            {"format": 2, "workbooks": {"m.xlsx": {"cases": [good_case]}}},
+            {"format": 1, "workbooks": {}},
+            {"format": 1, "workbooks": {"../escape.xlsx": {"cases": [good_case]}}},
+            {"format": 1, "workbooks": {"/abs.xlsx": {"cases": [good_case]}}},
+            {"format": 1, "workbooks": {"m.txt": {"cases": [good_case]}}},
+            {"format": 1, "workbooks": {"m.xlsx": {"cases": "nope"}}},
+            {"format": 1, "workbooks": {"m.xlsx": {"cases": [{"sheet": "D"}]}}},
+            {
+                "format": 1,
+                "workbooks": {"m.xlsx": {"cases": [{**good_case, "expected": float("nan")}]}},
+            },
+        ]:
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                validate_manifest_doc(bad)
+        validate_manifest_doc({"format": 1, "workbooks": {"sub/m.xlsx": {"cases": [good_case]}}})
+
+    def test_repair_and_prove_ships_manifest(self):
+        from orivellum.capabilities.workbench import repair_and_prove, verify_latest
+        from orivellum.capabilities.workbench_proof import MANIFEST_FILENAME
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            _publish_provable_import(db, cfg, p["id"])
+            row = repair_and_prove(db, cfg, p["id"], 1)
+            names = [f["name"] for f in json.loads(row["files_json"])]
+            self.assertIn(MANIFEST_FILENAME, names)
+            self.assertEqual(verify_latest(db, cfg, p["id"])["status"], "PASS")
 
 
 class TestLatestProofStatus(unittest.TestCase):

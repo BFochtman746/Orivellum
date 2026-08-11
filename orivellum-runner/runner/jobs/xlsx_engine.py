@@ -195,6 +195,8 @@ def _canon(v):
     v = _to_serial(v)
     if isinstance(v, bool) or v is None or isinstance(v, str):
         return v
+    if isinstance(v, float) and not math.isfinite(v):
+        return str(v)  # JSON-safe; NaN/Infinity must never become bare JSON tokens
     if isinstance(v, float) and v == int(v) and abs(v) < 1e15:
         return int(v)
     if isinstance(v, (int, float)):

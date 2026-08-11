@@ -1234,6 +1234,77 @@ def repair_and_prove(db, cfg, project_id: str, version_no: int) -> dict:
         )
 
 
+def verify_latest(db, cfg, project_id: str) -> dict:
+    """Re-run the newest saved ``workbook_tests.json`` against the LATEST
+    version's workbooks — the regression check for anything edited since the
+    manifest was proven.
+
+    PROVENANCE RULE: only a manifest recorded by the proof flow is ever
+    trusted — the newest version whose proof checks carry ``manifest_sha256``
+    AND whose on-disk manifest still matches that digest. A file merely named
+    ``workbook_tests.json`` (imported inside a zip, or copied forward by an
+    analysis version) is never selected on filename alone. Returns the
+    aggregated run with ``manifest_version`` and ``target_version`` attached.
+    """
+    from orivellum.capabilities.workbench_proof import run_saved_manifest
+
+    proj = db.get_wb_project(project_id)
+    if not proj:
+        raise FileNotFoundError("project not found")
+    if proj["kind"] != "xlsx":
+        raise ValueError("regression manifests apply to workbook projects only")
+    versions = db.list_wb_versions(project_id)
+    if not versions:
+        raise FileNotFoundError("project has no versions yet")
+    latest_no = versions[-1]["version_no"]
+    latest_dir = version_dir(cfg, project_id, latest_no)
+    if not latest_dir.is_dir():
+        raise FileNotFoundError(f"files for v{latest_no} are missing on disk")
+
+    doc, manifest_no = _select_trusted_manifest(cfg, project_id, versions)
+    result = run_saved_manifest(latest_dir, doc)
+    result["manifest_version"] = manifest_no
+    result["target_version"] = latest_no
+    return result
+
+
+def _select_trusted_manifest(cfg, project_id: str, versions: list[dict]) -> tuple[dict, int]:
+    """Newest version whose proof recorded ``manifest_sha256`` AND whose
+    on-disk manifest still matches that digest. Raises ValueError otherwise —
+    a filename alone is never a regression authority."""
+    from orivellum.capabilities.workbench_proof import MANIFEST_FILENAME
+
+    for v in reversed(versions):
+        try:
+            checks = json.loads(v["checks_json"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        expected_sha = (checks.get("proof") or {}).get("manifest_sha256")
+        if not expected_sha:
+            continue
+        vno = v["version_no"]
+        mp = version_dir(cfg, project_id, vno) / MANIFEST_FILENAME
+        if not mp.is_file():
+            raise ValueError(
+                f"v{vno} recorded a proof manifest but {MANIFEST_FILENAME} "
+                "is missing from its files"
+            )
+        payload = mp.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != expected_sha:
+            raise ValueError(
+                f"{MANIFEST_FILENAME} in v{vno} no longer matches the digest "
+                "recorded at proving time — refusing to use it as a regression authority"
+            )
+        try:
+            return json.loads(payload.decode("utf-8")), vno
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"{MANIFEST_FILENAME} in v{vno} is unreadable: {exc}") from exc
+    raise ValueError(
+        f"no proven version has recorded a {MANIFEST_FILENAME} yet — "
+        "publish a proven build or run Repair & prove first"
+    )
+
+
 def archive_project(db, cfg, project_id: str, allow_unproven: bool = False) -> str:
     """Zip every version + a hash manifest; mark the project archived.
 
