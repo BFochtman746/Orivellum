@@ -103,6 +103,49 @@ def test_repair_failure_is_a_clear_error_never_a_guess(db, llm):
     assert len(llm.calls) == 2  # exactly one repair retry, never more
 
 
+def test_missing_required_param_rejected(db, llm):
+    # action:study_plan requires work_id (exempt — flows from the operation
+    # level) while template_fill requires template_doc_id + data, which must
+    # be present up front so a run never starts doomed.
+    from orivellum.capabilities.operations.registry import get_op_registry
+
+    registry = get_op_registry()
+    if "action:template_fill" in registry:
+        errs = planner.validate_steps(
+            [{"action_id": "action:template_fill", "label": "Fill", "params": {}}], registry
+        )
+        assert any("missing required" in e for e in errs)
+    # work_id-only requirements are satisfied by the top-level Work.
+    errs = planner.validate_steps(
+        [{"action_id": "action:study_plan", "label": "Plan", "params": {}}], registry
+    )
+    assert errs == []
+
+
+def test_voice_with_unavailable_catalog_is_an_error(db, llm):
+    saved = hooks.HOOKS.studio
+    hooks.configure(studio=None)
+    try:
+        db.create_work("My Book")
+        llm.responses = [
+            _plan_json(
+                [
+                    {
+                        "action_id": "render_audiobook",
+                        "label": "Render",
+                        "params": {"voice": "bm_george"},
+                    }
+                ],
+                work="My Book",
+            )
+        ] * 2
+        result = planner.plan_job(db, None, "render with george")
+        assert result["status"] == "error"
+        assert any("voice catalog" in p for p in result["problems"])
+    finally:
+        hooks.HOOKS.studio = saved
+
+
 def test_unknown_and_mistyped_params_rejected(db, llm):
     bad = {"action_id": "notify", "label": "Tell me", "params": {"volume": 11}}
     llm.responses = [_plan_json([bad]), _plan_json([bad])]
@@ -209,3 +252,75 @@ def test_custom_playbook_save_validates_and_round_trips(db):
     assert playbooks.delete_custom_playbook(db, pb["id"]) is True
     assert playbooks.get_playbook(pb["id"], db) is None
     assert playbooks.delete_custom_playbook(db, pb["id"]) is False
+
+
+# ── /start validation boundary (route level) ─────────────────────────────────
+
+
+@pytest.fixture()
+def client(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from orivellum.api import _deps
+    from orivellum.api.app import create_app
+    from orivellum.configuration.config import OrivellumConfig, ServingConfig
+    from tests.conftest import AUTH_HEADERS
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    d = OrivellumDB(str(data_dir / "test.db"))
+    cfg = OrivellumConfig(
+        data_dir=str(data_dir),
+        serving=ServingConfig(base_url="http://localhost:1/api/v1"),
+    )
+    _deps.init(db=d, cfg=cfg)
+    c = TestClient(create_app(), raise_server_exceptions=False, headers=AUTH_HEADERS)
+    yield c, d
+    d.close()
+
+
+def test_start_rejects_unvalidated_steps(client):
+    """/start is not a validation bypass: explicit steps get the full check."""
+    c, d = client
+    work = d.create_work("Route Work")
+
+    def start(steps, work_id=None):
+        return c.post(
+            "/api/operations/start",
+            json={"title": "t", "steps": steps, **({"work_id": work_id} if work_id else {})},
+        )
+
+    # Unknown param name.
+    r = start([{"action_id": "notify", "label": "x", "params": {"volume": 11}}])
+    assert r.status_code == 422 and "volume" in r.json()["detail"]
+
+    # work_id smuggled into step params (would override the top-level Work).
+    r = start([{"action_id": "notify", "label": "x", "params": {"work_id": "evil"}}], work["id"])
+    assert r.status_code == 422 and "work_id" in r.json()["detail"]
+
+    # Wrong JSON type.
+    r = start([{"action_id": "notify", "label": "x", "params": {"title": 42}}])
+    assert r.status_code == 422
+
+    # Nonexistent top-level Work.
+    r = start([{"action_id": "notify", "label": "x", "params": {"title": "hi"}}], "no-such-work")
+    assert r.status_code == 422 and "Unknown Work" in r.json()["detail"]
+
+
+def test_start_validates_playbook_steps_too(client, monkeypatch):
+    """Saved playbooks are re-validated at start (the registry can change)."""
+    c, d = client
+    from orivellum.capabilities.operations import playbooks
+
+    pb = playbooks.save_custom_playbook(
+        d, "Was valid", [{"action_id": "notify", "label": "x", "params": {"title": "hi"}}]
+    )
+    # Simulate the action disappearing from the registry after the save.
+    import orivellum.capabilities.operations.registry as registry_mod
+
+    real = registry_mod.get_op_registry()
+    shrunk = {k: v for k, v in real.items() if k != "notify"}
+    monkeypatch.setattr(registry_mod, "get_op_registry", lambda: shrunk)
+    r = c.post("/api/operations/start", json={"playbook_id": pb["id"]})
+    assert r.status_code == 422
+    assert "notify" in r.json()["detail"]

@@ -157,10 +157,19 @@ def start_operation(body: StartOperationRequest):
         steps = [s.model_dump() for s in body.steps]
         playbook_id = None
 
-    registry = get_op_registry()
-    unknown = [s["action_id"] for s in steps if s["action_id"] not in registry]
-    if unknown:
-        raise HTTPException(422, f"Unknown action(s): {', '.join(unknown)}")
+    # Full schema validation for EVERY start path — explicit steps AND loaded
+    # playbooks (the registry can change after a playbook was saved). Rejects
+    # unknown actions, unknown/mistyped params, missing required params, and
+    # work_id smuggled into step params (which would override the top-level
+    # Work when the runner merges params).
+    from orivellum.capabilities.operations.planner import validate_steps
+
+    problems = validate_steps(steps, get_op_registry())
+    if problems:
+        raise HTTPException(422, "Invalid steps: " + "; ".join(problems[:6]))
+
+    if body.work_id and db.get_work(body.work_id) is None:
+        raise HTTPException(422, f"Unknown Work '{body.work_id}'")
 
     params = dict(body.params)
     if body.work_id:

@@ -185,6 +185,16 @@ def _step_problems(i: int, s: Any, registry: dict[str, OpAction]) -> list[str]:
     if not isinstance(params, dict):
         errors.append(f"Step {i} ({aid}): params must be an object.")
         return errors
+    errors.extend(_param_problems(i, aid, action, params))
+    return errors
+
+
+def _param_problems(i: int, aid: str, action: OpAction, params: dict) -> list[str]:
+    """Param-level problems: forbidden work_id, unknown names, wrong types,
+    and missing required params (an operation must never start only to fail
+    mid-run on a missing input; work_id is exempt — it flows in from the
+    operation level at run time)."""
+    errors: list[str] = []
     props = (action.params_schema or {}).get("properties", {}) or {}
     for key, value in params.items():
         if key == "work_id":
@@ -202,13 +212,27 @@ def _step_problems(i: int, s: Any, registry: dict[str, OpAction]) -> list[str]:
                     f"Step {i} ({aid}): parameter {key!r} must be a {expected}, "
                     f"got {type(value).__name__}."
                 )
+    required = (action.params_schema or {}).get("required", []) or []
+    for req in required:
+        if req != "work_id" and req not in params:
+            errors.append(f"Step {i} ({aid}): missing required parameter {req!r}.")
     return errors
 
 
 def _resolve_voices(steps: list[dict], voices: list[dict]) -> list[str]:
-    """Resolve human voice names ('George') to catalog ids in place."""
+    """Resolve human voice names ('George') to catalog ids in place.
+
+    An unverifiable voice is an error, never a pass-through: if the catalog is
+    unavailable while a step carries a voice, planning fails explicitly rather
+    than handing an unchecked voice string to the renderer.
+    """
     if not voices:
-        return []
+        return [
+            f"Step {i}: cannot verify voice {s['params']['voice']!r} — the voice catalog "
+            "is unavailable; omit the voice to use the default."
+            for i, s in enumerate(steps, 1)
+            if isinstance(s.get("params"), dict) and s["params"].get("voice")
+        ]
     by_id = {v["id"] for v in voices}
     errors: list[str] = []
     for i, s in enumerate(steps, 1):
