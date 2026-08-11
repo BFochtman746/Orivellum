@@ -782,7 +782,7 @@ def _llm_harvest_by_chapters_inner(
                 if not name:
                     continue
                 text = f"{name} ({role}): {desc}" if desc else f"{name} ({role})"
-                db.create_knowledge_item(
+                kid = db.create_knowledge_item(
                     work_id=work_id,
                     kind="character",
                     text=text,
@@ -796,9 +796,21 @@ def _llm_harvest_by_chapters_inner(
                     chapter_id=chapter_id,
                 )
                 created += 1
-                # Characters no longer double-write into the generic entities
-                # store — the ATLAS world graph (built after harvest, below)
-                # is the single typed representation for fiction (LAW 2).
+                # Double-write into the legacy entities store: several
+                # consumers (graph views, recall boosting, entity queries)
+                # still read it.  The ATLAS world graph (built after harvest,
+                # below) is the typed, evidence-grounded representation
+                # (LAW 2); the legacy write stays until every consumer
+                # migrates to ATLAS.
+                try:
+                    eid = db.upsert_entity(
+                        name,
+                        "character",
+                        meta={"role": role, "description": desc} if desc else {"role": role},
+                    )
+                    db.create_entity_mention(eid, doc_id, work_id, knowledge_id=kid)
+                except Exception:
+                    pass
 
             # ── Events ───────────────────────────────────────────────────────
             for evt in (extraction.get("events") or [])[:6]:
@@ -871,8 +883,15 @@ def _llm_harvest_by_chapters_inner(
                     chapter_id=chapter_id,
                 )
                 created += 1
-                # Relationships feed the ATLAS graph (typed social edges with
-                # evidence) instead of the untyped entity-edge store (LAW 2).
+                # Relationships also feed the ATLAS graph (typed social edges
+                # with evidence, LAW 2); the untyped entity-edge double-write
+                # stays until every legacy consumer migrates to ATLAS.
+                try:
+                    sid = db.upsert_entity(subj, "character")
+                    oid = db.upsert_entity(obj, "character")
+                    db.create_entity_edge(sid, oid, pred)
+                except Exception:
+                    pass
 
             # ── Themes ───────────────────────────────────────────────────────
             for theme in (extraction.get("themes") or [])[:3]:

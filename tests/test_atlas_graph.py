@@ -1229,6 +1229,75 @@ class FirstImportOrderingTests(AtlasBase):
         self.assertNotIn("Job of Uz", {n["label"] for n in g3["nodes"]})
 
 
+class LegacyEntityCompatTests(AtlasBase):
+    """Fiction harvest must keep feeding the legacy entities/edges stores
+    (graph views, recall boosting, entity queries still read them) until
+    every consumer migrates to ATLAS — the typed graph is additive."""
+
+    def test_fiction_harvest_populates_legacy_and_atlas_stores(self):
+        from orivellum.capabilities import knowledge_harvest as kh
+
+        doc_id = self.db.create_document(
+            title="Manuscript", source="ms.txt", kind="book", work_id=self.work_id
+        )["id"]
+        _seed_chapter(self.db, self.work_id, 0, "One", _CH_TEXT, doc_id=doc_id)
+
+        extraction = {
+            "summary": "Job endures.",
+            "characters": [
+                {"name": "Job of Uz", "role": "protagonist", "description": "a patient man"}
+            ],
+            "events": [],
+            "quotes": [],
+            "relationships": [
+                {"subject": "Job of Uz", "predicate": "married to", "object": "Sitis"}
+            ],
+            "themes": [],
+        }
+        stub = _StubLLM(
+            {
+                "harvest.llm": extraction,
+                "atlas.events": [],
+                "atlas.entities": [
+                    {
+                        "name": "Job of Uz",
+                        "node_type": "Character",
+                        "description": "…",
+                        "evidence_quote": "Job of Uz rose before dawn",
+                    }
+                ],
+                "atlas.relations": [],
+                "atlas.attributes": {},
+                "atlas.propose": [],
+            }
+        )
+        with (
+            patch("orivellum.capabilities.llm.llm_call", stub),
+            patch("orivellum.api._deps.get_config", return_value=_cfg()),
+        ):
+            kh.llm_harvest_by_chapters(doc_id, self.work_id, "Manuscript", self.db)
+
+        # Legacy stores still populated (consumers not yet migrated) …
+        with self.db._lock:
+            names = {
+                r["name"]
+                for r in self.db._conn.execute("SELECT name FROM entities").fetchall()
+            }
+            relations = [
+                r["relation"]
+                for r in self.db._conn.execute("SELECT relation FROM edges").fetchall()
+            ]
+        self.assertIn("Job of Uz", names)
+        self.assertIn("Sitis", names)
+        self.assertIn("married to", relations)
+        # … the legacy-fed global graph path still surfaces the character …
+        g = self.db.get_global_graph()
+        self.assertIn("Job of Uz", {n["label"] for n in g["nodes"]})
+        # … and the ATLAS typed graph was built alongside.
+        atlas_names = [n["name"] for n in self.db.list_graph_nodes(work_ids=[self.work_id])]
+        self.assertEqual(atlas_names, ["Job of Uz"])
+
+
 class HarvestFailureBoundaryTests(AtlasBase):
     """A gateway failure during the graph build must reach the harvest
     caller and leave an observable per-work marker — never a silent
