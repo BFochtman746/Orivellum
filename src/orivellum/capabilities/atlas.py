@@ -69,19 +69,22 @@ _MAX_PROPOSALS = 20
 _WS = re.compile(r"\s+")
 
 
-def ground_quote(quote: str, text: str) -> int | None:
-    """Return the character offset of *quote* in *text*, or None.
+def ground_quote_span(quote: str, text: str) -> tuple[int, str] | None:
+    """Locate *quote* in *text*; return (offset, verbatim span) or None.
 
     Exact match first; then a whitespace-normalised, case-insensitive search
-    mapped back to a real offset in the original text.  A quote that cannot
-    be located is ungroundable — the caller must discard whatever carried it.
+    mapped back to the original text.  The returned span is ALWAYS the exact
+    original-text substring at the returned offset — never the model's
+    version of the quote — so stored evidence stays verbatim-auditable.
+    A quote that cannot be located is ungroundable — the caller must discard
+    whatever carried it.
     """
     if not quote or not quote.strip() or not text:
         return None
     q = quote.strip()
     idx = text.find(q)
     if idx >= 0:
-        return idx
+        return idx, q
     # Normalised fallback: collapse whitespace, case-insensitive.
     norm_q = _WS.sub(" ", q).lower()
     if not norm_q:
@@ -105,7 +108,15 @@ def ground_quote(quote: str, text: str) -> int | None:
     j = norm_text.find(norm_q)
     if j < 0:
         return None
-    return offsets[j]
+    start = offsets[j]
+    end = offsets[j + len(norm_q) - 1]
+    return start, text[start : end + 1]
+
+
+def ground_quote(quote: str, text: str) -> int | None:
+    """Offset-only convenience wrapper around :func:`ground_quote_span`."""
+    found = ground_quote_span(quote, text)
+    return None if found is None else found[0]
 
 
 # ---------------------------------------------------------------------------
@@ -433,10 +444,11 @@ def _pass_relations(
         src = node_ids.get(_norm_name(rel.get("src", "")))
         dst = node_ids.get(_norm_name(rel.get("dst", "")))
         etype = (rel.get("edge_type") or "").strip()
-        offset = ground_quote(rel.get("evidence_quote", ""), text)
-        if not src or not dst or src == dst or offset is None:
+        found = ground_quote_span(rel.get("evidence_quote", ""), text)
+        if not src or not dst or src == dst or found is None:
             counts["discarded"] += 1
             continue
+        offset, span = found
         try:
             db.create_graph_edge(
                 work_id=work_id,
@@ -444,7 +456,7 @@ def _pass_relations(
                 src=src,
                 dst=dst,
                 edge_type=etype,
-                evidence_quote=rel["evidence_quote"].strip(),
+                evidence_quote=span,
                 evidence_offset=offset,
             )
             counts["edges"] += 1
@@ -508,11 +520,11 @@ def _store_node(
 ) -> str | None:
     """Ground one proposed node and store it; discard if ungroundable."""
     name = (item.get("name") or "").strip()
-    quote = (item.get("evidence_quote") or "").strip()
-    offset = ground_quote(quote, chapter_text)
-    if not name or offset is None:
+    found = ground_quote_span((item.get("evidence_quote") or "").strip(), chapter_text)
+    if not name or found is None:
         counts["discarded"] += 1
         return None
+    offset, span = found
     canon_id = _match_canon(name, canon_facts)
     try:
         nid = db.create_graph_node(
@@ -521,7 +533,7 @@ def _store_node(
             node_type=node_type,
             name=name,
             description=(item.get("description") or "").strip()[:1000],
-            evidence_quote=quote,
+            evidence_quote=span,
             evidence_offset=offset,
             canon_fact_id=canon_id,
         )
@@ -629,12 +641,14 @@ def verify_chapter(
         if not prior or not description:
             counts["discarded"] += 1
             continue
-        # Stage 1 — deterministic grounding on BOTH sides.
-        cur_offset = ground_quote(cur_quote, text)
-        prior_offset = ground_quote(prior_quote, (prior.get("text") or ""))
-        if cur_offset is None or prior_offset is None:
+        # Stage 1 — deterministic grounding on BOTH sides (verbatim spans).
+        cur_found = ground_quote_span(cur_quote, text)
+        prior_found = ground_quote_span(prior_quote, (prior.get("text") or ""))
+        if cur_found is None or prior_found is None:
             counts["discarded"] += 1
             continue
+        cur_offset, cur_quote = cur_found
+        prior_offset, prior_quote = prior_found
         # Stage 2 — verifier confirms from the quoted evidence alone.
         verdict = _call(
             _VERIFY_PROMPT.format(
@@ -731,6 +745,26 @@ def build_work_graph(
         return _build_work_graph_locked(db, cfg, work_id=work_id, doc_id=doc_id)
 
 
+def _reverify_downstream(
+    db: OrivellumDB,
+    cfg: Any,
+    *,
+    work_id: str,
+    chapters: list[dict],
+    rebuilt: set[str],
+    first_rebuilt_idx: int,
+    totals: dict,
+) -> None:
+    """Drop and re-verify inconsistencies of chapters after a partial rebuild."""
+    for i, ch in enumerate(chapters):
+        if i <= first_rebuilt_idx or ch["id"] in rebuilt:
+            continue
+        db.delete_graph_inconsistencies_for_chapter(ch["id"])
+        v = verify_chapter(db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i])
+        totals["inconsistencies"] += v["kept"]
+        totals["discarded"] += v["discarded"]
+
+
 def _build_work_graph_locked(
     db: OrivellumDB,
     cfg: Any,
@@ -741,7 +775,7 @@ def _build_work_graph_locked(
     with db._lock:
         rows = db._conn.execute(
             """SELECT id, seq, title, text, source_doc_id FROM book_chapters
-               WHERE work_id=? AND text IS NOT NULL AND text != ''
+               WHERE work_id=?
                ORDER BY seq""",
             (work_id,),
         ).fetchall()
@@ -756,6 +790,14 @@ def _build_work_graph_locked(
         if doc_id and ch.get("source_doc_id") != doc_id:
             continue
         totals["chapters"] += 1
+        if not (ch.get("text") or "").strip():
+            # Chapter was emptied since the last build — purge its graph
+            # rows and (via rebuilt/first_rebuilt_idx) re-verify downstream.
+            db.delete_graph_for_chapter(ch["id"])
+            rebuilt.add(ch["id"])
+            if first_rebuilt_idx is None:
+                first_rebuilt_idx = i
+            continue
         c = extract_chapter_graph(db, cfg, work_id=work_id, chapter=ch)
         totals["nodes"] += c["nodes"]
         totals["edges"] += c["edges"]
@@ -774,15 +816,10 @@ def _build_work_graph_locked(
     # a prior world state that just changed, so their stored inconsistencies
     # may no longer be evidence-valid.  Drop and re-verify them.
     if doc_id and first_rebuilt_idx is not None:
-        for i, ch in enumerate(chapters):
-            if i <= first_rebuilt_idx or ch["id"] in rebuilt:
-                continue
-            db.delete_graph_inconsistencies_for_chapter(ch["id"])
-            v = verify_chapter(
-                db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i]
-            )
-            totals["inconsistencies"] += v["kept"]
-            totals["discarded"] += v["discarded"]
+        _reverify_downstream(
+            db, cfg, work_id=work_id, chapters=chapters,
+            rebuilt=rebuilt, first_rebuilt_idx=first_rebuilt_idx, totals=totals,
+        )
     logger.info(
         "atlas: work %s graph built — %d chapters, %d nodes, %d edges, "
         "%d verified inconsistencies, %d discarded",

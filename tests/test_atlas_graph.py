@@ -372,6 +372,77 @@ class OffsetIntegrityTests(AtlasBase):
             self.db._conn.rollback()
 
 
+class VerbatimSpanTests(AtlasBase):
+    def test_normalized_match_stores_exact_original_span(self):
+        """A case/whitespace-normalized match must store the ORIGINAL text
+        span at the recorded offset — never the model's version of it."""
+        raw_text = "Job   Wept over the ruined fields of Uz. " + _FILLER
+        stub = _StubLLM(
+            {
+                "atlas.events": [],
+                "atlas.entities": [
+                    {
+                        "name": "Job of Uz",
+                        "node_type": "Character",
+                        "description": "…",
+                        # lowercase + collapsed whitespace — not verbatim
+                        "evidence_quote": "job wept",
+                    }
+                ],
+                "atlas.relations": [],
+                "atlas.attributes": {},
+            }
+        )
+        ch = _seed_chapter(self.db, self.work_id, 0, "One", raw_text)
+        with patch("orivellum.capabilities.llm.llm_call", stub):
+            extract_chapter_graph(
+                self.db, _cfg(), work_id=self.work_id,
+                chapter={"id": ch, "seq": 0, "title": "One", "text": raw_text},
+            )
+        node = self.db.list_graph_nodes(work_ids=[self.work_id])[0]
+        self.assertEqual(node["evidence_quote"], "Job   Wept")
+        self.assertEqual(
+            raw_text[node["evidence_offset"] :][: len(node["evidence_quote"])],
+            node["evidence_quote"],
+        )
+
+
+class EmptiedChapterPurgeTests(AtlasBase):
+    def test_blanked_chapter_graph_rows_are_purged_on_rebuild(self):
+        raw_text = _CH_TEXT
+        stub = _StubLLM(
+            {
+                "atlas.events": [],
+                "atlas.entities": [
+                    {
+                        "name": "Job of Uz",
+                        "node_type": "Character",
+                        "description": "…",
+                        "evidence_quote": "Job of Uz rose before dawn",
+                    }
+                ],
+                "atlas.relations": [],
+                "atlas.attributes": {},
+                "atlas.propose": [],
+            }
+        )
+        ch = _seed_chapter(self.db, self.work_id, 0, "One", raw_text)
+        with patch("orivellum.capabilities.llm.llm_call", stub):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        self.assertEqual(len(self.db.list_graph_nodes(work_ids=[self.work_id])), 1)
+
+        # The chapter is subsequently cleared (whitespace-only text).
+        with self.db._lock:
+            self.db._conn.execute(
+                "UPDATE book_chapters SET text='   ' WHERE id=?", (ch,)
+            )
+            self.db._conn.commit()
+        with patch("orivellum.capabilities.llm.llm_call", stub):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        self.assertEqual(self.db.list_graph_nodes(work_ids=[self.work_id]), [])
+        self.assertEqual(self.db.list_graph_inconsistencies(work_id=self.work_id), [])
+
+
 class LongChapterWindowTests(AtlasBase):
     def test_windows_cover_the_tail_of_long_chapters(self):
         from orivellum.capabilities.atlas import _MAX_PASS_CHARS
