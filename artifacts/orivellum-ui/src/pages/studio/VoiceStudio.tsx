@@ -27,6 +27,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useSearch } from "wouter";
 import { apiFetch } from "@/lib/auth";
 import { useGlobalAudio } from "./useGlobalAudio";
 import {
@@ -2405,7 +2406,14 @@ export function VoiceStudio() {
   const { data: voicesResp, isLoading, isError } = useListVoices();
   const voices: VoiceEntry[] = (voicesResp as any)?.voices ?? [];
 
-  const [activeTab, setActiveTab] = useState<"browse" | "recommend" | "design" | "clone" | "audiobook">("browse");
+  // Deep-link support: /studio?tool=voice&vtab=audiobook opens straight on a
+  // specific tab (e.g. the "audiobook rendering" indicator on a Work page
+  // jumps to Build Audiobook, which auto-reconnects to the running render).
+  const _vsSearch = useSearch();
+  const [activeTab, setActiveTab] = useState<"browse" | "recommend" | "design" | "clone" | "audiobook">(() => {
+    const v = new URLSearchParams(_vsSearch).get("vtab");
+    return v === "recommend" || v === "design" || v === "clone" || v === "audiobook" ? v : "browse";
+  });
   const [selectedVoice, setSelectedVoice] = useState<VoiceEntry | null>(null);
   const [audiobookVoice, setAudiobookVoice] = useState<VoiceEntry | null>(null);
 

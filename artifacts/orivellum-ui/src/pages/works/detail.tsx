@@ -222,6 +222,48 @@ function WorkCover({ workId, coverPath }: { workId: string; coverPath?: string |
   );
 }
 
+// ─── Audiobook rendering indicator ───────────────────────────────────────────
+// A 20–30 minute book render runs in the Studio's background — surface it on
+// the Work's own page so users don't have to open the Studio to check.
+// Clicking jumps to the Studio's Build Audiobook tab, which auto-reconnects.
+
+function WorkRenderingIndicator({ workId }: { workId: string }) {
+  const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+  const { data } = useQuery<{ jobs: any[] }>({
+    queryKey: ["studio-active-work-tts"],
+    queryFn: () =>
+      apiFetch(`${BASE}/studio/tts/work/active`).then(r => (r.ok ? r.json() : { jobs: [] })),
+    // Poll faster while THIS Work is rendering so the progress stays live;
+    // otherwise a slow background check is enough to discover a new render.
+    refetchInterval: query => {
+      const jobs = ((query.state.data as any)?.jobs ?? []) as any[];
+      return jobs.some(j => j.work_id === workId) ? 10_000 : 30_000;
+    },
+  });
+  const job = (data?.jobs ?? []).find((j: any) => j.work_id === workId);
+  if (!job) return null;
+
+  const chapterTotal: number = job.total_chapters ?? 0;
+  const chapterNow = Math.min((job.chapter_idx ?? 0) + 1, chapterTotal);
+  const segsTotal: number = job.total_segments ?? 0;
+  const pct = segsTotal > 0 ? Math.round(((job.segments_done ?? 0) / segsTotal) * 100) : null;
+
+  return (
+    <Link
+      href="/studio?tool=voice&vtab=audiobook"
+      title="An audiobook is rendering for this Work — open the Studio to see full progress"
+      className="flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded-full border transition-colors"
+      style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}
+      data-testid="badge-work-rendering"
+    >
+      <Loader2 className="w-3 h-3 animate-spin" />
+      Narrating
+      {chapterTotal > 0 && ` ch ${chapterNow}/${chapterTotal}`}
+      {pct !== null && ` · ${pct}%`}
+    </Link>
+  );
+}
+
 // ─── Work detail shell ────────────────────────────────────────────────────────
 
 export default function WorkDetail() {
@@ -347,6 +389,8 @@ export default function WorkDetail() {
         </div>
         {work && (
           <div className="flex items-center gap-2">
+            {/* Live audiobook render indicator — links to the Studio */}
+            <WorkRenderingIndicator workId={workId!} />
             {/* Start Book Pipeline — only shown when no pipeline exists yet */}
             {!hasPipeline && pipelineData !== undefined && (
               <Button
