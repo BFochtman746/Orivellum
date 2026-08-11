@@ -2410,4 +2410,57 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE wb_projects ADD COLUMN meta TEXT NOT NULL DEFAULT '{}';
     """,
     ),
+    # v117 — Operations: durable multi-step runs. An operation is an ordered
+    # list of steps, each referencing a registered action. Every step records
+    # its own started/finished/result/error so a run can be paused, survive a
+    # restart, and resume by skipping steps already done. States:
+    #   operations:      pending | running | paused | done | failed | cancelled
+    #   operation_steps: pending | running | done | failed | cancelled
+    (
+        117,
+        "Operations: durable multi-step runs with per-step checkpoints",
+        """
+        CREATE TABLE IF NOT EXISTS operations (
+            id          TEXT PRIMARY KEY,
+            title       TEXT NOT NULL,
+            playbook_id TEXT,
+            work_id     TEXT,
+            params      TEXT NOT NULL DEFAULT '{}',
+            state       TEXT NOT NULL DEFAULT 'pending',
+            error       TEXT,
+            created_at  TEXT NOT NULL,
+            started_at  TEXT,
+            finished_at TEXT,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS operations_state ON operations(state);
+        CREATE INDEX IF NOT EXISTS operations_work ON operations(work_id);
+        CREATE TABLE IF NOT EXISTS operation_steps (
+            id           TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            step_index   INTEGER NOT NULL,
+            action_id    TEXT NOT NULL,
+            label        TEXT NOT NULL,
+            params       TEXT NOT NULL DEFAULT '{}',
+            state        TEXT NOT NULL DEFAULT 'pending',
+            result       TEXT,
+            error        TEXT,
+            started_at   TEXT,
+            finished_at  TEXT,
+            UNIQUE(operation_id, step_index)
+        );
+        CREATE INDEX IF NOT EXISTS operation_steps_op
+            ON operation_steps(operation_id, step_index);
+    """,
+    ),
+    # v118 — Operations claim fencing: every successful claim (start/resume)
+    # rotates run_token; all step/operation transitions carry the token, so a
+    # stale runner that lost its claim can never mutate a newer run's state.
+    (
+        118,
+        "Operations: run_token claim fencing",
+        """
+        ALTER TABLE operations ADD COLUMN run_token TEXT;
+    """,
+    ),
 ]

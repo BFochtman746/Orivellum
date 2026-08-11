@@ -210,6 +210,18 @@ def _apply_pending_restore(cfg) -> None:
             logger.error("Restore rollback also failed: %s", exc2)
 
 
+def _recover_interrupted_operations(db) -> None:
+    """Flip operations orphaned by a restart from running → paused (non-fatal)."""
+    try:
+        from orivellum.capabilities.operations.store import reconcile_interrupted_operations
+
+        n_ops = reconcile_interrupted_operations(db)
+        if n_ops:
+            logger.info("Paused %d operation(s) interrupted by restart", n_ops)
+    except Exception as e:  # never block startup on recovery
+        logger.warning("Operation restart recovery failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Governed startup/shutdown: config → db → migrations → key → deps → serve.
@@ -280,6 +292,11 @@ async def lifespan(app: FastAPI):
             logger.info("Marked %d orphaned running trailer(s) as failed", stale)
     except Exception as e:  # never block startup on recovery
         logger.warning("Stale-trailer recovery failed: %s", e)
+
+    # Step 5a.2: Recover operations orphaned by the restart. Any run still
+    # 'running' lost its thread — flip it to 'paused' (in-flight step back to
+    # 'pending') so the UI offers Resume instead of an eternal spinner.
+    _recover_interrupted_operations(db)
 
     # Step 5b: Register PKLOS adapters with the global AdapterRegistry.
     # The WindowsInventoryAdapter reads from the claim ledger (not live CIM),
@@ -643,6 +660,7 @@ def create_app() -> FastAPI:
         mcp,
         music,
         notes,
+        operations,
         pklos,
         projects,
         review,
@@ -685,6 +703,7 @@ def create_app() -> FastAPI:
         bench,
         music,
         notes,
+        operations,
         workbench,
     ]
     for module in _route_modules:

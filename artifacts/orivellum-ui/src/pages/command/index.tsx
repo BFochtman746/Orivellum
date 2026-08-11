@@ -27,6 +27,7 @@ import {
   Shield,
   Sparkles,
   Terminal,
+  Workflow,
   XCircle,
 } from "lucide-react";
 
@@ -113,6 +114,7 @@ const SECTIONS = [
   { href: "/governance", icon: Shield,    title: "Governance",  desc: "Knowledge approvals, conflicts, regressions & audit chain" },
   { href: "/mcos",       icon: Gauge,     title: "Calibration", desc: "Benchmark suites, runs, prompt lab & LLM telemetry" },
   { href: "/actions",    icon: Terminal,  title: "Actions",     desc: "Run catalogued operations against your Works" },
+  { href: "/operations", icon: Workflow,  title: "Operations",  desc: "Multi-step jobs that checkpoint, pause & resume" },
   { href: "/backups",    icon: Archive,   title: "Backups",     desc: "Snapshots of your database — browse & restore" },
   { href: "/mail",       icon: Mail,      title: "Correspondence", desc: "Inbox triage, drafts & account connection" },
 ] as const;
