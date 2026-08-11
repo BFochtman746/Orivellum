@@ -67,7 +67,7 @@ versions; execute generated tests for code versions.
 - Archive gate: `latest_proof_status` + `UnprovenError` → route 409 `{code:"unproven"}`; UI force-confirm retries with `{force:true}`.
 
 ## Code project self-tests (build loop)
-- Code builds generate a unittest file (stdlib-only) and run it in the Workshop sandbox; failures feed the LLM repair loop (fix build script → rebuild → re-verify → re-run SAME tests). Version verdict `tested` only on a real pass.
-- Exit 0 is NOT a pass: parse unittest's "Ran N tests" and require N≥1, or empty/no-op suites silently certify garbage.
-- Tests run against an ISOLATED COPY of out/ — a mutating test can only touch the throwaway copy, so a pass always certifies the exact published bytes; the passing test file is copied into the version afterwards.
-- Sandbox runner injection: preload real `unittest` BEFORE putting the project dir on sys.path (a project unittest.py would shadow the harness), and strip the runner from sys.argv (unittest.main() parses argv and treats the test path as a test-name selector). `python -I` + runpy.run_path never adds the script dir to sys.path — must insert it explicitly.
+- Every code build (any language) must pass a generated test suite before a version publishes — non-Python files get Python tests that read/parse them; there is deliberately NO untested path to a good verdict. **Why:** completion review rejected a "skip if no .py files" carve-out as violating the guarantee.
+- Exit 0 is NOT a pass: require unittest's "Ran N tests" with N≥1, or empty/no-op suites silently certify garbage.
+- Tests run against an isolated copy of the output — a mutating test can only touch the throwaway copy, so a pass certifies the exact published bytes.
+- Sandbox runner lessons: preload real `unittest` before the project dir joins sys.path (a project unittest.py shadows it); strip the runner from sys.argv (unittest.main() parses argv); `python -I` + runpy never adds the script dir to sys.path.

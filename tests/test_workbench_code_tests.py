@@ -8,8 +8,8 @@ Covers:
   attempts recorded
 - persistent failure: no version is published, the error names the tests
 - test-generation failure blocks the version (never silently untested)
-- projects with no Python files skip testing honestly ('skipped', verdict
-  'verified' not 'tested')
+- non-Python projects (JS/HTML) are tested too via file-verifying Python
+  tests — there is no untested path to a good verdict
 """
 
 from __future__ import annotations
@@ -37,12 +37,34 @@ out.mkdir(exist_ok=True)
 print("built calc (buggy)")
 """
 
-_NO_PY_SCRIPT = """\
+_JS_SCRIPT = """\
 import pathlib
 out = pathlib.Path("out")
 out.mkdir(exist_ok=True)
-(out / "README.md").write_text("docs only")
-print("built docs")
+(out / "app.js").write_text("function add(a, b) { return a + b; }\\nmodule.exports = { add };\\n")
+(out / "index.html").write_text("<!DOCTYPE html><html><body><h1>Calc</h1></body></html>\\n")
+print("built js app")
+"""
+
+_JS_TESTS = """\
+import pathlib
+import re
+import unittest
+
+
+class TestJsProject(unittest.TestCase):
+    def test_add_function_exists(self):
+        src = pathlib.Path("app.js").read_text()
+        self.assertRegex(src, re.compile(r"function add\\(a, b\\)"))
+        self.assertIn("return a + b", src)
+
+    def test_html_has_heading(self):
+        html = pathlib.Path("index.html").read_text()
+        self.assertIn("<h1>Calc</h1>", html)
+
+
+if __name__ == "__main__":
+    unittest.main()
 """
 
 _TESTS = """\
@@ -188,16 +210,27 @@ print("built calc + shadow")
             self.assertTrue(checks["tests"]["passed"])
             self.assertGreaterEqual(checks["tests"]["tests_run"], 1)
 
-    def test_no_python_files_skips_tests_honestly(self):
+    def test_non_python_projects_are_tested_too(self):
+        # JavaScript/HTML outputs get Python tests that read and verify the
+        # files — there is no untested path to a good verdict
         with tempfile.TemporaryDirectory() as tmp:
-            db, _, p = self._build(tmp, _llm_results(_NO_PY_SCRIPT))
+            db, _, p = self._build(tmp, _llm_results(_JS_SCRIPT, _JS_TESTS))
             proj = db.get_wb_project(p["id"])
             self.assertIsNone(proj["last_error"], proj["last_error"])
             v = db.list_wb_versions(p["id"])[0]
-            self.assertEqual(v["verdict"], "verified")  # never claims 'tested'
+            self.assertEqual(v["verdict"], "tested")
             checks = json.loads(v["checks_json"])
-            self.assertTrue(checks["tests"]["skipped"])
-            self.assertIn("no Python files", checks["tests"]["reason"])
+            self.assertTrue(checks["tests"]["passed"])
+            self.assertEqual(checks["tests"]["tests_run"], 2)
+
+    def test_non_python_project_failing_tests_blocks_the_version(self):
+        # a JS build that doesn't satisfy its tests never publishes
+        bad_js = _JS_SCRIPT.replace("return a + b", "return a - b")
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(tmp, _llm_results(bad_js, _JS_TESTS, bad_js, bad_js))
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("tests failed", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
 
 
 if __name__ == "__main__":

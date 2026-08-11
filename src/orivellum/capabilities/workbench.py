@@ -277,6 +277,11 @@ _TESTGEN_SYSTEM = (
     "- If a file is a script with top-level side effects rather than importable "
     "functions, run it with runpy.run_path and assert on its observable "
     "output or files.\n"
+    "- The project may contain files in ANY language. Test non-Python files by "
+    "reading them: parse JSON with json, check HTML with html.parser, and "
+    "assert the requested functions, markup, or content exist (re / string "
+    "checks). Every claim must be verified against the actual files — never "
+    "write a test that passes without reading or running the project.\n"
     "- Write a handful of meaningful, deterministic assertions covering the "
     "behavior that was requested — no sleeps, no randomness, no network.\n"
     '- End with `if __name__ == "__main__": unittest.main()` so failures exit '
@@ -452,9 +457,11 @@ def _test_code_project(db, cfg, proj, instruction, work, out, script) -> dict:
     """Generate a test file for the built code project, run it sandboxed, and
     feed failures back into the LLM repair loop (rebuild → re-verify → re-run
     the SAME tests). Returns the record for checks_json['tests']; raises when
-    the tests still fail after retries — the version is then never published."""
-    if not any(p.suffix == ".py" and p.name != _TEST_FILE for p in out.rglob("*") if p.is_file()):
-        return {"skipped": True, "reason": "no Python files to test"}
+    the tests still fail after retries — the version is then never published.
+
+    Every code project gets tests, whatever language its files are in —
+    Python modules are imported and exercised; non-Python files are verified
+    by reading/parsing them. There is no untested path to a good verdict."""
     test_code = _generate_tests(cfg, db, proj, instruction, out)
     for attempt in range(_MAX_FIX_RETRIES + 1):
         res = _run_project_tests(test_code, out, work)
