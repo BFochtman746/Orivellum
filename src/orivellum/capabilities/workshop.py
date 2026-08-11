@@ -364,24 +364,16 @@ def execute_workshop(
             "critique": None,
         }
 
-    final_path = Path(output_path)
-    if final_path.is_symlink():
+    try:
+        final_path = _select_output(output_path, out_dir, fmt)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "script": script}
+    if final_path is None:
         return {
             "ok": False,
-            "error": "Generated output is a symlink — rejected.",
+            "error": "Script ran without errors but no output file was found.",
             "script": script,
         }
-    if not final_path.exists():
-        # LLM may have saved with slightly different path — search the dir
-        candidates = sorted(out_dir.glob(f"*.{fmt}"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if candidates:
-            final_path = candidates[0]
-        else:
-            return {
-                "ok": False,
-                "error": "Script ran without errors but no output file was found.",
-                "script": script,
-            }
 
     # ── Step 3: Critique ──────────────────────────────────────────────────────
     critique = _critique_output(
@@ -430,6 +422,22 @@ def execute_workshop(
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
+def _select_output(output_path: str, out_dir: Path, fmt: str) -> Path | None:
+    """Resolve the generated output file: the prescribed path, or the newest
+    matching file in the output dir (the LLM may have saved under a slightly
+    different name). The SELECTED file — prescribed or fallback — must not be
+    a symlink, so a link can never serve bytes from outside the sandbox."""
+    final_path = Path(output_path)
+    if not final_path.exists():
+        candidates = sorted(out_dir.glob(f"*.{fmt}"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not candidates:
+            return None
+        final_path = candidates[0]
+    if final_path.is_symlink():
+        raise ValueError("Generated output is a symlink — rejected.")
+    return final_path
+
+
 def _clean_script(raw: str) -> str:
     """Strip markdown fences and leading/trailing whitespace from LLM output."""
     s = raw.strip()
@@ -455,35 +463,41 @@ import os
 import sys
 
 # ── Filesystem allowlist (audit hook) ────────────────────────────────────────
-# Generated code may only open files under its working directory, the Python
-# installation (stdlib + site-packages), and any extra directories the parent
-# explicitly granted via ORIVELLUM_SANDBOX_ALLOW. Audit hooks cannot be
-# removed once installed, so this holds for the life of the process.
-_CWD = os.path.realpath(os.getcwd())
-_ALLOWED = [_CWD]
+# Two tiers. WRITABLE: the working directory plus any dirs the parent granted
+# via ORIVELLUM_SANDBOX_ALLOW — the only places generated code may create,
+# modify, or delete anything. READ-ONLY: the Python installation (stdlib +
+# site-packages) and system mime.types tables, so imports work but installed
+# packages cannot be tampered with. Everything else is unreachable. Audit
+# hooks cannot be removed once installed, so this holds for the process life.
+_WRITABLE = [os.path.realpath(os.getcwd())]
+for _extra in (os.environ.get("ORIVELLUM_SANDBOX_ALLOW") or "").split(os.pathsep):
+    if _extra:
+        _WRITABLE.append(os.path.realpath(_extra))
+_WRITABLE = tuple(dict.fromkeys(_WRITABLE))
+
+_READ_ONLY = []
 for _p in [
     sys.prefix, sys.base_prefix, sys.exec_prefix,
     getattr(sys, "base_exec_prefix", ""),
 ] + list(sys.path):
     if _p:
-        _ALLOWED.append(os.path.realpath(_p))
-for _extra in (os.environ.get("ORIVELLUM_SANDBOX_ALLOW") or "").split(os.pathsep):
-    if _extra:
-        _ALLOWED.append(os.path.realpath(_extra))
+        _READ_ONLY.append(os.path.realpath(_p))
 # System mime.types tables — harmless read-only data, but stdlib mimetypes
 # (instantiated by e.g. openpyxl) opens them at import/instantiation time.
 try:
     import mimetypes as _mt
 
     for _f in _mt.knownfiles:
-        _ALLOWED.append(os.path.realpath(_f))
+        _READ_ONLY.append(os.path.realpath(_f))
 except Exception:
     pass
-_ALLOWED = tuple(dict.fromkeys(_ALLOWED))
+_READ_ONLY = tuple(dict.fromkeys(_READ_ONLY))
 _DEVNULL = os.path.realpath(os.devnull)
 
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
 
-def _allowed_path(raw):
+
+def _within(raw, allowed):
     try:
         path = os.fsdecode(raw)
     except (TypeError, ValueError):
@@ -491,25 +505,42 @@ def _allowed_path(raw):
     rp = os.path.realpath(path)
     if rp == _DEVNULL:
         return True
-    return any(rp == a or rp.startswith(a + os.sep) for a in _ALLOWED)
+    return any(rp == a or rp.startswith(a + os.sep) for a in allowed)
+
+
+def _require(raw, write):
+    if raw is None or isinstance(raw, int):
+        return  # fd-based op — the fd was already vetted when it was opened
+    if _within(raw, _WRITABLE):
+        return
+    if not write and _within(raw, _READ_ONLY):
+        return
+    raise PermissionError(
+        "Sandbox: %s access outside the working directory is disabled: %r"
+        % ("write" if write else "file", raw))
 
 
 def _audit(event, args):
     if event == "open":
         target = args[0] if args else None
-        if target is None or isinstance(target, int):
-            return  # re-opening an fd that was already vetted at open time
-        if not _allowed_path(target):
-            raise PermissionError(
-                "Sandbox: file access outside the working directory "
-                "is disabled: %r" % (target,))
-    elif event in ("os.rename", "os.remove", "os.rmdir"):
+        mode, flags = (args[1] if len(args) > 1 else None), (args[2] if len(args) > 2 else None)
+        if isinstance(mode, str):
+            write = any(c in mode for c in "wax+")
+        elif isinstance(flags, int):
+            write = bool(flags & _WRITE_FLAGS)
+        else:
+            write = True  # unknown intent — treat as a write, the stricter tier
+        _require(target, write)
+    elif event in ("os.listdir", "os.scandir", "pathlib.Path.glob", "pathlib.Path.rglob"):
+        if args:
+            _require(args[0], False)
+    elif event in (
+        "os.rename", "os.remove", "os.rmdir", "os.mkdir", "os.chmod",
+        "os.truncate", "os.utime", "shutil.rmtree", "shutil.move",
+        "shutil.copyfile", "shutil.copymode", "shutil.copystat",
+    ):
         for target in args[:2]:
-            if target is not None and not isinstance(target, int):
-                if not _allowed_path(target):
-                    raise PermissionError(
-                        "Sandbox: file access outside the working directory "
-                        "is disabled: %r" % (target,))
+            _require(target, True)
     elif event in ("os.link", "os.symlink"):
         raise PermissionError("Sandbox: creating links is disabled.")
 

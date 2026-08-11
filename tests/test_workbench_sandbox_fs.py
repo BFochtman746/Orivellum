@@ -113,6 +113,57 @@ class TestSandboxFilesystemBoundary(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(target.read_text(encoding="utf-8"), "ok")
 
+    def test_script_cannot_write_under_python_installation(self):
+        """Interpreter/dependency paths are readable (imports) but never
+        writable — a script must not be able to tamper with installed
+        packages."""
+        import sysconfig
+
+        target = str(Path(sysconfig.get_paths()["purelib"]) / "_sandbox_evil_marker.txt")
+        with tempfile.TemporaryDirectory() as work:
+            script = (
+                "import openpyxl  # dependency reads still allowed\n"
+                "try:\n"
+                f"    open({target!r}, 'w').write('tampered')\n"
+                "    raise SystemExit('write into site-packages unexpectedly succeeded')\n"
+                "except PermissionError:\n"
+                "    pass\n"
+                "import pathlib\n"
+                "out = pathlib.Path('out'); out.mkdir(exist_ok=True)\n"
+                "out.joinpath('r.txt').write_text('ok')\n"
+            )
+            run = self._run(script, Path(work))
+            self.assertTrue(run["ok"], run.get("error"))
+            self.assertFalse(Path(target).exists())
+
+    def test_script_cannot_delete_outside_files(self):
+        with tempfile.TemporaryDirectory() as outside, tempfile.TemporaryDirectory() as work:
+            victim = Path(outside) / "victim.txt"
+            victim.write_text("keep me", encoding="utf-8")
+            script = f"import os\nos.remove({str(victim)!r})\n"
+            run = self._run(script, Path(work))
+            self.assertFalse(run["ok"])
+            self.assertIn("outside the working directory", run["error"])
+            self.assertTrue(victim.exists())
+
+    def test_workshop_output_selection_rejects_symlinked_fallback(self):
+        """When the prescribed path is missing and the fallback picks the
+        newest candidate, a symlinked candidate must still be rejected."""
+        from orivellum.capabilities.workshop import _select_output
+
+        with tempfile.TemporaryDirectory() as outside, tempfile.TemporaryDirectory() as work:
+            secret = Path(outside) / "secret.docx"
+            secret.write_text("leak", encoding="utf-8")
+            out_dir = Path(work)
+            os.symlink(secret, out_dir / "candidate.docx")
+            with self.assertRaises(ValueError):
+                _select_output(str(out_dir / "missing.docx"), out_dir, "docx")
+            # A regular fallback candidate is still selected normally.
+            real = out_dir / "real.docx"
+            real.write_text("fine", encoding="utf-8")
+            (out_dir / "candidate.docx").unlink()
+            self.assertEqual(_select_output(str(out_dir / "missing.docx"), out_dir, "docx"), real)
+
     def test_snapshot_rejects_symlinked_output(self):
         from orivellum.capabilities.workbench import _snapshot
 
