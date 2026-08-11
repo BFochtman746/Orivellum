@@ -53,9 +53,10 @@ export const APPS: AppDef[] = [
       { name: "Write desk", href: "/write" },
       { name: "Books", href: "/books" },
       { name: "Canon", href: "/canon" },
+      { name: "Architect", href: "/architect" },
       { name: "Finishing", href: "/finishing" },
     ],
-    own: ["/writing", "/write", "/works", "/books", "/canon", "/finishing"],
+    own: ["/writing", "/write", "/works", "/books", "/canon", "/architect", "/finishing"],
   },
   {
     id: "learning",

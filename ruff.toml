@@ -46,6 +46,7 @@ max-complexity = 10
 "src/orivellum/api/routes/studio.py" = ["B008", "B904", "C901", "E501", "SIM105", "SIM115"]
 "src/orivellum/api/routes/system.py" = ["B904", "C901", "E402", "E501", "RET504", "SIM105"]
 "src/orivellum/api/routes/topics.py" = ["C901", "SIM105"]
+"src/orivellum/api/routes/wa.py" = ["B008"]
 "src/orivellum/api/routes/works.py" = ["B008", "B904", "C901", "E501", "RET504", "SIM105"]
 "src/orivellum/api/routes/write.py" = ["C901", "E501"]
 "src/orivellum/capabilities/__init__.py" = ["E501"]

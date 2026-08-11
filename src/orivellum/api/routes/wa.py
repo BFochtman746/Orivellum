@@ -11,17 +11,25 @@ until the author explicitly approves or rejects them via PATCH.
 from __future__ import annotations
 
 import logging
+import re
+import time
+import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from orivellum.api._deps import get_config, get_db, require_auth
+from orivellum.configuration.config import ROOT
 from orivellum.database.wa_store import WAStore
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/wa", dependencies=[Depends(require_auth)])
+
+# The API server's working directory is not the repo root (workflows run from
+# the artifact dir), so attached_assets/ must always be anchored on ROOT.
+_ASSETS_ROOT = ROOT / "attached_assets"
 
 
 class DecomposeBody(BaseModel):
@@ -33,8 +41,59 @@ class ProposalDecisionBody(BaseModel):
 
 
 def _default_archive() -> Path | None:
-    candidates = sorted(Path("attached_assets").glob("WRITING_ARCHITECT*.zip"))
+    # Newest by modification time — name sort would pick the wrong archive
+    # (e.g. "..._BUILD_PACKAGE_..." sorts after a newer timestamped upload).
+    candidates = sorted(
+        _ASSETS_ROOT.glob("WRITING_ARCHITECT*.zip"), key=lambda p: p.stat().st_mtime
+    )
     return candidates[-1] if candidates else None
+
+
+# Hard ceiling for an uploaded archive — the real archive is ~tens of MB;
+# 500 MB bounds the damage of a runaway upload without blocking growth.
+_MAX_ARCHIVE_BYTES = 500 * 1024 * 1024
+
+
+@router.post("/upload")
+async def upload_archive(file: UploadFile = File(...)):
+    """Streaming upload of a Writing Architect archive (.zip).
+
+    Saves into ``attached_assets/`` (the only root ``/decompose`` accepts)
+    and returns the stored path so the client can immediately decompose it.
+    """
+    name = (file.filename or "").strip()
+    if not name.lower().endswith(".zip"):
+        raise HTTPException(422, "Archive must be a .zip file")
+
+    _ASSETS_ROOT.mkdir(parents=True, exist_ok=True)
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(name).stem)[:80] or "archive"
+    dest = _ASSETS_ROOT / f"WRITING_ARCHITECT_upload_{int(time.time())}_{stem}.zip"
+    tmp = dest.with_suffix(".part")
+    size = 0
+    try:
+        with tmp.open("wb") as fh:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > _MAX_ARCHIVE_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"Archive too large (limit {_MAX_ARCHIVE_BYTES // (1024 * 1024)} MB)",
+                    )
+                fh.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "Uploaded file is empty")
+        # Signature check — reject anything that isn't actually a zip before
+        # it can ever reach the decomposer.
+        if not zipfile.is_zipfile(tmp):
+            raise HTTPException(422, "File is not a valid zip archive")
+        tmp.rename(dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return {"path": str(dest), "size_bytes": size, "filename": dest.name}
 
 
 @router.post("/decompose")
@@ -51,8 +110,11 @@ def run_decompose_route(body: DecomposeBody):
             detail="Writing Architect archive not found; provide archive_path",
         )
     # Restrict caller-supplied paths to the attached_assets import root.
-    assets_root = Path("attached_assets").resolve()
-    if body.archive_path and not path.resolve().is_relative_to(assets_root):
+    # Relative caller paths (e.g. "attached_assets/x.zip") are anchored on
+    # ROOT so they resolve the same regardless of the server's cwd.
+    if body.archive_path and not path.is_absolute():
+        path = ROOT / path
+    if body.archive_path and not path.resolve().is_relative_to(_ASSETS_ROOT.resolve()):
         raise HTTPException(
             status_code=422,
             detail="archive_path must point inside attached_assets/",

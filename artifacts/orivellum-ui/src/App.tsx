@@ -34,6 +34,7 @@ import ReviewPage from '@/pages/review/index';
 import Mcos from '@/pages/mcos/index';
 import BooksPage from '@/pages/books/index';
 import CanonPage from '@/pages/canon/index';
+import WritingArchitectPage from '@/pages/writing-architect/index';
 import FinishingPage from '@/pages/finishing/index';
 import LearnPage from '@/pages/learn/index';
 import IntakePage from '@/pages/intake/index';
@@ -150,6 +151,7 @@ function RoutedPages() {
         <Route path="/review">{() => <RouteWithBoundary component={ReviewPage} />}</Route>
         <Route path="/books">{() => <RouteWithBoundary component={BooksPage} />}</Route>
         <Route path="/canon">{() => <RouteWithBoundary component={CanonPage} />}</Route>
+        <Route path="/architect">{() => <RouteWithBoundary component={WritingArchitectPage} />}</Route>
         <Route path="/finishing">{() => <RouteWithBoundary component={FinishingPage} />}</Route>
         <Route path="/learn">{() => <RouteWithBoundary component={LearnPage} />}</Route>
         <Route path="/intake">{() => <RouteWithBoundary component={IntakePage} />}</Route>
