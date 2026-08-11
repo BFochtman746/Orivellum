@@ -32,15 +32,21 @@ def start_position_audit(work_id: str):
     except RuntimeError as e:
         raise HTTPException(409, str(e)) from e
 
-    from orivellum.capabilities.position import run_position_audit  # noqa: PLC0415
+    # We hold the claim from here on: EVERY failure before a successful
+    # dispatch must finish the row as 'error' — a leaked 'running' row would
+    # permanently block audits for this work.
+    try:
+        from orivellum.capabilities.position import run_position_audit  # noqa: PLC0415
 
-    dispatched = submit_bg(
-        run_position_audit, db, cfg,
-        audit_id=audit_id, work_id=work_id,
-        kind="position_audit", label=f"position:{work_id}",
-    )
+        dispatched = submit_bg(
+            run_position_audit, db, cfg,
+            audit_id=audit_id, work_id=work_id,
+            kind="position_audit", label=f"position:{work_id}",
+        )
+    except Exception as exc:
+        db.finish_position_audit(audit_id, status="error", error=str(exc))
+        raise
     if not dispatched:
-        # We hold the claim — release it as an explicit failure.
         db.finish_position_audit(audit_id, status="error",
                                  error="background dispatch refused")
         raise HTTPException(503, "audit could not be dispatched; try again")

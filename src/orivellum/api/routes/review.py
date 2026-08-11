@@ -691,8 +691,18 @@ def _resolve_position(db, item_id: str, body: ResolveBody) -> dict:
 
     installed = None
     if decision == "approved" and proposal["kind"] == "voice_spec":
-        # Side effect strictly AFTER the successful atomic claim.
-        db.set_assay_baseline(proposal["work_id"], "voice_envelope", proposal["payload"])
+        # Side effect strictly AFTER the successful atomic claim.  If the
+        # install fails, the approval is rolled back (compensating update
+        # guarded by our own signature) so the author can simply retry —
+        # never an approved proposal with no baseline and no retry path.
+        try:
+            db.set_assay_baseline(proposal["work_id"], "voice_envelope", proposal["payload"])
+        except Exception as exc:
+            db.reopen_position_proposal(item_id, expected_resolved_by=author)
+            raise HTTPException(
+                500, "voice baseline install failed; the proposal was returned "
+                     "to the review queue — retry the approval"
+            ) from exc
         installed = "voice_envelope baseline"
     return {"ok": True, "decision": decision, "kind": proposal["kind"],
             "installed": installed}

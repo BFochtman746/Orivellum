@@ -547,15 +547,38 @@ def _battery_clean(battery: dict, *, severities: tuple[str, ...]) -> bool:
     )
 
 
-def _drift_clean(battery: dict) -> bool:
-    for inst in battery.get("instruments", []):
-        if not inst["key"].startswith(("drift.", "voice.")) and inst["key"] != "gate.d14":
-            continue
-        if inst.get("status") != "done":
+_FAILING_VERDICTS = ("confirmed_drift", "out_of_envelope", "structural_violations")
+
+
+def _instruments_ok(battery: dict, *, keys: set[str]) -> bool:
+    """Fail closed: every required instrument must be PRESENT, status 'done',
+    and free of a failing verdict.  A missing or errored run can never count
+    as clean — that would be a fabricated clean result."""
+    by_key = {i["key"]: i for i in battery.get("instruments", [])}
+    for key in keys:
+        inst = by_key.get(key)
+        if inst is None or inst.get("status") != "done":
             return False
-        if inst.get("verdict") in ("confirmed_drift", "out_of_envelope", "structural_violations"):
+        if inst.get("verdict") in _FAILING_VERDICTS:
             return False
     return True
+
+
+def _drift_clean(battery: dict) -> bool:
+    """Voice/drift acceptance: envelope + all four drift detectors + the two
+    Tier-1 gates (D13 pacing, D14 drift confirmation) ran and came back clean."""
+    keys = {
+        i["key"] for i in battery.get("instruments", [])
+        if i["key"].startswith(("drift.", "voice."))
+    }
+    keys |= {"voice.envelope", "gate.d13", "gate.d14"}
+    return _instruments_ok(battery, keys=keys)
+
+
+def _judge_recorded(battery: dict) -> bool:
+    """B9 acceptance: the hierarchical judge actually ran (its content is
+    advisory and never blocks, but an errored/missing run is not a pass)."""
+    return _instruments_ok(battery, keys={"judge.hierarchical"})
 
 
 def _stage_ladder(tests: dict, battery: dict, chapters: list[dict],
@@ -573,6 +596,7 @@ def _stage_ladder(tests: dict, battery: dict, chapters: list[dict],
         ("B5", "Drafting within band", tests["T3"]["passed"]),
         ("B6", "Continuity clean", _battery_clean(battery, severities=("critical", "high"))),
         ("B8", "Voice within envelope", _drift_clean(battery)),
+        ("B9", "Judge pass recorded", _judge_recorded(battery)),
         ("B13", "Style locked", tests["T7"]["passed"]),
         ("B14", "Front/back matter present", tests["T8"]["passed"]),
         ("B15", "Page count known", tests["T9"]["passed"]),

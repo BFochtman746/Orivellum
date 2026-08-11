@@ -214,6 +214,46 @@ class TestStageDerivation(PositionBase):
         self.assertTrue(ladder["B4"]["passed"])  # prose is fine …
         self.assertFalse(ladder["A1"]["passed"])  # … but canon is the gap
 
+    def test_battery_rungs_fail_closed_on_missing_or_errored_instruments(self):
+        """An errored or ABSENT battery instrument can never count as clean —
+        the audit must not report a high stage on fabricated results."""
+        done = [
+            {"key": k, "status": "done", "verdict": "clean", "findings_count": 0}
+            for k in ("voice.envelope", "drift.theology_lecture", "drift.catalog",
+                      "drift.elihu", "drift.restoration", "gate.d13", "gate.d14",
+                      "judge.hierarchical")
+        ]
+        clean = {"constory": {"status": "done"}, "_open_findings": [], "instruments": done}
+        self.assertTrue(position._drift_clean(clean))
+        self.assertTrue(position._judge_recorded(clean))
+
+        # Missing instruments entirely → fail closed.
+        empty = {"constory": {"status": "done"}, "_open_findings": [], "instruments": []}
+        self.assertFalse(position._drift_clean(empty))
+        self.assertFalse(position._judge_recorded(empty))
+
+        # One errored run (gateway down) → that rung fails.
+        errored = {**clean, "instruments": [
+            i if i["key"] != "gate.d13" else {"key": "gate.d13", "status": "error",
+                                              "error": "boom"}
+            for i in done
+        ]}
+        self.assertFalse(position._drift_clean(errored))
+        self.assertTrue(position._judge_recorded(errored))
+
+        # A failing verdict → fails even when status is done.
+        drifted = {**clean, "instruments": [
+            i if i["key"] != "gate.d14" else {"key": "gate.d14", "status": "done",
+                                              "verdict": "confirmed_drift"}
+            for i in done
+        ]}
+        self.assertFalse(position._drift_clean(drifted))
+
+        # An errored ConStory run is never continuity-clean.
+        broken = {"constory": {"status": "error", "error": "gateway"},
+                  "_open_findings": [], "instruments": done}
+        self.assertFalse(position._battery_clean(broken, severities=("critical", "high")))
+
 
 # ── Reconstruction proposals — review-gated, never auto-authority ────────────
 
@@ -334,6 +374,24 @@ class TestResolution(PositionBase):
             _resolve_position(self.db, p["id"], ResolveBody(decision="approve"))
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertEqual(self.db.get_position_proposal(p["id"])["status"], "proposed")
+
+    def test_failed_baseline_install_rolls_the_approval_back(self):
+        from fastapi import HTTPException
+
+        from orivellum.api.routes.review import ResolveBody, _resolve_position
+
+        p = self._proposal("voice_spec")
+        with patch.object(self.db, "set_assay_baseline", side_effect=RuntimeError("disk full")), \
+                self.assertRaises(HTTPException) as ctx:
+            _resolve_position(self.db, p["id"],
+                              ResolveBody(decision="approve", author="author"))
+        self.assertEqual(ctx.exception.status_code, 500)
+        # Returned to the queue — the author can simply retry.
+        self.assertEqual(self.db.get_position_proposal(p["id"])["status"], "proposed")
+        out = _resolve_position(self.db, p["id"],
+                                ResolveBody(decision="approve", author="author"))
+        self.assertEqual(out["installed"], "voice_envelope baseline")
+        self.assertIsNotNone(self.db.get_assay_baseline(self.work_id, "voice_envelope"))
 
     def test_rejected_voice_spec_installs_nothing(self):
         from orivellum.api.routes.review import ResolveBody, _resolve_position

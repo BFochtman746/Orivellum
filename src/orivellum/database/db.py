@@ -8068,6 +8068,20 @@ class OrivellumDB:
             self._conn.commit()
         return "ok"
 
+    def reopen_position_proposal(self, proposal_id: str, *, expected_resolved_by: str) -> bool:
+        """Compensating action: return an 'approved' proposal to 'proposed'
+        after its approval side effect failed, so the author can retry.
+        Guarded by the resolver's identity — a concurrent legitimate
+        resolution is never overturned."""
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE position_proposal SET status='proposed', resolved_by=NULL,
+                   resolved_at=NULL WHERE id=? AND status='approved' AND resolved_by=?""",
+                (proposal_id, expected_resolved_by),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
     # ── /POSITION ────────────────────────────────────────────────────────────
 
     def close(self) -> None:
