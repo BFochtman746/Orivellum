@@ -684,6 +684,106 @@ class UnverifiableProposalTests(AtlasBase):
 # ---------------------------------------------------------------------------
 
 
+class PartialRebuildReverifyTests(AtlasBase):
+    """Rebuilding one doc's chapters must re-verify downstream chapters."""
+
+    def test_downstream_inconsistencies_reverified_after_partial_rebuild(self):
+        doc_a = self.db.create_document(
+            title="Part One", source="a.txt", kind="book", work_id=self.work_id
+        )["id"]
+        doc_b = self.db.create_document(
+            title="Part Two", source="b.txt", kind="book", work_id=self.work_id
+        )["id"]
+        t0 = _FILLER + " The gate of Uz was made of cedar."
+        t1 = _FILLER + " The gate of Uz was made of iron."
+        _seed_chapter(self.db, self.work_id, 0, "One", t0, doc_id=doc_a)
+        ch1 = _seed_chapter(self.db, self.work_id, 1, "Two", t1, doc_id=doc_b)
+
+        def propose(prompt):
+            if "seq 1)" in prompt:
+                return [
+                    {
+                        "description": "Gate material",
+                        "current_quote": "The gate of Uz was made of iron.",
+                        "prior_chapter_seq": 0,
+                        "prior_quote": "The gate of Uz was made of cedar.",
+                        "reasoning": "conflict",
+                    }
+                ]
+            return []
+
+        base = {
+            "atlas.events": [],
+            "atlas.entities": [],
+            "atlas.relations": [],
+            "atlas.attributes": {},
+            "atlas.verify": {"verdict": "confirmed"},
+        }
+        with patch(
+            "orivellum.capabilities.llm.llm_call", _StubLLM({**base, "atlas.propose": propose})
+        ):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        rows = self.db.list_graph_inconsistencies(work_id=self.work_id)
+        self.assertEqual([r["chapter_id"] for r in rows], [ch1])
+
+        # Rebuild ONLY doc A (the prior side).  The proposer now finds no
+        # conflict — the stale chapter-2 finding must be dropped, not kept.
+        with patch(
+            "orivellum.capabilities.llm.llm_call",
+            _StubLLM({**base, "atlas.propose": lambda _p: []}),
+        ):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id, doc_id=doc_a)
+        self.assertEqual(self.db.list_graph_inconsistencies(work_id=self.work_id), [])
+
+
+class FirstImportOrderingTests(AtlasBase):
+    """Real production ordering: chapters written via upsert_book_chapters
+    (as the pipeline does BEFORE invoking harvest), then harvest runs and
+    the ATLAS graph is actually built — no pre-seeded rows, no mocked hook."""
+
+    def test_graph_built_on_first_import(self):
+        doc_id = self.db.create_document(
+            title="Manuscript", source="ms.txt", kind="book", work_id=self.work_id
+        )["id"]
+        self.db.upsert_book_chapters(
+            doc_id,
+            self.work_id,
+            [
+                {"seq": 0, "level": 1, "title": "One", "text": _CH_TEXT},
+                {"seq": 1, "level": 1, "title": "Two", "text": _FILLER},
+            ],
+        )
+        stub = _StubLLM(
+            {
+                # Harvest's own extraction calls fail (unknown purposes → ok=False);
+                # only the ATLAS passes answer.
+                "atlas.events": [],
+                "atlas.entities": [
+                    {
+                        "name": "Job of Uz",
+                        "node_type": "Character",
+                        "description": "…",
+                        "evidence_quote": "Job of Uz rose before dawn",
+                    }
+                ],
+                "atlas.relations": [],
+                "atlas.attributes": {},
+                "atlas.propose": [],
+            }
+        )
+        from orivellum.capabilities import knowledge_harvest as kh
+
+        with (
+            patch("orivellum.capabilities.llm.llm_call", stub),
+            patch("orivellum.api._deps.get_config", return_value=_cfg()),
+        ):
+            kh.llm_harvest_by_chapters(doc_id, self.work_id, "Manuscript", self.db)
+
+        nodes = self.db.list_graph_nodes(work_ids=[self.work_id])
+        self.assertEqual([n["name"] for n in nodes], ["Job of Uz"])
+        self.assertEqual(nodes[0]["evidence_offset"], _CH_TEXT.find("Job of Uz rose before dawn"))
+
+
 class HarvestHookTests(AtlasBase):
     def _run_harvest(self):
         from orivellum.capabilities import knowledge_harvest as kh

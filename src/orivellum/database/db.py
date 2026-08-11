@@ -7171,6 +7171,14 @@ class OrivellumDB:
             self._conn.execute("DELETE FROM graph_node WHERE chapter_id=?", (chapter_id,))
             self._conn.commit()
 
+    def delete_graph_inconsistencies_for_chapter(self, chapter_id: str) -> None:
+        """Drop the inconsistencies RAISED BY one chapter (before re-verify)."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,)
+            )
+            self._conn.commit()
+
     def create_graph_inconsistency(
         self,
         *,

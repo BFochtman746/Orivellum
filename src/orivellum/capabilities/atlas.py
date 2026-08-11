@@ -750,6 +750,8 @@ def _build_work_graph_locked(
         return {"chapters": 0, "nodes": 0, "edges": 0, "inconsistencies": 0, "discarded": 0}
 
     totals = {"chapters": 0, "nodes": 0, "edges": 0, "inconsistencies": 0, "discarded": 0}
+    rebuilt: set[str] = set()
+    first_rebuilt_idx: int | None = None
     for i, ch in enumerate(chapters):
         if doc_id and ch.get("source_doc_id") != doc_id:
             continue
@@ -758,7 +760,24 @@ def _build_work_graph_locked(
         totals["nodes"] += c["nodes"]
         totals["edges"] += c["edges"]
         totals["discarded"] += c["discarded"]
+        rebuilt.add(ch["id"])
+        if first_rebuilt_idx is None:
+            first_rebuilt_idx = i
         if i > 0:
+            v = verify_chapter(
+                db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i]
+            )
+            totals["inconsistencies"] += v["kept"]
+            totals["discarded"] += v["discarded"]
+
+    # Partial rebuild: chapters AFTER the rebuilt ones were verified against
+    # a prior world state that just changed, so their stored inconsistencies
+    # may no longer be evidence-valid.  Drop and re-verify them.
+    if doc_id and first_rebuilt_idx is not None:
+        for i, ch in enumerate(chapters):
+            if i <= first_rebuilt_idx or ch["id"] in rebuilt:
+                continue
+            db.delete_graph_inconsistencies_for_chapter(ch["id"])
             v = verify_chapter(
                 db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i]
             )
