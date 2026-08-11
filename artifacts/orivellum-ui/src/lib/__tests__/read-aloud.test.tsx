@@ -25,6 +25,7 @@ import {
   mergeListeningProgress,
   createServerPositionsFetcher,
   useListeningProgressBadges,
+  resetListeningRescueState,
   splitTextForTts,
 } from "@/lib/read-aloud";
 
@@ -54,6 +55,7 @@ function restoreDescriptor(target: object, prop: string, orig?: PropertyDescript
 
 beforeEach(() => {
   localStorage.clear();
+  resetListeningRescueState();
   vi.restoreAllMocks();
   apiFetchMock.mockReset();
   apiFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -583,10 +585,20 @@ describe("cross-device listening progress merge", () => {
     expect(mergeListeningProgress(null)).toEqual({ doc1: { part: 1, partCount: 3 } });
   });
 
-  it("clears a STALE local badge absent from a successful server batch (deleted remotely)", () => {
-    // Old local copy, server batch succeeded and has no row for it — the
-    // listen was finished/declined on another device; server is authoritative.
+  it("clears a STALE local badge only after the server rejects its rescue push", async () => {
+    // Old local copy, server batch succeeded and has no row for it. That is
+    // ambiguous (deleted remotely vs. listened offline), so the client first
+    // tries to PUSH the position; a 4xx rejection proves the server means it.
+    apiFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/read-position") && init?.method === "PUT") {
+        return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+    });
     seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: Date.now() - 10 * 60 * 1000 });
+    // First merge keeps the badge while the rescue push is attempted.
+    expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
+    await new Promise((r) => setTimeout(r, 0)); // let the (rejected) PUT settle
     expect(mergeListeningProgress({})).toEqual({});
     expect(localStorage.getItem(RA_KEY("doc1"))).toBeNull(); // local copy dropped too
   });
@@ -609,6 +621,111 @@ describe("cross-device listening progress merge", () => {
       return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
     });
     expect(await fetchServerListeningPositions()).toEqual({});
+  });
+});
+
+// ── Offline rescue: local positions get pushed before absence cleanup ────────
+
+describe("offline listening rescue", () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const STALE_AT = () => Date.now() - 10 * 60 * 1000; // well past the grace window
+
+  it("offline listen → back online: position is pushed to the server and survives", async () => {
+    // The user listened offline: the player's fire-and-forget PUTs never
+    // landed, so the position exists ONLY in localStorage and is now stale.
+    const savedAt = STALE_AT();
+    seedSavedPos("doc1", { part: 1, time: 40, partCount: 3, savedAt });
+
+    // Back online: the batch fetch succeeds but has no row for doc1.
+    // The badge must be kept, and the position pushed to the server.
+    expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
+    expect(localStorage.getItem(RA_KEY("doc1"))).not.toBeNull();
+    await flush(); // let the rescue PUT settle (default mock accepts it)
+    const put = apiFetchMock.mock.calls.find(
+      ([u, i]) => String(u).includes("/library/doc1/read-position") && i?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    expect(JSON.parse((put![1] as RequestInit).body as string)).toEqual({
+      part: 1, time: 40, part_count: 3, saved_at: savedAt,
+    });
+
+    // The next batch returns the pushed position — it appears on the server
+    // and the badge stays, with nothing deleted.
+    const merged = mergeListeningProgress({
+      doc1: { part: 1, time: 40, partCount: 3, savedAt },
+    });
+    expect(merged).toEqual({ doc1: { part: 1, partCount: 3 } });
+    expect(localStorage.getItem(RA_KEY("doc1"))).not.toBeNull();
+  });
+
+  it("keeps the badge inside the confirm window, drops it when the server still omits the position after it", async () => {
+    const base = Date.now();
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: STALE_AT() });
+    mergeListeningProgress({}); // triggers the rescue push (accepted by default mock)
+    await flush();
+    // Push succeeded moments ago — absence could just be an in-flight batch.
+    expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
+    // Long after the push, the server STILL doesn't return it → it's gone.
+    vi.spyOn(Date, "now").mockReturnValue(base + 5 * 60 * 1000);
+    expect(mergeListeningProgress({})).toEqual({});
+    expect(localStorage.getItem(RA_KEY("doc1"))).toBeNull();
+  });
+
+  it("retries the rescue push on network failure instead of dropping the position", async () => {
+    apiFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/read-position") && init?.method === "PUT") {
+        throw new Error("still offline");
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+    });
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: STALE_AT() });
+    expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
+    await flush(); // PUT failed — the attempt is forgotten so it can retry
+    expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
+    await flush();
+    const puts = apiFetchMock.mock.calls.filter(([, i]) => i?.method === "PUT");
+    expect(puts.length).toBe(2); // one attempt per merge — never gives up, never deletes
+    expect(localStorage.getItem(RA_KEY("doc1"))).not.toBeNull();
+  });
+
+  it("a 5xx server error is retried, not treated as a rejection", async () => {
+    apiFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/read-position") && init?.method === "PUT") {
+        return { ok: false, status: 503, json: async () => ({}) } as unknown as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+    });
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: STALE_AT() });
+    mergeListeningProgress({});
+    await flush();
+    expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
+    expect(localStorage.getItem(RA_KEY("doc1"))).not.toBeNull();
+    await flush();
+    const puts = apiFetchMock.mock.calls.filter(([, i]) => i?.method === "PUT");
+    expect(puts.length).toBe(2); // the second merge retried the push
+  });
+
+  it("a fresh local-only position is never rescue-pushed (its own PUT may be in flight)", async () => {
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: Date.now() });
+    mergeListeningProgress({});
+    await flush();
+    const puts = apiFetchMock.mock.calls.filter(([, i]) => i?.method === "PUT");
+    expect(puts.length).toBe(0);
+  });
+
+  it("a server row for the key clears any stale rescue bookkeeping", async () => {
+    const savedAt = STALE_AT();
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt });
+    mergeListeningProgress({}); // rescue push #1
+    await flush();
+    // The server now returns it — bookkeeping resets.
+    mergeListeningProgress({ doc1: { part: 1, time: 0, partCount: 3, savedAt } });
+    // If it later disappears again (a real remote delete this time), the
+    // cycle starts over with a fresh push instead of instantly deleting.
+    expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
+    await flush();
+    const puts = apiFetchMock.mock.calls.filter(([, i]) => i?.method === "PUT");
+    expect(puts.length).toBe(2);
   });
 });
 

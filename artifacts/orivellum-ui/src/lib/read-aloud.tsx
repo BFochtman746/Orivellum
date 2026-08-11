@@ -201,6 +201,56 @@ export async function fetchServerListeningPositions(): Promise<ServerListeningPo
  *  (finished / declined there) — not that the sync is still in flight. */
 const RA_SYNC_GRACE_MS = 5 * 60 * 1000;
 
+// ── Offline rescue ────────────────────────────────────────────────────────────
+// A stale local position absent from a successful server batch is NOT
+// necessarily deleted remotely: if the user listened while OFFLINE, the
+// player's fire-and-forget PUTs never reached the server at all. Before
+// absence cleanup drops a local position, it is pushed to the server once;
+// only positions the server rejects — or still doesn't return well after a
+// successful push — are trusted as remotely deleted and dropped.
+
+interface RescueState {
+  status: "pending" | "pushed" | "rejected";
+  at: number;
+}
+
+const rescueAttempts = new Map<string, RescueState>();
+
+/** Test hook — clears rescue bookkeeping between test cases. */
+export function resetListeningRescueState(): void {
+  rescueAttempts.clear();
+}
+
+/** After a successful rescue push, how long the server batch is given to
+ *  start returning the position before its absence is trusted as a delete. */
+const RA_RESCUE_CONFIRM_MS = 60_000;
+
+function rescuePush(key: string, pos: SavedPos): void {
+  rescueAttempts.set(key, { status: "pending", at: Date.now() });
+  try {
+    putServerPos(key, pos)
+      .then((resp) => {
+        if (resp.ok) {
+          rescueAttempts.set(key, { status: "pushed", at: Date.now() });
+          // Badges re-fetch and pick the position up from the server.
+          notifyPosChanged();
+        } else if (resp.status >= 400 && resp.status < 500) {
+          // The server refused the position (e.g. the document is gone) —
+          // the next merge drops the local copy.
+          rescueAttempts.set(key, { status: "rejected", at: Date.now() });
+          notifyPosChanged();
+        } else {
+          rescueAttempts.delete(key); // server error — retry on the next merge
+        }
+      })
+      .catch(() => {
+        rescueAttempts.delete(key); // still offline — retry on the next merge
+      });
+  } catch {
+    rescueAttempts.delete(key);
+  }
+}
+
 /** Merge local (localStorage) and server positions into badge shape.
  *  Per key the freshest `savedAt` wins — the same rule the resume offer
  *  uses — and the trivial-progress gate applies to the winner, so a listen
@@ -223,12 +273,35 @@ export function mergeListeningProgress(
   // it can never win a freshest-wins compare or dodge absence cleanup forever.
   const trustedSavedAt = (p: SavedPos) => (p.savedAt > now + RA_SYNC_GRACE_MS ? 0 : p.savedAt);
   for (const key of Object.keys(out)) {
-    if (server[key]) continue;
-    const local = loadSavedPos(key);
-    if (local && Math.abs(now - local.savedAt) > RA_SYNC_GRACE_MS) {
-      clearSavedPos(key); // deleted on another device — server is authoritative
-      delete out[key];
+    if (server[key]) {
+      rescueAttempts.delete(key);
+      continue;
     }
+    const local = loadSavedPos(key);
+    if (!local) continue;
+    if (local.savedAt > now + RA_SYNC_GRACE_MS) {
+      // Broken-clock copy — never rescue-push garbage; drop it immediately.
+      clearSavedPos(key);
+      rescueAttempts.delete(key);
+      delete out[key];
+      continue;
+    }
+    if (now - local.savedAt <= RA_SYNC_GRACE_MS) continue; // fresh — PUT may be in flight
+    // Stale local copy absent from a successful batch: EITHER deleted
+    // remotely OR a genuine offline listen whose fire-and-forget PUTs never
+    // reached the server. Rescue-push once before trusting absence.
+    const rescue = rescueAttempts.get(key);
+    if (!rescue) {
+      rescuePush(key, local); // keep the badge while the rescue is attempted
+      continue;
+    }
+    if (rescue.status === "pending") continue;
+    if (rescue.status === "pushed" && now - rescue.at <= RA_RESCUE_CONFIRM_MS) continue;
+    // Rescue rejected, or the server still doesn't return the position long
+    // after a successful push — it is authoritative: the position is gone.
+    clearSavedPos(key);
+    rescueAttempts.delete(key);
+    delete out[key];
   }
   for (const [key, sp] of Object.entries(server)) {
     const local = loadSavedPos(key);
@@ -327,18 +400,24 @@ async function fetchServerPos(key: string): Promise<SavedPos | null> {
   } catch { return null; }
 }
 
+/** PUT a position to the server. keepalive lets the save survive a page
+ *  unload/tab switch. Shared by the fire-and-forget player path and the
+ *  offline-rescue path (which inspects the response). */
+function putServerPos(key: string, pos: SavedPos): Promise<Response> {
+  return apiFetch(`${BASE}/library/${encodeURIComponent(key)}/read-position`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      part: pos.part, time: pos.time,
+      part_count: pos.partCount, saved_at: pos.savedAt,
+    }),
+    keepalive: true,
+  });
+}
+
 function pushServerPos(key: string, pos: SavedPos): void {
-  // Fire-and-forget; keepalive lets the save survive a page unload/tab switch.
   try {
-    void apiFetch(`${BASE}/library/${encodeURIComponent(key)}/read-position`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        part: pos.part, time: pos.time,
-        part_count: pos.partCount, saved_at: pos.savedAt,
-      }),
-      keepalive: true,
-    }).catch(() => {});
+    void putServerPos(key, pos).catch(() => {});
   } catch { /* ignore */ }
 }
 
