@@ -106,10 +106,19 @@ def _render_audiobook(ctx: OpContext, params: dict) -> dict:
     if not work_id:
         raise ValueError("render_audiobook needs a work_id")
 
+    # Forward the COMPLETE render configuration. Step params are persisted in
+    # the operations tables, so a resume — including after a server restart —
+    # reconstructs exactly the render the user originally asked for. Silently
+    # falling back to defaults here would change the audio output mid-run.
     body = studio.WorkAudiobookStartRequest(
         work_id=work_id,
         voice=str(params.get("voice") or "bm_george"),
         speed=float(params.get("speed") or 1.0),
+        include_credits=bool(params.get("include_credits", True)),
+        acx_mastering=bool(params.get("acx_mastering", True)),
+        spatial=params.get("spatial"),
+        spatial_mode=params.get("spatial_mode"),
+        ambience_doc_id=params.get("ambience_doc_id"),
     )
     try:
         started = studio.start_work_audiobook_async(body)
@@ -191,6 +200,17 @@ def register_builtin_actions() -> None:
                     "work_id": {"type": "string", "description": "Work to render"},
                     "voice": {"type": "string", "description": "Narrator voice"},
                     "speed": {"type": "number", "description": "Speaking speed"},
+                    "include_credits": {
+                        "type": "boolean",
+                        "description": "Opening/closing credits",
+                    },
+                    "acx_mastering": {"type": "boolean", "description": "ACX loudness mastering"},
+                    "spatial": {
+                        "type": "boolean",
+                        "description": "Spatial audio (null = Work's saved setting)",
+                    },
+                    "spatial_mode": {"type": "string", "description": "Spatial preset"},
+                    "ambience_doc_id": {"type": "string", "description": "Ambience bed document"},
                 },
                 "required": [],
             },

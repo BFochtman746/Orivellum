@@ -96,6 +96,76 @@ def test_wait_for_extraction_fails_when_nothing_ready(db):
         _wait_action().execute(_ctx(db, empty["id"]), {})
 
 
+# ── Render options survive pause / restart / resume ──────────────────────────
+
+
+def test_render_options_survive_resume_roundtrip(db):
+    """A resumed render must reconstruct EXACTLY the original render request.
+
+    All options live in the operation's persisted params, so this covers the
+    server-restart path too: after reconciliation, resume rebuilds the request
+    from the DB, not from anything in memory.
+    """
+    import threading
+
+    from orivellum.capabilities.operations import hooks, store
+    from orivellum.capabilities.operations.runner import run_operation
+
+    captured: list[dict] = []
+    render_options = {
+        "voice": "af_bella",
+        "speed": 1.25,
+        "include_credits": False,
+        "acx_mastering": False,
+        "spatial": True,
+        "spatial_mode": "cinema",
+        "ambience_doc_id": "amb-123",
+    }
+
+    class FakeRequest:
+        def __init__(self, **kw):
+            captured.append(kw)
+
+    class FakeStudio:
+        WorkAudiobookStartRequest = FakeRequest
+        _work_tts_jobs_lock = threading.Lock()
+        _WORK_TTS_TERMINAL = ("done", "error", "cancelled")
+        _work_tts_jobs = {"j1": {"state": "error", "error": "render crashed"}}
+
+        @staticmethod
+        def start_work_audiobook_async(body):
+            return {"job_id": "j1"}
+
+    saved_studio = hooks.HOOKS.studio
+    hooks.configure(studio=FakeStudio)
+    try:
+        work = db.create_work("Options Work")
+        op_id = store.create_operation(
+            db,
+            "Render with options",
+            [{"action_id": "render_audiobook", "label": "Render"}],
+            work_id=work["id"],
+            params={"work_id": work["id"], **render_options},
+        )
+        # First run: the render job fails → the operation fails.
+        token = store.claim_operation(db, op_id)
+        run_operation(db, None, op_id, token)
+        assert store.get_operation(db, op_id)["state"] == "failed"
+
+        # Resume (as after a restart: everything comes back from the DB).
+        FakeStudio._work_tts_jobs = {"j1": {"state": "done", "output_path": "/out.m4b"}}
+        token2 = store.claim_operation(db, op_id)
+        run_operation(db, None, op_id, token2)
+        assert store.get_operation(db, op_id)["state"] == "done"
+
+        # Both starts carried the complete, identical configuration.
+        assert len(captured) == 2
+        assert captured[0] == captured[1]
+        assert captured[0] == {"work_id": work["id"], **render_options}
+    finally:
+        hooks.HOOKS.studio = saved_studio
+
+
 # ── Studio scheduling rejection ───────────────────────────────────────────────
 
 
