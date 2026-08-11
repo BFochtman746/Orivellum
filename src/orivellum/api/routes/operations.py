@@ -4,15 +4,18 @@ Routes
 ------
 GET  /api/operations                      → recent operation runs
 GET  /api/operations/actions              → registered step actions
-GET  /api/operations/playbooks            → starter playbooks
+GET  /api/operations/playbooks            → starter + saved custom playbooks
+POST /api/operations/playbooks            → save a validated custom playbook
+DELETE /api/operations/playbooks/{id}     → delete a custom playbook
+POST /api/operations/plan                 → plain-words job → proposed plan
 POST /api/operations/start                → create + start an operation
 GET  /api/operations/{op_id}              → one run with its steps
 POST /api/operations/{op_id}/pause        → pause at the next checkpoint
-POST /api/operations/{op_id}/resume       → resume (also retries a failed run)
+POST /api/operations/{op_id}/resume      → resume (also retries a failed run)
 POST /api/operations/{op_id}/cancel       → cancel the run
 
-Route order matters: the literal /actions and /playbooks paths must be
-declared before the /{op_id} catch-all.
+Route order matters: the literal /actions, /playbooks, and /plan paths must
+be declared before the /{op_id} catch-all.
 """
 
 from __future__ import annotations
@@ -72,9 +75,63 @@ def list_op_actions():
 
 @router.get("/playbooks")
 def list_playbooks():
-    from orivellum.capabilities.operations.playbooks import PLAYBOOKS
+    from orivellum.capabilities.operations.playbooks import PLAYBOOKS, list_custom_playbooks
 
-    return {"playbooks": PLAYBOOKS}
+    return {"playbooks": PLAYBOOKS + list_custom_playbooks(get_db())}
+
+
+class SavePlaybookRequest(BaseModel):
+    title: str
+    description: str = ""
+    steps: list[StepIn]
+
+
+@router.post("/playbooks")
+def save_playbook(body: SavePlaybookRequest):
+    from orivellum.capabilities.operations.playbooks import save_custom_playbook
+
+    try:
+        pb = save_custom_playbook(
+            get_db(),
+            body.title,
+            [s.model_dump() for s in body.steps],
+            description=body.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"playbook": pb}
+
+
+@router.delete("/playbooks/{playbook_id}")
+def delete_playbook(playbook_id: str):
+    from orivellum.capabilities.operations.playbooks import PLAYBOOKS, delete_custom_playbook
+
+    if any(p["id"] == playbook_id for p in PLAYBOOKS):
+        raise HTTPException(409, "Built-in playbooks cannot be deleted.")
+    if not delete_custom_playbook(get_db(), playbook_id):
+        raise HTTPException(404, "Playbook not found")
+    return {"ok": True}
+
+
+class PlanRequest(BaseModel):
+    job: str
+
+
+@router.post("/plan")
+def plan_operation(body: PlanRequest):
+    """Plain-words job → proposed step plan (or a clarifying question).
+
+    Always answers 200 with a ``status`` field of ``ok`` / ``clarify`` /
+    ``error`` — the three outcomes are normal results for the UI, not HTTP
+    failures. The plan is strictly validated against the action registry;
+    the model gets one repair retry, never a silent guess.
+    """
+    from orivellum.capabilities.operations.planner import plan_job
+
+    job = body.job.strip()
+    if not job:
+        raise HTTPException(422, "Describe the job first.")
+    return plan_job(get_db(), get_config(), job)
 
 
 @router.post("/start")
@@ -87,7 +144,7 @@ def start_operation(body: StartOperationRequest):
     db = get_db()
 
     if body.playbook_id:
-        pb = get_playbook(body.playbook_id)
+        pb = get_playbook(body.playbook_id, db)
         if not pb:
             raise HTTPException(404, f"Unknown playbook '{body.playbook_id}'")
         title = body.title or pb["title"]

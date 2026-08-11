@@ -2463,4 +2463,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE operations ADD COLUMN run_token TEXT;
     """,
     ),
+    # v119 — Custom playbooks: user-saved, one-button operation plans (usually
+    # born from an AI-planned job). Steps are stored as validated JSON.
+    (
+        119,
+        "Operations: custom playbooks",
+        """
+        CREATE TABLE IF NOT EXISTS custom_playbooks (
+            id          TEXT PRIMARY KEY,
+            title       TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            steps       TEXT NOT NULL,
+            created_at  TEXT NOT NULL
+        );
+    """,
+    ),
 ]
