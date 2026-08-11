@@ -767,21 +767,32 @@ def list_narrative_findings(
         ).fetchall()
         fact_scope = {r["id"]: dict(r) for r in rows}
         titles: dict[str, str] = {}
+        own_membership = store.series_for_work(work_id)
         for f in findings:
             scope = fact_scope.get(f.get("canon_fact_id") or "")
             if not scope:
                 continue
             src = scope["work_id"]
             if src and src != work_id:
-                if src not in titles:
-                    src_work = db.get_work(src)
-                    titles[src] = (src_work or {}).get("title") or src
+                # Only a validated cross-book relation earns the label: the
+                # source book must be an EARLIER volume of the SAME series.
+                # (Stale facts from removed members or other series would
+                # otherwise read as false cross-book drift.)
                 membership = store.series_for_work(src)
-                f["cross_book"] = {
-                    "work_id": src,
-                    "title": titles[src],
-                    "volume": (membership or {}).get("volume"),
-                }
+                if (
+                    own_membership
+                    and membership
+                    and membership["series_id"] == own_membership["series_id"]
+                    and int(membership["volume"]) < int(own_membership["volume"])
+                ):
+                    if src not in titles:
+                        src_work = db.get_work(src)
+                        titles[src] = (src_work or {}).get("title") or src
+                    f["cross_book"] = {
+                        "work_id": src,
+                        "title": titles[src],
+                        "volume": membership["volume"],
+                    }
             elif scope["series_id"]:
                 f["series_scoped"] = True
     return {"work_id": work_id, "findings": findings, "count": len(findings)}

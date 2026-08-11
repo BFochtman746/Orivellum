@@ -239,6 +239,11 @@ class CanonStore:
                 "Refused: an override must be book-scoped (work_id) — it "
                 "changes the fact for ONE volume, not for the series."
             )
+        if not conn.execute("SELECT 1 FROM works WHERE id=?", (work_id,)).fetchone():
+            raise CanonFactError(
+                f"Refused: work {work_id!r} does not exist — an override must "
+                "belong to a real book."
+            )
         target = conn.execute(
             "SELECT status, work_id, series_id FROM canon_fact WHERE id=?",
             (overrides,),
@@ -326,10 +331,30 @@ class CanonStore:
             + (f" series={series_id}" if series_id else "")
             + (f" overrides={overrides}" if overrides else ""),
         ):
-            self._check_series_scope(
-                db._conn, work_id=work_id, series_id=series_id, overrides=overrides
-            )
             if supersedes:
+                old = db._conn.execute(
+                    "SELECT work_id, series_id, overrides FROM canon_fact WHERE id=?",
+                    (supersedes,),
+                ).fetchone()
+                # Override lifecycle: superseding an override REVISES the
+                # book's departure — the replacement stays an override of the
+                # same target.  Without this, a bare supersede would flip the
+                # old override to 'superseded' and silently resurrect the
+                # series/global fact for that book.
+                if old is not None and old["overrides"] is not None:
+                    if work_id != old["work_id"]:
+                        raise CanonFactError(
+                            "Refused: an override can only be superseded by a "
+                            "fact scoped to the SAME book."
+                        )
+                    if overrides is None:
+                        overrides = old["overrides"]
+                    elif overrides != old["overrides"]:
+                        raise CanonFactError(
+                            "Refused: superseding an override cannot retarget "
+                            "it — retract the override instead to restore the "
+                            "series fact, then create a new override."
+                        )
                 cur = db._conn.execute(
                     "UPDATE canon_fact SET status='superseded' WHERE id=? AND status='active'",
                     (supersedes,),
@@ -339,6 +364,12 @@ class CanonStore:
                         f"Refused: fact {supersedes!r} is not an active fact — a "
                         "revision must explicitly supersede a live fact."
                     )
+            # Scope guards run AFTER the supersede flip so a revision of an
+            # override does not trip the one-active-override-per-book check
+            # against the row it just superseded.
+            self._check_series_scope(
+                db._conn, work_id=work_id, series_id=series_id, overrides=overrides
+            )
             self._insert_row(
                 db._conn,
                 fact_id,

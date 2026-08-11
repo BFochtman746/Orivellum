@@ -94,10 +94,14 @@ class SeriesStore:
         return self.get_series(series_id)
 
     def delete_series(self, series_id: str, *, actor: str = "author") -> str:
-        """Delete a series.  Returns 'ok' | 'not_found' | 'has_canon'.
+        """Delete a series.  Returns 'ok' | 'not_found' | 'has_canon' |
+        'has_continuity'.
 
-        Refused while series-scoped canon facts exist — retire or rescope
-        the facts first, so authority records never dangle.
+        Refused while series-scoped canon facts exist ('has_canon'), or while
+        any member's removal would break established cross-book continuity
+        ('has_continuity') — authority records never lose their scope
+        silently.  Remove members latest-volume-first (each removal enforces
+        the continuity rules) and the empty series deletes cleanly.
         """
         db = self._db
         conn = db.read_conn()
@@ -108,6 +112,9 @@ class SeriesStore:
         ).fetchone()
         if int(row["n"]):
             return "has_canon"
+        for member in self.list_members(series_id):
+            if self._removal_blocker(series_id, member["work_id"]):
+                return "has_continuity"
         with db.governed_write(
             operation="series.deleted",
             event_type="series.deleted",
@@ -229,8 +236,55 @@ class SeriesStore:
             ) from exc
         return self.get_series(series_id)  # type: ignore[return-value]
 
+    def _removal_blocker(self, series_id: str, work_id: str) -> str | None:
+        """Why this Work can NOT leave the series right now, or None.
+
+        Removing a member silently rewrites the canon other volumes were
+        verified against, so it is refused while:
+        - the Work has ACTIVE book-scoped canon facts AND a later volume
+          exists (those facts currently bind the later books), or
+        - the Work has an active override of a fact scoped to this series
+          (the override would dangle outside the series).
+        Retract the facts (or remove later volumes first) to proceed.
+        """
+        conn = self._db.read_conn()
+        later = conn.execute(
+            """SELECT 1 FROM series_member m1
+               JOIN series_member m2
+                 ON m2.series_id=m1.series_id AND m2.volume > m1.volume
+               WHERE m1.series_id=? AND m1.work_id=? LIMIT 1""",
+            (series_id, work_id),
+        ).fetchone()
+        if later:
+            facts = conn.execute(
+                "SELECT COUNT(*) AS n FROM canon_fact WHERE work_id=? AND status='active'",
+                (work_id,),
+            ).fetchone()
+            if int(facts["n"]):
+                return (
+                    "Refused: this book's canon currently binds later volumes "
+                    f"({facts['n']} active fact(s)). Retract its facts or "
+                    "remove the later volumes first."
+                )
+        dangling = conn.execute(
+            """SELECT COUNT(*) AS n FROM canon_fact f
+               JOIN canon_fact t ON t.id = f.overrides
+               WHERE f.work_id=? AND f.status='active' AND t.series_id=?""",
+            (work_id, series_id),
+        ).fetchone()
+        if int(dangling["n"]):
+            return (
+                "Refused: this book actively overrides series canon "
+                f"({dangling['n']} override(s)). Retract the override(s) "
+                "before removing it from the series."
+            )
+        return None
+
     def remove_member(self, series_id: str, work_id: str, *, actor: str = "author") -> bool:
         db = self._db
+        blocker = self._removal_blocker(series_id, work_id)
+        if blocker:
+            raise SeriesError(blocker)
         with db.governed_write(
             operation="series.member_removed",
             event_type="series.member_removed",
@@ -251,6 +305,21 @@ class SeriesStore:
         if int(volume) < 1:
             raise SeriesError("volume must be >= 1")
         db = self._db
+        # Order IS authority: once any member book has active canon, the
+        # forward-only visibility direction has been relied on — reordering
+        # would silently rewrite which facts bind which book.
+        established = db.read_conn().execute(
+            """SELECT COUNT(*) AS n FROM canon_fact f
+               JOIN series_member m ON m.work_id = f.work_id
+               WHERE m.series_id=? AND f.status='active'""",
+            (series_id,),
+        ).fetchone()
+        if int(established["n"]):
+            raise SeriesError(
+                "Refused: this series already has established canon — "
+                "reordering volumes would rewrite which facts bind which "
+                "book. Retract the member books' canon first."
+            )
         try:
             with db.governed_write(
                 operation="series.member_reordered",

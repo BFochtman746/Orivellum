@@ -255,6 +255,106 @@ class SeriesOverrideTests(_Base):
                 series_id=self.sid, overrides=self.base["id"],
             )
 
+    def test_override_of_nonexistent_work_refused(self):
+        with self.assertRaises(CanonFactError):
+            self.canon.create_fact(
+                statement="x", classification="INVENTED", signed_by="author",
+                work_id="no-such-work", overrides=self.base["id"],
+            )
+
+    def test_superseding_an_override_keeps_the_override(self):
+        """Revising an override must NOT resurrect the series fact."""
+        ov = self._override(self.book2["id"])
+        revised = self.canon.create_fact(
+            statement="Magic is licensed this book", classification="INVENTED",
+            signed_by="author", work_id=self.book2["id"], supersedes=ov["id"],
+        )
+        self.assertEqual(revised["overrides"], self.base["id"],
+                         "replacement must inherit the override target")
+        book2_ids = {f["id"] for f in self.canon.list_facts(work_id=self.book2["id"])}
+        self.assertNotIn(self.base["id"], book2_ids,
+                         "series fact must stay hidden after the revision")
+        self.assertIn(revised["id"], book2_ids)
+
+    def test_superseding_an_override_cannot_retarget(self):
+        other_base = self.canon.create_fact(
+            statement="Second series law", classification="INVENTED",
+            signed_by="author", series_id=self.sid,
+        )
+        ov = self._override(self.book2["id"])
+        with self.assertRaises(CanonFactError):
+            self.canon.create_fact(
+                statement="x", classification="INVENTED", signed_by="author",
+                work_id=self.book2["id"], supersedes=ov["id"],
+                overrides=other_base["id"],
+            )
+
+    def test_superseding_an_override_from_another_book_refused(self):
+        ov = self._override(self.book2["id"])
+        with self.assertRaises(CanonFactError):
+            self.canon.create_fact(
+                statement="x", classification="INVENTED", signed_by="author",
+                work_id=self.book3["id"], supersedes=ov["id"],
+            )
+
+    def test_retracting_an_override_restores_the_series_fact(self):
+        """Retract = the author removes the departure — series canon applies."""
+        ov = self._override(self.book2["id"])
+        self.canon.retract_fact(ov["id"], signed_by="author")
+        book2_ids = {f["id"] for f in self.canon.list_facts(work_id=self.book2["id"])}
+        self.assertIn(self.base["id"], book2_ids,
+                      "retracting the override restores the series fact")
+
+
+class SeriesContinuityGuardTests(_Base):
+    """Membership mutations must never silently rewrite established canon."""
+
+    def setUp(self):
+        super().setUp()
+        self._add_all()
+
+    def _book_fact(self, work_id, statement="A binding fact"):
+        return self.canon.create_fact(
+            statement=statement, classification="INVENTED",
+            signed_by="author", work_id=work_id,
+        )
+
+    def test_remove_earlier_volume_with_canon_refused(self):
+        self._book_fact(self.book1["id"])
+        with self.assertRaises(SeriesError):
+            self.store.remove_member(self.sid, self.book1["id"])
+
+    def test_remove_latest_volume_with_canon_ok(self):
+        self._book_fact(self.book3["id"])
+        self.assertTrue(self.store.remove_member(self.sid, self.book3["id"]))
+
+    def test_remove_earlier_volume_ok_after_retraction(self):
+        fact = self._book_fact(self.book1["id"])
+        self.canon.retract_fact(fact["id"], signed_by="author")
+        self.assertTrue(self.store.remove_member(self.sid, self.book1["id"]))
+
+    def test_remove_member_with_dangling_override_refused(self):
+        base = self.canon.create_fact(
+            statement="Series law", classification="INVENTED",
+            signed_by="author", series_id=self.sid,
+        )
+        self.canon.create_fact(
+            statement="Departure", classification="INVENTED", signed_by="author",
+            work_id=self.book3["id"], overrides=base["id"],
+        )
+        with self.assertRaises(SeriesError):
+            self.store.remove_member(self.sid, self.book3["id"])
+
+    def test_reorder_refused_once_canon_established(self):
+        self._book_fact(self.book1["id"])
+        with self.assertRaises(SeriesError):
+            self.store.set_member_volume(self.sid, self.book3["id"], volume=9)
+
+    def test_delete_series_with_binding_canon_refused(self):
+        self._book_fact(self.book1["id"])
+        self.assertEqual(self.store.delete_series(self.sid), "has_continuity")
+        self.assertIsNotNone(self.store.get_series(self.sid))
+
 
 class LoomInheritanceTests(_Base):
     def setUp(self):

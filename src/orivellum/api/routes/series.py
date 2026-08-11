@@ -94,6 +94,13 @@ def delete_series(series_id: str):
             "This series still has series-scoped canon facts — retract or "
             "rescope them before deleting the series.",
         )
+    if result == "has_continuity":
+        raise HTTPException(
+            409,
+            "This series has established cross-book continuity — remove the "
+            "member books latest-volume-first (retracting their canon or "
+            "overrides as refused) before deleting it.",
+        )
     return {"ok": True, "id": series_id}
 
 
@@ -165,13 +172,21 @@ def series_overview(series_id: str):
                FROM narrative_finding WHERE work_id=?""",
             (wid,),
         ).fetchone()
+        # A finding is cross-book only when the canon fact it contradicts was
+        # established by an EARLIER volume of THIS series — never merely
+        # "some other work" (stale facts from removed members don't count).
         cross = conn.execute(
             """SELECT COUNT(*) AS n
                FROM narrative_finding nf
                JOIN canon_fact cf ON cf.id = nf.canon_fact_id
+               JOIN series_member m1
+                 ON m1.work_id = nf.work_id AND m1.series_id=?
+               JOIN series_member m2
+                 ON m2.work_id = cf.work_id AND m2.series_id = m1.series_id
+                AND m2.volume < m1.volume
                WHERE nf.work_id=? AND nf.disposition='open'
                  AND cf.work_id IS NOT NULL AND cf.work_id != nf.work_id""",
-            (wid,),
+            (series_id, wid),
         ).fetchone()
         open_severe = int(findings["open_severe"] or 0)
         open_total = int(findings["open_total"] or 0)
