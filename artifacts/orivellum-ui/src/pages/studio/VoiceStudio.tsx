@@ -29,6 +29,10 @@ import {
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
 import { useGlobalAudio } from "./useGlobalAudio";
+import {
+  WorkRenderTracker, pruneJobFromActiveMap,
+  type WorkRenderSnapshot, type WorkRenderStatus,
+} from "./workRenderTracker";
 import { SpatialSettingsSync, shouldRollback, type SpatialSettings } from "./spatialSettings";
 import { NarratorSync } from "./narratorSync";
 import {
@@ -1191,8 +1195,26 @@ function AudiobookTab({
   const [vsWorkChapterIdx, setVsWorkChapterIdx] = useState(0);
   const [vsWorkChapterTotal, setVsWorkChapterTotal] = useState(0);
   const [vsWorkChapterTitle, setVsWorkChapterTitle] = useState("");
-  const vsWorkJobIdRef = useRef<string | null>(null);
-  const vsWorkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Single-poller lifecycle for the work render job (see workRenderTracker.ts
+  // for the race guarantees). The instance is created once; its handlers are
+  // re-bound on every render below so they always close over fresh state.
+  const workTrackerHandlers = useRef<{
+    onAttach: (jobId: string, snap: WorkRenderSnapshot) => void;
+    onProgress: (status: WorkRenderStatus) => void;
+    onTerminal: (jobId: string, status: WorkRenderStatus) => void;
+    onGone: (jobId: string) => void;
+  }>(null!);
+  const workTrackerRef = useRef<WorkRenderTracker | null>(null);
+  if (!workTrackerRef.current) {
+    workTrackerRef.current = new WorkRenderTracker({
+      fetchStatus: id => apiFetch(`${BASE}/studio/tts/work/${id}/status`),
+      onAttach: (id, snap) => workTrackerHandlers.current.onAttach(id, snap),
+      onProgress: s => workTrackerHandlers.current.onProgress(s),
+      onTerminal: (id, s) => workTrackerHandlers.current.onTerminal(id, s),
+      onGone: id => workTrackerHandlers.current.onGone(id),
+    });
+  }
+  const workTracker = workTrackerRef.current;
   // Live work renders across the whole server, keyed by work_id — drives the
   // "render in progress" badge in the Work picker and auto re-attach.
   const [activeWorkJobs, setActiveWorkJobs] = useState<Record<string, { job_id: string }>>({});
@@ -1488,7 +1510,7 @@ function AudiobookTab({
   useEffect(() => {
     return () => {
       if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
-      if (vsWorkPollRef.current) { clearInterval(vsWorkPollRef.current); vsWorkPollRef.current = null; }
+      workTracker.detach();
       if (vsAbJobIdRef.current) {
         apiFetch(`${BASE}/studio/tts/document/${vsAbJobIdRef.current}`, { method: "DELETE" }).catch(() => {});
         vsAbJobIdRef.current = null;
@@ -1500,9 +1522,8 @@ function AudiobookTab({
   // the server job keeps going in the background (a browser alert fires when
   // it's ready) but its progress/result must not bleed into the new target.
   useEffect(() => {
-    if (vsWorkJobIdRef.current) {
-      if (vsWorkPollRef.current) { clearInterval(vsWorkPollRef.current); vsWorkPollRef.current = null; }
-      vsWorkJobIdRef.current = null;
+    if (workTracker.currentJobId) {
+      workTracker.detach();
       setVsWorkJobId(null);
       setLoading(false);
     }
@@ -1573,84 +1594,60 @@ function AudiobookTab({
     return () => { cancelled = true; };
   }, [mode, docId, voiceId, speed, vsAbJobId]);
 
-  // Shared polling loop for a work render — used both when this tab starts a
-  // job and when it re-attaches to one that was already running on the server.
-  function startWorkJobPolling(job_id: string) {
-    const iv: ReturnType<typeof setInterval> = setInterval(async () => {
-      // The user may have switched Work/mode (detach) or started another
-      // job — this closure must never update state for a stale job.
-      if (vsWorkJobIdRef.current !== job_id) { clearInterval(iv); return; }
-      const stopPolling = () => {
-        clearInterval(iv);
-        if (vsWorkPollRef.current === iv) vsWorkPollRef.current = null;
-      };
-      try {
-        const sr = await apiFetch(`${BASE}/studio/tts/work/${job_id}/status`);
-        if (vsWorkJobIdRef.current !== job_id) { clearInterval(iv); return; }
-        if (!sr.ok) {
-          if (sr.status === 404) {
-            stopPolling();
-            vsWorkJobIdRef.current = null; setVsWorkJobId(null); setLoading(false);
-            toast.error("Server restarted — finished chapters are saved. Generate again to resume.");
-          }
-          return;
-        }
-        const status = await sr.json();
-        setVsWorkChapterIdx(status.chapter_idx ?? 0);
-        setVsWorkChapterTotal(status.total_chapters ?? 0);
-        setVsWorkChapterTitle(status.chapter_title ?? "");
-        setVsWorkSegsDone(status.segments_done ?? 0);
-        setVsWorkSegsTotal(status.total_segments ?? 0);
-        setVsWorkCachedSegs(status.cached_segments ?? 0);
-        const terminal = ["done", "failed", "cancelled"].includes(status.state);
-        if (terminal) {
-          stopPolling();
-          vsWorkJobIdRef.current = null; setVsWorkJobId(null); setLoading(false);
-          // The render is over — clear its "in progress" badge everywhere.
-          setActiveWorkJobs(prev => {
-            const next = { ...prev };
-            for (const k of Object.keys(next)) if (next[k].job_id === job_id) delete next[k];
-            return next;
-          });
-          if (status.state === "done") {
-            setVsWorkQuality(status.quality_report ?? null);
-            const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.result?.path ?? "")}`;
-            setAudioUrl(serveUrl);
-            setAudioName(status.result?.filename ?? `${works.find((w: any) => w.id === workId)?.title ?? "audiobook"}.mp3`);
-            toast.success("Audiobook ready — tap play below");
-          } else if (status.state === "failed") {
-            toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
-          } else {
-            toast("Render paused — finished chapters are saved. Generate again to resume.");
-          }
-        }
-      } catch { /* transient poll errors */ }
-    }, 2000);
-    vsWorkPollRef.current = iv;
-  }
+  // Re-bind the tracker's handlers on every render so they close over the
+  // current works list / state setters. All race handling (single poller,
+  // no-op re-attach, stale-response discard) lives in WorkRenderTracker.
+  workTrackerHandlers.current = {
+    onAttach: (job_id, snap) => {
+      setVsWorkJobId(job_id);
+      setVsWorkChapterIdx(snap.chapter_idx ?? 0);
+      setVsWorkChapterTotal(snap.total_chapters ?? 0);
+      setVsWorkChapterTitle(snap.chapter_title ?? "");
+      setVsWorkSegsDone(snap.segments_done ?? 0);
+      setVsWorkSegsTotal(snap.total_segments ?? 0);
+      setVsWorkCachedSegs(snap.cached_segments ?? 0);
+      setVsWorkQuality(null);
+      setLoading(true);
+    },
+    onProgress: status => {
+      setVsWorkChapterIdx(status.chapter_idx ?? 0);
+      setVsWorkChapterTotal(status.total_chapters ?? 0);
+      setVsWorkChapterTitle(status.chapter_title ?? "");
+      setVsWorkSegsDone(status.segments_done ?? 0);
+      setVsWorkSegsTotal(status.total_segments ?? 0);
+      setVsWorkCachedSegs(status.cached_segments ?? 0);
+    },
+    onTerminal: (job_id, status) => {
+      setVsWorkJobId(null);
+      setLoading(false);
+      // The render is over — clear its "in progress" badge everywhere.
+      setActiveWorkJobs(prev => pruneJobFromActiveMap(prev, job_id));
+      if (status.state === "done") {
+        setVsWorkQuality((status.quality_report as QualityReport | undefined) ?? null);
+        const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.result?.path ?? "")}`;
+        setAudioUrl(serveUrl);
+        setAudioName(status.result?.filename ?? `${works.find((w: any) => w.id === workId)?.title ?? "audiobook"}.mp3`);
+        toast.success("Audiobook ready — tap play below");
+      } else if (status.state === "failed") {
+        toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
+      } else {
+        toast("Render paused — finished chapters are saved. Generate again to resume.");
+      }
+    },
+    onGone: () => {
+      setVsWorkJobId(null);
+      setLoading(false);
+      toast.error("Server restarted — finished chapters are saved. Generate again to resume.");
+    },
+  };
 
   // Point the progress UI at a work render job (freshly started or
   // rediscovered) and begin polling it. Exactly one poller may exist:
   // re-attaching to the job we're already polling is a no-op, and any older
   // interval is cleared first so a discovery/Generate(409) race can never
   // leave two timers polling the same job.
-  function attachWorkJob(job_id: string, snap?: any) {
-    if (vsWorkJobIdRef.current === job_id && vsWorkPollRef.current) return;
-    if (vsWorkPollRef.current) {
-      clearInterval(vsWorkPollRef.current);
-      vsWorkPollRef.current = null;
-    }
-    vsWorkJobIdRef.current = job_id;
-    setVsWorkJobId(job_id);
-    setVsWorkChapterIdx(snap?.chapter_idx ?? 0);
-    setVsWorkChapterTotal(snap?.total_chapters ?? 0);
-    setVsWorkChapterTitle(snap?.chapter_title ?? "");
-    setVsWorkSegsDone(snap?.segments_done ?? 0);
-    setVsWorkSegsTotal(snap?.total_segments ?? 0);
-    setVsWorkCachedSegs(snap?.cached_segments ?? 0);
-    setVsWorkQuality(null);
-    setLoading(true);
-    startWorkJobPolling(job_id);
+  function attachWorkJob(job_id: string, snap?: WorkRenderSnapshot) {
+    workTracker.attach(job_id, snap ?? {});
   }
 
   // Rediscover a render that's still running for the selected Work — the
@@ -1668,7 +1665,7 @@ function AudiobookTab({
         for (const j of data.jobs ?? []) if (j.work_id) map[j.work_id] = j;
         setActiveWorkJobs(map);
         const mine = workId ? (map[workId] as any) : null;
-        if (mine && !vsWorkJobIdRef.current) {
+        if (mine && !workTracker.currentJobId) {
           attachWorkJob(mine.job_id, mine);
           toast.info("Reconnected to the render already running for this Work");
         }
@@ -1805,9 +1802,10 @@ function AudiobookTab({
   }
 
   async function handlePauseWorkGenerate() {
-    if (!vsWorkJobIdRef.current) return;
+    const jobId = workTracker.currentJobId;
+    if (!jobId) return;
     try {
-      await apiFetch(`${BASE}/studio/tts/work/${vsWorkJobIdRef.current}`, { method: "DELETE" });
+      await apiFetch(`${BASE}/studio/tts/work/${jobId}`, { method: "DELETE" });
     } catch { /* best-effort */ }
   }
 
