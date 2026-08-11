@@ -42,6 +42,7 @@ interface PlanResult {
   status: "ok" | "clarify" | "error";
   plan?: { title: string; work_id: string | null; work_title: string | null; steps: PlanStep[] };
   question?: string;
+  options?: { id: string; title: string }[];
   message?: string;
   problems?: string[];
 }
@@ -203,16 +204,33 @@ function paramSummary(params: Record<string, unknown>): string {
 function JobPlanner({ onStarted }: { onStarted: () => void }) {
   const [job, setJob] = useState("");
   const [result, setResult] = useState<PlanResult | null>(null);
+  // The exact job text the current result was planned from — clarify answers
+  // re-plan this snapshot, so editing the textarea can't change the question's
+  // subject mid-flight.
+  const [plannedJob, setPlannedJob] = useState("");
+  const [clarifyAnswer, setClarifyAnswer] = useState("");
   const [saveName, setSaveName] = useState("");
   const [saving, setSaving] = useState(false);
   const qc = useQueryClient();
 
   const planMutation = useMutation({
-    mutationFn: async (jobText: string) => {
+    mutationFn: async ({
+      jobText,
+      answer,
+      workId,
+    }: {
+      jobText: string;
+      answer?: string;
+      workId?: string;
+    }) => {
       const r = await apiFetch(`${API_BASE}/api/operations/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job: jobText }),
+        body: JSON.stringify({
+          job: jobText,
+          clarify_answer: answer || undefined,
+          clarify_work_id: workId || undefined,
+        }),
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({ detail: "Planning failed" }));
@@ -220,9 +238,28 @@ function JobPlanner({ onStarted }: { onStarted: () => void }) {
       }
       return r.json() as Promise<PlanResult>;
     },
-    onSuccess: (data) => setResult(data),
+    onMutate: (vars) => {
+      setPlannedJob(vars.jobText);
+    },
+    onSuccess: (data) => {
+      setResult(data);
+      setClarifyAnswer("");
+    },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const clearResult = () => {
+    setResult(null);
+    setClarifyAnswer("");
+    setPlannedJob("");
+  };
+
+  const answerClarify = (answer: string, workId?: string) => {
+    const a = answer.trim();
+    const target = plannedJob.trim() || job.trim();
+    if (!a || !target || planMutation.isPending) return;
+    planMutation.mutate({ jobText: target, answer: a, workId });
+  };
 
   const runMutation = useMutation({
     mutationFn: async () => {
@@ -306,7 +343,7 @@ function JobPlanner({ onStarted }: { onStarted: () => void }) {
               size="sm"
               className="h-7 text-xs gap-1.5"
               disabled={!job.trim() || planMutation.isPending}
-              onClick={() => planMutation.mutate(job.trim())}
+              onClick={() => planMutation.mutate({ jobText: job.trim() })}
               data-testid="button-plan-job"
             >
               {planMutation.isPending ? (
@@ -318,17 +355,64 @@ function JobPlanner({ onStarted }: { onStarted: () => void }) {
             </Button>
             {result && (
               <Button size="sm" variant="ghost" className="h-7 text-[11px] px-2 text-muted-foreground"
-                onClick={() => setResult(null)}>
+                onClick={clearResult}>
                 Clear
               </Button>
             )}
           </div>
 
           {result?.status === "clarify" && (
-            <div className="flex items-start gap-2 text-xs text-amber-600 bg-amber-500/10 rounded-md px-3 py-2"
+            <div className="space-y-2 text-xs bg-amber-500/10 rounded-md px-3 py-2.5"
               data-testid="text-plan-clarify">
-              <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              <span>{result.question} Add the answer to your description above and plan again.</span>
+              <div className="flex items-start gap-2 text-amber-600">
+                <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>{result.question}</span>
+              </div>
+              {(result.options ?? []).length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pl-5">
+                  {(result.options ?? []).map((opt) => (
+                    <Button
+                      key={opt.id}
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-[11px] px-2 rounded-full"
+                      disabled={planMutation.isPending}
+                      onClick={() => answerClarify(opt.title, opt.id)}
+                      data-testid={`button-clarify-option-${opt.id}`}
+                    >
+                      {opt.title}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-1.5 pl-5">
+                <Input
+                  value={clarifyAnswer}
+                  onChange={(e) => setClarifyAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") answerClarify(clarifyAnswer);
+                  }}
+                  placeholder="Type your answer…"
+                  className="h-7 text-[11px] w-56"
+                  disabled={planMutation.isPending}
+                  data-testid="input-clarify-answer"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[11px] gap-1 px-2"
+                  disabled={!clarifyAnswer.trim() || planMutation.isPending}
+                  onClick={() => answerClarify(clarifyAnswer)}
+                  data-testid="button-clarify-answer"
+                >
+                  {planMutation.isPending ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3 h-3" />
+                  )}
+                  Answer & re-plan
+                </Button>
+              </div>
             </div>
           )}
 

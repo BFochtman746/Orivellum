@@ -185,6 +185,103 @@ def test_ambiguous_work_title_asks_instead_of_guessing(db, llm):
     assert "Alpha Book" in result["question"] and "Alpha Notes" in result["question"]
 
 
+def test_ambiguous_work_clarify_includes_clickable_options(db, llm):
+    db.create_work("Alpha Book")
+    db.create_work("Alpha Notes")
+    db.create_work("Unrelated")
+    llm.responses = [
+        _plan_json(
+            [{"action_id": "wait_for_extraction", "label": "Wait", "params": {}}], work="Alpha"
+        )
+    ]
+    result = planner.plan_job(db, None, "process alpha")
+    assert result["status"] == "clarify"
+    # Only the ambiguous candidates are offered — not every Work — and each
+    # carries its id so selection stays deterministic with duplicate titles.
+    assert sorted(o["title"] for o in result["options"]) == ["Alpha Book", "Alpha Notes"]
+    assert all(o["id"] for o in result["options"])
+
+
+def test_no_work_named_clarify_offers_all_works_as_options(db, llm):
+    w = db.create_work("Only Work")
+    llm.responses = [
+        _plan_json([{"action_id": "render_audiobook", "label": "Render", "params": {}}], work=None)
+    ]
+    result = planner.plan_job(db, None, "render an audiobook")
+    assert result["status"] == "clarify"
+    assert result["options"] == [{"id": w["id"], "title": "Only Work"}]
+
+
+def test_llm_clarification_has_empty_options(db, llm):
+    llm.responses = [_plan_json([], clarification="Which voice do you want?")]
+    result = planner.plan_job(db, None, "make an audiobook")
+    assert result["status"] == "clarify"
+    assert result["options"] == []
+
+
+def test_clarify_answer_reaches_the_prompt_and_resolves(db, llm):
+    work = db.create_work("Alpha Book")
+    db.create_work("Alpha Notes")
+    llm.responses = [
+        _plan_json(
+            [{"action_id": "wait_for_extraction", "label": "Wait", "params": {}}],
+            work="Alpha Book",
+        )
+    ]
+    result = planner.plan_job(db, None, "process alpha", clarify_answer="Alpha Book")
+    assert result["status"] == "ok"
+    assert result["plan"]["work_id"] == work["id"]
+    # The answer travels in the prompt so the model sees it verbatim.
+    user_msg = llm.calls[0][-1]["content"]
+    assert "process alpha" in user_msg
+    assert "Alpha Book" in user_msg
+
+
+def test_clarify_answer_survives_a_job_at_the_prompt_limit(db, llm):
+    """A job near the 2,000-char prompt cap must never truncate the answer away."""
+    work = db.create_work("Alpha Book")
+    db.create_work("Alpha Notes")
+    long_job = "process alpha " * 200  # ~2,800 chars — over the cap
+    llm.responses = [
+        _plan_json(
+            [{"action_id": "wait_for_extraction", "label": "Wait", "params": {}}],
+            work="Alpha Book",
+        )
+    ]
+    result = planner.plan_job(db, None, long_job, clarify_answer="Alpha Book")
+    assert result["status"] == "ok"
+    assert result["plan"]["work_id"] == work["id"]
+    user_msg = llm.calls[0][-1]["content"]
+    assert len(user_msg) <= 2000
+    assert user_msg.endswith("Clarifying answer from the user: Alpha Book")
+
+
+def test_clicked_work_id_is_enforced_over_the_models_choice(db, llm):
+    """Chip selection is deterministic: the model cannot swap in another Work."""
+    chosen = db.create_work("Alpha Book")
+    db.create_work("Alpha Notes")
+    # Model tries to answer with the OTHER work — the forced id must win.
+    llm.responses = [
+        _plan_json(
+            [{"action_id": "wait_for_extraction", "label": "Wait", "params": {}}],
+            work="Alpha Notes",
+        )
+    ]
+    result = planner.plan_job(db, None, "process alpha", clarify_work_id=chosen["id"])
+    assert result["status"] == "ok"
+    assert result["plan"]["work_id"] == chosen["id"]
+    assert result["plan"]["work_title"] == "Alpha Book"
+    # The chosen title is surfaced to the model too.
+    assert "Alpha Book" in llm.calls[0][-1]["content"]
+
+
+def test_vanished_clarify_work_id_is_a_clear_error(db, llm):
+    result = planner.plan_job(db, None, "process alpha", clarify_work_id="nonexistent-id")
+    assert result["status"] == "error"
+    assert "no longer exists" in result["message"]
+    assert llm.calls == []  # fails fast, no model call wasted
+
+
 def test_work_needed_but_none_named_asks(db, llm):
     db.create_work("Only Work")
     llm.responses = [

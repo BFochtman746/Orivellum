@@ -115,6 +115,8 @@ def delete_playbook(playbook_id: str):
 
 class PlanRequest(BaseModel):
     job: str
+    clarify_answer: str | None = None
+    clarify_work_id: str | None = None
 
 
 @router.post("/plan")
@@ -131,7 +133,9 @@ def plan_operation(body: PlanRequest):
     job = body.job.strip()
     if not job:
         raise HTTPException(422, "Describe the job first.")
-    return plan_job(get_db(), get_config(), job)
+    answer = (body.clarify_answer or "").strip() or None
+    work_id = (body.clarify_work_id or "").strip() or None
+    return plan_job(get_db(), get_config(), job, clarify_answer=answer, clarify_work_id=work_id)
 
 
 @router.post("/start")

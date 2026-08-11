@@ -33,6 +33,7 @@ logger = logging.getLogger("orivellum.operations.planner")
 _MAX_STEPS = 12
 _MAX_WORKS_IN_PROMPT = 60
 _MAX_CLARIFY_OPTIONS = 8
+_MAX_JOB_CHARS = 2000  # must match the user-message cap in _build_messages
 
 # Builtin steps that cannot run without a Work even though their schema marks
 # work_id optional (it falls back to the operation-level Work).
@@ -256,27 +257,40 @@ def _resolve_voices(steps: list[dict], voices: list[dict]) -> list[str]:
 
 def _resolve_work(
     plan: dict, steps: list[dict], works: list[dict], registry: dict
-) -> tuple[str | None, str | None, str | None]:
-    """Resolve the plan's Work reference. Returns (work_id, work_title, clarify_question)."""
+) -> tuple[str | None, str | None, str | None, list[dict]]:
+    """Resolve the plan's Work reference.
+
+    Returns (work_id, work_title, clarify_question, clarify_options). The
+    options are ``{"id", "title"}`` candidates the user can pick from when a
+    clarifying question is asked (empty when resolution succeeded) — the id
+    makes selection deterministic even when Work titles collide.
+    """
     ref = plan.get("work")
     titles = [(w["id"], w.get("title") or w["id"]) for w in works]
+    all_options = [{"id": i, "title": t} for i, t in titles[:_MAX_CLARIFY_OPTIONS]]
 
     def _options() -> str:
-        names = ", ".join(f"'{t}'" for _, t in titles[:_MAX_CLARIFY_OPTIONS])
+        names = ", ".join(f"'{o['title']}'" for o in all_options)
         return f" Your Works include: {names}." if names else ""
 
     if isinstance(ref, str) and ref.strip():
         low = ref.strip().lower()
         exact = [(i, t) for i, t in titles if t.lower() == low]
         if len(exact) == 1:
-            return exact[0][0], exact[0][1], None
+            return exact[0][0], exact[0][1], None, []
         partial = [(i, t) for i, t in titles if low in t.lower()]
         if len(partial) == 1:
-            return partial[0][0], partial[0][1], None
+            return partial[0][0], partial[0][1], None, []
         if len(partial) > 1:
-            names = ", ".join(f"'{t}'" for _, t in partial[:_MAX_CLARIFY_OPTIONS])
-            return None, None, f"Which Work did you mean — {names}?"
-        return None, None, f"I couldn't find a Work called '{ref.strip()}'.{_options()}"
+            candidates = [{"id": i, "title": t} for i, t in partial[:_MAX_CLARIFY_OPTIONS]]
+            names = ", ".join(f"'{o['title']}'" for o in candidates)
+            return None, None, f"Which Work did you mean — {names}?", candidates
+        return (
+            None,
+            None,
+            f"I couldn't find a Work called '{ref.strip()}'.{_options()}",
+            all_options,
+        )
 
     # No Work named — only a problem when a step actually needs one.
     def _needs_work(s: dict) -> bool:
@@ -288,25 +302,62 @@ def _resolve_work(
         return "work_id" in required and "work_id" not in (s.get("params") or {})
 
     if any(_needs_work(s) for s in steps):
-        return None, None, f"Which Work should this run on?{_options()}"
-    return None, None, None
+        return None, None, f"Which Work should this run on?{_options()}", all_options
+    return None, None, None, []
+
+
+def _compose_prompt(job_text: str, clarify_answer: str | None, forced_work: dict | None) -> str:
+    """Job text + clarifying answer, capped so the answer is never truncated away."""
+    answer = clarify_answer.strip()[:400] if isinstance(clarify_answer, str) else ""
+    if not answer and forced_work is not None:
+        answer = f"Use the Work '{forced_work.get('title') or forced_work['id']}'."
+    if not answer:
+        return job_text[:_MAX_JOB_CHARS]
+    # Reserve room for the answer so a long job never truncates it away.
+    suffix = f"\n\nClarifying answer from the user: {answer}"
+    return job_text[: _MAX_JOB_CHARS - len(suffix)] + suffix
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
-def plan_job(db: Any, cfg: Any, job_text: str, *, model: str | None = None) -> dict:
+def plan_job(
+    db: Any,
+    cfg: Any,
+    job_text: str,
+    *,
+    model: str | None = None,
+    clarify_answer: str | None = None,
+    clarify_work_id: str | None = None,
+) -> dict:
     """Turn *job_text* into a validated operation plan.
+
+    *clarify_answer* is the user's reply to an earlier clarifying question;
+    it is appended to the job text so the user never retypes the whole job.
+    *clarify_work_id* is a Work chosen by clicking an option chip — it is
+    enforced server-side, so the model can never swap in a different Work.
 
     Returns one of:
       {"status": "ok", "plan": {title, work_id, work_title, steps}}
-      {"status": "clarify", "question": "<short question>"}
+      {"status": "clarify", "question": "<short question>", "options": [{id, title}, ...]}
       {"status": "error", "message": "<what went wrong>", "problems": [...]}
     """
     registry = get_op_registry()
     works = db.list_works(limit=200)
     voices = _voice_catalog()
-    messages = _build_messages(job_text, registry, works, voices)
+
+    forced_work = None
+    if isinstance(clarify_work_id, str) and clarify_work_id.strip():
+        forced_work = next((w for w in works if w["id"] == clarify_work_id.strip()), None)
+        if forced_work is None:
+            return {
+                "status": "error",
+                "message": "That Work no longer exists — plan the job again.",
+                "problems": [],
+            }
+
+    prompt_text = _compose_prompt(job_text, clarify_answer, forced_work)
+    messages = _build_messages(prompt_text, registry, works, voices)
 
     raw = _llm_text(messages, db, cfg, model)
     if raw is None:
@@ -349,12 +400,17 @@ def plan_job(db: Any, cfg: Any, job_text: str, *, model: str | None = None) -> d
 
     clarification = plan.get("clarification")
     if isinstance(clarification, str) and clarification.strip():
-        return {"status": "clarify", "question": clarification.strip()[:400]}
+        return {"status": "clarify", "question": clarification.strip()[:400], "options": []}
 
     steps = plan.get("steps") or []
-    work_id, work_title, clarify = _resolve_work(plan, steps, works, registry)
-    if clarify:
-        return {"status": "clarify", "question": clarify}
+    if forced_work is not None:
+        # The user picked this Work explicitly — never let the model override it.
+        work_id = forced_work["id"]
+        work_title = forced_work.get("title") or forced_work["id"]
+    else:
+        work_id, work_title, clarify, options = _resolve_work(plan, steps, works, registry)
+        if clarify:
+            return {"status": "clarify", "question": clarify, "options": options}
 
     out_steps = [
         {
