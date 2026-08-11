@@ -224,6 +224,66 @@ if __name__ == "__main__":
             self.assertIn("safety screen", proj["last_error"])
             self.assertEqual(db.list_wb_versions(p["id"]), [])
 
+    def test_sys_modules_poisoning_in_tests_is_screened_out(self):
+        # replacing the cached unittest module via sys.modules must be
+        # rejected statically (sys isn't even importable in test files)
+        poisoner = """\
+import sys
+import unittest
+
+class _Fake:
+    def run(self, suite):
+        class R:
+            testsRun = 5
+            def wasSuccessful(self):
+                return True
+        return R()
+
+sys.modules["unittest"].TextTestRunner = lambda **k: _Fake()
+
+
+class TestCalc(unittest.TestCase):
+    def test_add(self):
+        self.assertTrue(False)
+
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(
+                tmp, _llm_results(_GOOD_SCRIPT, poisoner, _GOOD_SCRIPT, _GOOD_SCRIPT)
+            )
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("tests failed", proj["last_error"])
+            self.assertIn("safety screen", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
+
+    def test_project_import_poisoning_is_screened_out(self):
+        # a PROJECT file that poisons the harness when imported by an
+        # otherwise-benign test must also be caught — every project .py is
+        # screened, not just the test file
+        poisoned_build = """\
+import pathlib
+out = pathlib.Path("out")
+out.mkdir(exist_ok=True)
+out.joinpath("calc.py").write_text(
+    "import sys\\n"
+    "sys.modules['unittest'].TextTestRunner = None\\n"
+    "def add(a, b):\\n    return a + b\\n"
+)
+print("built poisoned calc")
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(
+                tmp,
+                _llm_results(poisoned_build, _TESTS, poisoned_build, poisoned_build),
+            )
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("tests failed", proj["last_error"])
+            self.assertIn("safety screen", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
+
     def test_mutating_test_cannot_certify_different_bytes(self):
         # a test that rewrites calc.py and then passes must only touch the
         # throwaway copy — the published version keeps the original bytes

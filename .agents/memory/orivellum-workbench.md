@@ -67,6 +67,6 @@ versions; execute generated tests for code versions.
 - Archive gate: `latest_proof_status` + `UnprovenError` → route 409 `{code:"unproven"}`; UI force-confirm retries with `{force:true}`.
 
 ## Code project self-tests (build loop)
-- Every code build (any language) must pass a generated test suite before a version publishes; non-Python files get file-verifying Python tests. There is deliberately no untested path to a good verdict.
-- Never certify a pass from exit codes or printed output — generated suites can be no-ops, print fake "Ran 1 test / OK" text, or tamper with the harness in-process. Certification must come from a trusted process that never executes test/project code: static AST screen + separate untrusted runner + token only the trusted side holds.
+- In-process certification of LLM-generated tests is unforgeable-proof only via a trusted process that never executes untrusted code: exit codes, printed output, and any in-process harness (token files included) can all be faked by test OR project code (sys.modules poisoning, __main__ introspection, os._exit(0)). Screen every project .py, not just the test file, and whitelist test-file imports.
+- Every code build (any language) must pass a generated suite before a version publishes — no untested path to a good verdict; non-Python files get file-verifying Python tests.
 - Run tests against an isolated copy of the output so a mutating test can never certify different bytes than the published ones.

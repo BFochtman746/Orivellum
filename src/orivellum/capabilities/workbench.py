@@ -270,7 +270,12 @@ _TESTGEN_SYSTEM = (
     "You write ONE Python test file and nothing else — no prose, no markdown "
     "fences. Rules:\n"
     "- Standard library ONLY, built on unittest. No pip, no network, no "
-    "subprocess.\n"
+    "subprocess. Import only the project's own modules plus: unittest, os, "
+    "pathlib, re, json, math, io, csv, string, datetime, collections, "
+    "itertools, functools, textwrap, html, unicodedata, runpy, tempfile, "
+    "shutil, statistics, decimal, fractions, random, time, typing. Never "
+    "import sys, ctypes, gc, inspect, or __main__; never touch sys.modules, "
+    "monkeypatch modules, or call exit()/os._exit().\n"
     "- The project's files sit in the SAME directory as the test file; import "
     "modules by file name (e.g. `import main` for main.py).\n"
     f"- Never import {_TEST_FILE} itself.\n"
@@ -323,36 +328,40 @@ def _generate_tests(cfg, db, proj: dict, instruction: str, out_dir: pathlib.Path
 
 _TEST_SUPERVISOR = '''\
 """Trusted test supervisor. Never imports or executes test/project code —
-it screens the generated test file statically (AST), then runs it in a
-SEPARATE sandboxed process. Only this process ever sees the auth token
-(read from stdin), so test or project code has no way to forge the
-token-authenticated result file, read the token, or tamper with the
-harness in-process."""
+it screens the generated test file AND every project file statically (AST),
+then runs the suite in a SEPARATE sandboxed process. Only this process ever
+sees the auth token (read from stdin), so test or project code cannot forge
+the token-authenticated result, and the screens reject every known way to
+tamper with the harness in-process (module patching, sys.modules poisoning,
+introspection escapes, or exiting 0 without running the suite)."""
 
 import ast
 import json
+import os
 import subprocess
 import sys
 
-_BANNED_MODULES = ("__main__", "gc", "ctypes", "inspect")
-_BANNED_CALLS = ("setattr", "delattr", "globals", "vars", "exec", "eval", "compile")
+# Test files may import unittest + a small stdlib toolbox + project modules.
+_TEST_IMPORT_ALLOW = {
+    "unittest", "os", "pathlib", "re", "json", "math", "io", "csv", "string",
+    "datetime", "collections", "itertools", "functools", "textwrap", "html",
+    "unicodedata", "runpy", "tempfile", "shutil", "statistics", "decimal",
+    "fractions", "random", "time", "typing",
+}
+_BANNED_CALLS = (
+    "setattr", "delattr", "globals", "vars", "exec", "eval", "compile",
+    "exit", "quit", "__import__",
+)
 
 
-def _screen(tree):
-    """Reject escape/tamper constructs; count real TestCase tests + asserts."""
-    problems, imported, tests, asserts = [], set(), 0, 0
+def _patch_and_exit_problems(tree):
+    """Constructs that defeat certification in ANY file: patching an imported
+    module's attributes, touching sys.modules, or hard process exits."""
+    problems, imported = [], set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
                 imported.add(a.asname or a.name.split(".")[0])
-                if a.name.split(".")[0] in _BANNED_MODULES:
-                    problems.append("imports " + a.name)
-        elif isinstance(node, ast.ImportFrom):
-            if (node.module or "").split(".")[0] in _BANNED_MODULES:
-                problems.append("imports " + (node.module or ""))
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in _BANNED_CALLS:
-                problems.append("calls " + node.func.id)
         elif isinstance(node, (ast.Assign, ast.AugAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for t in targets:
@@ -365,6 +374,33 @@ def _screen(tree):
                     and root.id in imported
                 ):
                     problems.append("patches an imported module")
+        elif isinstance(node, ast.Attribute):
+            if node.attr == "_exit":
+                problems.append("uses _exit")
+            elif node.attr == "modules":
+                problems.append("touches sys.modules")
+        elif isinstance(node, ast.Raise):
+            exc = node.exc
+            name = getattr(exc, "id", None) or getattr(getattr(exc, "func", None), "id", None)
+            if name in ("SystemExit", "BaseException", "KeyboardInterrupt"):
+                problems.append("raises " + name)
+    return problems
+
+
+def _screen_test(tree, allowed):
+    """Whitelist imports; reject tamper constructs; count real tests."""
+    problems, tests, asserts = list(_patch_and_exit_problems(tree)), 0, 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name.split(".")[0] not in allowed:
+                    problems.append("imports " + a.name)
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[0] not in allowed:
+                problems.append("imports " + (node.module or "?"))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in _BANNED_CALLS:
+                problems.append("calls " + node.func.id)
         elif isinstance(node, ast.ClassDef):
             bases = [
                 b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", "")
@@ -374,12 +410,28 @@ def _screen(tree):
                 for item in node.body:
                     if isinstance(item, ast.FunctionDef) and item.name.startswith("test"):
                         tests += 1
-        if isinstance(node, ast.Attribute):
-            if node.attr == "_exit":
-                problems.append("uses _exit")
-            elif node.attr.startswith("assert"):
-                asserts += 1
+        if isinstance(node, ast.Attribute) and node.attr.startswith("assert"):
+            asserts += 1
     return problems, tests, asserts
+
+
+def _screen_dir(test_path):
+    """Screen every project .py the suite could import for harness tampering."""
+    problems = []
+    folder = os.path.dirname(os.path.abspath(test_path))
+    for base, _dirs, files in os.walk(folder):
+        for name in files:
+            path = os.path.join(base, name)
+            if not name.endswith(".py") or os.path.abspath(path) == os.path.abspath(test_path):
+                continue
+            try:
+                with open(path, encoding="utf-8") as f:
+                    tree = ast.parse(f.read())
+            except (OSError, SyntaxError):
+                continue  # unparseable files cannot be imported by the tests
+            for prob in _patch_and_exit_problems(tree):
+                problems.append(name + " " + prob)
+    return problems
 
 
 def main():
@@ -389,11 +441,12 @@ def main():
     try:
         with open(test_path, encoding="utf-8") as f:
             tree = ast.parse(f.read())
-        problems, tests, asserts = _screen(tree)
+        folder = os.path.dirname(os.path.abspath(test_path))
+        stems = {n[:-3] for n in os.listdir(folder) if n.endswith(".py")}
+        problems, tests, asserts = _screen_test(tree, _TEST_IMPORT_ALLOW | stems)
+        problems += _screen_dir(test_path)
         if problems:
-            report["error"] = "test file failed the safety screen: " + "; ".join(
-                sorted(set(problems))
-            )
+            report["error"] = "failed the safety screen: " + "; ".join(sorted(set(problems)))
         elif tests < 1 or asserts < 1:
             report["error"] = "test file defines no real tests with assertions"
         else:
