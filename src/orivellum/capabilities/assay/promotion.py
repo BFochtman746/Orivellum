@@ -23,12 +23,19 @@ import json
 import logging
 from typing import Any
 
+from orivellum.database.db import (
+    ASSAY_DEFAULT_MIN_DISPOSITIONS,
+    ASSAY_DEFAULT_MIN_PRECISION,
+)
+
 logger = logging.getLogger(__name__)
 
 # Defaults when an instrument's contract does not declare its own bar
-# (override per instrument via thresholds["promotion"]).
-DEFAULT_MIN_PRECISION = 0.80
-DEFAULT_MIN_DISPOSITIONS = 10
+# (override per instrument via thresholds["promotion"]).  Single-sourced
+# from the database layer, which enforces the bar authoritatively in
+# set_assay_certification.
+DEFAULT_MIN_PRECISION = ASSAY_DEFAULT_MIN_PRECISION
+DEFAULT_MIN_DISPOSITIONS = ASSAY_DEFAULT_MIN_DISPOSITIONS
 
 
 class PromotionError(ValueError):

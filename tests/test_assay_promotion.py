@@ -113,6 +113,30 @@ class PromotionBase(unittest.TestCase):
             )
         return self.db.get_assay_instrument(CANDIDATE["key"])
 
+    def _disposition_n(self, inst: dict, tp: int, fp: int) -> None:
+        run = assay.run_instrument(
+            self.db, _cfg(), key=inst["key"], work_id=self.work_id
+        )
+        findings = self.db.list_assay_findings(run["id"])
+        needed = tp + fp
+        # The catalog fixture fires multiple findings; synthesize extras if
+        # the fixture produced fewer than needed.
+        while len(findings) < needed:
+            fid = self.db.create_assay_finding(
+                run_id=run["id"], instrument_id=inst["id"], work_id=self.work_id,
+                chapter_id=None, unit=f"chapter {len(findings)}",
+                force_check=inst["key"], issue_type="catalog_prose",
+                severity="medium", classification="deterministic",
+                action="author_review", evidence={},
+            )
+            findings.append(self.db.get_assay_finding(fid))
+        for i, f in enumerate(findings[:needed]):
+            self.db.set_assay_finding_disposition(
+                f["id"],
+                "true_positive" if i < tp else "false_positive",
+                actor="user",
+            )
+
 
 class TestRegistrationEnforcement(PromotionBase):
     def test_registration_cannot_set_certification(self):
@@ -144,6 +168,7 @@ class TestLifecycle(PromotionBase):
         with self.assertRaises(ValueError):
             self.db.set_assay_certification(key, "certified", actor="user")
         self.db.set_assay_certification(key, "shadow", actor="user")
+        self._disposition_n(self.db.get_assay_instrument(key), tp=4, fp=0)
         self.db.set_assay_certification(key, "certified", actor="user")
         # certified -> advisory is illegal (demotion goes to shadow).
         with self.assertRaises(ValueError):
@@ -159,11 +184,38 @@ class TestLifecycle(PromotionBase):
         with self.assertRaises(ValueError):
             self.db.set_assay_certification("judge.hierarchical", "certified", actor="user")
 
+    def test_db_write_path_refuses_certification_below_bar(self):
+        # The DB transition path itself is authoritative: even a direct
+        # caller (bypassing promotion.promote) cannot certify without the
+        # declared evidence.
+        inst = self._register_candidate()  # shadow, zero dispositions
+        with self.assertRaises(ValueError):
+            self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        self._disposition_n(inst, tp=2, fp=2)  # 0.5 < 0.75 bar
+        with self.assertRaises(ValueError):
+            self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        self.assertEqual(
+            self.db.get_assay_instrument(inst["key"])["certification"], "shadow"
+        )
+
+    def test_caller_supplied_precision_is_ignored_on_certify(self):
+        # The ledger records the COMPUTED evidence, never caller claims.
+        inst = self._register_candidate()
+        self._disposition_n(inst, tp=3, fp=1)
+        self.db.set_assay_certification(
+            inst["key"], "certified", actor="user",
+            precision=1.0, sample_size=999,  # lies — must be overridden
+        )
+        event = self.db.list_assay_certification_events(inst["id"])[0]
+        self.assertEqual(event["precision_val"], 0.75)
+        self.assertEqual(event["sample_size"], 4)
+
     def test_certified_reseed_with_changed_authority_demotes_to_shadow(self):
         # A certified instrument whose tier/thresholds/scope/shadow_of change
         # on re-seed must re-earn its authority: auto-demoted to shadow with
         # a ledger row, in the same transaction.
         inst = self._register_candidate()
+        self._disposition_n(inst, tp=4, fp=0)
         self.db.set_assay_certification(inst["key"], "certified", actor="user")
         changed = dict(CANDIDATE)
         changed["thresholds"] = dict(CANDIDATE["thresholds"], min_series_items=2)
@@ -173,9 +225,17 @@ class TestLifecycle(PromotionBase):
         events = self.db.list_assay_certification_events(inst["id"])
         self.assertEqual(events[0]["to_status"], "shadow")
         self.assertEqual(events[0]["actor"], "system")
+        # The demotion went through the governed write path: an audit row
+        # for the certification change exists.
+        audit = self.db.list_audit_log(operation="assay.certification_changed")
+        self.assertTrue(
+            any("re-seed" in (a.get("detail") or "") for a in audit),
+            f"no governed audit row for the re-seed demotion: {audit}",
+        )
 
     def test_certified_reseed_without_authority_change_keeps_certification(self):
         inst = self._register_candidate()
+        self._disposition_n(inst, tp=4, fp=0)
         self.db.set_assay_certification(inst["key"], "certified", actor="user")
         renamed = dict(CANDIDATE)
         renamed["name"] = "Drift: Catalog (renamed)"
@@ -277,30 +337,6 @@ class TestShadowExecution(PromotionBase):
 
 
 class TestPrecisionAndPromotion(PromotionBase):
-    def _disposition_n(self, inst: dict, tp: int, fp: int) -> None:
-        run = assay.run_instrument(
-            self.db, _cfg(), key=inst["key"], work_id=self.work_id
-        )
-        findings = self.db.list_assay_findings(run["id"])
-        needed = tp + fp
-        # The catalog fixture fires multiple findings; synthesize extras if
-        # the fixture produced fewer than needed.
-        while len(findings) < needed:
-            fid = self.db.create_assay_finding(
-                run_id=run["id"], instrument_id=inst["id"], work_id=self.work_id,
-                chapter_id=None, unit=f"chapter {len(findings)}",
-                force_check=inst["key"], issue_type="catalog_prose",
-                severity="medium", classification="deterministic",
-                action="author_review", evidence={},
-            )
-            findings.append(self.db.get_assay_finding(fid))
-        for i, f in enumerate(findings[:needed]):
-            self.db.set_assay_finding_disposition(
-                f["id"],
-                "true_positive" if i < tp else "false_positive",
-                actor="user",
-            )
-
     def test_rolling_precision_and_series(self):
         inst = self._register_candidate()
         self._disposition_n(inst, tp=3, fp=1)

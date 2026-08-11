@@ -58,6 +58,13 @@ class VersionConflictError(Exception):
 
 logger = logging.getLogger(__name__)
 
+# PROMOTION (E10) defaults: the precision bar a shadow instrument must meet
+# before it can be certified, unless its contract declares its own bar via
+# thresholds["promotion"].  Enforced authoritatively in
+# set_assay_certification — no caller can certify below the bar.
+ASSAY_DEFAULT_MIN_PRECISION = 0.80
+ASSAY_DEFAULT_MIN_DISPOSITIONS = 10
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -7644,8 +7651,9 @@ class OrivellumDB:
 
         A CERTIFIED instrument whose authority-affecting contract changes on
         re-seed (tier, thresholds, scope, or shadow_of) is automatically
-        demoted to shadow in the same transaction, with a ledger row — a
-        changed detector must re-earn blocking authority, never keep it.
+        demoted to shadow via a governed write (audit + outbox + ledger row,
+        atomically with the contract update) — a changed detector must
+        re-earn blocking authority, never keep it.
         """
         if "certification" in contract:
             raise ValueError(
@@ -7655,6 +7663,21 @@ class OrivellumDB:
         if shadow_of is not None and shadow_of == contract["key"]:
             raise ValueError("shadow_of cannot point at the instrument itself")
         now = _now()
+        update_params = (
+            contract["name"], contract.get("purpose", ""),
+            int(contract["tier"]), contract["variance"],
+            json.dumps(contract.get("allowed_ops", [])),
+            json.dumps(contract.get("forbidden_ops", [])),
+            contract.get("authority_relationship", ""),
+            json.dumps(contract.get("output_schema", {})),
+            json.dumps(contract.get("scope", {})),
+            json.dumps(contract.get("thresholds", {})),
+            contract.get("origin", ""), shadow_of, now, contract["key"],
+        )
+        _UPDATE_SQL = """UPDATE assay_instrument SET name=?, purpose=?, tier=?,
+            variance=?, allowed_ops=?, forbidden_ops=?, authority_relationship=?,
+            output_schema=?, scope=?, thresholds=?, origin=?, shadow_of=?,
+            updated_at=? WHERE key=?"""
         with self._lock:
             row = self._conn.execute(
                 """SELECT id, certification, tier, thresholds, scope, shadow_of
@@ -7669,27 +7692,31 @@ class OrivellumDB:
                     or shadow_of != row["shadow_of"]
                 )
                 demote = row["certification"] == "certified" and authority_changed
-                self._conn.execute(
-                    """UPDATE assay_instrument SET name=?, purpose=?, tier=?, variance=?,
-                       allowed_ops=?, forbidden_ops=?, authority_relationship=?,
-                       output_schema=?, scope=?, thresholds=?, origin=?, shadow_of=?,
-                       certification=CASE WHEN ? THEN 'shadow' ELSE certification END,
-                       updated_at=?
-                       WHERE key=?""",
-                    (
-                        contract["name"], contract.get("purpose", ""),
-                        int(contract["tier"]), contract["variance"],
-                        json.dumps(contract.get("allowed_ops", [])),
-                        json.dumps(contract.get("forbidden_ops", [])),
-                        contract.get("authority_relationship", ""),
-                        json.dumps(contract.get("output_schema", {})),
-                        json.dumps(contract.get("scope", {})),
-                        json.dumps(contract.get("thresholds", {})),
-                        contract.get("origin", ""), shadow_of,
-                        1 if demote else 0, now, contract["key"],
-                    ),
+                if not demote:
+                    self._conn.execute(_UPDATE_SQL, update_params)
+                    self._conn.commit()
+                    return row["id"]
+        if row is not None:
+            # Governed demotion: contract update + certification drop + ledger
+            # row + audit/outbox, one atomic transaction.  The CAS predicate
+            # re-checks 'certified' so a concurrent transition can't be
+            # clobbered; if it was lost, apply the plain contract update.
+            with self.governed_write(
+                operation="assay.certification_changed",
+                event_type="assay.certification_changed",
+                object_id=row["id"],
+                object_type="assay_instrument",
+                actor="system",
+                detail=f"{contract['key']}: certified -> shadow "
+                       "(contract changed on re-seed)",
+            ):
+                self._conn.execute(_UPDATE_SQL, update_params)
+                cur = self._conn.execute(
+                    """UPDATE assay_instrument SET certification='shadow'
+                       WHERE key=? AND certification='certified'""",
+                    (contract["key"],),
                 )
-                if demote:
+                if cur.rowcount == 1:
                     self._conn.execute(
                         """INSERT INTO assay_certification_event(id, instrument_id,
                            from_status, to_status, actor, precision_val, sample_size,
@@ -7702,8 +7729,8 @@ class OrivellumDB:
                             now,
                         ),
                     )
-                self._conn.commit()
-                return row["id"]
+            return row["id"]
+        with self._lock:
             instrument_id = str(uuid.uuid4())
             self._conn.execute(
                 """INSERT INTO assay_instrument(id, key, name, purpose, tier, variance,
@@ -7765,8 +7792,37 @@ class OrivellumDB:
         allowed = self._ASSAY_CERT_TRANSITIONS.get(frm, frozenset())
         if to_status not in allowed:
             raise ValueError(f"illegal certification transition {frm!r} -> {to_status!r}")
-        if to_status == "certified" and int(instrument["tier"]) == 3:
-            raise ValueError("Tier 3 instruments are advisory forever and cannot be certified")
+        if to_status == "certified":
+            if int(instrument["tier"]) == 3:
+                raise ValueError(
+                    "Tier 3 instruments are advisory forever and cannot be certified"
+                )
+            # Certification must be EARNED: the precision evidence is computed
+            # here from the author's dispositions, never trusted from the
+            # caller — this write path is authoritative, so no code path can
+            # certify below the instrument's declared bar.
+            bar = (instrument.get("thresholds") or {}).get("promotion") or {}
+            min_precision = float(
+                bar.get("min_precision", ASSAY_DEFAULT_MIN_PRECISION)
+            )
+            min_dispositions = int(
+                bar.get("min_dispositions", ASSAY_DEFAULT_MIN_DISPOSITIONS)
+            )
+            disps = self.list_assay_dispositions(instrument["id"], limit=1000)
+            tp = sum(1 for d in disps if d["disposition"] == "true_positive")
+            total = len(disps)
+            if total < min_dispositions:
+                raise ValueError(
+                    f"insufficient dispositions to certify: {total} < "
+                    f"{min_dispositions} required"
+                )
+            computed = round(tp / total, 4)
+            if computed < min_precision:
+                raise ValueError(
+                    f"precision {computed} below declared bar {min_precision}"
+                )
+            precision = computed
+            sample_size = total
         now = _now()
         with self.governed_write(
             operation="assay.certification_changed",
