@@ -3002,4 +3002,43 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE loom_chapter_revision ADD COLUMN edit_scope TEXT
     """,
     ),
+    # v130 — PROMOTION (E10): shadow-mode certification for quality instruments.
+    #
+    # assay_instrument.shadow_of — a candidate instrument may declare the
+    # certified baseline instrument it shadows; when the baseline runs, the
+    # candidate co-runs against the same work/chapter so parity is measurable.
+    # assay_finding.disposition — the author's ratified verdict on a finding
+    # ('open' | 'true_positive' | 'false_positive').  Dispositions are the
+    # ground truth precision is computed against — rolling precision =
+    # true_positive / (true_positive + false_positive).
+    # assay_certification_event — the append-only certification ledger: every
+    # promotion / demotion / shadow-entry / retirement is one row recording
+    # who, from→to, and the precision evidence at the moment of the decision.
+    # Certification itself stays a column on assay_instrument; this table is
+    # its history, and set_assay_certification is the ONLY write path.
+    (
+        130,
+        "PROMOTION: shadow_of, finding dispositions, certification event ledger",
+        """
+        ALTER TABLE assay_instrument ADD COLUMN shadow_of TEXT;
+        ALTER TABLE assay_finding ADD COLUMN disposition TEXT NOT NULL DEFAULT 'open';
+        ALTER TABLE assay_finding ADD COLUMN disposition_note TEXT NOT NULL DEFAULT '';
+        ALTER TABLE assay_finding ADD COLUMN dispositioned_at TEXT;
+        CREATE INDEX IF NOT EXISTS idx_assay_finding_dispo
+            ON assay_finding(instrument_id, dispositioned_at);
+        CREATE TABLE IF NOT EXISTS assay_certification_event (
+            id            TEXT PRIMARY KEY,
+            instrument_id TEXT NOT NULL REFERENCES assay_instrument(id) ON DELETE CASCADE,
+            from_status   TEXT NOT NULL,
+            to_status     TEXT NOT NULL,
+            actor         TEXT NOT NULL,
+            precision_val REAL,
+            sample_size   INTEGER,
+            note          TEXT NOT NULL DEFAULT '',
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_assay_cert_event
+            ON assay_certification_event(instrument_id, created_at)
+    """,
+    ),
 ]

@@ -18,8 +18,10 @@ Every instrument emits the standard finding schema:
 Unit | Force Check | Issue Type | Severity | Classification | Action
 (plus evidence JSON with verbatim quotes/offsets/metrics).
 
-Certification/shadow-mode promotion is a separate milestone (PROMOTION)
-and deliberately not implemented here.
+Certification/shadow-mode promotion (E10) lives in ``promotion.py``:
+candidates run in shadow (recorded, labeled, never gating), accumulate a
+precision record against author dispositions, and are promoted to
+CERTIFIED only on threshold + author signature.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import drift, gates, judge, metrics
+from . import drift, gates, judge, metrics, promotion
 
 logger = logging.getLogger(__name__)
 
@@ -364,11 +366,20 @@ def run_instrument(
     work_id: str,
     chapter_id: str | None = None,
     run_id: str | None = None,
+    companion_of: str | None = None,
 ) -> dict:
     """Execute one registered instrument and record the run + findings.
 
     Returns the finished run dict.  Raises AssayError on failure (the run
     row is marked 'error' first — failures are recorded, never swallowed).
+
+    Shadow instruments (certification='shadow') run exactly like any other,
+    but every finding and the run itself is visibly labeled shadow and can
+    never block (blocking is computed).  When a NON-shadow instrument
+    finishes, its shadow companions (shadow_of=key) co-run against the same
+    work/chapter so the parity record accumulates; a companion failure never
+    affects the primary run.  ``companion_of`` links a companion run to the
+    primary run it accompanied.
     """
     try:
         instrument = db.get_assay_instrument(key)
@@ -392,16 +403,7 @@ def run_instrument(
         db.finish_assay_run(run_id, status="error", error=str(exc)[:500])
         raise
     findings = result.pop("findings", [])
-    # Stamp the computed authority on every run: blocking is derived from
-    # (tier, certification) at execution time — an advisory instrument's
-    # verdict is a measurement, never a gate decision.
-    evidence = result.get("evidence") or {}
-    evidence["authority"] = {
-        "tier": instrument["tier"],
-        "certification": instrument["certification"],
-        "blocking": is_blocking(instrument),
-    }
-    result["evidence"] = evidence
+    is_shadow = _stamp_authority(result, instrument, findings, companion_of)
     for f in findings:
         db.create_assay_finding(
             run_id=run_id,
@@ -428,13 +430,67 @@ def run_instrument(
         "assay: instrument=%s work=%s verdict=%s findings=%d",
         key, work_id, result.get("verdict"), len(findings),
     )
+    # Co-run shadow companions alongside the (non-shadow) primary run so the
+    # parity record accumulates.  A companion failure or claim conflict never
+    # affects the primary result — shadow is observation only.
+    if not is_shadow:
+        _run_shadow_companions(db, cfg, key, work_id, chapter_id, run_id)
     return db.get_assay_run(run_id)
+
+
+def _stamp_authority(
+    result: dict, instrument: dict, findings: list[dict], companion_of: str | None
+) -> bool:
+    """Stamp the computed authority on the run: blocking is derived from
+    (tier, certification) at execution time — an advisory instrument's
+    verdict is a measurement, never a gate decision.  Shadow runs and every
+    shadow finding are visibly labeled: recorded, never gating.  Returns
+    whether the instrument is in shadow."""
+    is_shadow = instrument["certification"] == "shadow"
+    evidence = result.get("evidence") or {}
+    evidence["authority"] = {
+        "tier": instrument["tier"],
+        "certification": instrument["certification"],
+        "blocking": is_blocking(instrument),
+        "shadow": is_shadow,
+    }
+    if companion_of is not None:
+        evidence["shadow_companion_of"] = companion_of
+    result["evidence"] = evidence
+    if is_shadow:
+        for f in findings:
+            f_ev = f.get("evidence") or {}
+            f_ev["shadow"] = True
+            f["evidence"] = f_ev
+    return is_shadow
+
+
+def _run_shadow_companions(
+    db: Any, cfg: Any, key: str, work_id: str, chapter_id: str | None, primary_run_id: str
+) -> None:
+    for companion in db.list_assay_shadow_companions(key):
+        try:
+            run_instrument(
+                db, cfg,
+                key=companion["key"],
+                work_id=work_id,
+                chapter_id=chapter_id,
+                companion_of=primary_run_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "assay: shadow companion %s failed alongside %s: %s",
+                companion["key"], key, exc,
+            )
 
 
 def _dispatch(
     db: Any, cfg: Any, instrument: dict, work_id: str, chapter_id: str | None
 ) -> dict:
-    key = instrument["key"]
+    # A shadow candidate shares its baseline's runner family (shadow_of)
+    # while using its OWN thresholds/scope — that is what makes a re-tuned
+    # detector testable in shadow before it may block.
+    key = instrument.get("shadow_of") or instrument["key"]
     thresholds = instrument["thresholds"]
     scope = instrument["scope"]
     if key == "voice.envelope":
@@ -934,6 +990,7 @@ __all__ = [
     "build_voice_baseline",
     "contract_public",
     "is_blocking",
+    "promotion",
     "run_instrument",
     "seed_instruments",
 ]

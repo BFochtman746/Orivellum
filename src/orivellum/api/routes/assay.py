@@ -134,6 +134,92 @@ def get_run(run_id: str):
     return {"run": run, "findings": db.list_assay_findings(run_id)}
 
 
+class DispositionRequest(BaseModel):
+    disposition: str = Field(pattern="^(open|true_positive|false_positive)$")
+    note: str = ""
+
+
+@router.patch("/assay/findings/{finding_id}/disposition")
+def disposition_finding(finding_id: str, req: DispositionRequest):
+    """The author's ratified verdict on a finding — the ground truth every
+    shadow instrument's precision is scored against."""
+    db = get_db()
+    if db.get_assay_finding(finding_id) is None:
+        raise HTTPException(status_code=404, detail="finding not found")
+    try:
+        # The dispositioner is the authenticated principal (single-author
+        # system) — never a caller-supplied name.
+        finding = db.set_assay_finding_disposition(
+            finding_id, req.disposition, actor="user", note=req.note
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"finding": finding}
+
+
+# ── PROMOTION (E10): shadow-mode certification ──────────────────────────────
+
+
+@router.get("/assay/promotion/dashboard")
+def promotion_dashboard():
+    """Per-instrument certification status, rolling precision against author
+    dispositions, and shadow/baseline parity."""
+    db = get_db()
+    assay.seed_instruments(db)
+    return {
+        "instruments": assay.promotion.dashboard(db),
+        "events": db.list_assay_certification_events(limit=50),
+    }
+
+
+@router.get("/assay/instruments/{key}/parity")
+def instrument_parity(key: str):
+    db = get_db()
+    instrument = db.get_assay_instrument(key)
+    if instrument is None:
+        raise HTTPException(status_code=404, detail="instrument not registered")
+    return {
+        "report": assay.promotion.instrument_report(db, instrument),
+        "events": db.list_assay_certification_events(instrument["id"]),
+    }
+
+
+class CertificationRequest(BaseModel):
+    note: str = ""
+
+
+@router.post("/assay/instruments/{key}/shadow")
+def instrument_enter_shadow(key: str, req: CertificationRequest):
+    db = get_db()
+    try:
+        instrument = assay.promotion.enter_shadow(db, key, actor="user", note=req.note)
+    except assay.promotion.PromotionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"instrument": assay.contract_public(instrument)}
+
+
+@router.post("/assay/instruments/{key}/promote")
+def instrument_promote(key: str, req: CertificationRequest):
+    """Threshold + author signature: the signer is the authenticated
+    principal, and the precision evidence is checked server-side."""
+    db = get_db()
+    try:
+        instrument = assay.promotion.promote(db, key, author="user", note=req.note)
+    except assay.promotion.PromotionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"instrument": assay.contract_public(instrument)}
+
+
+@router.post("/assay/instruments/{key}/demote")
+def instrument_demote(key: str, req: CertificationRequest):
+    db = get_db()
+    try:
+        instrument = assay.promotion.demote(db, key, author="user", note=req.note)
+    except assay.promotion.PromotionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"instrument": assay.contract_public(instrument)}
+
+
 class SignatureRequest(BaseModel):
     decision: str = Field(default="open", pattern="^(open|go|no_go)$")
     note: str = ""

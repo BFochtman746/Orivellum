@@ -7635,7 +7635,20 @@ class OrivellumDB:
         Contract fields are updated on re-seed, but the certification status
         is PRESERVED — promotion is a separate governed workflow, never a
         side effect of registration.  Returns the instrument id.
+
+        Registration can NEVER set certification: a contract carrying a
+        ``certification`` field is refused outright, so an uncertified
+        instrument cannot be registered straight into blocking authority.
+        ``shadow_of`` (optional) names the certified baseline instrument the
+        candidate shadows; it must not point at itself.
         """
+        if "certification" in contract:
+            raise ValueError(
+                "registration cannot set certification — use set_assay_certification"
+            )
+        shadow_of = contract.get("shadow_of")
+        if shadow_of is not None and shadow_of == contract["key"]:
+            raise ValueError("shadow_of cannot point at the instrument itself")
         now = _now()
         with self._lock:
             row = self._conn.execute(
@@ -7645,7 +7658,8 @@ class OrivellumDB:
                 self._conn.execute(
                     """UPDATE assay_instrument SET name=?, purpose=?, tier=?, variance=?,
                        allowed_ops=?, forbidden_ops=?, authority_relationship=?,
-                       output_schema=?, scope=?, thresholds=?, origin=?, updated_at=?
+                       output_schema=?, scope=?, thresholds=?, origin=?, shadow_of=?,
+                       updated_at=?
                        WHERE key=?""",
                     (
                         contract["name"], contract.get("purpose", ""),
@@ -7656,7 +7670,7 @@ class OrivellumDB:
                         json.dumps(contract.get("output_schema", {})),
                         json.dumps(contract.get("scope", {})),
                         json.dumps(contract.get("thresholds", {})),
-                        contract.get("origin", ""), now, contract["key"],
+                        contract.get("origin", ""), shadow_of, now, contract["key"],
                     ),
                 )
                 self._conn.commit()
@@ -7665,8 +7679,9 @@ class OrivellumDB:
             self._conn.execute(
                 """INSERT INTO assay_instrument(id, key, name, purpose, tier, variance,
                    certification, allowed_ops, forbidden_ops, authority_relationship,
-                   output_schema, scope, thresholds, origin, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,'advisory',?,?,?,?,?,?,?,?,?)""",
+                   output_schema, scope, thresholds, origin, shadow_of,
+                   created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,'advisory',?,?,?,?,?,?,?,?,?,?)""",
                 (
                     instrument_id, contract["key"], contract["name"],
                     contract.get("purpose", ""), int(contract["tier"]),
@@ -7677,11 +7692,96 @@ class OrivellumDB:
                     json.dumps(contract.get("output_schema", {})),
                     json.dumps(contract.get("scope", {})),
                     json.dumps(contract.get("thresholds", {})),
-                    contract.get("origin", ""), now, now,
+                    contract.get("origin", ""), shadow_of, now, now,
                 ),
             )
             self._conn.commit()
             return instrument_id
+
+    # Legal certification transitions.  set_assay_certification is the ONLY
+    # write path for the certification column — registration always inserts
+    # 'advisory' and re-seeding preserves whatever is stored.
+    _ASSAY_CERT_TRANSITIONS: dict[str, frozenset[str]] = {
+        "advisory": frozenset({"shadow", "retired"}),
+        "shadow": frozenset({"certified", "advisory", "retired"}),
+        "certified": frozenset({"shadow", "retired"}),
+        "retired": frozenset({"shadow"}),
+    }
+
+    def set_assay_certification(
+        self,
+        key: str,
+        to_status: str,
+        *,
+        actor: str,
+        note: str = "",
+        precision: float | None = None,
+        sample_size: int | None = None,
+    ) -> dict:
+        """Move an instrument through its certification lifecycle — ledgered.
+
+        Validates the transition against ``_ASSAY_CERT_TRANSITIONS``, refuses
+        to certify Tier 3 (advisory forever), then updates the column and
+        appends one ``assay_certification_event`` row atomically inside a
+        governed write.  Returns the updated instrument.  Raises ValueError
+        on any illegal transition.
+        """
+        instrument = self.get_assay_instrument(key)
+        if instrument is None:
+            raise ValueError(f"instrument {key!r} is not registered")
+        frm = instrument["certification"]
+        allowed = self._ASSAY_CERT_TRANSITIONS.get(frm, frozenset())
+        if to_status not in allowed:
+            raise ValueError(f"illegal certification transition {frm!r} -> {to_status!r}")
+        if to_status == "certified" and int(instrument["tier"]) == 3:
+            raise ValueError("Tier 3 instruments are advisory forever and cannot be certified")
+        now = _now()
+        with self.governed_write(
+            operation="assay.certification_changed",
+            event_type="assay.certification_changed",
+            object_id=instrument["id"],
+            object_type="assay_instrument",
+            actor=actor,
+            detail=f"{key}: {frm} -> {to_status}",
+        ):
+            self._conn.execute(
+                "UPDATE assay_instrument SET certification=?, updated_at=? WHERE key=?",
+                (to_status, now, key),
+            )
+            self._conn.execute(
+                """INSERT INTO assay_certification_event(id, instrument_id, from_status,
+                   to_status, actor, precision_val, sample_size, note, created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    _uuid(), instrument["id"], frm, to_status, actor,
+                    precision, sample_size, note, now,
+                ),
+            )
+        return self.get_assay_instrument(key)  # type: ignore[return-value]
+
+    def list_assay_certification_events(
+        self, instrument_id: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        query = "SELECT * FROM assay_certification_event"
+        params: list[Any] = []
+        if instrument_id:
+            query += " WHERE instrument_id=?"
+            params.append(instrument_id)
+        query += " ORDER BY created_at DESC, rowid DESC LIMIT ?"
+        params.append(max(1, min(int(limit), 500)))
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_assay_shadow_companions(self, of_key: str) -> list[dict]:
+        """Shadow-status instruments that declare ``shadow_of`` = of_key."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM assay_instrument
+                   WHERE shadow_of=? AND certification='shadow' ORDER BY key""",
+                (of_key,),
+            ).fetchall()
+        return [self._assay_instrument_row(r) for r in rows]
 
     @staticmethod
     def _assay_instrument_row(row: Any) -> dict:
@@ -7837,6 +7937,61 @@ class OrivellumDB:
             d["evidence"] = json.loads(d["evidence"] or "{}")
             out.append(d)
         return out
+
+    def get_assay_finding(self, finding_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM assay_finding WHERE id=?", (finding_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["evidence"] = json.loads(d["evidence"] or "{}")
+        return d
+
+    def set_assay_finding_disposition(
+        self, finding_id: str, disposition: str, *, actor: str, note: str = ""
+    ) -> dict:
+        """Record the author's ratified verdict on a finding.
+
+        Dispositions are the ground truth precision is computed against:
+        'true_positive' (the finding was real) or 'false_positive' (a false
+        alarm); 'open' reverts to undispositioned.  Governed + audited.
+        """
+        if disposition not in ("open", "true_positive", "false_positive"):
+            raise ValueError(f"invalid disposition {disposition!r}")
+        finding = self.get_assay_finding(finding_id)
+        if finding is None:
+            raise ValueError(f"finding {finding_id!r} not found")
+        now = _now() if disposition != "open" else None
+        with self.governed_write(
+            operation="assay.finding.dispositioned",
+            event_type="assay.finding.dispositioned",
+            object_id=finding_id,
+            object_type="assay_finding",
+            actor=actor,
+            detail=f"{finding['force_check']}: {disposition}",
+        ):
+            self._conn.execute(
+                """UPDATE assay_finding SET disposition=?, disposition_note=?,
+                   dispositioned_at=? WHERE id=?""",
+                (disposition, note, now, finding_id),
+            )
+        return self.get_assay_finding(finding_id)  # type: ignore[return-value]
+
+    def list_assay_dispositions(self, instrument_id: str, limit: int = 200) -> list[dict]:
+        """Dispositioned findings for one instrument, oldest first (for the
+        rolling-precision series)."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, disposition, dispositioned_at, severity, unit, issue_type
+                   FROM assay_finding
+                   WHERE instrument_id=? AND disposition != 'open'
+                     AND dispositioned_at IS NOT NULL
+                   ORDER BY dispositioned_at ASC, rowid ASC LIMIT ?""",
+                (instrument_id, max(1, min(int(limit), 1000))),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def create_assay_signature(
         self,

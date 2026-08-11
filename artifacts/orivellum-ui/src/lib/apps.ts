@@ -110,6 +110,7 @@ export const APPS: AppDef[] = [
       { name: "Review", href: "/review" },
       { name: "Governance", href: "/governance" },
       { name: "Calibration", href: "/mcos" },
+      { name: "Certification", href: "/assay" },
       { name: "Backups", href: "/backups" },
     ],
     own: [
@@ -120,6 +121,7 @@ export const APPS: AppDef[] = [
       "/review",
       "/governance",
       "/mcos",
+      "/assay",
       "/backups",
     ],
   },

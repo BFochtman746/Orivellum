@@ -32,6 +32,7 @@ import CommandHub from '@/pages/command/index';
 import GovernancePage from '@/pages/governance/index';
 import ReviewPage from '@/pages/review/index';
 import Mcos from '@/pages/mcos/index';
+import AssayPromotion from '@/pages/assay/index';
 import BooksPage from '@/pages/books/index';
 import CanonPage from '@/pages/canon/index';
 import WritingArchitectPage from '@/pages/writing-architect/index';
@@ -147,6 +148,7 @@ function RoutedPages() {
         <Route path="/command">{() => <RouteWithBoundary component={CommandHub} />}</Route>
         <Route path="/system">{() => <RouteWithBoundary component={System} />}</Route>
         <Route path="/mcos">{() => <RouteWithBoundary component={Mcos} />}</Route>
+        <Route path="/assay">{() => <RouteWithBoundary component={AssayPromotion} />}</Route>
         <Route path="/governance">{() => <RouteWithBoundary component={GovernancePage} />}</Route>
         <Route path="/review">{() => <RouteWithBoundary component={ReviewPage} />}</Route>
         <Route path="/books">{() => <RouteWithBoundary component={BooksPage} />}</Route>
