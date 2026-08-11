@@ -86,6 +86,7 @@ class OrivellumDB:
     def __init__(self, path: str) -> None:
         self._path = path
         self._lock = threading.RLock()
+        self._suspend_commit = False  # True inside atomic() — see _maybe_commit
         self._local = threading.local()  # per-thread read connections
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
@@ -544,6 +545,35 @@ class OrivellumDB:
                VALUES(?,?,?,?,?,?)""",
             (_uuid(), event_type, object_id, object_type, json.dumps(payload or {}), _now()),
         )
+
+    def _maybe_commit(self) -> None:
+        """Commit unless an :meth:`atomic` transaction is in progress."""
+        if not self._suspend_commit:
+            self._conn.commit()
+
+    @contextmanager
+    def atomic(self) -> Generator[None, None, None]:
+        """Group multiple mutation-method calls into ONE transaction.
+
+        Holds the DB lock for the whole block; participating methods (those
+        that commit via ``_maybe_commit``) defer their commits.  On success
+        everything commits once; on ANY exception the whole transaction is
+        rolled back and the exception re-raised — no partial state survives.
+        Nested ``atomic`` blocks join the outermost transaction.
+        """
+        with self._lock:
+            if self._suspend_commit:  # nested — join the outer transaction
+                yield
+                return
+            self._suspend_commit = True
+            try:
+                yield
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+            finally:
+                self._suspend_commit = False
 
     @contextmanager
     def governed_write(
@@ -7087,7 +7117,7 @@ class OrivellumDB:
                     _now(),
                 ),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return nid
 
     def update_graph_node_attributes(self, node_id: str, attributes: dict) -> None:
@@ -7097,7 +7127,7 @@ class OrivellumDB:
                 "UPDATE graph_node SET attributes=? WHERE id=?",
                 (_jdump(attributes or {}), node_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def set_graph_node_canon(self, node_id: str, canon_fact_id: str | None) -> None:
         """Link (or unlink) a node to the sealed canon fact it instantiates."""
@@ -7106,7 +7136,7 @@ class OrivellumDB:
                 "UPDATE graph_node SET canon_fact_id=? WHERE id=?",
                 (canon_fact_id, node_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def create_graph_edge(
         self,
@@ -7150,7 +7180,7 @@ class OrivellumDB:
                     _now(),
                 ),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return eid
 
     def list_graph_nodes(
@@ -7226,7 +7256,7 @@ class OrivellumDB:
             )
             self._conn.execute("DELETE FROM graph_edge WHERE chapter_id=?", (chapter_id,))
             self._conn.execute("DELETE FROM graph_node WHERE chapter_id=?", (chapter_id,))
-            self._conn.commit()
+            self._maybe_commit()
 
     def delete_graph_inconsistencies_for_chapter(self, chapter_id: str) -> None:
         """Drop the inconsistencies RAISED BY one chapter (before re-verify)."""
@@ -7234,7 +7264,7 @@ class OrivellumDB:
             self._conn.execute(
                 "DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,)
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def create_graph_inconsistency(
         self,
@@ -7279,7 +7309,7 @@ class OrivellumDB:
                     _now(),
                 ),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return iid
 
     def list_graph_inconsistencies(

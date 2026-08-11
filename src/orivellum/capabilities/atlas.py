@@ -859,27 +859,29 @@ def build_work_graph(
 
 
 def _commit_plan(db: OrivellumDB, *, work_id: str, plan: list[tuple]) -> None:
-    """Apply a fully staged rebuild plan.
+    """Apply a fully staged rebuild plan in ONE database transaction.
 
     Runs only after EVERY LLM call in the plan succeeded — deletions happen
-    here, never during staging, so a gateway failure can't leave the work
-    partially rebuilt.
+    here, never during staging.  ``db.atomic()`` makes the application
+    itself all-or-nothing too: any DB error mid-plan rolls the whole
+    transaction back, so no partial delete/rebuild ever survives.
     """
-    for op in plan:
-        if op[0] == "purge":
-            db.delete_graph_for_chapter(op[1])
-        elif op[0] == "replace":
-            _, chapter_id, staged_nodes, staged_edges, staged_incs = op
-            _commit_chapter(
-                db, work_id=work_id, chapter_id=chapter_id,
-                staged_nodes=staged_nodes, staged_edges=staged_edges,
-                staged_incs=staged_incs,
-            )
-        else:  # reverify
-            _, chapter_id, staged_incs = op
-            db.delete_graph_inconsistencies_for_chapter(chapter_id)
-            for inc in staged_incs:
-                db.create_graph_inconsistency(**inc)
+    with db.atomic():
+        for op in plan:
+            if op[0] == "purge":
+                db.delete_graph_for_chapter(op[1])
+            elif op[0] == "replace":
+                _, chapter_id, staged_nodes, staged_edges, staged_incs = op
+                _commit_chapter(
+                    db, work_id=work_id, chapter_id=chapter_id,
+                    staged_nodes=staged_nodes, staged_edges=staged_edges,
+                    staged_incs=staged_incs,
+                )
+            else:  # reverify
+                _, chapter_id, staged_incs = op
+                db.delete_graph_inconsistencies_for_chapter(chapter_id)
+                for inc in staged_incs:
+                    db.create_graph_inconsistency(**inc)
 
 
 def _staged_view(

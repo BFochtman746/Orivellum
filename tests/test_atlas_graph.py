@@ -21,6 +21,7 @@ Proves by assertion:
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 import uuid
@@ -346,7 +347,6 @@ class OffsetIntegrityTests(AtlasBase):
 
     def test_sql_layer_refuses_blank_evidence(self):
         """CHECK constraints hold even if the Python validators are bypassed."""
-        import sqlite3
 
         from orivellum.database.db import _now as now
 
@@ -1045,6 +1045,61 @@ class PartialRebuildAtomicityTests(AtlasBase):
         # … and NOTHING changed: nodes, edges, and both downstream
         # inconsistencies are exactly as before the failed rebuild.
         self.assertEqual(self._snapshot(), before)
+
+
+class CommitPhaseAtomicityTests(AtlasBase):
+    """A DB error DURING plan application must roll back the whole
+    transaction — never leave the graph partially deleted/rebuilt."""
+
+    _GOOD = {
+        "atlas.events": [],
+        "atlas.entities": [
+            {
+                "name": "Job of Uz",
+                "node_type": "Character",
+                "description": "…",
+                "evidence_quote": "Job of Uz rose before dawn",
+            }
+        ],
+        "atlas.relations": [],
+        "atlas.attributes": {},
+        "atlas.propose": [],
+    }
+
+    def test_db_error_mid_commit_rolls_back_everything(self):
+        _seed_chapter(self.db, self.work_id, 0, "One", _CH_TEXT)
+        _seed_chapter(self.db, self.work_id, 1, "Two", _CH_TEXT)
+        with patch("orivellum.capabilities.llm.llm_call", _StubLLM(dict(self._GOOD))):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        before = sorted(
+            (n["chapter_id"], n["name"], n["evidence_offset"])
+            for n in self.db.list_graph_nodes(work_ids=[self.work_id])
+        )
+        self.assertEqual(len(before), 2)  # one node per chapter
+
+        # Rebuild again, but the DB fails partway through phase 2 — after
+        # chapter 1's rows were already deleted and replaced.
+        real_create = self.db.create_graph_node
+        calls = {"n": 0}
+
+        def flaky_create(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] >= 2:  # second chapter's insert blows up
+                raise sqlite3.OperationalError("database or disk is full")
+            return real_create(*args, **kwargs)
+
+        with (
+            patch("orivellum.capabilities.llm.llm_call", _StubLLM(dict(self._GOOD))),
+            patch.object(self.db, "create_graph_node", side_effect=flaky_create),
+            self.assertRaises(sqlite3.OperationalError),
+        ):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        self.assertGreaterEqual(calls["n"], 2)  # failure happened mid-plan
+        after = sorted(
+            (n["chapter_id"], n["name"], n["evidence_offset"])
+            for n in self.db.list_graph_nodes(work_ids=[self.work_id])
+        )
+        self.assertEqual(after, before)
 
 
 class FirstImportOrderingTests(AtlasBase):
