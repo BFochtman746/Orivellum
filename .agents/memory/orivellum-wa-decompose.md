@@ -12,6 +12,8 @@ description: How the WRITING_ARCHITECT archive is turned into machine-readable r
 - Duplicate pairs (`NAME__1.docx`, `NAME 2`): canonical = largest file; differing variants are deferred "needs manual reconciliation" (task queued).
 - ENGINE_INDEX operator table (File/Purpose/When to Call/Runtime Status) backfills engine contract metadata; certification is runtime status like "On-Demand"/"Runtime Core", not PRESERVED-style keywords.
 - Real archive: 207 files → 143 extracted, 64 deferred, 131 records, 99 proposals, ~4s.
+- **Server cwd trap:** artifact workflows run from the artifact dir (e.g. `artifacts/api-server/`), NOT repo root — any route touching repo-relative paths like `attached_assets/` must anchor on `ROOT` from `configuration/config.py`. Normalize + containment-check caller paths BEFORE the existence check, or valid relative paths 404.
+- Default archive selection is newest-by-mtime (name sort picked `_BUILD_PACKAGE_` over the newer timestamped zip). `/api/wa/upload` streams zips into attached_assets (zip signature check, 500 MB cap, body-limit exempt); UI at `/architect` (Writing app nav).
 
 **Why:** downstream milestones (canon authority table, context compiler, ASSAY) consume these tables; breaking invariant 1 or 3 would grant unratified authority or destroy author decisions.
 **How to apply:** any consumer of wa_canon_proposals must filter status='approved'; any decomposer change must keep dispositions exhaustive and proposal ids deterministic.
