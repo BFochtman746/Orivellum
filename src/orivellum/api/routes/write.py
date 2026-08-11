@@ -247,24 +247,36 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
     cfg = get_config()
     db = get_db()
 
-    # Verify document exists
+    # Verify document exists (work_id scopes knowledge pulls to this book)
     with db._lock:
-        row = db._conn.execute("SELECT title FROM write_documents WHERE id=?", (doc_id,)).fetchone()
+        row = db._conn.execute(
+            "SELECT title, work_id FROM write_documents WHERE id=?", (doc_id,)
+        ).fetchone()
     if not row:
         raise HTTPException(404, "Document not found")
+    doc_work_id = row["work_id"]
 
     cmd = body.command.lower().strip()
 
     # ── from_knowledge: inject relevant items from the knowledge base ─────────
     if cmd == "from_knowledge":
         query = body.selection or body.instruction or body.document_text[:200]
+        # Scope to the document's Work so canon never leaks across books
+        # (audit D-10); unlinked documents fall back to the global base.
+        # Order by confidence so the strongest facts are offered first.
+        where = "k.review_status != 'rejected'"
+        params: tuple = ()
+        if doc_work_id:
+            where += " AND k.work_id = ?"
+            params = (doc_work_id,)
         with db._lock:
             items = db._conn.execute(
-                """SELECT k.title, k.description
-                   FROM knowledge k
-                   WHERE k.review_status != 'rejected'
-                   ORDER BY k.created_at DESC
-                   LIMIT 20"""
+                f"""SELECT k.kind, k.subject, k.text
+                    FROM knowledge k
+                    WHERE {where}
+                    ORDER BY k.confidence DESC, k.created_at DESC
+                    LIMIT 20""",
+                params,
             ).fetchall()
         if not items:
 
@@ -273,7 +285,10 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
 
             return StreamingResponse(_no_knowledge(), media_type="text/event-stream")
 
-        knowledge_block = "\n".join(f"- **{r['title']}**: {r['description'] or ''}" for r in items)
+        knowledge_block = "\n".join(
+            f"- **{r['kind'].upper()}{': ' + r['subject'] if r['subject'] else ''}**: {r['text']}"
+            for r in items
+        )
         prompt = (
             f"Select the most relevant knowledge items for the following context "
             f"and format them as clean prose that can be inserted into the document.\n\n"

@@ -1,4 +1,4 @@
-"""Book pipeline AI stage workers — B0 through B5.
+"""Book pipeline AI stage workers — B0–B3 planning + B6/B7 review stages.
 
 Each worker:
   1. Compiles a bounded context package from the Work's documents, knowledge,
@@ -6,8 +6,14 @@ Each worker:
   2. Calls the LLM with a stage-specific prompt (from the prompt registry or
      a hardcoded default).
   3. Stores the structured result as a pipeline artifact.
-  4. For B4/B5 also creates governance findings on the pipeline so the
+  4. For B6/B7 also creates governance findings on the pipeline so the
      state-machine blocker check prevents advancing past broken stages.
+
+Stage semantics follow ``BOOK_STAGE_LABELS`` in ``state_machine.py`` — B4 is
+Chapter Extraction (handled by ``chapters.py``, no LLM worker) and B5 is
+Chapter Drafting (no worker yet); the continuity and fact-check reviews run
+at B6 and B7.  ``_assert_stage_alignment()`` enforces this at import time so
+the two tables can never silently drift again (audit defect D-01).
 
 Entry point: ``run_stage_worker(pipeline_id, stage, db, cfg)``
 """
@@ -33,9 +39,40 @@ _STAGE_CFG: dict[str, tuple[str, str, str]] = {
     "B1": ("chapter_outline", "pipeline.b1.outline", "Chapter Outline"),
     "B2": ("research_agenda", "pipeline.b2.research", "Research Agenda"),
     "B3": ("architecture", "pipeline.b3.architecture", "Architecture"),
-    "B4": ("continuity_report", "pipeline.b4.continuity", "Continuity Review"),
-    "B5": ("fact_check_report", "pipeline.b5.factcheck", "Fact Check"),
+    "B6": ("continuity_report", "pipeline.b6.continuity", "Continuity Review"),
+    "B7": ("fact_check_report", "pipeline.b7.factcheck", "Fact Check"),
 }
+
+
+def _assert_stage_alignment() -> None:
+    """Fail loudly at import if worker stages drift from the canonical labels.
+
+    Two invariants (audit D-01 — the off-by-two bug this prevents):
+    1. Every worker stage key must be a declared B-stage.
+    2. If a worker's display label IS one of the canonical stage labels, it
+       must be the label of the SAME stage key — a "Continuity Review" worker
+       registered under B4 (whose canonical label is "Chapter Extraction")
+       is exactly the drift that shipped broken findings.
+    """
+    from orivellum.capabilities.state_machine import BOOK_STAGE_LABELS
+
+    canonical_by_label = {v: k for k, v in BOOK_STAGE_LABELS.items()}
+    for stage, (artifact_type, _slot, label) in _STAGE_CFG.items():
+        if stage not in BOOK_STAGE_LABELS:
+            raise RuntimeError(
+                f"pipeline_workers._STAGE_CFG defines unknown stage {stage!r} "
+                f"(artifact {artifact_type!r}) — not in BOOK_STAGE_LABELS"
+            )
+        owner = canonical_by_label.get(label)
+        if owner is not None and owner != stage:
+            raise RuntimeError(
+                f"pipeline_workers._STAGE_CFG stage {stage!r} is labelled "
+                f"{label!r}, but that is the canonical label of stage {owner!r} "
+                f"— stage mapping has drifted (D-01)"
+            )
+
+
+_assert_stage_alignment()
 
 # ── JSON extraction helper ─────────────────────────────────────────────────────
 
@@ -113,8 +150,9 @@ def compile_stage_context(pipeline_id: str, stage: str, db: OrivellumDB) -> dict
         {"kind": r["kind"], "text": r["text"], "subject": r["subject"] or ""} for r in k_rows
     ]
 
-    # Prior artifacts for all stages before this one
-    stage_order = ["B0", "B1", "B2", "B3", "B4", "B5"]
+    # Prior artifacts for all stages before this one (B4/B5 have no LLM
+    # workers — chapter extraction and drafting — so they never appear here)
+    stage_order = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
     prior_artifacts: dict[str, Any] = {}
     if stage in stage_order:
         idx = stage_order.index(stage)
@@ -255,7 +293,7 @@ Design the book's structural architecture. Produce JSON:
 }}"""
 
 
-def _b4_prompt(ctx: dict) -> str:
+def _b6_prompt(ctx: dict) -> str:
     arch = ctx["prior_artifacts"].get("B3", {})
     return f"""Work: {ctx["work_title"]}
 Architecture: {json.dumps(arch, ensure_ascii=False)[:800]}
@@ -280,7 +318,7 @@ Produce JSON:
 }}"""
 
 
-def _b5_prompt(ctx: dict) -> str:
+def _b7_prompt(ctx: dict) -> str:
     arch = ctx["prior_artifacts"].get("B3", {})
     return f"""Work: {ctx["work_title"]}
 Architecture: {json.dumps(arch, ensure_ascii=False)[:600]}
@@ -312,8 +350,8 @@ _PROMPT_BUILDERS = {
     "B1": _b1_prompt,
     "B2": _b2_prompt,
     "B3": _b3_prompt,
-    "B4": _b4_prompt,
-    "B5": _b5_prompt,
+    "B6": _b6_prompt,
+    "B7": _b7_prompt,
 }
 
 
@@ -346,8 +384,8 @@ def _call_llm(
     return parsed
 
 
-def _post_b4(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
-    """Create high-severity findings for each B4 continuity issue."""
+def _post_b6(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
+    """Create high-severity findings for each B6 continuity issue."""
     for issue in content.get("issues", []):
         sev = issue.get("severity", "medium").lower()
         if sev not in ("high", "critical", "medium", "low"):
@@ -356,7 +394,7 @@ def _post_b4(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
             object_id=pipeline_id,
             object_type="book_pipeline",
             description=(
-                f"[B4 Continuity] {issue.get('chapter_a', '?')} ↔ "
+                f"[B6 Continuity] {issue.get('chapter_a', '?')} ↔ "
                 f"{issue.get('chapter_b', '?')}: {issue.get('description', '')[:200]}"
             ),
             kind="continuity",
@@ -364,8 +402,8 @@ def _post_b4(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
         )
 
 
-def _post_b5(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
-    """Create findings for each B5 unverified claim."""
+def _post_b7(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
+    """Create findings for each B7 unverified claim."""
     for claim in content.get("unverified_claims", []):
         sev = claim.get("severity", "medium").lower()
         if sev not in ("high", "critical", "medium", "low"):
@@ -374,7 +412,7 @@ def _post_b5(pipeline_id: str, content: dict, db: OrivellumDB) -> None:
             object_id=pipeline_id,
             object_type="book_pipeline",
             description=(
-                f"[B5 Fact Check] {claim.get('chapter', '?')}: "
+                f"[B7 Fact Check] {claim.get('chapter', '?')}: "
                 f"{claim.get('claim', '')[:150]} — {claim.get('reason', '')[:150]}"
             ),
             kind="fact_check",
@@ -424,10 +462,10 @@ def run_stage_worker(
         content = _call_llm(user_prompt, db, cfg, purpose=f"pipeline.{stage.lower()}.worker")
 
         # Post-processing: create findings for continuity / fact-check stages
-        if stage == "B4":
-            _post_b4(pipeline_id, content, db)
-        elif stage == "B5":
-            _post_b5(pipeline_id, content, db)
+        if stage == "B6":
+            _post_b6(pipeline_id, content, db)
+        elif stage == "B7":
+            _post_b7(pipeline_id, content, db)
 
         db.upsert_pipeline_artifact(pipeline_id, stage, artifact_type, content, status="done")
         logger.info("Pipeline worker done stage=%s pipeline=%s", stage, pipeline_id[:8])

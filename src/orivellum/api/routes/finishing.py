@@ -91,7 +91,9 @@ class ChapterAdd(BaseModel):
 class EpigraphDraft(BaseModel):
     soul: str = ""
     in_world: str = ""
-    gateway: str = "mock"
+    # "lemonade" = the real LLM gateway (abstains on failure, never fabricates);
+    # "mock" remains available for offline/deterministic use.
+    gateway: str = "lemonade"
     want_quote: bool = False
 
 
@@ -308,7 +310,9 @@ class AtelierBookCreate(BaseModel):
 class CoverGenerate(BaseModel):
     versions: int = 3
     mood: str = ""
-    gateway: str = "mock"
+    # "lemonade" = the real image pipeline; versions record ABSTAINED when the
+    # image backend is unreachable instead of pretending an asset exists.
+    gateway: str = "lemonade"
 
 
 class SealDesign(BaseModel):

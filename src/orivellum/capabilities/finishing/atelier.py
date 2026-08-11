@@ -349,9 +349,10 @@ def generate_covers(
     cover_list = engine.cover_versions(brief, n=versions)
     out = []
     for v in cover_list:
+        notes = f"{v.notes} [asset: {v.asset_ref}]" if v.asset_ref else v.notes
         conn.execute(
             "INSERT INTO atelier_cover_version (book,version_id,prompt,status,notes,at) VALUES (?,?,?,?,?,?)",
-            (slug, v.version_id, v.prompt, v.status, v.notes, _now()),
+            (slug, v.version_id, v.prompt, v.status, notes, _now()),
         )
         out.append(
             {"version_id": v.version_id, "prompt": v.prompt, "status": v.status, "notes": v.notes}

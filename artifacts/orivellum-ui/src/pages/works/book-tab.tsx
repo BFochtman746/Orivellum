@@ -153,8 +153,8 @@ const STAGE_WORKER_LABELS: Record<string, string> = {
   B1: "Generate Chapter Outline",
   B2: "Build Research Agenda",
   B3: "Design Architecture",
-  B4: "Run Continuity Check",
-  B5: "Run Fact Check",
+  B6: "Run Continuity Check",
+  B7: "Run Fact Check",
 };
 
 /** Human-readable artifact type labels for the display panel. */
@@ -643,7 +643,7 @@ function PipelinePanel({ workId }: { workId: string }) {
           </div>
         )}
 
-        {/* AI stage worker section — shown for B0–B5 */}
+        {/* AI stage worker section — shown for stages with an AI worker */}
         {hasWorker && (
           <div className="space-y-2 pt-1 border-t border-border/30">
             {/* Run button — shown when no artifact, failed, or to retry */}

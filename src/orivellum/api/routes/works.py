@@ -1197,9 +1197,11 @@ def _check_stage_gate(
     """
     gate_key = (current, next_state)
 
-    # ── B0–B5: AI stage artifact must be completed before advancing ──────────────
-    # Workers are defined for B0–B5; each stage's artifact must be status='done'.
-    _ARTIFACT_REQUIRED_FOR = {"B0", "B1", "B2", "B3", "B4", "B5"}
+    # ── AI stage artifact must be completed before advancing ─────────────────────
+    # Workers exist for B0–B3 (planning) and B6/B7 (continuity + fact check);
+    # each of those stages' artifacts must be status='done'.  B4 (Chapter
+    # Extraction) and B5 (Chapter Drafting) have no LLM worker.
+    _ARTIFACT_REQUIRED_FOR = {"B0", "B1", "B2", "B3", "B6", "B7"}
     if current in _ARTIFACT_REQUIRED_FOR and pipeline_id:
         try:
             artifact = db.get_pipeline_artifact(pipeline_id, current)
@@ -1438,11 +1440,12 @@ async def run_pipeline_stage(work_id: str):
     Compiles context from the Work's documents and knowledge, calls the LLM,
     stores the result as a ``pipeline_artifact``, and returns it.
 
-    For B4 (Continuity Review) and B5 (Fact Check), also creates governance
+    For B6 (Continuity Review) and B7 (Fact Check), also creates governance
     findings on the pipeline for each detected issue; those findings will block
     ``advance_pipeline`` via the state-machine blocker check until resolved.
 
-    Returns 409 when the current stage has no worker (B6 and later).
+    Returns 409 when the current stage has no worker (e.g. B4 Chapter
+    Extraction, B5 Chapter Drafting, and B8 onward).
     The endpoint blocks until the LLM call completes (up to 45 s).
     """
     from starlette.concurrency import run_in_threadpool
@@ -1470,9 +1473,10 @@ async def run_pipeline_stage(work_id: str):
         raise internal_error(logger, exc, "load pipeline_workers module") from exc
 
     if stage not in _STAGE_CFG:
+        available = ", ".join(sorted(_STAGE_CFG))
         raise HTTPException(
             409,
-            f"No AI worker defined for stage {stage!r}. Workers are available for B0–B5.",
+            f"No AI worker defined for stage {stage!r}. Workers are available for: {available}.",
         )
 
     cfg = get_config()
