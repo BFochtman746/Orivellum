@@ -24,6 +24,7 @@ import {
   fetchServerListeningPositions,
   mergeListeningProgress,
   createServerPositionsFetcher,
+  useListeningProgressBadges,
   splitTextForTts,
 } from "@/lib/read-aloud";
 
@@ -634,5 +635,61 @@ describe("clock-skew and fetch convergence", () => {
     expect(call).toBe(2); // stale response was not trusted as final
     expect(updates[updates.length - 1]).toEqual({}); // converged to post-DELETE state
     fetcher.dispose();
+  });
+});
+
+// ── Live badge lifecycle (useListeningProgressBadges) ─────────────────────────
+//
+// The Library's resume badges must react to the player's same-tab
+// position-changed event — a listen can finish while the Library is on
+// screen (the dock is global), and the badge must vanish WITHOUT a tab
+// switch or focus change. Renders the real hook next to the real engine.
+
+function BadgeList() {
+  const progress = useListeningProgressBadges();
+  return (
+    <div>
+      {Object.entries(progress).map(([id, p]) => (
+        <span key={id} data-testid={`badge-${id}`}>
+          Part {p.part + 1} of {p.partCount}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+describe("live resume badges", () => {
+  it("shows a badge when a position is saved and clears it the moment the listen finishes", async () => {
+    const utils = render(
+      <ReadAloudProvider>
+        <Harness />
+        <BadgeList />
+      </ReadAloudProvider>,
+    );
+    expect(utils.queryByTestId("badge-doc1")).toBeNull();
+
+    await act(async () => {
+      await ctx.startText({ title: "T", text: TWO_PART_TEXT, resumeKey: "doc1" });
+    });
+    // Reaching the last part saves a position → badge appears immediately.
+    await act(async () => { await ctx.goToPart(1, false); });
+    expect(utils.getByTestId("badge-doc1").textContent).toBe("Part 2 of 2");
+
+    // The last part ends → the engine clears the save and notifies. The badge
+    // must disappear with NO focus/visibility/storage event (no tab switch).
+    await act(async () => { ctx.onEnded(); });
+    expect(utils.queryByTestId("badge-doc1")).toBeNull();
+  });
+
+  it("never renders a badge for a corrupt record with part >= partCount", () => {
+    seedSavedPos("corrupt", { part: 3, time: 0, partCount: 3, savedAt: Date.now() });
+    seedSavedPos("good", { part: 1, time: 0, partCount: 3, savedAt: Date.now() });
+    const utils = render(
+      <ReadAloudProvider>
+        <BadgeList />
+      </ReadAloudProvider>,
+    );
+    expect(utils.queryByTestId("badge-corrupt")).toBeNull();
+    expect(utils.getByTestId("badge-good")).toBeTruthy();
   });
 });

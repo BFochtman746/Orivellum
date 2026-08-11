@@ -24,12 +24,8 @@ import {
   BookHeadphones,
 } from "lucide-react";
 import {
-  createServerPositionsFetcher,
-  listSavedListeningProgress,
-  mergeListeningProgress,
-  RA_POS_CHANGED_EVENT,
+  useListeningProgressBadges,
   type ListeningProgress,
-  type ServerListeningPositions,
 } from "@/lib/read-aloud";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -973,50 +969,10 @@ export default function Library() {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
 
-  // Saved Read Aloud positions: localStorage (fast, always available) merged
-  // with the server-synced copies so a listen started on another device shows
-  // a resume badge here too (freshest saved_at wins per document). Refreshed
-  // when the player saves/clears a position in THIS tab (the dock is global,
-  // so a listen can finish while the Library is visible), when the tab
-  // regains focus, and via the storage event for changes made in other tabs.
-  // Position changes also re-fetch the server batch, so a position deleted on
-  // either side clears the badge within one round-trip.
-  const [listenProgress, setListenProgress] = useState<Record<string, ListeningProgress>>(() => listSavedListeningProgress());
-  const serverPosRef = useRef<ServerListeningPositions | null>(null);
-  useEffect(() => {
-    let fetchTimer: ReturnType<typeof setTimeout> | null = null;
-    // Single-flight + queued-refetch fetcher: an event arriving mid-fetch
-    // always triggers one more fetch after the current one resolves, so a
-    // fire-and-forget PUT/DELETE that lands during the flight is re-read.
-    const fetcher = createServerPositionsFetcher((server) => {
-      serverPosRef.current = server;
-      setListenProgress(mergeListeningProgress(server));
-    });
-    const refresh = (delayMs = 0) => {
-      // Instant re-merge from the last known server copy + current local state.
-      setListenProgress(mergeListeningProgress(serverPosRef.current));
-      // Re-fetch the server batch; position-change events delay it slightly so
-      // the player's fire-and-forget PUT/DELETE has landed before we read.
-      if (fetchTimer) clearTimeout(fetchTimer);
-      if (delayMs > 0) fetchTimer = setTimeout(fetcher.request, delayMs);
-      else fetcher.request();
-    };
-    const onFocusEvent = () => refresh();
-    const onPosEvent = () => refresh(1200);
-    refresh();
-    window.addEventListener(RA_POS_CHANGED_EVENT, onPosEvent);
-    window.addEventListener("storage", onPosEvent);
-    window.addEventListener("focus", onFocusEvent);
-    document.addEventListener("visibilitychange", onFocusEvent);
-    return () => {
-      fetcher.dispose();
-      if (fetchTimer) clearTimeout(fetchTimer);
-      window.removeEventListener(RA_POS_CHANGED_EVENT, onPosEvent);
-      window.removeEventListener("storage", onPosEvent);
-      window.removeEventListener("focus", onFocusEvent);
-      document.removeEventListener("visibilitychange", onFocusEvent);
-    };
-  }, []);
+  // Live resume-listening badges: localStorage merged with the server-synced
+  // positions, kept fresh by the player's position-change events (no tab
+  // switch needed) — see useListeningProgressBadges in lib/read-aloud.tsx.
+  const listenProgress = useListeningProgressBadges();
   const searchStr = useSearch();
   const openImport = new URLSearchParams(searchStr).get("import") === "1";
   // Tier filter pre-selected from URL (e.g. linked from dashboard scorecard tiles)

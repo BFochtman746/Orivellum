@@ -242,6 +242,52 @@ export function mergeListeningProgress(
   return out;
 }
 
+/** Live resume-badge state for document lists (Library cards, etc.).
+ *
+ *  Starts from localStorage, merges in the server-synced batch (freshest
+ *  saved_at wins — see mergeListeningProgress), and stays fresh without a tab
+ *  switch: the player fires RA_POS_CHANGED_EVENT whenever it stores or clears
+ *  a position (the dock is global, so a listen can finish while the list is
+ *  on screen), other tabs arrive via the storage event, and focus/visibility
+ *  re-fetch the server copy. Position-change events delay the server re-fetch
+ *  slightly so the player's fire-and-forget PUT/DELETE lands before we read. */
+export function useListeningProgressBadges(): Record<string, ListeningProgress> {
+  const [progress, setProgress] = useState<Record<string, ListeningProgress>>(
+    () => listSavedListeningProgress(),
+  );
+  const serverRef = useRef<ServerListeningPositions | null>(null);
+  useEffect(() => {
+    let fetchTimer: ReturnType<typeof setTimeout> | null = null;
+    const fetcher = createServerPositionsFetcher((server) => {
+      serverRef.current = server;
+      setProgress(mergeListeningProgress(server));
+    });
+    const refresh = (delayMs = 0) => {
+      // Instant re-merge from the last known server copy + current local state.
+      setProgress(mergeListeningProgress(serverRef.current));
+      if (fetchTimer) clearTimeout(fetchTimer);
+      if (delayMs > 0) fetchTimer = setTimeout(fetcher.request, delayMs);
+      else fetcher.request();
+    };
+    const onFocusEvent = () => refresh();
+    const onPosEvent = () => refresh(1200);
+    refresh();
+    window.addEventListener(RA_POS_CHANGED_EVENT, onPosEvent);
+    window.addEventListener("storage", onPosEvent);
+    window.addEventListener("focus", onFocusEvent);
+    document.addEventListener("visibilitychange", onFocusEvent);
+    return () => {
+      fetcher.dispose();
+      if (fetchTimer) clearTimeout(fetchTimer);
+      window.removeEventListener(RA_POS_CHANGED_EVENT, onPosEvent);
+      window.removeEventListener("storage", onPosEvent);
+      window.removeEventListener("focus", onFocusEvent);
+      document.removeEventListener("visibilitychange", onFocusEvent);
+    };
+  }, []);
+  return progress;
+}
+
 /** Single-flight batch fetcher that always converges: a request made while a
  *  fetch is in flight queues exactly one follow-up fetch, so state written by
  *  a fire-and-forget PUT/DELETE during the flight is always re-read (an
