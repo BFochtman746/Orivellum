@@ -79,10 +79,18 @@ or is relabelled IDEA-ONLY.
 # G3 — Canon Seed (World, Pillar 1)
 
 ## Canon facts (tiered)
-| Fact | Tier (HISTORICAL / INFERRED / INVENTED) | source_pointer (required for HISTORICAL & INFERRED) |
-|------|-----------------------------------------|-----------------------------------------------------|
-| <<FILL>> | <<FILL>> | <<FILL>> |
-| <<FILL>> | <<FILL>> | <<FILL>> |
+| Fact | Tier (HISTORICAL / INFERRED / INVENTED) | source_pointer | Scope (WORK / SERIES) |
+|------|-----------------------------------------|----------------|-----------------------|
+| <<FILL>> | <<FILL>> | <<FILL>> | WORK |
+| <<FILL>> | <<FILL>> | <<FILL>> | WORK |
+
+Rules (enforced when the gate passes — every row becomes a signed canon fact):
+- HISTORICAL rows need a source_pointer (scripture ref or source document).
+- INFERRED rows must cite the fact rows they derive from as #N refs in
+  source_pointer (e.g. `#1, #2`); extra text is kept as the source.
+- INVENTED rows are signed by the gate author automatically.
+- Scope SERIES makes the fact hold across the whole trilogy; WORK (default)
+  scopes it to this book only.
 
 ## Research-question backlog
 - <<FILL>>

@@ -2579,4 +2579,42 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS wa_canon_status ON wa_canon_proposals(status, scope);
     """,
     ),
+    # v123 — Canon authority (Masterpiece Pipeline Part 2.1).
+    #
+    # canon_fact — the single authority substrate for the trilogy: every fact
+    # carries a mandatory classification (HISTORICAL / INFERRED / INVENTED),
+    # a source reference, and an author signature.  work_id NULL means the
+    # fact holds series-wide (all three books).  Revisions are explicit:
+    # a new fact must name the fact it supersedes; silent overwrite is
+    # impossible because there is no UPDATE path for statement/classification.
+    # Insert-path guards live in database/canon_store.py.
+    (
+        123,
+        "Canon authority: classified, sourced, signed facts (series-scoped)",
+        """
+        CREATE TABLE IF NOT EXISTS canon_fact (
+            id                  TEXT PRIMARY KEY,
+            work_id             TEXT,
+            statement           TEXT NOT NULL,
+            classification      TEXT NOT NULL
+                CHECK (classification IN ('HISTORICAL','INFERRED','INVENTED')),
+            source_ref          TEXT NOT NULL DEFAULT '',
+            parent_ids          TEXT NOT NULL DEFAULT '[]',
+            established_chapter INTEGER,
+            established_offset  INTEGER,
+            supersedes          TEXT,
+            status              TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active','superseded','retracted')),
+            signed_by           TEXT NOT NULL DEFAULT '',
+            origin              TEXT NOT NULL DEFAULT 'author',
+            proposal_id         TEXT,
+            retracted_by        TEXT,
+            retracted_at        TEXT,
+            created_at          TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_canon_work_class
+            ON canon_fact(work_id, classification, status);
+        CREATE INDEX IF NOT EXISTS idx_canon_supersedes ON canon_fact(supersedes);
+    """,
+    ),
 ]

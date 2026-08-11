@@ -100,3 +100,4 @@
 - [PDF→Excel protocol](orivellum-pdf-excel.md) — verified-or-refused: no silent truncation, occurrence-aware bidirectional channel compare, parser ceilings; auto review on every upload (workbench_auto_review).
 - [Operations runner](orivellum-operations.md) — run_token claim fencing on every transition; atomic reset-in-claim; pause reverts steps to pending; lifespan-decorator capture lesson.
 - [WA decomposition M0](orivellum-wa-decompose.md) — proposal-only canon, exhaustive file dispositions, deterministic proposal ids so re-runs never clobber ratifications.
+- [Canon authority](orivellum-canon-authority.md) — CanonStore guards are the only write path; batch seed + ratify claim/insert each ONE governed_write (rollback releases claims); series scope→NULL work, never guess.

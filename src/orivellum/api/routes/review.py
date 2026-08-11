@@ -28,8 +28,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 _DEFER_DAYS = 7
-_VALID_DECISIONS = {"approve", "reject", "defer"}
-_VALID_TYPES = {"knowledge", "reclassify", "suggestion", "duplicate", "quarantine", "noteblock"}
+_VALID_DECISIONS = {"approve", "reject", "defer", "reclassify"}
+_VALID_TYPES = {
+    "knowledge",
+    "reclassify",
+    "suggestion",
+    "duplicate",
+    "quarantine",
+    "noteblock",
+    "canon_fact",
+}
 
 
 def _now_iso() -> str:
@@ -279,6 +287,39 @@ def review_queue(limit: int = 200):
             }
         )
 
+    # 7. Machine-proposed canon facts awaiting author ratification
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT id, fact_title, fact_text, classification, scope,
+                      source_path, source_location, created_at
+               FROM wa_canon_proposals WHERE status='proposed'
+               ORDER BY created_at ASC LIMIT 300""",
+        ).fetchall()
+    for r in rows:
+        key = f"canon_fact:{r['id']}"
+        if key in deferred:
+            continue
+        items.append(
+            {
+                "id": key,
+                "item_type": "canon_fact",
+                "title": f"Canon fact ({r['classification']}): "
+                + (r["fact_title"] or (r["fact_text"] or "")[:60]),
+                "description": r["fact_text"],
+                # Canon is authority — surface it near the top (after security).
+                "confidence": 0.1,
+                "work_id": None,
+                "work_title": None,
+                "evidence": {
+                    "classification": r["classification"],
+                    "scope": r["scope"],
+                    "source_path": r["source_path"],
+                    "source_location": r["source_location"],
+                },
+                "created_at": r["created_at"],
+            }
+        )
+
     # Most uncertain first; None confidence treated as 0.5
     items.sort(key=lambda i: i["confidence"] if i["confidence"] is not None else 0.5)
     counts: dict[str, int] = {}
@@ -291,9 +332,16 @@ def review_queue(limit: int = 200):
 
 
 class ResolveBody(BaseModel):
-    decision: str  # approve | reject | defer
+    decision: str  # approve | reject | defer | reclassify (canon only)
     reason: str = ""
     canonical_doc_id: str | None = None  # duplicates: which doc survives on approve
+    # canon_fact ratification: the author may edit/reclassify while approving.
+    author: str = ""
+    classification: str | None = None  # HISTORICAL | INFERRED | INVENTED
+    statement: str | None = None
+    source_ref: str | None = None
+    work_id: str | None = None
+    parent_ids: list[str] | None = None
 
 
 _PENDING_SQL = {
@@ -302,6 +350,7 @@ _PENDING_SQL = {
     "duplicate": "SELECT 1 FROM doc_dupes WHERE id=? AND resolved=0",
     "quarantine": "SELECT 1 FROM documents WHERE id=? AND quarantined=1",
     "noteblock": "SELECT 1 FROM note_blocks WHERE id=? AND status='proposed'",
+    "canon_fact": "SELECT 1 FROM wa_canon_proposals WHERE id=? AND status='proposed'",
 }
 
 
@@ -341,23 +390,24 @@ def review_resolve(
         raise HTTPException(400, f"decision must be one of: {', '.join(sorted(_VALID_DECISIONS))}")
     if item_type not in _VALID_TYPES:
         raise HTTPException(400, f"unknown item type {item_type!r}")
+    if body.decision == "reclassify" and item_type != "canon_fact":
+        raise HTTPException(400, "reclassify only applies to canon_fact items")
 
     db = get_db()
 
+    resolvers = {
+        "canon_fact": lambda: _resolve_canon_fact(db, item_id, body),
+        "knowledge": lambda: _resolve_knowledge(db, item_id, body),
+        "reclassify": lambda: _resolve_reclassify(db, item_id, body, background_tasks),
+        "suggestion": lambda: _resolve_suggestion(db, item_id, body),
+        "quarantine": lambda: _resolve_quarantine(db, item_id, body, background_tasks),
+        "noteblock": lambda: _resolve_noteblock(db, item_id, body),
+        "duplicate": lambda: _resolve_duplicate(db, item_id, body),
+    }
     if body.decision == "defer":
         result = _defer(db, item_type, item_id, body.reason)
-    elif item_type == "knowledge":
-        result = _resolve_knowledge(db, item_id, body)
-    elif item_type == "reclassify":
-        result = _resolve_reclassify(db, item_id, body, background_tasks)
-    elif item_type == "suggestion":
-        result = _resolve_suggestion(db, item_id, body)
-    elif item_type == "quarantine":
-        result = _resolve_quarantine(db, item_id, body, background_tasks)
-    elif item_type == "noteblock":
-        result = _resolve_noteblock(db, item_id, body)
-    else:  # duplicate
-        result = _resolve_duplicate(db, item_id, body)
+    else:
+        result = resolvers[item_type]()
 
     db.audit(
         "review.resolved",
@@ -531,6 +581,52 @@ def _resolve_noteblock(db, item_id: str, body: ResolveBody) -> dict:
         "filed_paths": out["filed_paths"],
         "tasks_created": out["tasks_created"],
     }
+
+
+def _resolve_canon_fact(db, item_id: str, body: ResolveBody) -> dict:
+    """Ratify a machine-proposed canon fact.
+
+    approve/reclassify → write a signed canon_fact (reclassify lets the
+    author override the proposed classification); reject → dismiss it.
+    The proposal row is claimed first, so no fact enters canon twice.
+    """
+    from orivellum.database.canon_store import CanonFactError, CanonStore
+
+    # Canon decisions are author acts — a real signature is mandatory (the
+    # store enforces this too; checking here gives a clean 422 up front).
+    author = (body.author or "").strip()
+    if not author:
+        raise HTTPException(422, "Canon ratification requires your signature (author)")
+    if body.decision == "reject":
+        result = CanonStore(db).ratify_proposal(item_id, decision="reject", author=author)
+        if result["result"] == "not_found":
+            raise HTTPException(404, f"Canon proposal {item_id!r} not found")
+        if result["result"] == "conflict":
+            raise HTTPException(409, "Proposal was already resolved")
+        return {"ok": True, "decision": "reject"}
+
+    # approve or reclassify — both write a fact; reclassify supplies a new class.
+    classification = body.classification
+    if body.decision == "reclassify" and not classification:
+        raise HTTPException(400, "reclassify requires a target classification")
+    try:
+        result = CanonStore(db).ratify_proposal(
+            item_id,
+            decision="approve",
+            author=author,
+            classification=classification,
+            statement=body.statement,
+            source_ref=body.source_ref,
+            work_id=body.work_id,
+            parent_ids=body.parent_ids,
+        )
+    except CanonFactError as e:
+        raise HTTPException(422, str(e)) from e
+    if result["result"] == "not_found":
+        raise HTTPException(404, f"Canon proposal {item_id!r} not found")
+    if result["result"] == "conflict":
+        raise HTTPException(409, "Proposal was already resolved")
+    return {"ok": True, "decision": body.decision, "fact": result["fact"]}
 
 
 def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:

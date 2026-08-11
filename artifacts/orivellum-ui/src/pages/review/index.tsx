@@ -25,6 +25,7 @@ import {
   RefreshCw, Copy, FileQuestion, Lightbulb, Loader2, ExternalLink,
   ShieldAlert,
   NotebookPen,
+  ScrollText,
 } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -33,7 +34,7 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 interface ReviewItem {
   id: string;
-  item_type: "knowledge" | "reclassify" | "suggestion" | "duplicate" | "quarantine" | "noteblock";
+  item_type: "knowledge" | "reclassify" | "suggestion" | "duplicate" | "quarantine" | "noteblock" | "canon_fact";
   title: string;
   description: string;
   confidence: number | null;
@@ -92,7 +93,15 @@ const TYPE_META: Record<ReviewItem["item_type"], {
     badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
     borderStyle: { borderLeftColor: 'var(--gilt)' },
   },
+  canon_fact: {
+    label: "Canon fact", icon: ScrollText,
+    badgeCls: "border",
+    badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gilt)' },
+  },
 };
+
+const CLASSIFICATIONS = ["HISTORICAL", "INFERRED", "INVENTED"] as const;
 
 type TypeFilter = "all" | ReviewItem["item_type"];
 
@@ -175,6 +184,24 @@ function EvidenceLine({ item }: { item: ReviewItem }) {
         );
       }
     }
+  } else if (item.item_type === "canon_fact") {
+    if (ev.classification) {
+      parts.push(
+        <span key="class" className="font-mono text-[11px]">{String(ev.classification)}</span>,
+      );
+    }
+    if (ev.scope) {
+      parts.push(
+        <span key="scope" className="font-mono text-[11px]">scope: {String(ev.scope)}</span>,
+      );
+    }
+    if (ev.source_path) {
+      parts.push(
+        <span key="src" className="font-mono text-[11px]">
+          {String(ev.source_path)}{ev.source_location ? `#${String(ev.source_location)}` : ""}
+        </span>,
+      );
+    }
   } else if (item.item_type === "quarantine" && ev.doc_id) {
     parts.push(
       <Link key="doc" href={`/library/${ev.doc_id}`}
@@ -217,15 +244,26 @@ function EvidenceLine({ item }: { item: ReviewItem }) {
 // ── Card ──────────────────────────────────────────────────────────────────────
 
 function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => void }) {
-  const [pending, setPending] = useState<"approve" | "reject" | "defer" | null>(null);
+  const [pending, setPending] = useState<"approve" | "reject" | "defer" | "reclassify" | null>(null);
   const isDupe = item.item_type === "duplicate";
+  const isCanon = item.item_type === "canon_fact";
   const [canonical, setCanonical] = useState<string | null>(
     isDupe ? String(item.evidence?.doc_a_id ?? "") || null : null,
   );
+  // Canon ratification requires an author signature (and may reclassify).
+  const [author, setAuthor] = useState("");
+  const [reclass, setReclass] = useState<string>(
+    isCanon ? String(item.evidence?.classification ?? "HISTORICAL") : "HISTORICAL",
+  );
   const meta = TYPE_META[item.item_type];
   const Icon = meta.icon;
+  const origClass = isCanon ? String(item.evidence?.classification ?? "") : "";
 
-  const resolve = async (decision: "approve" | "reject" | "defer") => {
+  const resolve = async (decision: "approve" | "reject" | "defer" | "reclassify") => {
+    if (isCanon && decision !== "defer" && !author.trim()) {
+      toast.error("Canon decisions need your signature — enter your name first");
+      return;
+    }
     setPending(decision);
     try {
       const r = await apiFetch(`${BASE}/review/${item.id}/resolve`, {
@@ -237,12 +275,22 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
           ...(isDupe && decision === "approve" && canonical
             ? { canonical_doc_id: canonical }
             : {}),
+          ...(isCanon
+            ? {
+                author: author.trim(),
+                ...(decision === "reclassify" ? { classification: reclass } : {}),
+              }
+            : {}),
         }),
       });
-      if (!r.ok) throw new Error(`Resolve failed (${r.status})`);
+      if (!r.ok) {
+        const msg = await r.json().catch(() => null);
+        throw new Error(msg?.detail || `Resolve failed (${r.status})`);
+      }
       toast.success(
-        decision === "approve" ? "Approved" :
-        decision === "reject" ? "Rejected" : "Deferred for 7 days",
+        decision === "reject" ? "Rejected" :
+        decision === "defer" ? "Deferred for 7 days" :
+        isCanon ? "Ratified into canon" : "Approved",
       );
       onResolved();
     } catch (e) {
@@ -302,6 +350,40 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
         </div>
       )}
 
+      {isCanon && (
+        <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
+          <input
+            value={author}
+            onChange={(e) => setAuthor(e.target.value)}
+            placeholder="Sign as (author)"
+            className="h-8 px-2 rounded-md border bg-background text-xs w-40"
+            style={{ borderColor: 'var(--line-2)' }}
+            data-testid={`canon-author-${item.id}`}
+          />
+          <span className="text-muted-foreground">Reclassify:</span>
+          <select
+            value={reclass}
+            onChange={(e) => setReclass(e.target.value)}
+            className="h-8 px-2 rounded-md border bg-background text-xs"
+            style={{ borderColor: 'var(--line-2)' }}
+            data-testid={`canon-class-${item.id}`}>
+            {CLASSIFICATIONS.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          {reclass !== origClass && (
+            <Button size="sm" variant="outline" disabled={pending != null}
+                    onClick={() => resolve("reclassify")}
+                    className="h-8 gap-1.5 min-h-[36px]"
+                    style={{ color: 'var(--gilt)', borderColor: 'var(--line-2)' }}
+                    data-testid={`reclassify-${item.id}`}>
+              {pending === "reclassify" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScrollText className="w-3 h-3" />}
+              Ratify as {reclass}
+            </Button>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center gap-2 pt-1">
         <Button size="sm" variant="outline" disabled={pending != null}
                 onClick={() => resolve("approve")}
@@ -309,7 +391,7 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
                 style={{ color: 'var(--green-2)', borderColor: 'var(--line-2)' }}
                 data-testid={`approve-${item.id}`}>
           {pending === "approve" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />}
-          Approve
+          {isCanon ? "Ratify" : "Approve"}
         </Button>
         <Button size="sm" variant="outline" disabled={pending != null}
                 onClick={() => resolve("reject")}
@@ -335,6 +417,7 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
 
 const FILTERS: { key: TypeFilter; label: string }[] = [
   { key: "all",        label: "All" },
+  { key: "canon_fact", label: "Canon facts" },
   { key: "knowledge",  label: "AI knowledge" },
   { key: "suggestion", label: "Suggestions" },
   { key: "duplicate",  label: "Duplicates" },

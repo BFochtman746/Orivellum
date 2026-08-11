@@ -276,6 +276,7 @@ def record_gate(work_id: str, code: str, req: GateRequest, db=Depends(get_db)):
     if not req.author.strip():
         raise HTTPException(422, "author is required")
 
+    canon_seed = None
     # FA-05: the whole read-check-write sequence runs under the DB lock so two
     # concurrent gate requests cannot both pass on the same stage-status
     # snapshot and produce duplicate/conflicting ledger entries.
@@ -284,29 +285,13 @@ def record_gate(work_id: str, code: str, req: GateRequest, db=Depends(get_db)):
 
         # Order enforcement — cannot pass until all prior stages are PASSED
         if req.decision == "pass":
-            idx = STAGE_CODES.index(code)
-            for prior in STAGE_CODES[:idx]:
-                if ss.get(prior) != "PASSED":
-                    raise HTTPException(
-                        422,
-                        f"Blocked: {prior} must be PASSED before {code} can pass.",
-                    )
-            # Idempotency claim: re-passing an already-PASSED gate is a
-            # duplicate submit (double-click / retry) — reject it cleanly.
-            if ss.get(code) == "PASSED":
-                raise HTTPException(409, f"Gate {code} is already PASSED.")
+            art_content = _check_pass_preconditions(db, book["id"], code, ss)
 
-            # Check artifact is filled (no <<FILL>> placeholders)
-            art = db._conn.execute(
-                "SELECT content FROM genesis_artifacts WHERE book_id=? AND stage_code=?",
-                (book["id"], code),
-            ).fetchone()
-            if not art or not art["content"] or "<<FILL>>" in art["content"]:
-                raise HTTPException(
-                    422,
-                    f"Blocked: {code} artifact still contains <<FILL>> placeholders or is empty. "
-                    "Fill the template before passing the gate.",
-                )
+            # G3 Canon Seed: passing the gate writes the tiered fact table into
+            # the canon authority (canon_fact), classified/sourced/signed.
+            # Parse errors block the pass — no fact enters canon unchecked.
+            if code == "G3":
+                canon_seed = _seed_g3_canon(db, work_id, art_content, req.author)
 
         # Append-only gate record via ledger
         ledger_append(
@@ -338,7 +323,7 @@ def record_gate(work_id: str, code: str, req: GateRequest, db=Depends(get_db)):
         )
         db._conn.commit()
 
-    return {
+    resp = {
         "ok": True,
         "code": code,
         "decision": req.decision,
@@ -346,6 +331,43 @@ def record_gate(work_id: str, code: str, req: GateRequest, db=Depends(get_db)):
         "book_state": new_book_state,
         "next_stage": nxt,
     }
+    if canon_seed is not None:
+        resp["canon_seed"] = canon_seed
+    return resp
+
+
+def _check_pass_preconditions(db, book_id: str, code: str, ss: dict) -> str:
+    """Enforce gate-pass preconditions; returns the filled artifact content."""
+    idx = STAGE_CODES.index(code)
+    for prior in STAGE_CODES[:idx]:
+        if ss.get(prior) != "PASSED":
+            raise HTTPException(422, f"Blocked: {prior} must be PASSED before {code} can pass.")
+    # Idempotency claim: re-passing an already-PASSED gate is a duplicate
+    # submit (double-click / retry) — reject it cleanly.
+    if ss.get(code) == "PASSED":
+        raise HTTPException(409, f"Gate {code} is already PASSED.")
+    # Check artifact is filled (no <<FILL>> placeholders)
+    art = db._conn.execute(
+        "SELECT content FROM genesis_artifacts WHERE book_id=? AND stage_code=?",
+        (book_id, code),
+    ).fetchone()
+    if not art or not art["content"] or "<<FILL>>" in art["content"]:
+        raise HTTPException(
+            422,
+            f"Blocked: {code} artifact still contains <<FILL>> placeholders or is empty. "
+            "Fill the template before passing the gate.",
+        )
+    return art["content"]
+
+
+def _seed_g3_canon(db, work_id: str, content: str, author: str) -> dict:
+    """Write the G3 fact table into the canon authority; 422 blocks the pass."""
+    from orivellum.capabilities.genesis.canon_seed import seed_canon_facts
+
+    try:
+        return seed_canon_facts(db, work_id, content, author)
+    except ValueError as e:
+        raise HTTPException(422, f"Blocked: Canon Seed table invalid — {e}") from e
 
 
 @router.post("/{work_id}/genesis/seal")

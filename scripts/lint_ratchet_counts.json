@@ -281,7 +281,7 @@
   "E501": 2
  },
  "src/orivellum/capabilities/genesis/templates.py": {
-  "E501": 2
+  "E501": 1
  },
  "src/orivellum/capabilities/intake.py": {
   "C901": 3,
