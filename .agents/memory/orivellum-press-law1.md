@@ -11,7 +11,5 @@ Rule: chapter prose lives only in `book_chapters` (main DB). PRESS opens the mai
 
 **How to apply:**
 - PRESS may only own presentation state (`press_epigraph`, keyed book+number). Never reintroduce press-side prose or typed word counts.
-- Slots keyed by number go stale when the manuscript is renumbered/relinked: verify has `epigraph_slots_valid`, `get_book` exposes `orphan_epigraph_slots`, and clearing a slot must always be allowed even when its chapter is gone.
+- Slots carry the work_id they were authored against; a slot from another Work (relink) or a vanished chapter number is stale — it must fail verify and block sealing, never silently reattach to same-numbered prose in a different Work. Clearing a stale slot must always be allowed.
 - Legacy table lives on as `press_chapter_legacy` (migration in `cmd_init`, idempotent, ledger-noted).
-- Env quirk: plain `uv run` re-syncs WITHOUT dev extras and removes ruff — prefix every gate chain with `uv sync --extra dev -q`.
-- API login body is `{"key": $SESSION_SECRET}`, not `{"password": ...}`.

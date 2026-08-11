@@ -214,6 +214,36 @@ class PressTests(unittest.TestCase):
         vr = press.verify(slug)
         self.assertFalse(vr["checks"]["epigraph_slots_valid"])
 
+    def test_relink_never_reattaches_approved_epigraph_to_other_work(self):
+        # Both Works have a chapter 1 — the dangerous same-number case.
+        _seed_main_db(self._tmp.name, [(0, "Other Opening", _words(4000))], "other-work")
+        slug = _styled_book("Two Works")  # linked to WORK_ID, also has chapter 1
+        press.lock_style(slug, "Author X")
+        press.set_matter(slug, front=True, back=True)
+        press.set_epigraph_slot(slug, 1, has_epigraph=True)
+        press.draft_epigraph(slug, 1, soul="grief")
+        press.approve_epigraph(slug, 1, "Author X")
+        self.assertTrue(press.verify(slug)["passed"])
+        press.link_work(slug, "other-work")
+        vr = press.verify(slug)
+        # slot was authored for WORK_ID's chapter 1, not other-work's
+        self.assertFalse(vr["checks"]["epigraph_slots_valid"])
+        self.assertFalse(vr["passed"])
+        with self.assertRaises(ValueError):
+            press.seal_package(slug, "publisher", "production", "Author X")
+        # the approved text must not silently attach to the new Work's ch 1
+        book = press.get_book(slug)
+        self.assertFalse(book["chapters"][0]["has_epigraph"])
+        self.assertEqual(book["chapters"][0]["epigraph_text"], "")
+        self.assertEqual(book["orphan_epigraph_slots"], [1])
+        # recreating the slot for the new Work starts clean
+        press.set_epigraph_slot(slug, 1, has_epigraph=True)
+        book = press.get_book(slug)
+        self.assertEqual(book["chapters"][0]["epigraph_status"], "")
+        self.assertEqual(book["orphan_epigraph_slots"], [])
+        with self.assertRaises(ValueError):
+            press.approve_epigraph(slug, 1, "Author X")  # nothing drafted yet
+
     def test_verify_blocks_unapproved_epigraph(self):
         slug = _styled_book("Unapproved Epigraph")
         press.lock_style(slug, "Author X")

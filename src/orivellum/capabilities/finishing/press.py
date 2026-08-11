@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS press_book (
 );
 CREATE TABLE IF NOT EXISTS press_epigraph (
     book TEXT NOT NULL, number INTEGER NOT NULL,
+    work_id TEXT NOT NULL DEFAULT '',
     has_epigraph INTEGER NOT NULL DEFAULT 1,
     epigraph_text TEXT NOT NULL DEFAULT '', epigraph_status TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (book, number)
@@ -251,11 +252,18 @@ def _real_chapters(work_id: str) -> list[dict]:
 
 
 def _chapters_for_book(conn: sqlite3.Connection, slug: str, work_id: str) -> list[dict]:
-    """Real chapters merged with PRESS epigraph-slot state."""
+    """Real chapters merged with PRESS epigraph-slot state.
+
+    Only slots authored against the CURRENT linked Work are merged — a slot
+    written for a different Work's "chapter 3" must never silently attach to
+    this Work's chapter 3.
+    """
     chs = _real_chapters(work_id)
     slots = {
         r["number"]: dict(r)
-        for r in conn.execute("SELECT * FROM press_epigraph WHERE book=?", (slug,)).fetchall()
+        for r in conn.execute(
+            "SELECT * FROM press_epigraph WHERE book=? AND work_id=?", (slug, work_id)
+        ).fetchall()
     }
     for ch in chs:
         s = slots.get(ch["number"])
@@ -265,21 +273,26 @@ def _chapters_for_book(conn: sqlite3.Connection, slug: str, work_id: str) -> lis
     return chs
 
 
-def _orphan_slots(conn: sqlite3.Connection, slug: str, chapters: list[dict]) -> list[int]:
-    """Epigraph slots pointing at chapter numbers that no longer exist.
+def _orphan_slots(
+    conn: sqlite3.Connection, slug: str, work_id: str, chapters: list[dict]
+) -> list[int]:
+    """Epigraph slots that no longer map to a chapter of the CURRENT Work.
 
-    Chapters can be deleted or renumbered upstream (the manuscript is the
-    source of truth) — a stale slot must surface loudly, never be silently
-    dropped.
+    A slot is stale when its chapter number no longer exists, or when it was
+    authored against a different Work (the book was relinked). Either way it
+    must surface loudly and fail verification, never be silently dropped or
+    silently reattached to unrelated prose.
     """
     valid = {c["number"] for c in chapters}
-    return [
-        r["number"]
-        for r in conn.execute(
-            "SELECT number FROM press_epigraph WHERE book=? ORDER BY number", (slug,)
-        ).fetchall()
-        if r["number"] not in valid
-    ]
+    return sorted(
+        {
+            r["number"]
+            for r in conn.execute(
+                "SELECT number, work_id FROM press_epigraph WHERE book=?", (slug,)
+            ).fetchall()
+            if r["work_id"] != work_id or r["number"] not in valid
+        }
+    )
 
 
 def _ledger_append(conn: sqlite3.Connection, scope: str, kind: str, payload: Any) -> str:
@@ -309,6 +322,14 @@ def _migrate_legacy_chapters(conn: sqlite3.Connection) -> None:
     table is renamed to ``press_chapter_legacy`` so nothing is silently lost.
     Idempotent: does nothing once the rename has happened.
     """
+    # Older press_epigraph tables predate slot provenance — add the column.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(press_epigraph)").fetchall()}
+    if cols and "work_id" not in cols:
+        conn.execute("ALTER TABLE press_epigraph ADD COLUMN work_id TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            "UPDATE press_epigraph SET work_id="
+            "COALESCE((SELECT work_id FROM press_book WHERE slug=press_epigraph.book),'')"
+        )
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='press_chapter'"
     ).fetchone()
@@ -317,18 +338,23 @@ def _migrate_legacy_chapters(conn: sqlite3.Connection) -> None:
     moved = 0
     for r in conn.execute("SELECT * FROM press_chapter").fetchall():
         if r["has_epigraph"] or (r["epigraph_text"] or "").strip():
-            conn.execute(
+            book_work = conn.execute(
+                "SELECT work_id FROM press_book WHERE slug=?", (r["book"],)
+            ).fetchone()
+            cur = conn.execute(
                 "INSERT OR IGNORE INTO press_epigraph "
-                "(book,number,has_epigraph,epigraph_text,epigraph_status) VALUES (?,?,?,?,?)",
+                "(book,number,work_id,has_epigraph,epigraph_text,epigraph_status) "
+                "VALUES (?,?,?,?,?,?)",
                 (
                     r["book"],
                     r["number"],
+                    (book_work["work_id"] if book_work else "") or "",
                     1 if r["has_epigraph"] else 0,
                     r["epigraph_text"] or "",
                     r["epigraph_status"] or "",
                 ),
             )
-            moved += 1
+            moved += cur.rowcount
     conn.execute("ALTER TABLE press_chapter RENAME TO press_chapter_legacy")
     _ledger_append(
         conn,
@@ -368,7 +394,7 @@ def get_book(slug: str) -> dict | None:
     b = dict(row)
     b["style"] = json.loads(b["style"])
     b["chapters"] = _chapters_for_book(conn, slug, b["work_id"] or "")
-    b["orphan_epigraph_slots"] = _orphan_slots(conn, slug, b["chapters"])
+    b["orphan_epigraph_slots"] = _orphan_slots(conn, slug, b["work_id"] or "", b["chapters"])
     return b
 
 
@@ -461,10 +487,16 @@ def set_epigraph_slot(slug: str, number: int, has_epigraph: bool = True) -> dict
         # requires the chapter to actually exist in the manuscript.
         raise KeyError(f"Chapter {number} does not exist in the manuscript.")
     if has_epigraph:
+        # Slots carry the Work they were authored against. Recreating a slot
+        # after a relink resets any drafted/approved text — an epigraph
+        # written for another Work's prose is never carried over.
         conn.execute(
-            "INSERT INTO press_epigraph (book,number,has_epigraph) VALUES (?,?,1) "
-            "ON CONFLICT(book,number) DO UPDATE SET has_epigraph=1",
-            (slug, number),
+            "INSERT INTO press_epigraph (book,number,work_id,has_epigraph) VALUES (?,?,?,1) "
+            "ON CONFLICT(book,number) DO UPDATE SET has_epigraph=1, "
+            "epigraph_text=CASE WHEN work_id=excluded.work_id THEN epigraph_text ELSE '' END, "
+            "epigraph_status=CASE WHEN work_id=excluded.work_id THEN epigraph_status ELSE '' END, "
+            "work_id=excluded.work_id",
+            (slug, number, work_id),
         )
     else:
         conn.execute("DELETE FROM press_epigraph WHERE book=? AND number=?", (slug, number))
@@ -498,11 +530,11 @@ def draft_epigraph(
     if not ch:
         raise KeyError(f"Chapter {number} not found in the manuscript.")
     slot = conn.execute(
-        "SELECT * FROM press_epigraph WHERE book=? AND number=? AND has_epigraph=1",
-        (slug, number),
+        "SELECT * FROM press_epigraph WHERE book=? AND number=? AND has_epigraph=1 AND work_id=?",
+        (slug, number, row["work_id"] or ""),
     ).fetchone()
     if not slot:
-        raise ValueError("This chapter has no epigraph slot.")
+        raise ValueError("This chapter has no epigraph slot for the current manuscript.")
     engine = gw.get_gateway(gateway_name)
     res = engine.original_epigraph(
         {
@@ -528,11 +560,15 @@ def draft_epigraph(
 
 def approve_epigraph(slug: str, number: int, author: str) -> None:
     conn = _connect()
+    row = conn.execute("SELECT * FROM press_book WHERE slug=?", (slug,)).fetchone()
+    if not row:
+        raise KeyError(f"Book '{slug}' not found.")
     slot = conn.execute(
-        "SELECT * FROM press_epigraph WHERE book=? AND number=?", (slug, number)
+        "SELECT * FROM press_epigraph WHERE book=? AND number=? AND work_id=?",
+        (slug, number, row["work_id"] or ""),
     ).fetchone()
     if not slot or not slot["epigraph_text"]:
-        raise ValueError("No drafted epigraph to approve.")
+        raise ValueError("No drafted epigraph to approve for the current manuscript.")
     conn.execute(
         "UPDATE press_epigraph SET epigraph_status='APPROVED' WHERE book=? AND number=?",
         (slug, number),
@@ -572,7 +608,7 @@ def verify(slug: str) -> dict:
     work_id = b["work_id"] or ""
     chs = _chapters_for_book(conn, slug, work_id)
     nums = [c["number"] for c in chs]
-    orphans = _orphan_slots(conn, slug, chs)
+    orphans = _orphan_slots(conn, slug, work_id, chs)
     checks = {
         "style_locked": bool(b["style_locked"]),
         "linked_to_work": bool(work_id),
