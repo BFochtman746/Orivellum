@@ -99,3 +99,4 @@
 - [Workbench import + analyze](orivellum-workbench-import-analyze.md) — upload becomes v1 verbatim; analyze publishes report versions; submit_bg returns bool (release claims on False); xlsx zip-bomb guard.
 - [PDF→Excel protocol](orivellum-pdf-excel.md) — verified-or-refused: no silent truncation, occurrence-aware bidirectional channel compare, parser ceilings; auto review on every upload (workbench_auto_review).
 - [Operations runner](orivellum-operations.md) — run_token claim fencing on every transition; atomic reset-in-claim; pause reverts steps to pending; lifespan-decorator capture lesson.
+- [WA decomposition M0](orivellum-wa-decompose.md) — proposal-only canon, exhaustive file dispositions, deterministic proposal ids so re-runs never clobber ratifications.
