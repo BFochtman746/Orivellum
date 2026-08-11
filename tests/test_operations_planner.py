@@ -124,7 +124,9 @@ def test_missing_required_param_rejected(db, llm):
 
 def test_voice_with_unavailable_catalog_is_an_error(db, llm):
     saved = hooks.HOOKS.studio
-    hooks.configure(studio=None)
+    # configure(studio=None) is a deliberate no-op, so clear the hook directly
+    # (earlier tests in the same session may have configured the real studio).
+    hooks.HOOKS.studio = None
     try:
         db.create_work("My Book")
         llm.responses = [
