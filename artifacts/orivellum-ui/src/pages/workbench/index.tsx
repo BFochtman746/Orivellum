@@ -114,13 +114,15 @@ export default function WorkbenchPage() {
       const r = await apiFetch(url, { method: "POST", body: form });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((body as { detail?: string }).detail ?? "Import failed");
-      return { ...(body as { id: string }), isPdf };
+      return { ...(body as { id: string }), isPdf, isXlsx: /\.xlsx$/i.test(importFile.name) };
     },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["wb-projects"] });
       toast.success(res.isPdf
         ? "Transcribing the PDF into a verified workbook — this runs in the background"
-        : "Imported — the files are saved as v1 and a review is running");
+        : res.isXlsx
+          ? "Workbook saved as v1 — the review is running and will publish a findings report"
+          : "Imported — the files are saved as v1 and a review is running");
       setShowNew(false); setTitle(""); setBrief(""); setImportFile(null);
       navigate(`/workbench/${res.id}`);
     },
@@ -321,7 +323,11 @@ export default function WorkbenchPage() {
                 {importProject.isPending
                   ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
                   : <Upload className="h-4 w-4 mr-1" />}
-                {importFile && /\.pdf$/i.test(importFile.name) ? "Transcribe PDF → Excel" : "Import as v1"}
+                {importFile && /\.pdf$/i.test(importFile.name)
+                  ? "Transcribe PDF → Excel"
+                  : importFile && /\.xlsx$/i.test(importFile.name)
+                    ? "Review workbook"
+                    : "Import as v1"}
               </Button>
             )}
           </div>
