@@ -67,7 +67,6 @@ versions; execute generated tests for code versions.
 - Archive gate: `latest_proof_status` + `UnprovenError` → route 409 `{code:"unproven"}`; UI force-confirm retries with `{force:true}`.
 
 ## Code project self-tests (build loop)
-- Every code build (any language) must pass a generated test suite before a version publishes — non-Python files get Python tests that read/parse them; there is deliberately NO untested path to a good verdict. **Why:** completion review rejected a "skip if no .py files" carve-out as violating the guarantee.
-- Exit 0 is NOT a pass: require unittest's "Ran N tests" with N≥1, or empty/no-op suites silently certify garbage.
-- Tests run against an isolated copy of the output — a mutating test can only touch the throwaway copy, so a pass certifies the exact published bytes.
-- Sandbox runner lessons: preload real `unittest` before the project dir joins sys.path (a project unittest.py shadows it); strip the runner from sys.argv (unittest.main() parses argv); `python -I` + runpy never adds the script dir to sys.path.
+- Every code build (any language) must pass a generated test suite before a version publishes; non-Python files get file-verifying Python tests. **Why:** completion review rejected both a "skip if no .py files" carve-out and any untested path to a good verdict.
+- Never trust exit codes or printed output as proof tests ran — LLM-generated suites can be no-ops or print fake "Ran 1 test / OK" text. Only a trusted-runner result channel (token the test code cannot read) may certify a pass, and it must require >=1 test actually run.
+- Run tests against an isolated copy of the output so a mutating test can never certify different bytes than the published ones.

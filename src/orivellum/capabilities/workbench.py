@@ -44,7 +44,7 @@ import hashlib
 import json
 import logging
 import pathlib
-import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -322,36 +322,54 @@ def _generate_tests(cfg, db, proj: dict, instruction: str, out_dir: pathlib.Path
 
 
 def _test_runner_source() -> str:
-    """The Workshop sandbox runner, with the test file's directory put on
-    sys.path first — `python -I` + runpy never adds it, and the generated
-    tests must import the project's sibling modules."""
+    """The Workshop sandbox runner with its script-execution tail replaced by
+    a TRUSTED unittest harness: the runner itself loads the test module,
+    runs the suite through unittest's real loader/runner, and writes a
+    token-authenticated JSON result file. The parent only believes a result
+    carrying the per-run token (delivered via stdin, so neither test nor
+    project code can read it — not even from /proc/self/cmdline). Test/stdout
+    text can never spoof a pass.
+
+    The real `unittest` is imported before the project dir joins sys.path so
+    a project file named unittest.py cannot shadow the harness."""
     from orivellum.capabilities.workshop import _SANDBOX_RUNNER
 
     marker = 'runpy.run_path(sys.argv[1], run_name="__main__")'
     if marker not in _SANDBOX_RUNNER:  # runner contract changed — fail loudly
         raise RuntimeError("sandbox runner no longer matches the test-runner injection point")
-    return _SANDBOX_RUNNER.replace(
-        marker,
-        # Preload the REAL stdlib harness before the project dir joins
-        # sys.path — a project file named unittest.py must not be able to
-        # shadow it and turn the suite into a silent no-op. Strip the runner
-        # from argv too: unittest.main() parses sys.argv and would treat the
-        # test file path as a test-name selector.
-        "import os\n"
-        "import unittest  # noqa: F401 — preload before project dir shadows stdlib\n"
-        "_target = sys.argv[1]\n"
-        "sys.path.insert(0, os.path.dirname(os.path.abspath(_target)))\n"
-        "sys.argv = sys.argv[1:]\n"
-        'runpy.run_path(_target, run_name="__main__")',
+    harness = """\
+import importlib.util
+import json
+import os
+import unittest
+
+_target, _result_path = sys.argv[1], sys.argv[2]
+_token = sys.stdin.readline().strip()
+sys.argv = [_target]
+sys.path.insert(0, os.path.dirname(os.path.abspath(_target)))
+_spec = importlib.util.spec_from_file_location("project_tests_module", _target)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+_result = unittest.TextTestRunner(stream=sys.stderr, verbosity=1).run(
+    unittest.defaultTestLoader.loadTestsFromModule(_mod)
+)
+with open(_result_path, "w") as _f:
+    json.dump(
+        {"token": _token, "tests_run": _result.testsRun, "ok": _result.wasSuccessful()},
+        _f,
     )
+sys.exit(0 if (_result.wasSuccessful() and _result.testsRun >= 1) else 1)
+"""
+    return _SANDBOX_RUNNER.replace(marker, harness)
 
 
 def _run_project_tests(test_code: str, out_dir: pathlib.Path, workdir: pathlib.Path) -> dict:
     """Execute the generated test file in the build sandbox against an
     ISOLATED COPY of the built project — a test that mutates project files
     can only mutate the throwaway copy, so a pass always certifies the exact
-    bytes that get published. Exit 0 alone is not a pass: the suite must have
-    actually run at least one test (unittest's 'Ran N tests' line)."""
+    bytes that get published. A pass requires the trusted runner's
+    token-authenticated result file reporting >=1 test run and success —
+    exit codes and printed output alone can never certify a pass."""
     from orivellum.capabilities.workshop import _sandbox_env, _sandbox_preexec
 
     test_dir = workdir / "_testrun"
@@ -362,9 +380,13 @@ def _run_project_tests(test_code: str, out_dir: pathlib.Path, workdir: pathlib.P
     test_path.write_text(test_code, encoding="utf-8")
     runner_path = workdir / "_test_runner.py"
     runner_path.write_text(_test_runner_source(), encoding="utf-8")
+    token = secrets.token_hex(16)
+    result_path = workdir / "_test_result.json"
+    result_path.unlink(missing_ok=True)
     try:
         result = subprocess.run(
-            [sys.executable, "-I", str(runner_path), str(test_path)],
+            [sys.executable, "-I", str(runner_path), str(test_path), str(result_path)],
+            input=token + "\n",
             capture_output=True,
             text=True,
             timeout=_SCRIPT_TIMEOUT_S,
@@ -379,10 +401,24 @@ def _run_project_tests(test_code: str, out_dir: pathlib.Path, workdir: pathlib.P
             "tests_run": 0,
         }
     output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-    m = re.search(r"Ran (\d+) tests?", output)
-    tests_run = int(m.group(1)) if m else 0
-    passed = result.returncode == 0 and tests_run >= 1
-    if result.returncode == 0 and tests_run < 1:
+    report = None
+    try:
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("token") == token:
+            report = data
+    except (OSError, ValueError):
+        pass
+    if report is None:
+        return {
+            "passed": False,
+            "output": ("no trusted test result — the suite did not complete\n" + output)[
+                -_TEST_OUTPUT_CAP:
+            ],
+            "tests_run": 0,
+        }
+    tests_run = int(report.get("tests_run") or 0)
+    passed = result.returncode == 0 and report.get("ok") is True and tests_run >= 1
+    if tests_run < 1:
         output = "test suite ran no tests — exit 0 does not count as a pass\n" + output
     return {"passed": passed, "output": output[-_TEST_OUTPUT_CAP:], "tests_run": tests_run}
 

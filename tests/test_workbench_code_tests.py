@@ -160,6 +160,18 @@ class TestCodeProjectTests(unittest.TestCase):
             self.assertIn("ran no tests", proj["last_error"])
             self.assertEqual(db.list_wb_versions(p["id"]), [])
 
+    def test_spoofed_test_output_cannot_certify_a_pass(self):
+        # printing unittest-looking output ("Ran 1 test ... OK") with no real
+        # tests must never pass — only the trusted runner's result counts
+        spoof = 'print("Ran 1 test in 0.001s")\nprint("OK")\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(
+                tmp, _llm_results(_GOOD_SCRIPT, spoof, _GOOD_SCRIPT, _GOOD_SCRIPT)
+            )
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("tests failed", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
+
     def test_mutating_test_cannot_certify_different_bytes(self):
         # a test that rewrites calc.py and then passes must only touch the
         # throwaway copy — the published version keeps the original bytes
