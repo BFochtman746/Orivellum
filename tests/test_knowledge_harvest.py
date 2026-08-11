@@ -247,6 +247,39 @@ class TestLlmHarvestDBWrites(unittest.TestCase):
             )
         return count
 
+    # -- gap cache invalidation ------------------------------------------------
+
+    def test_warm_gap_cache_dropped_when_items_created(self):
+        """LLM harvest adds knowledge → the Work's cached coverage is stale
+        and must be dropped so the next read recomputes (task: keep the book
+        coverage report accurate after overnight AI extraction)."""
+        work = self.db.create_work(title="Cache Work")
+        self.db.cache_work_gaps(work["id"], gaps=[{"kind": "test"}], coverage_pct=42.0)
+
+        count = self._run_llm_harvest(_GOOD_LLM_RESPONSE, work_id=work["id"])
+        self.assertGreater(count, 0)
+
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT 1 FROM work_gap_cache WHERE work_id=?", (work["id"],)
+            ).fetchone()
+        self.assertIsNone(row, "warm gap cache survived an LLM harvest that added items")
+
+    def test_gap_cache_kept_when_nothing_created(self):
+        """An LLM harvest that produces no items must not throw away a
+        perfectly valid cached coverage result."""
+        work = self.db.create_work(title="Cache Work 2")
+        self.db.cache_work_gaps(work["id"], gaps=[{"kind": "test"}], coverage_pct=42.0)
+
+        count = self._run_llm_harvest(json.dumps({}), work_id=work["id"])
+        self.assertEqual(count, 0)
+
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT 1 FROM work_gap_cache WHERE work_id=?", (work["id"],)
+            ).fetchone()
+        self.assertIsNotNone(row, "gap cache dropped even though no items were created")
+
     # -- entities written correctly ------------------------------------------
 
     def test_entity_rows_created(self):
@@ -978,6 +1011,63 @@ class TestLlmHarvestByChapters(unittest.TestCase):
     def _insert_chapter(self, seq: int, text: str, title: str = "") -> None:
         """Convenience wrapper for a single chapter."""
         self._insert_chapters([{"seq": seq, "text": text, "title": title}])
+
+    # -- gap cache invalidation (chapter path) ---------------------------------
+
+    _FICTION_RESPONSE = json.dumps(
+        {
+            "characters": [{"name": "Mara", "role": "protagonist", "description": "A sailor"}],
+            "events": [{"text": "Mara sets sail at dawn.", "significance": "major"}],
+            "settings": [],
+            "relationships": [],
+            "themes": [],
+            "foreshadowing": [],
+        }
+    )
+
+    def test_warm_gap_cache_dropped_after_chapter_harvest(self):
+        """The chapter-first LLM harvest is the production path for novels —
+        it must drop the Work's warm coverage cache when it adds items."""
+        from orivellum.capabilities.knowledge_harvest import llm_harvest_by_chapters
+
+        work = self.db.create_work(title="Chapter Cache Work")
+        self.db.cache_work_gaps(work["id"], gaps=[{"kind": "test"}], coverage_pct=42.0)
+        self._insert_chapter(0, "Mara set sail at dawn. " * 40, "Chapter 1")
+
+        with patch(
+            "orivellum.capabilities.knowledge_harvest._call_llm_sync",
+            return_value=self._FICTION_RESPONSE,
+        ):
+            created = llm_harvest_by_chapters(
+                doc_id=self.doc_id, work_id=work["id"], doc_title="Test", db=self.db
+            )
+
+        self.assertGreater(created, 0)
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT 1 FROM work_gap_cache WHERE work_id=?", (work["id"],)
+            ).fetchone()
+        self.assertIsNone(row, "warm gap cache survived a chapter harvest that added items")
+
+    def test_gap_cache_kept_when_chapter_harvest_creates_nothing(self):
+        """A chapter harvest that yields no items must not evict a valid cache."""
+        from orivellum.capabilities.knowledge_harvest import llm_harvest_by_chapters
+
+        work = self.db.create_work(title="Chapter Cache Work 2")
+        self.db.cache_work_gaps(work["id"], gaps=[{"kind": "test"}], coverage_pct=42.0)
+        self._insert_chapter(0, "Mara set sail at dawn. " * 40, "Chapter 1")
+
+        with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", return_value=None):
+            created = llm_harvest_by_chapters(
+                doc_id=self.doc_id, work_id=work["id"], doc_title="Test", db=self.db
+            )
+
+        self.assertEqual(created, 0)
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT 1 FROM work_gap_cache WHERE work_id=?", (work["id"],)
+            ).fetchone()
+        self.assertIsNotNone(row, "gap cache dropped though no chapter items were created")
 
     def test_short_chapter_gets_one_llm_call(self):
         """A chapter shorter than _MAX_CHAPTER_CHARS needs exactly one LLM call."""

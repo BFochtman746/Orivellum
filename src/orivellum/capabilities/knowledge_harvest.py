@@ -264,6 +264,101 @@ def _parse_extraction(raw: str) -> dict:
         return {}
 
 
+def _build_harvest_chunks(result: ExtractionResult) -> list[str]:
+    """Build text chunks covering the FULL document for LLM harvest.
+
+    result.pages[:N] only covered the first N pages, silently dropping the
+    rest of a long novel.  Instead, we generate endpoint-inclusive windows
+    from result.full_text so the beginning AND the tail are always covered.
+
+    Chunking strategy:
+      • Fits in _MAX_HARVEST_CHUNKS sequential windows: sequential, no gaps.
+      • Longer: endpoint-inclusive interpolation — start positions range from
+        0 to (len - _MAX_CHUNK_CHARS), guaranteeing the last window ends at
+        the very end of the text.  Intermediate windows are evenly spaced.
+
+    This replaces result.pages[:5] (first 5 pages only) for non-chapter docs.
+    """
+    _full_text = (result.full_text or "").strip()
+    if not _full_text:
+        # Fallback: use page segments if full_text is absent
+        return [seg.text[:_MAX_CHUNK_CHARS] for seg in result.pages[:_MAX_HARVEST_CHUNKS]]
+
+    _total_len = len(_full_text)
+    if _total_len <= _MAX_HARVEST_CHUNKS * _MAX_CHUNK_CHARS:
+        # Short doc — sequential, non-overlapping windows, zero gap at tail
+        return [
+            _full_text[i : i + _MAX_CHUNK_CHARS] for i in range(0, _total_len, _MAX_CHUNK_CHARS)
+        ][:_MAX_HARVEST_CHUNKS]
+    if _MAX_HARVEST_CHUNKS == 1:
+        return [_full_text[:_MAX_CHUNK_CHARS]]
+    # Long doc — endpoint-inclusive interpolation:
+    # starts[0]=0, starts[-1]=_total_len-_MAX_CHUNK_CHARS
+    _tail = _total_len - _MAX_CHUNK_CHARS
+    return [
+        _full_text[
+            int(_tail * i / (_MAX_HARVEST_CHUNKS - 1)) : int(_tail * i / (_MAX_HARVEST_CHUNKS - 1))
+            + _MAX_CHUNK_CHARS
+        ]
+        for i in range(_MAX_HARVEST_CHUNKS)
+    ]
+
+
+def _resolve_harvest_template(db: OrivellumDB, kind: str | None, work_id: str | None) -> str:
+    """Resolve the extraction prompt template for a document.
+
+    Priority 1–3: user-defined extraction templates stored in the DB.
+    Priority 4: active MCOS prompt-registry template (slot 'harvest.extract').
+    Priority 5: hardcoded ``_EXTRACT_PROMPT`` fallback — never crashes harvest.
+    """
+    try:
+        et = db.get_template_for_doc(kind=kind, work_id=work_id)
+    except Exception as _te:
+        logger.debug("llm_harvest: template lookup failed (%s) — using defaults", _te)
+        et = None
+    if et:
+        # Build the effective prompt from the custom template.
+        # Custom templates must use {title} and {chunk} placeholders.
+        # field_hints, when present, are appended as bullet guidance.
+        hints: list[str] = et.get("field_hints") or []
+        hints_block = ""
+        if hints:
+            hints_block = "\n\nExtraction guidance for this document type:\n" + "\n".join(
+                f"  • {h}" for h in hints
+            )
+        logger.debug(
+            "llm_harvest: using custom template %r (id=%s) for kind=%s work=%s",
+            et.get("name"),
+            et.get("id", "")[:8],
+            kind,
+            work_id,
+        )
+        # Append the JSON output structure reminder so the parser can handle
+        # responses from any custom template that still uses our JSON schema.
+        return (
+            et["system_prompt"].rstrip()
+            + hints_block
+            + "\n\n"
+            + "Return ONLY valid JSON with this structure:\n"
+            + "{{\n"
+            + '  "entities": [{{"name": "...", "description": "..."}}],\n'
+            + '  "claims": [{{"text": "..."}}],\n'
+            + '  "relationships": [{{"subject": "...", "predicate": "...", "object": "..."}}\n'
+            + "]\n}}\n\n"
+            + "Document title: {title}\n\nChunk:\n{chunk}"
+        )
+    # Fall back through MCOS prompt registry then hardcoded constant.
+    # Same never-break rule as chat.base.  The template MUST keep the
+    # {title}/{chunk} placeholders and its literal JSON braces doubled ({{ }}).
+    try:
+        active = db.get_active_prompt("harvest.extract")
+        if active:
+            return active
+    except Exception:
+        pass
+    return _EXTRACT_PROMPT
+
+
 def llm_harvest(
     result: ExtractionResult,
     doc_id: str,
@@ -301,103 +396,68 @@ def llm_harvest(
     # Falls back to the module-level default if not set in config.
     timeout = getattr(cfg.serving, "extraction_timeout_sec", _EXTRACTION_TIMEOUT_SEC)
 
-    created = 0
-
-    # ── Build text chunks covering the FULL document ───────────────────────────
-    # result.pages[:N] only covered the first N pages, silently dropping the
-    # rest of a long novel.  Instead, we generate endpoint-inclusive windows
-    # from result.full_text so the beginning AND the tail are always covered.
-    #
-    # Chunking strategy:
-    #   • Fits in _MAX_HARVEST_CHUNKS sequential windows: sequential, no gaps.
-    #   • Longer: endpoint-inclusive interpolation — start positions range from
-    #     0 to (len - _MAX_CHUNK_CHARS), guaranteeing the last window ends at
-    #     the very end of the text.  Intermediate windows are evenly spaced.
-    #
-    # This replaces result.pages[:5] (first 5 pages only) for non-chapter docs.
-    _full_text = (result.full_text or "").strip()
-    if _full_text:
-        _total_len = len(_full_text)
-        if _total_len <= _MAX_HARVEST_CHUNKS * _MAX_CHUNK_CHARS:
-            # Short doc — sequential, non-overlapping windows, zero gap at tail
-            _chunk_texts: list[str] = [
-                _full_text[i : i + _MAX_CHUNK_CHARS] for i in range(0, _total_len, _MAX_CHUNK_CHARS)
-            ][:_MAX_HARVEST_CHUNKS]
-        elif _MAX_HARVEST_CHUNKS == 1:
-            _chunk_texts = [_full_text[:_MAX_CHUNK_CHARS]]
-        else:
-            # Long doc — endpoint-inclusive interpolation:
-            # starts[0]=0, starts[-1]=_total_len-_MAX_CHUNK_CHARS
-            _tail = _total_len - _MAX_CHUNK_CHARS
-            _chunk_texts = [
-                _full_text[
-                    int(_tail * i / (_MAX_HARVEST_CHUNKS - 1)) : int(
-                        _tail * i / (_MAX_HARVEST_CHUNKS - 1)
-                    )
-                    + _MAX_CHUNK_CHARS
-                ]
-                for i in range(_MAX_HARVEST_CHUNKS)
-            ]
-    else:
-        # Fallback: use page segments if full_text is absent
-        _chunk_texts = [seg.text[:_MAX_CHUNK_CHARS] for seg in result.pages[:_MAX_HARVEST_CHUNKS]]
-
-    # ── Template resolution ────────────────────────────────────────────────────
-    # Priority 1–3: user-defined extraction templates stored in the DB.
-    # Priority 4: active MCOS prompt-registry template (slot 'harvest.extract').
-    # Priority 5: hardcoded fallback — never crashes the harvest.
-    template = _EXTRACT_PROMPT
-    _using_custom_template = False
-    try:
-        et = db.get_template_for_doc(kind=kind, work_id=work_id)
-        if et:
-            # Build the effective prompt from the custom template.
-            # Custom templates must use {title} and {chunk} placeholders.
-            # field_hints, when present, are appended as bullet guidance.
-            hints: list[str] = et.get("field_hints") or []
-            hints_block = ""
-            if hints:
-                hints_block = "\n\nExtraction guidance for this document type:\n" + "\n".join(
-                    f"  • {h}" for h in hints
-                )
-            # Append the JSON output structure reminder so the parser can handle
-            # responses from any custom template that still uses our JSON schema.
-            template = (
-                et["system_prompt"].rstrip()
-                + hints_block
-                + "\n\n"
-                + "Return ONLY valid JSON with this structure:\n"
-                + "{{\n"
-                + '  "entities": [{{"name": "...", "description": "..."}}],\n'
-                + '  "claims": [{{"text": "..."}}],\n'
-                + '  "relationships": [{{"subject": "...", "predicate": "...", "object": "..."}}\n'
-                + "]\n}}\n\n"
-                + "Document title: {title}\n\nChunk:\n{chunk}"
-            )
-            _using_custom_template = True
-            logger.debug(
-                "llm_harvest: using custom template %r (id=%s) for kind=%s work=%s",
-                et.get("name"),
-                et.get("id", "")[:8],
-                kind,
-                work_id,
-            )
-    except Exception as _te:
-        logger.debug("llm_harvest: template lookup failed (%s) — using defaults", _te)
-
-    if not _using_custom_template:
-        # Fall back through MCOS prompt registry then hardcoded constant.
-        # Same never-break rule as chat.base.  The template MUST keep the
-        # {title}/{chunk} placeholders and its literal JSON braces doubled ({{ }}).
-        try:
-            active = db.get_active_prompt("harvest.extract")
-            if active:
-                template = active
-        except Exception:
-            template = _EXTRACT_PROMPT
+    _chunk_texts = _build_harvest_chunks(result)
+    template = _resolve_harvest_template(db, kind=kind, work_id=work_id)
 
     from orivellum.capabilities.shield import wrap as _shield_wrap
 
+    try:
+        created = _llm_harvest_chunks(
+            _chunk_texts,
+            template=template,
+            doc_id=doc_id,
+            work_id=work_id,
+            doc_title=doc_title,
+            base_url=base_url,
+            model=model,
+            timeout=timeout,
+            db=db,
+            shield_wrap=_shield_wrap,
+        )
+    except BaseException:
+        # An exception mid-loop may have landed AFTER successful item writes
+        # (callers swallow harvest errors), so drop the cache unconditionally
+        # — invalidating a still-valid cache only costs a recompute, while a
+        # stale one misreports coverage for the whole staleness window.
+        if work_id:
+            db.invalidate_gap_cache(work_id)
+        raise
+    # The Work's knowledge just grew — a warm gap/coverage cache computed
+    # before this harvest would understate coverage for up to the staleness
+    # window.  invalidate_gap_cache is best-effort and never raises.
+    if created and work_id:
+        db.invalidate_gap_cache(work_id)
+
+    logger.info(
+        "LLM-harvested %d knowledge items for doc %s (work=%s, chunks=%d)",
+        created,
+        doc_id,
+        work_id,
+        len(_chunk_texts),
+    )
+    return created
+
+
+def _llm_harvest_chunks(
+    _chunk_texts: list[str],
+    *,
+    template: str,
+    doc_id: str,
+    work_id: str | None,
+    doc_title: str,
+    base_url: str,
+    model: str,
+    timeout: int,
+    db: OrivellumDB,
+    shield_wrap,
+) -> int:
+    """Run the extraction prompt over *_chunk_texts* and write items to the DB.
+
+    Split out of :func:`llm_harvest` so the caller can wrap the whole writing
+    phase in try/finally for gap-cache invalidation.  Returns items created.
+    """
+    _shield_wrap = shield_wrap
+    created = 0
     for chunk_text in _chunk_texts:
         chunk_text = chunk_text.strip()
         if not chunk_text:
@@ -512,13 +572,6 @@ def llm_harvest(
             except Exception as _e:
                 logger.debug("llm relationship graph write non-fatal: %s", _e)
 
-    logger.info(
-        "LLM-harvested %d knowledge items for doc %s (work=%s, chunks=%d)",
-        created,
-        doc_id,
-        work_id,
-        len(_chunk_texts),
-    )
     return created
 
 
@@ -567,6 +620,26 @@ Chapter text (excerpt):
 
 
 def llm_harvest_by_chapters(
+    doc_id: str,
+    work_id: str | None,
+    doc_title: str,
+    db: OrivellumDB,
+) -> int:
+    """Chapter-level LLM extraction with gap-cache invalidation on every exit.
+
+    Thin wrapper around :func:`_llm_harvest_by_chapters_inner` so an exception
+    raised AFTER successful item writes (callers swallow harvest errors) still
+    drops the Work's warm gap/coverage cache — same rule as :func:`llm_harvest`.
+    """
+    try:
+        return _llm_harvest_by_chapters_inner(doc_id, work_id, doc_title, db)
+    except BaseException:
+        if work_id:
+            db.invalidate_gap_cache(work_id)
+        raise
+
+
+def _llm_harvest_by_chapters_inner(
     doc_id: str,
     work_id: str | None,
     doc_title: str,
@@ -872,4 +945,8 @@ def llm_harvest_by_chapters(
         len(chapter_rows),
         doc_id,
     )
+    # Same rule as llm_harvest: new items must drop the Work's warm
+    # gap/coverage cache so the next read reflects what the book now knows.
+    if total_created and work_id:
+        db.invalidate_gap_cache(work_id)
     return total_created
