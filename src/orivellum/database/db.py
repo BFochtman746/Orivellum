@@ -7386,6 +7386,173 @@ class OrivellumDB:
 
     # ── /ATLAS-O ──────────────────────────────────────────────────────────────
 
+    # ── ConStory narrative findings ───────────────────────────────────────────
+
+    NF_DISPOSITIONS = ("open", "fixed", "intentional", "wontfix")
+
+    def create_narrative_finding(
+        self,
+        *,
+        work_id: str,
+        chapter_id: str,
+        category: str,
+        subtype: str,
+        fact_quote: str,
+        fact_chapter: int,
+        fact_offset: int,
+        contradiction_quote: str,
+        contradiction_chapter: int,
+        contradiction_offset: int,
+        reasoning: str = "",
+        severity: str = "medium",
+        canon_class: str | None = None,
+        canon_fact_id: str | None = None,
+        detector: str = "constory",
+        dedupe_key: str = "",
+    ) -> str | None:
+        """Store one verified story contradiction (LAW 3 on both sides).
+
+        Returns the new id, or None when a finding with the same dedupe key
+        already exists for this work (re-runs never resurrect dispositioned
+        findings as fresh 'open' rows).
+        """
+        for label, quote in (("fact", fact_quote), ("contradiction", contradiction_quote)):
+            if not quote or not quote.strip():
+                raise ValueError(f"narrative finding requires a {label} quote (LAW 3)")
+        for label, off in (
+            ("fact_offset", fact_offset),
+            ("contradiction_offset", contradiction_offset),
+        ):
+            if not isinstance(off, int) or off < 0:
+                raise ValueError(f"narrative finding requires a non-negative {label}")
+        if not dedupe_key:
+            raise ValueError("narrative finding requires a dedupe_key")
+        fid = _uuid()
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO narrative_finding(id, work_id, chapter_id, category,
+                       subtype, fact_quote, fact_chapter, fact_offset,
+                       contradiction_quote, contradiction_chapter, contradiction_offset,
+                       reasoning, severity, canon_class, canon_fact_id,
+                       detector, dedupe_key, created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(work_id, dedupe_key) DO NOTHING""",
+                (
+                    fid,
+                    work_id,
+                    chapter_id,
+                    category,
+                    subtype,
+                    fact_quote,
+                    fact_chapter,
+                    fact_offset,
+                    contradiction_quote,
+                    contradiction_chapter,
+                    contradiction_offset,
+                    reasoning or "",
+                    severity,
+                    canon_class,
+                    canon_fact_id,
+                    detector,
+                    dedupe_key,
+                    _now(),
+                ),
+            )
+            self._maybe_commit()
+            return fid if cur.rowcount else None
+
+    def get_narrative_finding(self, finding_id: str) -> dict | None:
+        row = self.read_conn().execute(
+            "SELECT * FROM narrative_finding WHERE id=?", (finding_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_narrative_findings(
+        self,
+        work_id: str,
+        *,
+        chapter_id: str | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+        disposition: str | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        q = """SELECT nf.*, bc.seq AS chapter_seq, bc.title AS chapter_title
+               FROM narrative_finding nf
+               LEFT JOIN book_chapters bc ON bc.id = nf.chapter_id
+               WHERE nf.work_id=?"""
+        args: list = [work_id]
+        if chapter_id:
+            q += " AND nf.chapter_id=?"
+            args.append(chapter_id)
+        if category:
+            q += " AND nf.category=?"
+            args.append(category)
+        if severity:
+            q += " AND nf.severity=?"
+            args.append(severity)
+        if disposition:
+            q += " AND nf.disposition=?"
+            args.append(disposition)
+        q += """ ORDER BY CASE nf.severity
+                     WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+                     WHEN 'medium' THEN 2 ELSE 3 END,
+                 nf.contradiction_chapter, nf.contradiction_offset
+                 LIMIT ?"""
+        args.append(max(1, min(limit, 2000)))
+        rows = self.read_conn().execute(q, args).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_narrative_finding_disposition(
+        self,
+        finding_id: str,
+        disposition: str,
+        *,
+        note: str = "",
+        actor: str = "user",
+    ) -> dict | None:
+        """Set a finding's disposition.  'intentional' REQUIRES a note.
+
+        Atomic claim: the conditional UPDATE only fires when the row exists;
+        returns the updated row, or None when the finding is unknown.
+        """
+        if disposition not in self.NF_DISPOSITIONS:
+            raise ValueError(f"invalid disposition {disposition!r}")
+        note = (note or "").strip()
+        if disposition == "intentional" and not note:
+            raise ValueError("disposition 'intentional' requires a note")
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE narrative_finding
+                   SET disposition=?, disposition_note=?, disposition_by=?,
+                       disposition_at=?
+                   WHERE id=?""",
+                (disposition, note, actor, _now(), finding_id),
+            )
+            self._maybe_commit()
+            if not cur.rowcount:
+                return None
+        return self.get_narrative_finding(finding_id)
+
+    def delete_open_narrative_findings(
+        self, work_id: str, *, detector: str = "constory"
+    ) -> int:
+        """Remove still-open findings before a re-run replaces them.
+
+        Dispositioned findings (fixed/intentional/wontfix) are preserved —
+        they are author decisions, not detector output.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                """DELETE FROM narrative_finding
+                   WHERE work_id=? AND detector=? AND disposition='open'""",
+                (work_id, detector),
+            )
+            self._maybe_commit()
+            return cur.rowcount
+
+    # ── /ConStory ─────────────────────────────────────────────────────────────
+
     def close(self) -> None:
         with self._lock:
             # Close the main writer connection.

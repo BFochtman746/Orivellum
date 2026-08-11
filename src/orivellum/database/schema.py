@@ -2695,4 +2695,55 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_ginc_chapter ON graph_inconsistency(chapter_id);
     """,
     ),
+    # v125 — ConStory narrative findings (Masterpiece Pipeline Part 2.3 + B6).
+    #
+    # narrative_finding — story contradictions detected by the ConStory
+    # checker.  Five categories with a closed set of 19 subtypes (the subtype
+    # registry is enforced in capabilities/constory.py — anything outside it
+    # is discarded, never coerced).  Every finding carries DUAL evidence:
+    # the established fact's verbatim quote + chapter + character offset AND
+    # the contradicting passage's quote + chapter + offset (LAW 3 on both
+    # sides).  Severity is COMPUTED from (subtype, canon_class) — never
+    # model-chosen.  Dispositions: open / fixed / intentional / wontfix;
+    # 'intentional' requires a note (enforced in db.py + the API route).
+    # dedupe_key is stable across re-runs so dispositioned findings are
+    # never re-created as new 'open' rows.
+    (
+        125,
+        "ConStory narrative findings: 19-subtype contradictions with dual evidence",
+        """
+        CREATE TABLE IF NOT EXISTS narrative_finding (
+            id                    TEXT PRIMARY KEY,
+            work_id               TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            chapter_id            TEXT NOT NULL REFERENCES book_chapters(id) ON DELETE CASCADE,
+            category              TEXT NOT NULL CHECK (category IN
+                ('timeline_plot','characterization','worldbuilding',
+                 'factual_detail','narrative_style')),
+            subtype               TEXT NOT NULL CHECK (length(trim(subtype)) > 0),
+            fact_quote            TEXT NOT NULL CHECK (length(trim(fact_quote)) > 0),
+            fact_chapter          INTEGER NOT NULL CHECK (fact_chapter >= 0),
+            fact_offset           INTEGER NOT NULL CHECK (fact_offset >= 0),
+            contradiction_quote   TEXT NOT NULL CHECK (length(trim(contradiction_quote)) > 0),
+            contradiction_chapter INTEGER NOT NULL CHECK (contradiction_chapter >= 0),
+            contradiction_offset  INTEGER NOT NULL CHECK (contradiction_offset >= 0),
+            reasoning             TEXT NOT NULL DEFAULT '',
+            severity              TEXT NOT NULL CHECK (severity IN
+                ('critical','high','medium','low')),
+            canon_class           TEXT CHECK (canon_class IS NULL OR canon_class IN
+                ('HISTORICAL','INFERRED','INVENTED')),
+            canon_fact_id         TEXT REFERENCES canon_fact(id) ON DELETE SET NULL,
+            disposition           TEXT NOT NULL DEFAULT 'open' CHECK (disposition IN
+                ('open','fixed','intentional','wontfix')),
+            disposition_note      TEXT NOT NULL DEFAULT '',
+            disposition_by        TEXT NOT NULL DEFAULT '',
+            disposition_at        TEXT,
+            detector              TEXT NOT NULL DEFAULT 'constory',
+            dedupe_key            TEXT NOT NULL,
+            created_at            TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_nf_dedupe  ON narrative_finding(work_id, dedupe_key);
+        CREATE INDEX IF NOT EXISTS idx_nf_work           ON narrative_finding(work_id, disposition, severity);
+        CREATE INDEX IF NOT EXISTS idx_nf_chapter        ON narrative_finding(chapter_id);
+    """,
+    ),
 ]

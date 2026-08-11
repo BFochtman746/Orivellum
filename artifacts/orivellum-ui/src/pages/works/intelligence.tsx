@@ -25,6 +25,7 @@ import {
   RefreshCw, ChevronDown, ChevronRight, Layers, Brain,
   BookOpen, FileText, Loader2, Zap, ArrowRight, TrendingUp,
   Search, UploadCloud, RotateCw, ExternalLink, CheckSquare, Plus,
+  ScanSearch, Check, EyeOff, Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -543,6 +544,13 @@ export default function WorkIntelligence() {
         )}
       </Section>
 
+      {/* ── Continuity Findings (ConStory) ───────────────────────────────────── */}
+      <FindingsSection
+        workId={workId!}
+        open={open.has("findings")}
+        onToggle={() => toggle("findings")}
+      />
+
       {/* ── Chapter Structure ────────────────────────────────────────────────── */}
       {chaptersData && chaptersData.total_chapters > 0 && (
         <Section id="chapters" label="Chapter Structure" icon={BookOpen}
@@ -1051,4 +1059,293 @@ function Section({
 
 function Empty({ text }: { text: string }) {
   return <p className="text-sm text-muted-foreground py-4 text-center">{text}</p>;
+}
+
+// ── Continuity Findings (ConStory) ────────────────────────────────────────────
+
+interface NarrativeFinding {
+  id: string; category: string; subtype: string; severity: string;
+  canon_class: string | null;
+  fact_quote: string; fact_chapter: number; fact_offset: number;
+  contradiction_quote: string; contradiction_chapter: number; contradiction_offset: number;
+  reasoning: string; disposition: string; disposition_note: string;
+  chapter_seq?: number; chapter_title?: string; created_at: string;
+}
+interface FindingMetrics {
+  book: { words: number; findings: number; ced: number };
+  chapters: Array<{ chapter_id: string; seq: number; title: string; words: number; findings: number; ced: number }>;
+  counts: { total: number; by_severity: Record<string, number>; by_disposition: Record<string, number> };
+}
+interface ConstoryRun {
+  state: "running" | "done" | "error";
+  chapters_done: number; chapters_total: number;
+  findings_created: number; error?: string | null;
+}
+
+const SEV_STYLE: Record<string, React.CSSProperties> = {
+  critical: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 45%, transparent)" },
+  high:     { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" },
+  medium:   { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
+  low:      { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" },
+};
+const DISPOSITION_LABEL: Record<string, string> = {
+  open: "Open", fixed: "Fixed", intentional: "Intentional", wontfix: "Won't fix",
+};
+
+function FindingsSection({ workId, open, onToggle }: {
+  workId: string; open: boolean; onToggle: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [filter, setFilter] = useState<string>("open");
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
+
+  const { data: statusData } = useQuery<{ run: ConstoryRun | null }>({
+    queryKey: ["constory-status", workId],
+    queryFn: () => apiFetch(`${BASE}/works/${workId}/constory/status`).then((r) => r.json()),
+    refetchInterval: (q) => (q.state.data?.run?.state === "running" ? 3_000 : false),
+  });
+  const run = statusData?.run ?? null;
+  const running = run?.state === "running";
+
+  // Refresh findings + metrics when a run finishes.
+  const prevRunning = useRef(false);
+  useEffect(() => {
+    if (prevRunning.current && !running) {
+      queryClient.invalidateQueries({ queryKey: ["narrative-findings", workId] });
+      queryClient.invalidateQueries({ queryKey: ["finding-metrics", workId] });
+      if (run?.state === "done") toast.success(`Contradiction check finished — ${run.findings_created} new finding${run.findings_created === 1 ? "" : "s"}`);
+      if (run?.state === "error") toast.error(`Contradiction check failed: ${run.error ?? "unknown error"}`);
+    }
+    prevRunning.current = running;
+  }, [running, run, queryClient, workId]);
+
+  const { data: findingsData, isLoading } = useQuery<{ findings: NarrativeFinding[] }>({
+    queryKey: ["narrative-findings", workId],
+    queryFn: () => apiFetch(`${BASE}/works/${workId}/findings`).then((r) => r.json()),
+    staleTime: 60_000,
+  });
+  const { data: metrics } = useQuery<FindingMetrics>({
+    queryKey: ["finding-metrics", workId],
+    queryFn: () => apiFetch(`${BASE}/works/${workId}/findings/metrics`).then((r) => r.json()),
+    staleTime: 60_000,
+  });
+
+  const runMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/constory/run`, { method: "POST" });
+      if (r.status === 409) throw new Error("A check is already running");
+      if (!r.ok) throw new Error("Could not start the contradiction check");
+      return r.json();
+    },
+    onSuccess: () => {
+      toast.success("Contradiction check started");
+      queryClient.invalidateQueries({ queryKey: ["constory-status", workId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const dispositionMutation = useMutation({
+    mutationFn: async ({ id, disposition, note }: { id: string; disposition: string; note?: string }) => {
+      const r = await apiFetch(`${BASE}/works/${workId}/findings/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disposition, note: note ?? "" }),
+      });
+      if (!r.ok) {
+        const detail = (await r.json().catch(() => null))?.detail;
+        throw new Error(detail ?? "Could not update the finding");
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      setNoteFor(null); setNoteText("");
+      queryClient.invalidateQueries({ queryKey: ["narrative-findings", workId] });
+      queryClient.invalidateQueries({ queryKey: ["finding-metrics", workId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const all = findingsData?.findings ?? [];
+  const shown = filter === "all" ? all : all.filter((f) => f.disposition === filter);
+  const openCount = all.filter((f) => f.disposition === "open").length;
+
+  return (
+    <Section id="findings" label="Continuity Findings" icon={ScanSearch}
+      open={open} onToggle={onToggle}
+      badge={openCount ? String(openCount) : undefined}
+      badgeVariant="destructive"
+      headerAction={
+        <button
+          className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground/60 hover:text-primary transition-colors disabled:opacity-40"
+          onClick={() => runMutation.mutate()}
+          disabled={running || runMutation.isPending}
+          title="Check every chapter against all earlier chapters and canon"
+        >
+          {running || runMutation.isPending
+            ? <Loader2 className="w-3 h-3 animate-spin" />
+            : <RotateCw className="w-3 h-3" />}
+          {running
+            ? `Checking ${run?.chapters_done ?? 0}/${run?.chapters_total ?? "?"}…`
+            : "Run check"}
+        </button>
+      }>
+      {/* CED summary */}
+      {metrics && metrics.book.words > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-4 text-[11px] font-mono text-muted-foreground">
+          <span>
+            Book CED <span className="font-semibold text-foreground">{metrics.book.ced}</span>
+            <span className="text-muted-foreground/50"> / 10k words</span>
+          </span>
+          <span>{metrics.book.findings} error finding{metrics.book.findings === 1 ? "" : "s"} in {metrics.book.words.toLocaleString()} words</span>
+          {Object.entries(metrics.counts.by_severity).map(([sev, n]) => (
+            <span key={sev} className="px-1.5 py-0.5 rounded border text-[10px] font-semibold" style={SEV_STYLE[sev]}>
+              {n} {sev}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Disposition filter */}
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        {["open", "fixed", "intentional", "wontfix", "all"].map((d) => (
+          <button key={d}
+            className={`px-2 py-0.5 rounded-md border font-mono text-[10px] uppercase tracking-wider transition-colors ${
+              filter === d ? "border-primary/50 text-primary bg-primary/5" : "border-border/60 text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setFilter(d)}>
+            {d === "all" ? "All" : DISPOSITION_LABEL[d]}
+            {d !== "all" && (
+              <span className="ml-1 opacity-60">{all.filter((f) => f.disposition === d).length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">{[1, 2].map((i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
+      ) : shown.length === 0 ? (
+        all.length === 0 ? (
+          <Empty text='No contradictions recorded yet — press "Run check" to scan every chapter against all earlier chapters and canon.' />
+        ) : (
+          <Empty text={`No ${filter === "all" ? "" : DISPOSITION_LABEL[filter].toLowerCase() + " "}findings.`} />
+        )
+      ) : (
+        <div className="space-y-3">
+          {shown.map((f) => (
+            <div key={f.id}
+              className={`p-3 rounded-lg border border-border/40 bg-muted/10 ${f.disposition !== "open" ? "opacity-60" : ""}`}>
+              <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                <span className="px-1.5 py-0.5 rounded border text-[10px] font-mono font-semibold uppercase" style={SEV_STYLE[f.severity]}>
+                  {f.severity}
+                </span>
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  {f.category.replace(/_/g, " ")} · {f.subtype.replace(/_/g, " ")}
+                </Badge>
+                {f.canon_class && (
+                  <Badge variant="outline" className="text-[10px] font-mono border-primary/40 text-primary">
+                    canon {f.canon_class}
+                  </Badge>
+                )}
+                {f.disposition !== "open" && (
+                  <Badge variant="secondary" className="text-[10px] font-mono">
+                    {DISPOSITION_LABEL[f.disposition]}
+                  </Badge>
+                )}
+              </div>
+
+              {/* Dual evidence */}
+              <div className="space-y-1.5 text-sm">
+                <p className="leading-snug">
+                  <span className="text-[10px] font-mono text-muted-foreground/70 mr-1.5">
+                    {f.fact_chapter > 0 ? `ch ${f.fact_chapter} @${f.fact_offset}` : "canon"}
+                  </span>
+                  <span className="italic">“{f.fact_quote}”</span>
+                </p>
+                <p className="leading-snug">
+                  <span className="text-[10px] font-mono mr-1.5" style={{ color: "var(--rust)" }}>
+                    ch {f.contradiction_chapter} @{f.contradiction_offset}
+                  </span>
+                  <span className="italic">“{f.contradiction_quote}”</span>
+                </p>
+              </div>
+              {f.reasoning && (
+                <p className="text-[11px] text-muted-foreground mt-1.5">{f.reasoning}</p>
+              )}
+              {f.disposition === "intentional" && f.disposition_note && (
+                <p className="text-[11px] font-mono mt-1.5" style={{ color: "var(--gilt)" }}>
+                  note: {f.disposition_note}
+                </p>
+              )}
+
+              {/* Disposition actions */}
+              <div className="flex flex-wrap items-center gap-2.5 mt-2.5">
+                {f.disposition === "open" ? (
+                  <>
+                    <button
+                      className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80"
+                      style={{ color: "var(--green-2)" }}
+                      disabled={dispositionMutation.isPending}
+                      onClick={() => dispositionMutation.mutate({ id: f.id, disposition: "fixed" })}>
+                      <Check className="w-3 h-3" /> Fixed
+                    </button>
+                    <button
+                      className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80"
+                      style={{ color: "var(--gilt)" }}
+                      disabled={dispositionMutation.isPending}
+                      onClick={() => { setNoteFor(noteFor === f.id ? null : f.id); setNoteText(""); }}>
+                      <Lightbulb className="w-3 h-3" /> Intentional…
+                    </button>
+                    <button
+                      className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                      disabled={dispositionMutation.isPending}
+                      onClick={() => dispositionMutation.mutate({ id: f.id, disposition: "wontfix" })}>
+                      <EyeOff className="w-3 h-3" /> Won't fix
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                    disabled={dispositionMutation.isPending}
+                    onClick={() => dispositionMutation.mutate({ id: f.id, disposition: "open" })}>
+                    <Undo2 className="w-3 h-3" /> Reopen
+                  </button>
+                )}
+              </div>
+
+              {/* Intentional note input (required) */}
+              {noteFor === f.id && (
+                <div className="flex items-center gap-2 mt-2">
+                  <input
+                    autoFocus
+                    className="flex-1 px-2 py-1 rounded-md border border-border/60 bg-background text-xs font-mono focus:outline-none focus:border-primary/50"
+                    placeholder="Why is this deliberate? (required — e.g. delayed revelation)"
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && noteText.trim()) {
+                        dispositionMutation.mutate({ id: f.id, disposition: "intentional", note: noteText.trim() });
+                      }
+                      if (e.key === "Escape") setNoteFor(null);
+                    }}
+                  />
+                  <button
+                    className="text-[10px] font-mono text-primary disabled:opacity-40"
+                    disabled={!noteText.trim() || dispositionMutation.isPending}
+                    onClick={() => dispositionMutation.mutate({ id: f.id, disposition: "intentional", note: noteText.trim() })}>
+                    Save
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-[10px] font-mono text-muted-foreground/50 mt-4">
+        Every finding quotes both passages at their real character offsets. Severity is computed
+        from the contradiction type and canon class — findings marked Intentional or Won't fix are
+        excluded from CED.
+      </p>
+    </Section>
+  );
 }

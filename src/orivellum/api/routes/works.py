@@ -662,6 +662,126 @@ def works_book_intelligence(work_id: str):
         raise HTTPException(404, str(exc))
 
 
+# ── ConStory — story-contradiction findings ──────────────────────────────────
+
+
+@router.post("/works/{work_id}/constory/run")
+def constory_run(work_id: str):
+    """Kick off a ConStory contradiction check for all chapters of a Work.
+
+    Runs in the background (whole-book pairing is many gateway calls);
+    poll GET /constory/status.  409 when a run is already in flight.
+    """
+    from orivellum.api._deps import get_config
+    from orivellum.api.executor import submit_bg
+    from orivellum.capabilities import constory
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    if constory.is_running(work_id):
+        raise HTTPException(409, "A contradiction check is already running for this work")
+    cfg = get_config()
+
+    def _run():
+        try:
+            constory.run_constory_check(db, cfg, work_id=work_id)
+        except Exception:
+            logger.exception("constory run failed for work %s", work_id)
+
+    if not submit_bg(_run, kind="constory", label=f"constory:{work_id}"):
+        raise HTTPException(503, "Background executor unavailable — try again shortly")
+    return {"started": True, "work_id": work_id}
+
+
+@router.get("/works/{work_id}/constory/status")
+def constory_status(work_id: str):
+    from orivellum.capabilities import constory
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    return {"work_id": work_id, "run": constory.get_run_status(work_id)}
+
+
+@router.get("/works/{work_id}/findings/metrics")
+def narrative_finding_metrics(work_id: str):
+    """CED (findings per 10,000 words) per chapter and for the book, plus
+    finding counts by severity/category/disposition."""
+    from orivellum.capabilities.constory import compute_ced
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    findings = db.list_narrative_findings(work_id, limit=2000)
+    by = lambda key: {  # noqa: E731
+        v: sum(1 for f in findings if f[key] == v)
+        for v in sorted({f[key] for f in findings})
+    }
+    return {
+        **compute_ced(db, work_id),
+        "counts": {
+            "total": len(findings),
+            "by_severity": by("severity"),
+            "by_category": by("category"),
+            "by_disposition": by("disposition"),
+        },
+    }
+
+
+@router.get("/works/{work_id}/findings")
+def list_narrative_findings(
+    work_id: str,
+    chapter_id: str | None = None,
+    category: str | None = None,
+    severity: str | None = None,
+    disposition: str | None = None,
+    limit: int = Query(500, ge=1, le=2000),
+):
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    findings = db.list_narrative_findings(
+        work_id,
+        chapter_id=chapter_id,
+        category=category,
+        severity=severity,
+        disposition=disposition,
+        limit=limit,
+    )
+    return {"work_id": work_id, "findings": findings, "count": len(findings)}
+
+
+class FindingDisposition(BaseModel):
+    disposition: str
+    note: str = ""
+
+
+@router.patch("/works/{work_id}/findings/{finding_id}")
+def set_narrative_finding_disposition(
+    work_id: str, finding_id: str, body: FindingDisposition
+):
+    """Disposition a finding: open (reopen) / fixed / intentional / wontfix.
+
+    'intentional' REQUIRES a note — delayed revelation and unreliable
+    narration legitimately read as contradictions, and the note records why
+    this one is deliberate.
+    """
+    db = get_db()
+    existing = db.get_narrative_finding(finding_id)
+    if not existing or existing["work_id"] != work_id:
+        raise HTTPException(404, f"Finding {finding_id!r} not found for this work")
+    try:
+        updated = db.update_narrative_finding_disposition(
+            finding_id, body.disposition, note=body.note, actor="user"
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    if updated is None:
+        raise HTTPException(404, f"Finding {finding_id!r} not found")
+    return {"finding": updated}
+
+
 @router.get("/works/{work_id}/chapters")
 def works_chapters(work_id: str):
     """Return all book chapters extracted from documents linked to this Work.
