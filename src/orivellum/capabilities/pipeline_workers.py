@@ -101,102 +101,63 @@ def _parse_json(text: str | None, fallback: Any = None) -> Any:
 
 
 def compile_stage_context(pipeline_id: str, stage: str, db: OrivellumDB) -> dict:
-    """Assemble a bounded context package for a stage worker.
+    """Assemble the per-stage declared context package (see context_compiler)."""
+    from orivellum.capabilities.context_compiler import compile_context
 
-    Returns a dict with:
-      work_id, work_title, work_description,
-      documents (list of {title, summary}),
-      knowledge  (list of {kind, text, subject}),
-      prior_artifacts (dict of stage → content)
-    """
-    with db._lock:
-        # Work info via pipeline
-        row = db._conn.execute(
-            """SELECT bp.work_id, w.title, w.description
-               FROM book_pipelines bp JOIN works w ON w.id=bp.work_id
-               WHERE bp.id=?""",
-            (pipeline_id,),
-        ).fetchone()
-    if not row:
-        raise ValueError(f"Pipeline {pipeline_id!r} not found")
-    work_id = row["work_id"]
-    work_title = row["title"] or "Untitled"
-    work_desc = row["description"] or ""
-
-    # Top-5 active documents with their extracted text as summary
-    with db._lock:
-        doc_rows = db._conn.execute(
-            """SELECT d.title, d.source,
-                      substr(coalesce(d.extracted_text,''), 1, 600) as summary
-               FROM documents d JOIN objects o ON o.id=d.id
-               WHERE d.work_id=? AND o.lifecycle != 'deleted'
-               ORDER BY d.created_at DESC LIMIT 5""",
-            (work_id,),
-        ).fetchall()
-    documents = []
-    for r in doc_rows:
-        title = r["title"] or (r["source"] or "").split("/")[-1] or "Document"
-        documents.append({"title": title, "summary": (r["summary"] or "").strip()})
-
-    # Top-20 approved/auto knowledge items
-    with db._lock:
-        k_rows = db._conn.execute(
-            """SELECT kind, text, subject FROM knowledge
-               WHERE work_id=? AND review_status != 'rejected'
-               ORDER BY confidence DESC LIMIT 20""",
-            (work_id,),
-        ).fetchall()
-    knowledge = [
-        {"kind": r["kind"], "text": r["text"], "subject": r["subject"] or ""} for r in k_rows
-    ]
-
-    # Prior artifacts for all stages before this one (B4/B5 have no LLM
-    # workers — chapter extraction and drafting — so they never appear here)
-    stage_order = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
-    prior_artifacts: dict[str, Any] = {}
-    if stage in stage_order:
-        idx = stage_order.index(stage)
-        for s in stage_order[:idx]:
-            art = db.get_pipeline_artifact(pipeline_id, s)
-            if art and art.get("status") == "done":
-                prior_artifacts[s] = art["content"]
-
-    return {
-        "work_id": work_id,
-        "work_title": work_title,
-        "work_description": work_desc,
-        "documents": documents,
-        "knowledge": knowledge,
-        "prior_artifacts": prior_artifacts,
-    }
+    return compile_context(pipeline_id, stage, db)
 
 
 # ── Default prompt templates ──────────────────────────────────────────────────
 
 
+# All source material is rendered and budget-clipped by the context compiler;
+# the helpers below only substitute a placeholder when a block is empty, so
+# what reaches the prompt is exactly what the context_report accounted for.
+
+
+def _block(ctx: dict, name: str, empty: str) -> str:
+    return ctx.get("blocks", {}).get(name) or empty
+
+
 def _docs_block(ctx: dict) -> str:
-    lines = []
-    for i, d in enumerate(ctx["documents"], 1):
-        summary = d["summary"][:400].replace("\n", " ") if d["summary"] else "(no text extracted)"
-        lines.append(f"{i}. {d['title']}: {summary}")
-    return "\n".join(lines) if lines else "(no documents)"
+    return _block(ctx, "documents", "(no documents)")
 
 
 def _knowledge_block(ctx: dict) -> str:
-    lines = []
-    for k in ctx["knowledge"][:15]:
-        subj = f"[{k['subject']}] " if k["subject"] else ""
-        lines.append(f"- {k['kind'].upper()}: {subj}{k['text'][:200]}")
-    return "\n".join(lines) if lines else "(no knowledge items)"
+    return _block(ctx, "knowledge", "(no knowledge items)")
 
 
 def _prior_block(ctx: dict) -> str:
-    if not ctx["prior_artifacts"]:
-        return "(no prior stage outputs)"
-    parts = []
-    for stage, content in ctx["prior_artifacts"].items():
-        parts.append(f"[{stage}] " + json.dumps(content, ensure_ascii=False)[:600])
-    return "\n\n".join(parts)
+    return _block(ctx, "prior", "(no prior stage outputs)")
+
+
+def _genesis_block(ctx: dict) -> str:
+    return _block(ctx, "genesis", "(no sealed origination package)")
+
+
+def _canon_block(ctx: dict) -> str:
+    return _block(ctx, "canon", "(no canon facts)")
+
+
+def _contracts_block(ctx: dict) -> str:
+    return _block(ctx, "contracts", "(no chapter contracts)")
+
+
+def _chapters_block(ctx: dict) -> str:
+    return _block(ctx, "chapter_text", "(no chapter text)")
+
+
+# Registered prompt templates may contain literal JSON braces; str.format()
+# would raise KeyError on them, so substitution is limited to the known
+# placeholder names and everything else is left untouched.
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"\{(work_title|work_description|documents|knowledge|prior_stages"
+    r"|genesis|canon|contracts|chapters)\}"
+)
+
+
+def render_registered_prompt(template: str, values: dict[str, str]) -> str:
+    return _TEMPLATE_PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
 
 _PROMPT_SYSTEM = (
@@ -207,6 +168,30 @@ _PROMPT_SYSTEM = (
 
 
 def _b0_prompt(ctx: dict) -> str:
+    if ctx["genesis"]["sealed"]:
+        codes = ", ".join(sorted(ctx["genesis"]["artifacts"].keys()))
+        return f"""Work: {ctx["work_title"]}
+Description: {ctx["work_description"] or "(none)"}
+
+SEALED ORIGINATION PACKAGE (GENESIS). The project brief must be DERIVED from
+these sealed artifacts — do not re-imagine the premise, scope, or themes.
+Every field must trace to the artifacts below.
+
+{_genesis_block(ctx)}
+
+Canon facts:
+{_canon_block(ctx)}
+
+Produce a JSON project brief with these exact keys:
+{{
+  "title": "final book title (from the seal)",
+  "premise": "2-3 sentence description derived from the sealed premise (G1)",
+  "audience": "primary readership in one sentence",
+  "scope": "what the book covers and does NOT cover, per the sealed package",
+  "goals": ["goal 1", "goal 2", "goal 3"],
+  "key_themes": ["theme 1", "theme 2", "theme 3"],
+  "source_citations": ["the G-stage codes this brief derives from — choose from: {codes}"]
+}}"""
     return f"""Work: {ctx["work_title"]}
 Description: {ctx["work_description"] or "(none)"}
 
@@ -229,6 +214,35 @@ Produce a JSON project brief with these exact keys:
 
 def _b1_prompt(ctx: dict) -> str:
     brief = ctx["prior_artifacts"].get("B0", {})
+    bp_count = ctx["genesis"]["blueprint_chapter_count"]
+    if bp_count:
+        return f"""Work: {ctx["work_title"]}
+Project brief: {json.dumps(brief, ensure_ascii=False)[:400]}
+
+SEALED BLUEPRINT (GENESIS). The blueprint declares EXACTLY {bp_count} chapters.
+You must RECONCILE the outline to the blueprint — total_chapters MUST be
+{bp_count}. Do not invent a different chapter count. If you believe material
+suggests a different structure, report that as a delta, never as a changed count.
+
+{_genesis_block(ctx)}
+
+Chapter contracts (if scaffolded):
+{_contracts_block(ctx)}
+
+Produce a JSON chapter outline:
+{{
+  "total_chapters": {bp_count},
+  "chapters": [
+    {{
+      "seq": 1,
+      "title": "working chapter title",
+      "description": "1-2 sentence description of what this chapter covers",
+      "key_questions": ["question the chapter must answer"]
+    }}
+  ],
+  "blueprint_deltas": ["where source material diverges from the blueprint — empty if none"]
+}}
+List as many chapter entries as fit; seq values must be between 1 and {bp_count}."""
     return f"""Work: {ctx["work_title"]}
 Project brief: {json.dumps(brief, ensure_ascii=False)[:400]}
 
@@ -254,6 +268,9 @@ def _b2_prompt(ctx: dict) -> str:
     return f"""Work: {ctx["work_title"]}
 Chapter outline: {json.dumps(outline, ensure_ascii=False)[:600]}
 
+Canon facts (ground truth already established):
+{_canon_block(ctx)}
+
 Existing knowledge:
 {_knowledge_block(ctx)}
 
@@ -276,7 +293,15 @@ def _b3_prompt(ctx: dict) -> str:
 Chapter outline: {json.dumps(outline, ensure_ascii=False)[:400]}
 Research agenda summary: {json.dumps(research, ensure_ascii=False)[:400]}
 
-Design the book's structural architecture. Produce JSON:
+Blueprint (GENESIS, if sealed):
+{_genesis_block(ctx)}
+
+Chapter contracts:
+{_contracts_block(ctx)}
+
+Design the book's structural architecture. Every chapter's "depends_on" list
+may reference ONLY earlier chapters (by seq number). No forward references,
+no cycles — the output is rejected automatically otherwise. Produce JSON:
 {{
   "arc_type": "e.g. chronological|thematic|problem-solution|case-study",
   "structure": "one paragraph describing the narrative arc and flow",
@@ -298,7 +323,13 @@ def _b6_prompt(ctx: dict) -> str:
     return f"""Work: {ctx["work_title"]}
 Architecture: {json.dumps(arch, ensure_ascii=False)[:800]}
 
-Check whether the chapter architecture is internally consistent. Specifically:
+Chapter contracts:
+{_contracts_block(ctx)}
+
+Chapter prose (excerpts):
+{_chapters_block(ctx)}
+
+Check whether the chapters and architecture are internally consistent. Specifically:
 - Does any chapter reference knowledge or conclusions that are only established in a later chapter?
 - Are there circular dependencies?
 - Are there any chapters whose 'depends_on' references a later sequence number?
@@ -323,11 +354,18 @@ def _b7_prompt(ctx: dict) -> str:
     return f"""Work: {ctx["work_title"]}
 Architecture: {json.dumps(arch, ensure_ascii=False)[:600]}
 
+Canon facts (the record — HISTORICAL facts carry sources):
+{_canon_block(ctx)}
+
+Chapter prose (excerpts):
+{_chapters_block(ctx)}
+
 Knowledge base:
 {_knowledge_block(ctx)}
 
-Cross-check the factual claims implied by the architecture against the knowledge base.
-Flag any chapter themes or stated roles that are NOT supported by existing knowledge items.
+Cross-check the factual claims in the prose and architecture against the canon
+record and knowledge base. Flag any claim, theme, or stated role that is NOT
+supported by canon facts or existing knowledge items.
 
 Produce JSON:
 {{
@@ -355,11 +393,242 @@ _PROMPT_BUILDERS = {
 }
 
 
+# ── Deterministic acceptance checks ───────────────────────────────────────────
+
+
+def _index_chapters(
+    chapters: list[dict], problems: list[str]
+) -> tuple[dict[int, dict], dict[str, int]]:
+    """Index B3 chapters by seq and title, collecting seq problems."""
+    by_seq: dict[int, dict] = {}
+    by_title: dict[str, int] = {}
+    for ch in chapters:
+        try:
+            seq = int(ch.get("seq"))
+        except (TypeError, ValueError):
+            problems.append(f"Chapter with invalid seq: {ch.get('seq')!r}")
+            continue
+        if seq < 1:
+            problems.append(f"Chapter seq must be >= 1, got {seq}")
+            continue
+        if seq in by_seq:
+            problems.append(f"Duplicate chapter seq {seq}")
+            continue
+        by_seq[seq] = ch
+        title = str(ch.get("title") or "").strip().lower()
+        if title:
+            by_title[title] = seq
+    return by_seq, by_title
+
+
+def _resolve_dep(dep: Any, by_title: dict[str, int]) -> int | None:
+    """Resolve a depends_on entry (seq int, digit-string, or title) to a seq."""
+    if isinstance(dep, bool):
+        return None
+    if isinstance(dep, int):
+        return dep
+    if isinstance(dep, str):
+        s = dep.strip()
+        if s.lstrip("-").isdigit():
+            return int(s)
+        return by_title.get(s.lower())
+    return None
+
+
+def _collect_edges(
+    by_seq: dict[int, dict], by_title: dict[str, int], problems: list[str]
+) -> list[tuple[int, int]]:
+    """Resolve depends_on into (dep_seq, seq) edges, flagging bad references."""
+    edges: list[tuple[int, int]] = []
+    for seq, ch in by_seq.items():
+        deps = ch.get("depends_on") or []
+        if not isinstance(deps, list):
+            problems.append(f"Chapter {seq}: depends_on must be a list")
+            continue
+        for dep in deps:
+            dep_seq = _resolve_dep(dep, by_title)
+            if dep_seq is None or dep_seq not in by_seq:
+                problems.append(f"Chapter {seq}: unresolvable dependency {dep!r}")
+            elif dep_seq >= seq:
+                kind = "self" if dep_seq == seq else "forward"
+                problems.append(f"Chapter {seq}: {kind} reference to chapter {dep_seq}")
+            else:
+                edges.append((dep_seq, seq))
+    return edges
+
+
+def _kahn_cycle_check(by_seq: dict[int, dict], edges: list[tuple[int, int]]) -> str | None:
+    """Return a cycle problem string, or None if the resolved edges are acyclic."""
+    indeg = dict.fromkeys(by_seq, 0)
+    adj: dict[int, list[int]] = {s: [] for s in by_seq}
+    for dep, seq in edges:
+        adj[dep].append(seq)
+        indeg[seq] += 1
+    queue = [s for s, d in indeg.items() if d == 0]
+    seen = 0
+    while queue:
+        n = queue.pop()
+        seen += 1
+        for m in adj[n]:
+            indeg[m] -= 1
+            if indeg[m] == 0:
+                queue.append(m)
+    if seen != len(by_seq):
+        cyclic = sorted(s for s, d in indeg.items() if d > 0)
+        return f"Dependency cycle involving chapters {cyclic}"
+    return None
+
+
+def check_architecture_dag(chapters: list[dict]) -> list[str]:
+    """Deterministically validate B3 chapter dependencies — never ask a model.
+
+    Returns a list of problems (empty = valid):
+    - duplicate or non-positive seq numbers
+    - unresolvable ``depends_on`` references
+    - forward or self references (a chapter may depend only on EARLIER seqs)
+    - cycles (Kahn's algorithm, belt-and-braces on top of the forward check)
+    """
+    problems: list[str] = []
+    by_seq, by_title = _index_chapters(chapters, problems)
+    edges = _collect_edges(by_seq, by_title, problems)
+    cycle = _kahn_cycle_check(by_seq, edges)
+    if cycle:
+        problems.append(cycle)
+    return problems
+
+
+def _accept_b0(content: dict, ctx: dict) -> None:
+    """B0 must derive the brief FROM the seal, citing real G-stage artifacts."""
+    if not ctx["genesis"]["sealed"]:
+        return
+    available = set(ctx["genesis"]["artifacts"].keys())
+    cites = content.get("source_citations")
+    if not isinstance(cites, list) or not cites:
+        raise RuntimeError(
+            "B0 rejected: sealed origination package present but the brief "
+            "cites no G-stage artifacts (source_citations missing/empty)"
+        )
+    bogus = [c for c in cites if not isinstance(c, str) or c.upper() not in available]
+    if bogus:
+        raise RuntimeError(
+            f"B0 rejected: brief cites artifacts not in the sealed package: {bogus} "
+            f"(available: {sorted(available)})"
+        )
+    content["source_citations"] = [c.upper() for c in cites]
+
+
+def _validated_chapter_entries(content: dict, bp_count: int, stage: str) -> dict[int, dict]:
+    """Strictly validate a stage's chapters payload; return entries keyed by seq.
+
+    Rejects missing/non-list/empty chapters, non-dict entries, invalid or
+    out-of-range seqs, and duplicates — an empty or malformed payload must
+    never be stored as a successful stage.
+    """
+    raw = content.get("chapters")
+    if not isinstance(raw, list) or not raw:
+        raise RuntimeError(f"{stage} rejected: chapters must be a non-empty list")
+    seen: dict[int, dict] = {}
+    for ch in raw:
+        if not isinstance(ch, dict):
+            raise RuntimeError(f"{stage} rejected: chapter entry is not an object: {ch!r}")
+        seq = ch.get("seq")
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1 or seq > bp_count:
+            raise RuntimeError(
+                f"{stage} rejected: chapter seq {seq!r} outside blueprint range 1..{bp_count}"
+            )
+        if seq in seen:
+            raise RuntimeError(f"{stage} rejected: duplicate chapter seq {seq}")
+        seen[seq] = ch
+    return seen
+
+
+def _accept_b1(content: dict, ctx: dict) -> None:
+    """B1 must reconcile to the blueprint chapter count, never invent one.
+
+    Reconciliation is deterministic: after validating the model's entries,
+    the worker fills any missing seqs from the scaffolded chapter records so
+    the stored outline ALWAYS covers exactly 1..blueprint_count.
+    """
+    bp_count = ctx["genesis"]["blueprint_chapter_count"]
+    if not bp_count:
+        return
+    total = content.get("total_chapters")
+    if total != bp_count:
+        raise RuntimeError(
+            f"B1 rejected: outline invented a chapter count ({total!r}) that "
+            f"differs from the sealed blueprint ({bp_count}) — reconcile and "
+            f"report deltas instead"
+        )
+    if not isinstance(content.get("blueprint_deltas"), list):
+        raise RuntimeError(
+            "B1 rejected: blueprint present but blueprint_deltas is missing "
+            "(must be a list, empty when there are no divergences)"
+        )
+    seen = _validated_chapter_entries(content, bp_count, "B1")
+    titles = {c["seq"]: c["title"] for c in ctx.get("chapter_contracts", [])}
+    full: list[dict] = []
+    for seq in range(1, bp_count + 1):
+        if seq in seen:
+            full.append(seen[seq])
+        else:
+            full.append(
+                {
+                    "seq": seq,
+                    "title": titles.get(seq) or f"Chapter {seq}",
+                    "from_blueprint": True,
+                }
+            )
+    content["chapters"] = full
+
+
+def _accept_b3(content: dict, ctx: dict) -> None:
+    """B3 dependency output is validated by code, never by a model."""
+    raw = content.get("chapters")
+    if not isinstance(raw, list) or not raw:
+        raise RuntimeError("B3 rejected: chapters must be a non-empty list")
+    problems = check_architecture_dag(raw)
+    bp_count = ctx["genesis"]["blueprint_chapter_count"]
+    if bp_count and not problems:
+        seqs = {ch.get("seq") for ch in raw if isinstance(ch, dict)}
+        missing = sorted(set(range(1, bp_count + 1)) - seqs)
+        if missing:
+            head = ", ".join(str(m) for m in missing[:10])
+            extra = f" (+{len(missing) - 10} more)" if len(missing) > 10 else ""
+            problems.append(
+                f"architecture covers {len(seqs)} of {bp_count} blueprint "
+                f"chapters; missing seqs: {head}{extra}"
+            )
+        extra_seqs = sorted(s for s in seqs if isinstance(s, int) and s > bp_count)
+        if extra_seqs:
+            problems.append(f"architecture has chapters beyond the blueprint: {extra_seqs[:10]}")
+    if problems:
+        joined = "; ".join(problems[:10])
+        extra = f" (+{len(problems) - 10} more)" if len(problems) > 10 else ""
+        raise RuntimeError(f"B3 rejected — dependency graph invalid: {joined}{extra}")
+
+
+_ACCEPTANCE_CHECKS = {
+    "B0": _accept_b0,
+    "B1": _accept_b1,
+    "B3": _accept_b3,
+}
+
+
 # ── Stage workers ─────────────────────────────────────────────────────────────
 
 
+# B1 must be able to list every blueprint chapter and B3 the full dependency
+# graph — those stages get a larger completion budget than the default.
+_STAGE_MAX_TOKENS: dict[str, int] = {"B1": 6000, "B3": 6000}
+
+
 def _call_llm(
-    user_prompt: str, db: OrivellumDB, cfg: OrivellumConfig, purpose: str, timeout: float = 45.0
+    user_prompt: str,
+    db: OrivellumDB,
+    cfg: OrivellumConfig,
+    purpose: str,
+    timeout: float = 45.0,
+    max_tokens: int = 1800,
 ) -> dict | None:
     """Call the LLM and return parsed JSON, or None on failure."""
     from orivellum.capabilities.llm import llm_call
@@ -374,7 +643,7 @@ def _call_llm(
         purpose=purpose,
         timeout=timeout,
         temperature=0.3,
-        max_tokens=1800,
+        max_tokens=max_tokens,
     )
     if not result.ok or not result.text:
         raise RuntimeError(result.error or "LLM returned no text")
@@ -447,19 +716,38 @@ def run_stage_worker(
         # Prefer prompt from registry, fall back to built-in template
         registered = db.get_active_prompt(prompt_slot)
         if registered:
-            user_prompt = registered.format(
-                work_title=ctx["work_title"],
-                work_description=ctx["work_description"],
-                documents=_docs_block(ctx),
-                knowledge=_knowledge_block(ctx),
-                prior_stages=_prior_block(ctx),
+            user_prompt = render_registered_prompt(
+                registered,
+                {
+                    "work_title": ctx["work_title"],
+                    "work_description": ctx["work_description"],
+                    "documents": _docs_block(ctx),
+                    "knowledge": _knowledge_block(ctx),
+                    "prior_stages": _prior_block(ctx),
+                    "genesis": _genesis_block(ctx),
+                    "canon": _canon_block(ctx),
+                    "contracts": _contracts_block(ctx),
+                    "chapters": _chapters_block(ctx),
+                },
             )
         else:
             builder = _PROMPT_BUILDERS[stage]
             user_prompt = builder(ctx)
 
         logger.info("Running pipeline worker stage=%s pipeline=%s", stage, pipeline_id[:8])
-        content = _call_llm(user_prompt, db, cfg, purpose=f"pipeline.{stage.lower()}.worker")
+        content = _call_llm(
+            user_prompt,
+            db,
+            cfg,
+            purpose=f"pipeline.{stage.lower()}.worker",
+            max_tokens=_STAGE_MAX_TOKENS.get(stage, 1800),
+        )
+
+        # Deterministic acceptance checks — a stage whose output violates the
+        # sealed blueprint/seal contract FAILS; we never ask a model to judge.
+        acceptor = _ACCEPTANCE_CHECKS.get(stage)
+        if acceptor:
+            acceptor(content, ctx)
 
         # Post-processing: create findings for continuity / fact-check stages
         if stage == "B6":
