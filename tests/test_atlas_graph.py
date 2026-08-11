@@ -450,6 +450,48 @@ class WorkGraphMergeTests(AtlasBase):
         )
 
 
+class WorkGraphBudgetTests(AtlasBase):
+    def _atlas_pair(self):
+        a = self.db.create_graph_node(
+            work_id=self.work_id, chapter_id=None, node_type="Character",
+            name="Job", evidence_quote="q", evidence_offset=0,
+        )
+        b = self.db.create_graph_node(
+            work_id=self.work_id, chapter_id=None, node_type="Event",
+            name="The storm", evidence_quote="q", evidence_offset=0,
+        )
+        self.db.create_graph_edge(
+            work_id=self.work_id, chapter_id=None, src=a, dst=b,
+            edge_type="experiences", evidence_quote="q", evidence_offset=0,
+        )
+
+    def test_saturated_legacy_graph_still_shows_atlas_and_no_dangling_edges(self):
+        # Enough documents to saturate a small node budget on their own.
+        for i in range(12):
+            self.db.create_document(
+                title=f"Doc {i}", source=f"d{i}.txt", kind="note", work_id=self.work_id
+            )
+        self._atlas_pair()
+        graph = self.db.get_work_graph(self.work_id, limit=8)
+        labels = {n["label"] for n in graph["nodes"]}
+        self.assertIn("Job", labels)
+        self.assertIn("The storm", labels)
+        self.assertLessEqual(len(graph["nodes"]), 8)
+        ids = {n["id"] for n in graph["nodes"]}
+        for e in graph["edges"]:
+            self.assertIn(e["source"], ids)
+            self.assertIn(e["target"], ids)
+
+    def test_atlas_only_work_without_documents_returns_graph(self):
+        self._atlas_pair()
+        graph = self.db.get_work_graph(self.work_id)
+        self.assertEqual({n["label"] for n in graph["nodes"]}, {"Job", "The storm"})
+        self.assertEqual(len(graph["edges"]), 1)
+        ids = {n["id"] for n in graph["nodes"]}
+        self.assertIn(graph["edges"][0]["source"], ids)
+        self.assertIn(graph["edges"][0]["target"], ids)
+
+
 class CanonLinkTests(AtlasBase):
     def test_node_links_to_sealed_canon(self):
         from orivellum.database.canon_store import CanonStore

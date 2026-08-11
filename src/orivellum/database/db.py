@@ -2666,7 +2666,15 @@ class OrivellumDB:
             ).fetchall()
 
         if not doc_rows:
-            return {"nodes": [], "edges": [], "node_count": 0, "edge_count": 0}
+            # No documents — the work may still have an ATLAS-only graph
+            # (graph nodes are not required to reference a chapter/doc).
+            self._merge_atlas_graph(work_id, nodes, edges, seen, limit)
+            return {
+                "nodes": nodes[:limit],
+                "edges": edges[:limit],
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+            }
 
         # Add document nodes (capped)
         for r in doc_rows:
@@ -2862,9 +2870,27 @@ class OrivellumDB:
         Keeps the graph view showing fiction characters/relationships now
         that the chapter harvest feeds graph_node/graph_edge instead of the
         legacy entities store.
+
+        Enforces the payload contract IN PLACE: the final node list fits the
+        limit with room reserved for ATLAS nodes even when the legacy
+        portion has already saturated the budget, and every edge (legacy or
+        ATLAS) references only nodes that survive the budget.
         """
-        for n in self.list_graph_nodes(work_ids=[work_id], limit=max(1, limit)):
-            if n["id"] not in seen:
+        atlas_nodes = [
+            n
+            for n in self.list_graph_nodes(work_ids=[work_id], limit=max(1, limit))
+            if n["id"] not in seen
+        ]
+        if atlas_nodes:
+            # Reserve up to half the budget (min 10 slots) for ATLAS nodes so
+            # a saturated legacy graph can never hide the typed world graph.
+            reserve = min(len(atlas_nodes), max(10, limit // 2))
+            keep = max(0, limit - reserve)
+            if len(nodes) > keep:
+                for dropped in nodes[keep:]:
+                    seen.discard(dropped["id"])
+                del nodes[keep:]
+            for n in atlas_nodes[: max(0, limit - len(nodes))]:
                 seen.add(n["id"])
                 nodes.append(
                     {
@@ -2884,6 +2910,10 @@ class OrivellumDB:
                         "type": e["edge_type"],
                     }
                 )
+        # Final contract: no edge may reference a node outside the returned
+        # set (legacy edges may point at nodes dropped to make room above).
+        final_ids = {n["id"] for n in nodes[:limit]}
+        edges[:] = [e for e in edges if e["source"] in final_ids and e["target"] in final_ids]
 
     def get_global_graph(
         self,
