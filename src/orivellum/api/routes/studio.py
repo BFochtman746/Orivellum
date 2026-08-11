@@ -2726,10 +2726,12 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
 
 
 # ── Work-Audiobook async job model ───────────────────────────────────────────
-# Per-job registry keys: state, chapter_idx, total_chapters, chapter_title,
-#                        work_title, cancel_requested, result?, error?
+# Per-job registry keys: state, work_id, started_at, chapter_idx,
+#                        total_chapters, chapter_title, work_title,
+#                        cancel_requested, result?, error?
 _work_tts_jobs: dict[str, dict] = {}
 _work_tts_jobs_lock = threading.Lock()
+_WORK_TTS_TERMINAL = frozenset({"done", "failed", "cancelled"})
 
 
 def _run_work_tts_job(
@@ -3305,6 +3307,21 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
     db = get_db()
     cfg = get_config()
 
+    # One render per Work: starting a second job for the same Work would burn
+    # 20+ minutes of duplicate synthesis. Return 409 with the live job id so
+    # the client can re-attach to it instead. (Checked before any heavy work.)
+    with _work_tts_jobs_lock:
+        for jid, j in _work_tts_jobs.items():
+            if j.get("work_id") == body.work_id and j.get("state") not in _WORK_TTS_TERMINAL:
+                raise HTTPException(
+                    409,
+                    {
+                        "message": "A render for this Work is already in progress.",
+                        "job_id": jid,
+                        "work_id": body.work_id,
+                    },
+                )
+
     work_title, doc_texts = _collect_work_doc_texts(db, body.work_id)
 
     # Cloned voices exist only on the premium sidecar — reject before the job
@@ -3341,6 +3358,8 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
     with _work_tts_jobs_lock:
         _work_tts_jobs[job_id] = {
             "state": "starting",
+            "work_id": body.work_id,
+            "started_at": time.time(),
             "chapter_idx": 0,
             "total_chapters": len(doc_texts),
             "chapter_title": "",
@@ -3372,6 +3391,27 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
     )
 
     return {"job_id": job_id, "total_chapters": len(doc_texts)}
+
+
+@router.get("/studio/tts/work/active")
+def list_active_work_tts_jobs():
+    """Return every work-audiobook job that is still running.
+
+    Lets a re-opened Studio rediscover a render it started earlier (the job
+    deliberately keeps going when the UI unmounts) and re-attach its progress
+    view. Terminal jobs are excluded — their results are fetched per-job.
+    """
+    with _work_tts_jobs_lock:
+        jobs = [
+            {
+                "job_id": jid,
+                **{k: v for k, v in j.items() if k not in ("cancel_requested", "result")},
+            }
+            for jid, j in _work_tts_jobs.items()
+            if j.get("state") not in _WORK_TTS_TERMINAL
+        ]
+    jobs.sort(key=lambda j: j.get("started_at") or 0.0, reverse=True)
+    return {"jobs": jobs}
 
 
 @router.get("/studio/tts/work/{job_id}/status")

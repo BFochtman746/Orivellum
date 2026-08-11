@@ -29,36 +29,14 @@ import {
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
 import { SpatialSettingsSync, shouldRollback, type SpatialSettings } from "./spatialSettings";
+import {
+  VoiceCard, DimensionBar, DIMENSION_COLORS,
+  type VoiceEntry, type VoiceDimensions,
+} from "./VoiceCard";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-
-interface VoiceDimensions {
-  warmth: number;
-  authority: number;
-  gravitas: number;
-  pace: number;
-  brightness: number;
-  age: number;
-}
-
-interface VoiceEntry {
-  id: string;
-  name: string;
-  accent?: string;
-  gender?: string;
-  description?: string;
-  dimensions?: VoiceDimensions;
-  tags?: string[];
-  builtin?: boolean;
-  engine?: string;
-  custom?: boolean;
-  /** Engine used to generate this voice's cached sample, if one exists.
-   *  Always neural ("kokoro") — the robotic fallback was removed by policy.
-   *  null = not yet generated. */
-  sample_engine?: string | null;
-}
 
 interface Recommendation {
   voice_id: string;
@@ -261,162 +239,6 @@ function CustomLinePreview({ voiceId, globalAudio }: {
       <p className="text-[10px] text-muted-foreground mt-1">
         {line.length}/{CUSTOM_LINE_MAX} — one-off preview, not saved
       </p>
-    </div>
-  );
-}
-
-// ── Dimension bar ─────────────────────────────────────────────────────────────
-
-function DimensionBar({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-[10px] font-mono text-muted-foreground w-16 shrink-0 capitalize">{label}</span>
-      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all"
-          style={{ width: `${(value / 10) * 100}%`, background: color || "var(--gilt)" }}
-        />
-      </div>
-      <span className="text-[10px] font-mono text-muted-foreground w-4 text-right">{value}</span>
-    </div>
-  );
-}
-
-const DIMENSION_COLORS: Record<string, string> = {
-  warmth:    "var(--gilt)",
-  authority: "var(--green-2)",
-  gravitas:  "var(--rust)",
-  pace:      "var(--green-2)",
-  brightness:"var(--gilt)",
-  age:       "#8A7A6A",
-};
-
-// ── Voice Card ────────────────────────────────────────────────────────────────
-
-function VoiceCard({
-  voice,
-  selected,
-  onSelect,
-  playingId,
-  loadingId,
-  onPlay,
-  sampleEngines = {},
-}: {
-  voice: VoiceEntry;
-  selected: boolean;
-  onSelect: (v: VoiceEntry) => void;
-  playingId: string | null;
-  loadingId: string | null;
-  onPlay: (id: string) => void;
-  /** Engine recorded for each voice's sample — keyed by voice ID.
-   *  Populated lazily as the user plays samples this session. */
-  sampleEngines?: Record<string, string>;
-}) {
-  const isPlaying = playingId === voice.id;
-  const isLoading = loadingId === voice.id;
-  const dims = voice.dimensions;
-
-  const accentColor = voice.accent === "british"
-    ? "border-border/60 bg-muted/20"
-    : "";
-
-  const genderIcon = voice.gender === "feminine" ? "♀" : voice.gender === "masculine" ? "♂" : "◆";
-
-  return (
-    <div
-      onClick={() => onSelect(voice)}
-      className={`
-        relative group cursor-pointer rounded-xl border-2 p-4 transition-all
-        hover:shadow-md hover:-translate-y-0.5
-        ${selected
-          ? "border-primary bg-primary/5 shadow-md ring-1 ring-primary/20"
-          : "border-border/50 hover:border-primary/40 bg-card"
-        }
-      `}
-    >
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-sm leading-tight">{voice.name}</span>
-            <span className="text-[11px] text-muted-foreground">{genderIcon}</span>
-            {voice.builtin && (
-              <span className="text-[9px] font-mono px-1 py-0.5 rounded" style={{ background: "var(--green-soft)", color: "var(--green-2)" }}>
-                ✓
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1 mt-0.5">
-            {voice.accent && (
-              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full border capitalize ${accentColor}`}>
-                {voice.accent}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Play button */}
-        <button
-          onClick={e => { e.stopPropagation(); onPlay(voice.id); }}
-          disabled={isLoading}
-          className={`
-            w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all
-            ${isPlaying
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "bg-muted hover:bg-primary/10 hover:text-primary text-muted-foreground"
-            }
-            disabled:opacity-50
-          `}
-          title={isPlaying ? "Stop" : "Preview voice sample"}
-        >
-          {isLoading ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : isPlaying ? (
-            <Pause className="w-3.5 h-3.5" />
-          ) : (
-            <Play className="w-3.5 h-3.5 ml-0.5" />
-          )}
-        </button>
-      </div>
-
-      {/* Description */}
-      {voice.description && (
-        <p className="text-xs text-muted-foreground line-clamp-2 mb-3 leading-relaxed">
-          {voice.description}
-        </p>
-      )}
-
-      {/* Key dimensions — top 3 */}
-      {dims && (
-        <div className="space-y-1.5 mb-3">
-          {(["warmth", "authority", "gravitas"] as const).map(key => (
-            <DimensionBar
-              key={key}
-              label={key}
-              value={dims[key]}
-              color={DIMENSION_COLORS[key]}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Genre tags */}
-      {voice.tags && voice.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {voice.tags.slice(0, 3).map(tag => (
-            <span key={tag}
-              className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {selected && (
-        <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-primary flex items-center justify-center">
-          <CheckCircle2 className="w-3 h-3 text-primary-foreground" />
-        </div>
-      )}
     </div>
   );
 }
@@ -964,7 +786,6 @@ function BrowseTab({
                 playingId={globalAudio.playingId}
                 loadingId={globalAudio.loadingId}
                 onPlay={globalAudio.playVoiceSample}
-                sampleEngines={globalAudio.sampleEngines}
               />
             ))}
             {filtered.length === 0 && (
@@ -1436,6 +1257,9 @@ function AudiobookTab({
   const [vsWorkChapterTitle, setVsWorkChapterTitle] = useState("");
   const vsWorkJobIdRef = useRef<string | null>(null);
   const vsWorkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Live work renders across the whole server, keyed by work_id — drives the
+  // "render in progress" badge in the Work picker and auto re-attach.
+  const [activeWorkJobs, setActiveWorkJobs] = useState<Record<string, { job_id: string }>>({});
   // What the segment cache already holds for the selected Work + settings —
   // drives the "Resume" affordance and the per-chapter done list.
   type ResumeInfo = {
@@ -1708,6 +1532,103 @@ function AudiobookTab({
     return () => { cancelled = true; };
   }, [mode, workId, voiceId, speed, credits, vsWorkJobId]);
 
+  // Shared polling loop for a work render — used both when this tab starts a
+  // job and when it re-attaches to one that was already running on the server.
+  function startWorkJobPolling(job_id: string) {
+    const iv: ReturnType<typeof setInterval> = setInterval(async () => {
+      // The user may have switched Work/mode (detach) or started another
+      // job — this closure must never update state for a stale job.
+      if (vsWorkJobIdRef.current !== job_id) { clearInterval(iv); return; }
+      const stopPolling = () => {
+        clearInterval(iv);
+        if (vsWorkPollRef.current === iv) vsWorkPollRef.current = null;
+      };
+      try {
+        const sr = await apiFetch(`${BASE}/studio/tts/work/${job_id}/status`);
+        if (vsWorkJobIdRef.current !== job_id) { clearInterval(iv); return; }
+        if (!sr.ok) {
+          if (sr.status === 404) {
+            stopPolling();
+            vsWorkJobIdRef.current = null; setVsWorkJobId(null); setLoading(false);
+            toast.error("Server restarted — finished chapters are saved. Generate again to resume.");
+          }
+          return;
+        }
+        const status = await sr.json();
+        setVsWorkChapterIdx(status.chapter_idx ?? 0);
+        setVsWorkChapterTotal(status.total_chapters ?? 0);
+        setVsWorkChapterTitle(status.chapter_title ?? "");
+        setVsWorkSegsDone(status.segments_done ?? 0);
+        setVsWorkSegsTotal(status.total_segments ?? 0);
+        setVsWorkCachedSegs(status.cached_segments ?? 0);
+        const terminal = ["done", "failed", "cancelled"].includes(status.state);
+        if (terminal) {
+          stopPolling();
+          vsWorkJobIdRef.current = null; setVsWorkJobId(null); setLoading(false);
+          // The render is over — clear its "in progress" badge everywhere.
+          setActiveWorkJobs(prev => {
+            const next = { ...prev };
+            for (const k of Object.keys(next)) if (next[k].job_id === job_id) delete next[k];
+            return next;
+          });
+          if (status.state === "done") {
+            setVsWorkQuality(status.quality_report ?? null);
+            const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.result?.path ?? "")}`;
+            setAudioUrl(serveUrl);
+            setAudioName(status.result?.filename ?? `${works.find((w: any) => w.id === workId)?.title ?? "audiobook"}.mp3`);
+            toast.success("Audiobook ready — tap play below");
+          } else if (status.state === "failed") {
+            toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
+          } else {
+            toast("Render paused — finished chapters are saved. Generate again to resume.");
+          }
+        }
+      } catch { /* transient poll errors */ }
+    }, 2000);
+    vsWorkPollRef.current = iv;
+  }
+
+  // Point the progress UI at a work render job (freshly started or
+  // rediscovered) and begin polling it.
+  function attachWorkJob(job_id: string, snap?: any) {
+    vsWorkJobIdRef.current = job_id;
+    setVsWorkJobId(job_id);
+    setVsWorkChapterIdx(snap?.chapter_idx ?? 0);
+    setVsWorkChapterTotal(snap?.total_chapters ?? 0);
+    setVsWorkChapterTitle(snap?.chapter_title ?? "");
+    setVsWorkSegsDone(snap?.segments_done ?? 0);
+    setVsWorkSegsTotal(snap?.total_segments ?? 0);
+    setVsWorkCachedSegs(snap?.cached_segments ?? 0);
+    setVsWorkQuality(null);
+    setLoading(true);
+    startWorkJobPolling(job_id);
+  }
+
+  // Rediscover a render that's still running for the selected Work — the
+  // server job deliberately survives navigation/unmount, so coming back to
+  // the Studio must re-show live progress instead of a stale Generate button.
+  useEffect(() => {
+    if (mode !== "work") return;
+    let cancelled = false;
+    apiFetch(`${BASE}/studio/tts/work/active`)
+      .then(async r => {
+        if (cancelled || !r.ok) return;
+        const data = await r.json();
+        if (cancelled) return;
+        const map: Record<string, { job_id: string }> = {};
+        for (const j of data.jobs ?? []) if (j.work_id) map[j.work_id] = j;
+        setActiveWorkJobs(map);
+        const mine = workId ? (map[workId] as any) : null;
+        if (mine && !vsWorkJobIdRef.current) {
+          attachWorkJob(mine.job_id, mine);
+          toast.info("Reconnected to the render already running for this Work");
+        }
+      })
+      .catch(() => {/* discovery is optional — Generate still works */});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, workId]);
+
   async function handleGenerate() {
     const hasTarget = mode === "work" ? !!workId : !!docId;
     if (!hasTarget) return;
@@ -1737,64 +1658,23 @@ function AudiobookTab({
         });
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
-          throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+          const detail = (err as any).detail;
+          // 409 = a render for this Work is already running on the server —
+          // re-attach to it instead of surfacing an error.
+          if (resp.status === 409 && detail?.job_id) {
+            setActiveWorkJobs(prev => ({ ...prev, [workId]: { job_id: detail.job_id } }));
+            attachWorkJob(detail.job_id);
+            toast.info("This Work is already rendering — reconnected to the running job");
+            return;
+          }
+          throw new Error(typeof detail === "string" ? detail : `HTTP ${resp.status}`);
         }
         const { job_id, total_chapters } = await resp.json();
-        vsWorkJobIdRef.current = job_id;
-        setVsWorkJobId(job_id);
-        setVsWorkChapterIdx(0);
-        setVsWorkChapterTotal(total_chapters ?? 0);
-        setVsWorkChapterTitle("");
-        setVsWorkSegsDone(0);
-        setVsWorkSegsTotal(resumeInfo?.total_segments ?? 0);
-        setVsWorkCachedSegs(0);
-        setVsWorkQuality(null);
-        // loading stays true while polling
-        const iv: ReturnType<typeof setInterval> = setInterval(async () => {
-          // The user may have switched Work/mode (detach) or started another
-          // job — this closure must never update state for a stale job.
-          if (vsWorkJobIdRef.current !== job_id) { clearInterval(iv); return; }
-          const stopPolling = () => {
-            clearInterval(iv);
-            if (vsWorkPollRef.current === iv) vsWorkPollRef.current = null;
-          };
-          try {
-            const sr = await apiFetch(`${BASE}/studio/tts/work/${job_id}/status`);
-            if (vsWorkJobIdRef.current !== job_id) { clearInterval(iv); return; }
-            if (!sr.ok) {
-              if (sr.status === 404) {
-                stopPolling();
-                vsWorkJobIdRef.current = null; setVsWorkJobId(null); setLoading(false);
-                toast.error("Server restarted — finished chapters are saved. Generate again to resume.");
-              }
-              return;
-            }
-            const status = await sr.json();
-            setVsWorkChapterIdx(status.chapter_idx ?? 0);
-            setVsWorkChapterTotal(status.total_chapters ?? 0);
-            setVsWorkChapterTitle(status.chapter_title ?? "");
-            setVsWorkSegsDone(status.segments_done ?? 0);
-            setVsWorkSegsTotal(status.total_segments ?? 0);
-            setVsWorkCachedSegs(status.cached_segments ?? 0);
-            const terminal = ["done", "failed", "cancelled"].includes(status.state);
-            if (terminal) {
-              stopPolling();
-              vsWorkJobIdRef.current = null; setVsWorkJobId(null); setLoading(false);
-              if (status.state === "done") {
-                setVsWorkQuality(status.quality_report ?? null);
-                const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.result?.path ?? "")}`;
-                setAudioUrl(serveUrl);
-                setAudioName(status.result?.filename ?? `${works.find((w: any) => w.id === workId)?.title ?? "audiobook"}.mp3`);
-                toast.success("Audiobook ready — tap play below");
-              } else if (status.state === "failed") {
-                toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
-              } else {
-                toast("Render paused — finished chapters are saved. Generate again to resume.");
-              }
-            }
-          } catch { /* transient poll errors */ }
-        }, 2000);
-        vsWorkPollRef.current = iv;
+        setActiveWorkJobs(prev => ({ ...prev, [workId]: { job_id } }));
+        attachWorkJob(job_id, {
+          total_chapters: total_chapters ?? 0,
+          total_segments: resumeInfo?.total_segments ?? 0,
+        });
       } catch (e: any) {
         toast.error(`Audiobook failed: ${e.message}`, { duration: 10_000 });
         setLoading(false);
@@ -1911,7 +1791,16 @@ function AudiobookTab({
               </SelectTrigger>
               <SelectContent>
                 {works.map((w: any) => (
-                  <SelectItem key={w.id} value={w.id}>{w.title}</SelectItem>
+                  <SelectItem key={w.id} value={w.id}>
+                    <span className="flex items-center gap-2">
+                      {w.title}
+                      {activeWorkJobs[w.id] && (
+                        <span className="flex items-center gap-1 text-[11px] text-primary">
+                          <Loader2 className="w-3 h-3 animate-spin" /> rendering
+                        </span>
+                      )}
+                    </span>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
