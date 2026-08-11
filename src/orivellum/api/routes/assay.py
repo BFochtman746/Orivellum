@@ -195,6 +195,8 @@ def instrument_enter_shadow(key: str, req: CertificationRequest):
         instrument = assay.promotion.enter_shadow(db, key, actor="user", note=req.note)
     except assay.promotion.PromotionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"instrument": assay.contract_public(instrument)}
 
 
@@ -207,6 +209,8 @@ def instrument_promote(key: str, req: CertificationRequest):
         instrument = assay.promotion.promote(db, key, author="user", note=req.note)
     except assay.promotion.PromotionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"instrument": assay.contract_public(instrument)}
 
 
@@ -217,6 +221,8 @@ def instrument_demote(key: str, req: CertificationRequest):
         instrument = assay.promotion.demote(db, key, author="user", note=req.note)
     except assay.promotion.PromotionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"instrument": assay.contract_public(instrument)}
 
 

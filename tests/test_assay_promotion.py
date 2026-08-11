@@ -159,6 +159,49 @@ class TestLifecycle(PromotionBase):
         with self.assertRaises(ValueError):
             self.db.set_assay_certification("judge.hierarchical", "certified", actor="user")
 
+    def test_certified_reseed_with_changed_authority_demotes_to_shadow(self):
+        # A certified instrument whose tier/thresholds/scope/shadow_of change
+        # on re-seed must re-earn its authority: auto-demoted to shadow with
+        # a ledger row, in the same transaction.
+        inst = self._register_candidate()
+        self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        changed = dict(CANDIDATE)
+        changed["thresholds"] = dict(CANDIDATE["thresholds"], min_series_items=2)
+        self.db.upsert_assay_instrument(changed)
+        updated = self.db.get_assay_instrument(inst["key"])
+        self.assertEqual(updated["certification"], "shadow")
+        events = self.db.list_assay_certification_events(inst["id"])
+        self.assertEqual(events[0]["to_status"], "shadow")
+        self.assertEqual(events[0]["actor"], "system")
+
+    def test_certified_reseed_without_authority_change_keeps_certification(self):
+        inst = self._register_candidate()
+        self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        renamed = dict(CANDIDATE)
+        renamed["name"] = "Drift: Catalog (renamed)"
+        self.db.upsert_assay_instrument(renamed)
+        self.assertEqual(
+            self.db.get_assay_instrument(inst["key"])["certification"], "certified"
+        )
+
+    def test_concurrent_transition_loses_cas(self):
+        # Simulate a lost race: the validated from-status is stale by the
+        # time the compare-and-set UPDATE runs — the write must fail loud
+        # and leave no ledger row.
+        from unittest.mock import patch
+
+        inst = self._register_candidate()  # now in shadow
+        stale = dict(inst)
+        stale["certification"] = "advisory"  # pretends it is still advisory
+        real_get = self.db.get_assay_instrument
+        with patch.object(
+            self.db, "get_assay_instrument", side_effect=[stale, real_get(inst["key"])]
+        ), self.assertRaises(RuntimeError):
+            self.db.set_assay_certification(inst["key"], "shadow", actor="user")
+        events = self.db.list_assay_certification_events(inst["id"])
+        # Only the original advisory->shadow event from setup exists.
+        self.assertEqual(len(events), 1)
+
     def test_every_transition_is_ledgered(self):
         inst = self._register_candidate(in_shadow=True)
         events = self.db.list_assay_certification_events(inst["id"])

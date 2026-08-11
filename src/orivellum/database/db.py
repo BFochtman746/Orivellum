@@ -7641,6 +7641,11 @@ class OrivellumDB:
         instrument cannot be registered straight into blocking authority.
         ``shadow_of`` (optional) names the certified baseline instrument the
         candidate shadows; it must not point at itself.
+
+        A CERTIFIED instrument whose authority-affecting contract changes on
+        re-seed (tier, thresholds, scope, or shadow_of) is automatically
+        demoted to shadow in the same transaction, with a ledger row — a
+        changed detector must re-earn blocking authority, never keep it.
         """
         if "certification" in contract:
             raise ValueError(
@@ -7652,13 +7657,23 @@ class OrivellumDB:
         now = _now()
         with self._lock:
             row = self._conn.execute(
-                "SELECT id FROM assay_instrument WHERE key=?", (contract["key"],)
+                """SELECT id, certification, tier, thresholds, scope, shadow_of
+                   FROM assay_instrument WHERE key=?""",
+                (contract["key"],),
             ).fetchone()
             if row is not None:
+                authority_changed = (
+                    int(contract["tier"]) != int(row["tier"])
+                    or json.dumps(contract.get("thresholds", {})) != row["thresholds"]
+                    or json.dumps(contract.get("scope", {})) != row["scope"]
+                    or shadow_of != row["shadow_of"]
+                )
+                demote = row["certification"] == "certified" and authority_changed
                 self._conn.execute(
                     """UPDATE assay_instrument SET name=?, purpose=?, tier=?, variance=?,
                        allowed_ops=?, forbidden_ops=?, authority_relationship=?,
                        output_schema=?, scope=?, thresholds=?, origin=?, shadow_of=?,
+                       certification=CASE WHEN ? THEN 'shadow' ELSE certification END,
                        updated_at=?
                        WHERE key=?""",
                     (
@@ -7670,9 +7685,23 @@ class OrivellumDB:
                         json.dumps(contract.get("output_schema", {})),
                         json.dumps(contract.get("scope", {})),
                         json.dumps(contract.get("thresholds", {})),
-                        contract.get("origin", ""), shadow_of, now, contract["key"],
+                        contract.get("origin", ""), shadow_of,
+                        1 if demote else 0, now, contract["key"],
                     ),
                 )
+                if demote:
+                    self._conn.execute(
+                        """INSERT INTO assay_certification_event(id, instrument_id,
+                           from_status, to_status, actor, precision_val, sample_size,
+                           note, created_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                        (
+                            str(uuid.uuid4()), row["id"], "certified", "shadow",
+                            "system", None, None,
+                            "authority-affecting contract change on re-seed — "
+                            "must re-earn certification",
+                            now,
+                        ),
+                    )
                 self._conn.commit()
                 return row["id"]
             instrument_id = str(uuid.uuid4())
@@ -7723,8 +7752,11 @@ class OrivellumDB:
         Validates the transition against ``_ASSAY_CERT_TRANSITIONS``, refuses
         to certify Tier 3 (advisory forever), then updates the column and
         appends one ``assay_certification_event`` row atomically inside a
-        governed write.  Returns the updated instrument.  Raises ValueError
-        on any illegal transition.
+        governed write.  The UPDATE is a compare-and-set predicated on the
+        validated from-status, so two concurrent transitions can never both
+        ledger — the loser's CAS misses and the whole write rolls back.
+        Returns the updated instrument.  Raises ValueError on any illegal
+        transition, RuntimeError on a lost CAS race.
         """
         instrument = self.get_assay_instrument(key)
         if instrument is None:
@@ -7744,10 +7776,15 @@ class OrivellumDB:
             actor=actor,
             detail=f"{key}: {frm} -> {to_status}",
         ):
-            self._conn.execute(
-                "UPDATE assay_instrument SET certification=?, updated_at=? WHERE key=?",
-                (to_status, now, key),
+            cur = self._conn.execute(
+                """UPDATE assay_instrument SET certification=?, updated_at=?
+                   WHERE key=? AND certification=?""",
+                (to_status, now, key, frm),
             )
+            if cur.rowcount != 1:
+                raise RuntimeError(
+                    f"certification of {key!r} changed concurrently — retry"
+                )
             self._conn.execute(
                 """INSERT INTO assay_certification_event(id, instrument_id, from_status,
                    to_status, actor, precision_val, sample_size, note, created_at)
