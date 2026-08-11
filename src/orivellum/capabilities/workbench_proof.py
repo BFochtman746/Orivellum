@@ -66,6 +66,48 @@ class _OverLimit(Exception):
     """Internal: preflight counter passed the ceiling — stop parsing."""
 
 
+_WORKSHEET_CT = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
+_CONTENT_TYPES_CAP = 4 * 1024 * 1024
+
+
+def _worksheet_parts(z: zipfile.ZipFile) -> list[str] | None:
+    """Every part the package declares as a worksheet — a valid workbook may
+    name them anything (relationships decide, not filenames), so the
+    conventional ``sheet<N>.xml`` pattern alone is bypassable. Returns the
+    union of pattern matches and ``[Content_Types].xml`` declarations
+    (Override part names + Default extension mappings); ``None`` when the
+    content-types manifest is too large to inspect safely (fail closed)."""
+    import xml.parsers.expat
+
+    names = {n for n in z.namelist() if _SHEET_XML.match(n)}
+    overrides: set[str] = set()
+    default_exts: set[str] = set()
+
+    def _start(tag, attrs):
+        local = tag.rpartition(":")[2]
+        if local == "Override" and attrs.get("ContentType") == _WORKSHEET_CT:
+            overrides.add(attrs.get("PartName", "").lstrip("/"))
+        elif local == "Default" and attrs.get("ContentType") == _WORKSHEET_CT:
+            default_exts.add(attrs.get("Extension", "").lower().lstrip("."))
+
+    try:
+        with z.open("[Content_Types].xml") as fh:
+            data = fh.read(_CONTENT_TYPES_CAP + 1)
+        if len(data) > _CONTENT_TYPES_CAP:
+            return None
+        parser = xml.parsers.expat.ParserCreate()
+        parser.StartElementHandler = _start
+        parser.Parse(data, True)
+    except Exception:  # noqa: BLE001 - no/broken manifest: engine will report it
+        logger.debug("Content-types scan failed", exc_info=True)
+        return sorted(names)
+    names.update(n for n in overrides if n)
+    if default_exts:
+        exts = {"." + e for e in default_exts if e}
+        names.update(n for n in z.namelist() if pathlib.PurePosixPath(n).suffix.lower() in exts)
+    return sorted(n for n in names if n in set(z.namelist()))
+
+
 def _feed_sheet_xml(fh, parser, scanned: int) -> int:
     """Stream one worksheet part into the parser; -1 when the cumulative
     scan budget is spent."""
@@ -108,9 +150,10 @@ def _count_formula_cells(path: pathlib.Path, limit: int) -> int:
     scanned = 0
     try:
         with zipfile.ZipFile(path) as z:
-            for name in z.namelist():
-                if not _SHEET_XML.match(name):
-                    continue
+            parts = _worksheet_parts(z)
+            if parts is None:
+                return limit + 1  # cannot enumerate sheets safely — fail closed
+            for name in parts:
                 parser = xml.parsers.expat.ParserCreate()
                 parser.StartElementHandler = _start
                 with z.open(name) as fh:

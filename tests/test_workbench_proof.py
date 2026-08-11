@@ -217,6 +217,45 @@ class TestProveWorkbook(unittest.TestCase):
             self.assertIn("too large to prove", res["error"])
             engine.recalculate.assert_not_called()
 
+    def test_ceiling_covers_renamed_worksheet_parts(self):
+        """A valid workbook may name its worksheet parts anything — the
+        package relationships decide, not the sheet<N>.xml convention. The
+        preflight must discover such parts via [Content_Types].xml and the
+        engine must never run when they exceed the ceiling."""
+        import os
+        import zipfile as zf
+        from unittest.mock import MagicMock
+
+        from orivellum.capabilities import workbench_proof
+        from orivellum.capabilities.workbench_proof import _count_formula_cells
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "book.xlsx"
+            _good_workbook(src)  # 2 formula cells
+            renamed = Path(tmp) / "renamed.xlsx"
+            with zf.ZipFile(src) as zin, zf.ZipFile(renamed, "w") as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    name = item.filename
+                    if name == "xl/worksheets/sheet1.xml":
+                        name = "xl/worksheets/custom.xml"
+                    elif name in ("[Content_Types].xml", "xl/_rels/workbook.xml.rels"):
+                        data = data.replace(b"sheet1.xml", b"custom.xml")
+                    zout.writestr(name, data)
+            self.assertEqual(_count_formula_cells(renamed, 100), 2)
+
+            engine = MagicMock()
+            engine.recalculate.side_effect = AssertionError("engine must not run")
+            with (
+                patch.dict(os.environ, {"ORIVELLUM_PROOF_FORMULA_CEILING": "1"}),
+                patch.object(
+                    workbench_proof, "_load_runner_modules", return_value=(engine, MagicMock())
+                ),
+            ):
+                res = workbench_proof.prove_workbook(renamed)
+            self.assertEqual(res["verdict"], "unverified")
+            engine.recalculate.assert_not_called()
+
     def test_scan_budget_fails_closed_as_unverified(self):
         """Exhausting the XML scan budget must report 'too large' (over the
         limit), never hang or silently pass."""
