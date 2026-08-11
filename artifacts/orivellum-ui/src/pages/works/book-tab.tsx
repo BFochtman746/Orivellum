@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { BrainstormB3Panel } from "./brainstorm-tab";
+import { ChapterBandDialog } from "./chapter-history";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -1129,6 +1130,7 @@ function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string
 export function BookTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [settingCanonical, setSettingCanonical] = useState<string | null>(null);
+  const [bandChapter, setBandChapter] = useState<string | null>(null);
 
   // Fetch work lifecycle for the Trailer Architect canon guard
   const { data: workData } = useQuery<{ lifecycle?: string }>({
@@ -1251,13 +1253,22 @@ export function BookTab({ workId }: { workId: string }) {
                 return (
                   <div
                     key={c.id}
-                    className="flex items-center gap-3 py-2 px-3 rounded-lg border border-border/40 bg-card/50"
+                    className="group flex items-center gap-3 py-2 px-3 rounded-lg border border-border/40 bg-card/50"
                     style={{ marginLeft: `${Math.min(c.level - 1, 2) * 16}px` }}
                   >
                     <chip.Icon className="w-4 h-4 shrink-0" style={{ color: chip.style.color as string }} />
                     <span className="font-serif text-sm truncate flex-1" title={c.title ?? undefined}>
                       {c.title || "Untitled section"}
                     </span>
+                    {c.word_count > 0 && (
+                      <button
+                        onClick={() => setBandChapter(c.id)}
+                        className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border opacity-0 group-hover:opacity-100 transition-opacity hover:border-primary/50 hover:text-primary"
+                        title="Surgical edit & revision history"
+                      >
+                        edit / history
+                      </button>
+                    )}
                     <span className="text-[10px] font-mono text-muted-foreground shrink-0" title="Word count">
                       {c.word_count.toLocaleString()} w
                     </span>
@@ -1354,6 +1365,16 @@ export function BookTab({ workId }: { workId: string }) {
 
       {/* Trailer Architect */}
       <TrailerPanel workId={workId} lifecycle={workLifecycle} />
+
+      {/* BAND: surgical chapter edits + revision history */}
+      {bandChapter && (
+        <ChapterBandDialog
+          chapterId={bandChapter}
+          workId={workId}
+          open={!!bandChapter}
+          onOpenChange={(o) => !o && setBandChapter(null)}
+        />
+      )}
     </div>
   );
 }

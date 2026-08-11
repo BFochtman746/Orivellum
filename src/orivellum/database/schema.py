@@ -2983,4 +2983,23 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
     """,
     ),
+    # v129 — BAND + LINEAGE (E8/E9): revision lineage columns.
+    #
+    # Every revision now records WHERE it came from (parent_rev — the head
+    # revision it was created from, NULL for a chapter's first revision),
+    # WHAT produced it (origin: human / ai_assisted / ai_generated), WHO
+    # (created_by: 'loom', an author signature, 'user', 'checkpoint'), and —
+    # for surgical band edits — the exact edit scope (JSON: span offsets,
+    # instruction, fingerprints before/after).  Nothing is ever deleted;
+    # restore creates a NEW revision pointing at its source.
+    (
+        129,
+        "BAND/LINEAGE: revision lineage (parent_rev, origin, created_by, edit_scope)",
+        """
+        ALTER TABLE loom_chapter_revision ADD COLUMN parent_rev INTEGER;
+        ALTER TABLE loom_chapter_revision ADD COLUMN origin TEXT NOT NULL DEFAULT 'ai_generated';
+        ALTER TABLE loom_chapter_revision ADD COLUMN created_by TEXT NOT NULL DEFAULT 'loom';
+        ALTER TABLE loom_chapter_revision ADD COLUMN edit_scope TEXT
+    """,
+    ),
 ]

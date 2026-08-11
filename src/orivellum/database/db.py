@@ -8188,9 +8188,18 @@ class OrivellumDB:
             self._conn.commit()
 
     def create_chapter_revision(
-        self, chapter_id: str, work_id: str, text: str, meta: dict | None = None
+        self, chapter_id: str, work_id: str, text: str, meta: dict | None = None,
+        *, origin: str = "ai_generated", created_by: str = "loom",
+        edit_scope: dict | None = None,
     ) -> dict:
-        """Append a NEW revision row (rev = max+1, allocated under the lock)."""
+        """Append a NEW revision row (rev = max+1, allocated under the lock).
+
+        Lineage is recorded automatically: parent_rev is the head revision at
+        insert time (NULL for the first revision).  Revisions are append-only —
+        nothing updates or deletes them; restore copies text into a NEW row.
+        """
+        if origin not in ("human", "ai_assisted", "ai_generated"):
+            raise ValueError(f"invalid revision origin {origin!r}")
         rid = str(uuid.uuid4())
         wc = len(text.split())
         with self._lock:
@@ -8198,19 +8207,24 @@ class OrivellumDB:
                 "SELECT COALESCE(MAX(rev), 0) AS m FROM loom_chapter_revision WHERE chapter_id=?",
                 (chapter_id,),
             ).fetchone()
-            rev = int(row["m"]) + 1
+            head = int(row["m"])
+            rev = head + 1
             self._conn.execute(
                 """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
-                   text, word_count, meta, created_at) VALUES(?,?,?,?,?,?,?,?)""",
-                (rid, chapter_id, work_id, rev, text, wc, json.dumps(meta or {}), _now()),
+                   text, word_count, meta, created_at, parent_rev, origin,
+                   created_by, edit_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (rid, chapter_id, work_id, rev, text, wc, json.dumps(meta or {}),
+                 _now(), head if head > 0 else None, origin, created_by,
+                 json.dumps(edit_scope) if edit_scope is not None else None),
             )
             self._conn.commit()
-        return {"id": rid, "rev": rev, "word_count": wc}
+        return {"id": rid, "rev": rev, "word_count": wc, "parent_rev": head or None}
 
     def list_chapter_revisions(self, chapter_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                """SELECT id, chapter_id, work_id, rev, word_count, meta, created_at
+                """SELECT id, chapter_id, work_id, rev, word_count, meta,
+                          created_at, parent_rev, origin, created_by, edit_scope
                    FROM loom_chapter_revision WHERE chapter_id=? ORDER BY rev""",
                 (chapter_id,),
             ).fetchall()
@@ -8218,8 +8232,24 @@ class OrivellumDB:
         for r in rows:
             d = dict(r)
             d["meta"] = json.loads(d["meta"] or "{}")
+            d["edit_scope"] = json.loads(d["edit_scope"]) if d["edit_scope"] else None
             out.append(d)
         return out
+
+    def get_head_chapter_revision(self, chapter_id: str) -> dict | None:
+        """Full row (including text) of the highest revision, or None."""
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT * FROM loom_chapter_revision WHERE chapter_id=?
+                   ORDER BY rev DESC LIMIT 1""",
+                (chapter_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["meta"] = json.loads(d["meta"] or "{}")
+        d["edit_scope"] = json.loads(d["edit_scope"]) if d["edit_scope"] else None
+        return d
 
     def get_chapter_revision(self, revision_id: str) -> dict | None:
         with self._lock:

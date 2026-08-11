@@ -669,8 +669,10 @@ def _store_draft(db, work_id, chapter, prose, meta) -> dict:
         ).fetchone()["m"]) + 1
         db._conn.execute(
             """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
-               text, word_count, meta, created_at) VALUES(?,?,?,?,?,?,?,?)""",
-            (rid, chapter["id"], work_id, rev, prose, wc, json.dumps(meta), now),
+               text, word_count, meta, created_at, parent_rev, origin, created_by)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (rid, chapter["id"], work_id, rev, prose, wc, json.dumps(meta), now,
+             rev - 1 if rev > 1 else None, "ai_generated", "loom"),
         )
         db._conn.execute(
             "UPDATE book_chapters SET text=?, updated_at=? WHERE id=?",
