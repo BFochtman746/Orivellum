@@ -1484,10 +1484,12 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks, force: bool =
     ``/reprocess-all`` route and the MCOS ``/rag/apply?reprocess_library`` path.
 
     Collects every not-finished document (and all ZIPs, which are idempotent to
-    re-explode), atomically reserves each (flips readiness to the transient
-    ``reprocessing`` marker so concurrent callers can't re-select it) and queues
-    ``process_document`` on ``background_tasks``.  Returns the same summary dict
-    the route exposes.
+    re-explode), claims the shared document-level extraction reservation for
+    each BEFORE touching any document state, then flips readiness to the
+    transient ``reprocessing`` marker (so concurrent callers can't re-select
+    it) and queues ``process_document`` on ``background_tasks``.  Documents
+    whose reservation is held by another entry point are skipped with zero
+    mutation.  Returns the same summary dict the route exposes.
     """
     lib_root = _library_root()
 
@@ -1525,14 +1527,11 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks, force: bool =
             if row["id"] not in seen:
                 seen.add(row["id"])
                 candidates.append(row)
-        # Reserve every candidate in the SAME transaction so a concurrent call's
-        # SELECT (which excludes _REPROCESS_RESERVED) finds nothing to re-grab.
-        if candidates:
-            db._conn.executemany(
-                "UPDATE documents SET readiness=? WHERE id=?",
-                [(_REPROCESS_RESERVED, row["id"]) for row in candidates],
-            )
-            db._conn.commit()
+    # NOTE: readiness is NOT flipped here.  The shared extraction reservation
+    # (claimed per candidate below, before any mutation) is what serializes
+    # against every entry point — including a concurrent reprocess-all, whose
+    # try_reserve_extraction for the same doc fails and skips it.  Only after
+    # ownership is acquired does the doc get the _REPROCESS_RESERVED marker.
 
     # ── Queue each reserved candidate ───────────────────────────────────────────
     queued_zips = 0
@@ -1554,61 +1553,53 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks, force: bool =
             file_path = None
 
         if not file_path or not file_path.exists():
+            # Nothing was reserved or mutated for this doc — pure skip.
             logger.warning(
                 "reprocess-all: file missing for doc %s (kind=%s) — skipping",
                 doc_id,
                 kind,
             )
-            # Un-reserve: restore the doc's prior readiness so a stranded
-            # 'reprocessing' marker never leaves it stuck / mis-counted.
-            prior = row["readiness"] or "error"
-            if prior == _REPROCESS_RESERVED:  # was already reserved somehow
-                prior = "error"
-            with db._lock:
-                db._conn.execute("UPDATE documents SET readiness=? WHERE id=?", (prior, doc_id))
-                db._conn.commit()
             skipped += 1
             skipped_docs.append(
                 {
                     "id": doc_id,
                     "title": row["title"] or doc_id[:8],
                     "kind": kind,
-                    "readiness": prior,
+                    "readiness": row["readiness"],
+                    "reason": "file_missing",
                 }
             )
             continue
 
-        # Claim the document-level extraction reservation.  The readiness
-        # marker above only guards against a concurrent reprocess-all; the
-        # reservation is shared with EVERY pipeline entry point (single
-        # reprocess, Studio re-transcribe, nightshift recovery, uploads), so
-        # a doc mid-extraction is skipped here instead of double-run.
+        # Claim the document-level extraction reservation BEFORE any mutation.
+        # The reservation is shared with EVERY pipeline entry point (single
+        # reprocess, Studio re-transcribe, nightshift recovery, uploads), so a
+        # doc mid-extraction is skipped here with its state left untouched.
         token = try_reserve_extraction(doc_id)
         if token is None:
-            prior = row["readiness"] or "error"
-            if prior == _REPROCESS_RESERVED:
-                prior = "error"
-            with db._lock:
-                db._conn.execute("UPDATE documents SET readiness=? WHERE id=?", (prior, doc_id))
-                db._conn.commit()
             skipped += 1
             skipped_docs.append(
                 {
                     "id": doc_id,
                     "title": row["title"] or doc_id[:8],
                     "kind": kind,
-                    "readiness": prior,
+                    "readiness": row["readiness"],
+                    "reason": "already_processing",
                 }
             )
             logger.info("reprocess-all: doc %s already extracting — skipped", doc_id)
             continue
 
         try:
-            # Clear stale warnings.  Do NOT flip readiness back to 'imported'
-            # here — the doc is already reserved at '_REPROCESS_RESERVED' (an
-            # in-flight state), which keeps a concurrent caller from
-            # re-selecting it.  The pipeline drives it to a terminal state
-            # when it finishes.
+            # We own the doc now: mark it with the transient reservation
+            # readiness (so a concurrent reprocess-all's SELECT won't re-pick
+            # it) and clear stale warnings.  The pipeline drives readiness to
+            # a terminal state when it finishes.
+            with db._lock:
+                db._conn.execute(
+                    "UPDATE documents SET readiness=? WHERE id=?", (_REPROCESS_RESERVED, doc_id)
+                )
+                db._conn.commit()
             db.delete_extraction_warnings(doc_id)
 
             background_tasks.add_task(
@@ -1622,7 +1613,14 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks, force: bool =
                 reservation_token=token,
             )
         except Exception:
-            # The queued pipeline never got ownership — release the claim.
+            # The queued pipeline never got ownership — restore the prior
+            # readiness and release the claim.
+            prior = row["readiness"] or "error"
+            if prior == _REPROCESS_RESERVED:
+                prior = "error"
+            with db._lock:
+                db._conn.execute("UPDATE documents SET readiness=? WHERE id=?", (prior, doc_id))
+                db._conn.commit()
             release_extraction(doc_id, token)
             raise
 
@@ -1644,8 +1642,12 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks, force: bool =
         parts.append(f"{queued_zips} ZIP archive(s) will be exploded into child documents")
     if queued_stuck:
         parts.append(f"{queued_stuck} document(s) re-queued for extraction")
-    if skipped:
-        parts.append(f"{skipped} skipped (source file not found on disk)")
+    n_missing = sum(1 for d in skipped_docs if d.get("reason") == "file_missing")
+    n_busy = sum(1 for d in skipped_docs if d.get("reason") == "already_processing")
+    if n_missing:
+        parts.append(f"{n_missing} skipped (source file not found on disk)")
+    if n_busy:
+        parts.append(f"{n_busy} skipped (already being processed)")
 
     return {
         "queued": total,

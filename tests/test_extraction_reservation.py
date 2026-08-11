@@ -269,6 +269,53 @@ class ReprocessRoute409Test(unittest.TestCase):
         self.assertFalse(pipeline.is_extraction_reserved(self.doc_id))
 
 
+class BulkReprocessReservationTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.app, self.db, self.cfg = _make_app(self._tmp.name)
+        self.client = TestClient(self.app, headers=AUTH_HEADERS)
+        lib = Path(self.cfg.data_dir) / "library"
+        lib.mkdir(parents=True, exist_ok=True)
+        (lib / "stuck.txt").write_text("stuck body " * 30)
+        doc = self.db.create_document(title="stuck.txt", kind="text", content_path="stuck.txt")
+        self.db.update_document_extracted(doc["id"], "mid-run text", 2, readiness="error")
+        self.doc_id = doc["id"]
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_bulk_reprocess_skips_reserved_doc_untouched(self):
+        """queue_library_reprocess must not mutate ANY state (readiness,
+        warnings, text) of a document whose reservation another entry point
+        holds — reservation precedes every mutation."""
+        self.db.add_extraction_warning(self.doc_id, "w1", "some warning")
+        token = pipeline.try_reserve_extraction(self.doc_id)
+        try:
+            r = self.client.post("/api/library/reprocess-all")
+            self.assertEqual(r.status_code, 200)
+            body = r.json()
+            self.assertEqual(body["queued"], 0)
+            self.assertEqual(body["skipped"], 1)
+            self.assertEqual(body["skipped_docs"][0]["reason"], "already_processing")
+            doc = self.db.get_document(self.doc_id)
+            self.assertEqual(doc["readiness"], "error")
+            self.assertEqual(doc["extracted_text"], "mid-run text")
+            self.assertEqual(len(self.db.get_extraction_warnings(self.doc_id)), 1)
+            # The holder's reservation survived
+            self.assertTrue(pipeline.is_extraction_reserved(self.doc_id))
+        finally:
+            pipeline.release_extraction(self.doc_id, token)
+
+    def test_bulk_reprocess_runs_and_releases_when_free(self):
+        with mock.patch.object(pipeline, "extract", return_value=_fake_result()):
+            r = self.client.post("/api/library/reprocess-all")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["queued"], 1)
+        self.assertFalse(pipeline.is_extraction_reserved(self.doc_id))
+        doc = self.db.get_document(self.doc_id)
+        self.assertEqual(doc["readiness"], "ready")
+
+
 class ExplodeZipsReservationTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
