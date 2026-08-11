@@ -382,6 +382,33 @@ def revert_project(project_id: str, body: RevertBody):
     return _version_out(row)
 
 
+@router.post("/projects/{project_id}/repair-prove")
+def repair_prove_project(project_id: str, body: RevertBody):
+    """Publish a repaired, fully-gated copy of a version as the next
+    version (verdict 'proven'). The source version stays verbatim —
+    history is append-only. Refuses (422) when the gates still fail."""
+    db, cfg = get_db(), get_config()
+    proj = _get_or_404(db, project_id)
+    _require_active(proj)
+    if not db.get_wb_version(project_id, body.version_no):
+        raise HTTPException(404, f"version v{body.version_no} not found")
+    if not db.claim_wb_build(project_id):
+        raise HTTPException(409, "a build is already running for this project")
+    try:
+        from orivellum.capabilities.workbench import repair_and_prove
+
+        row = repair_and_prove(db, cfg, project_id, body.version_no)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise internal_error(logger, exc, "workbench repair-prove") from exc
+    finally:
+        db.update_wb_project(project_id, building=0)
+    return _version_out(row)
+
+
 @router.get("/projects/{project_id}/rundown")
 def project_rundown(project_id: str):
     """Health breakdown + cached needs assessment + close-out record."""

@@ -295,6 +295,20 @@ export default function WorkbenchDetail() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const repairProve = useMutation({
+    mutationFn: (version_no: number) =>
+      apiFetch(`${API}/projects/${projectId}/repair-prove`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version_no }),
+      }).then(async r => { if (!r.ok) throw new Error((await r.json()).detail ?? "failed"); return r.json(); }),
+    onSuccess: (v: WbVersion) => {
+      toast.success(`Certified — repaired workbook published as v${v.version_no}`);
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const complete = useMutation({
     mutationFn: (force: boolean) =>
       apiFetch(`${API}/projects/${projectId}/complete`, {
@@ -681,6 +695,21 @@ export default function WorkbenchDetail() {
               >
                 <Download className="h-3.5 w-3.5 mr-1" /> Download
               </Button>
+              {isActive && proj.kind === "xlsx" &&
+                (v.checks as { proof?: WbProof })?.proof?.verdict === "provable" && (
+                <Button
+                  size="sm" variant="outline"
+                  disabled={proj.building || repairProve.isPending}
+                  onClick={() => repairProve.mutate(v.version_no)}
+                  title="Publish a repaired copy that passes all six gates as the next version. This version stays untouched."
+                  data-testid={`button-wb-repair-prove-${v.version_no}`}
+                >
+                  {repairProve.isPending
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                    : <Hammer className="h-3.5 w-3.5 mr-1" />}
+                  Repair & prove
+                </Button>
+              )}
               {isActive && v.version_no !== latest?.version_no && (
                 <Button
                   size="sm" variant="ghost"

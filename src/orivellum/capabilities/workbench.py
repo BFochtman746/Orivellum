@@ -1164,6 +1164,70 @@ def revert_to(db, cfg, project_id: str, version_no: int) -> dict:
     )
 
 
+def repair_and_prove(db, cfg, project_id: str, version_no: int) -> dict:
+    """Publish a repaired, fully-gated COPY of a version as the next version.
+
+    Imported versions stay byte-for-byte verbatim, so a workbook with blank
+    or stale formula caches can only ever reach verdict 'provable' — it
+    passes the six gates only after repairs it never received. This takes a
+    copy of the version's files, applies the runner's repairs, runs all six
+    gates against the repaired copy, and — only when every gate passes —
+    publishes it as a new 'proven' version. History stays append-only: the
+    source version is never touched, and any other outcome publishes
+    nothing and raises instead.
+    """
+    proj = db.get_wb_project(project_id)
+    if not proj:
+        raise FileNotFoundError("project not found")
+    if proj["kind"] != "xlsx":
+        raise ValueError("repair & prove applies to workbook (xlsx) projects only")
+    src = version_dir(cfg, project_id, version_no)
+    if not src.is_dir():
+        raise FileNotFoundError(f"version v{version_no} has no files on disk")
+    with tempfile.TemporaryDirectory() as tmp:
+        stage = pathlib.Path(tmp) / "stage"
+        shutil.copytree(src, stage)
+        workbooks = [p for p in sorted(stage.rglob("*.xlsx")) if p.is_file()]
+        if not workbooks:
+            raise ValueError(f"v{version_no} contains no .xlsx workbook to prove")
+        from orivellum.capabilities.workbench_proof import prove_outputs
+
+        proof = prove_outputs(stage, workbooks, promote=True)
+        if proof["verdict"] != "proven":
+            details = "; ".join(
+                f"{name}: "
+                + "; ".join((r.get("problems") or [r.get("error") or "gates failed"])[:2])
+                for name, r in proof["workbooks"].items()
+                if r["verdict"] != "proven"
+            )[:400]
+            raise ValueError(
+                f"repair could not certify v{version_no} ({proof['verdict']})"
+                + (f": {details}" if details else "")
+            )
+        refreshed = sum(
+            r.get("repairs", {}).get("refreshed_cells", 0) for r in proof["workbooks"].values()
+        )
+        reordered = sum(
+            r.get("repairs", {}).get("reordered_parts", 0) for r in proof["workbooks"].values()
+        )
+        files = _snapshot(stage)
+        checks = {"proof": proof, "repaired_from": version_no}
+        return _publish_version(
+            db,
+            cfg,
+            project_id,
+            stage,
+            f"Repair & prove v{version_no}",
+            files,
+            checks,
+            note=(
+                f"{refreshed} cached value(s) refreshed, {reordered} part(s) reordered; "
+                "all six gates passed on the repaired copy"
+            ),
+            verdict=_proof_verdict(checks),
+        )
+
+
 def archive_project(db, cfg, project_id: str, allow_unproven: bool = False) -> str:
     """Zip every version + a hash manifest; mark the project archived.
 

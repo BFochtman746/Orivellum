@@ -354,6 +354,145 @@ class TestCompleteRouteProofGate(unittest.TestCase):
             self.assertEqual(db.get_wb_project(p["id"])["status"], "archived")
 
 
+def _publish_provable_import(db, cfg, project_id: str) -> dict:
+    """Mimic import_upload's v1: verbatim workbook + real promote=False proof."""
+    from orivellum.capabilities.workbench import _publish_version, _snapshot
+    from orivellum.capabilities.workbench_proof import prove_outputs
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "out"
+        src.mkdir()
+        _good_workbook(src / "model.xlsx")
+        proof = prove_outputs(src, [src / "model.xlsx"], promote=False)
+        return _publish_version(
+            db,
+            cfg,
+            project_id,
+            src,
+            "Imported from model.xlsx",
+            _snapshot(src),
+            {"imported": True, "proof": proof},
+            verdict="imported",
+        )
+
+
+class TestRepairAndProve(unittest.TestCase):
+    def test_provable_import_becomes_proven_new_version(self):
+        from orivellum.capabilities.workbench import (
+            archive_project,
+            latest_proof_status,
+            repair_and_prove,
+            version_dir,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            v1 = _publish_provable_import(db, cfg, p["id"])
+            self.assertEqual(json.loads(v1["checks_json"])["proof"]["verdict"], "provable", v1)
+            v1_sha = _sha(version_dir(cfg, p["id"], 1) / "model.xlsx")
+
+            row = repair_and_prove(db, cfg, p["id"], 1)
+            self.assertEqual(row["version_no"], 2)
+            self.assertEqual(row["verdict"], "proven")
+            checks = json.loads(row["checks_json"])
+            self.assertEqual(checks["proof"]["verdict"], "proven")
+            self.assertEqual(checks["repaired_from"], 1)
+
+            # the original imported version stays byte-for-byte verbatim
+            self.assertEqual(_sha(version_dir(cfg, p["id"], 1) / "model.xlsx"), v1_sha)
+            # the new version's workbook is the repaired one — real cached values
+            wb = load_workbook(version_dir(cfg, p["id"], 2) / "model.xlsx", data_only=True)
+            self.assertEqual(wb["Data"]["A3"].value, 42)
+            wb.close()
+
+            # Complete & archive now passes without force
+            proj = db.get_wb_project(p["id"])
+            versions = db.list_wb_versions(p["id"])
+            self.assertEqual(latest_proof_status(proj, versions)[0], "proven")
+            self.assertTrue(Path(archive_project(db, cfg, p["id"])).is_file())
+
+    def test_failing_workbook_publishes_nothing(self):
+        from orivellum.capabilities.workbench import (
+            _publish_version,
+            _snapshot,
+            repair_and_prove,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Broken", "xlsx", "b")
+            with tempfile.TemporaryDirectory() as tmp2:
+                src = Path(tmp2) / "out"
+                src.mkdir()
+                _error_workbook(src / "model.xlsx")
+                _publish_version(
+                    db, cfg, p["id"], src, "import", _snapshot(src), {}, verdict="imported"
+                )
+            with self.assertRaises(ValueError) as ctx:
+                repair_and_prove(db, cfg, p["id"], 1)
+            self.assertIn("could not certify", str(ctx.exception))
+            self.assertEqual(len(db.list_wb_versions(p["id"])), 1)
+
+    def test_non_xlsx_and_missing_version_refused(self):
+        from orivellum.capabilities.workbench import repair_and_prove
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            code = db.create_wb_project("Tool", "code", "t")
+            with self.assertRaises(ValueError):
+                repair_and_prove(db, cfg, code["id"], 1)
+            xlsx = db.create_wb_project("Budget", "xlsx", "b")
+            with self.assertRaises(FileNotFoundError):
+                repair_and_prove(db, cfg, xlsx["id"], 7)
+
+
+class TestRepairProveRoute(unittest.TestCase):
+    def test_route_publishes_proven_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            _publish_provable_import(db, cfg, p["id"])
+
+            r = client.post(
+                f"/api/workbench/projects/{p['id']}/repair-prove",
+                headers=AUTH_HEADERS,
+                json={"version_no": 1},
+            )
+            self.assertEqual(r.status_code, 200, r.text)
+            body = r.json()
+            self.assertEqual(body["version_no"], 2)
+            self.assertEqual(body["verdict"], "proven")
+            # claim released — a follow-up mutation is not blocked
+            self.assertEqual(db.get_wb_project(p["id"])["building"], 0)
+
+            r = client.post(f"/api/workbench/projects/{p['id']}/complete", headers=AUTH_HEADERS)
+            self.assertEqual(r.status_code, 200, r.text)
+
+    def test_route_404_unknown_version_and_409_while_building(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db, cfg = _make_app(tmp)
+            client = TestClient(app)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            _publish_provable_import(db, cfg, p["id"])
+
+            r = client.post(
+                f"/api/workbench/projects/{p['id']}/repair-prove",
+                headers=AUTH_HEADERS,
+                json={"version_no": 9},
+            )
+            self.assertEqual(r.status_code, 404, r.text)
+
+            db.claim_wb_build(p["id"])
+            r = client.post(
+                f"/api/workbench/projects/{p['id']}/repair-prove",
+                headers=AUTH_HEADERS,
+                json={"version_no": 1},
+            )
+            self.assertEqual(r.status_code, 409, r.text)
+
+
 class TestLatestProofStatus(unittest.TestCase):
     def test_status_mapping(self):
         from orivellum.capabilities.workbench import latest_proof_status
