@@ -148,6 +148,32 @@ class ConcurrentPipelineTest(unittest.TestCase):
         doc = self.db.get_document(self.doc["id"])
         self.assertEqual(doc["readiness"], "error")
 
+    def test_duplicate_run_leaves_readiness_untouched(self):
+        """Nightshift-style entry points call process_document directly and
+        rely on the self-reserve: while another run holds the reservation the
+        duplicate must no-op WITHOUT touching readiness or anything else."""
+        self.db.update_document_extracted(self.doc["id"], "old text", 2, readiness="ready")
+        token = pipeline.try_reserve_extraction(self.doc["id"])
+        try:
+            with mock.patch.object(pipeline, "extract", return_value=_fake_result()) as m:
+                pipeline.process_document(
+                    doc_id=self.doc["id"],
+                    file_path=str(self.file),
+                    kind="text",
+                    work_id=None,
+                    title="Note",
+                    db=self.db,
+                )
+                m.assert_not_called()
+        finally:
+            pipeline.release_extraction(self.doc["id"], token)
+        doc = self.db.get_document(self.doc["id"])
+        self.assertEqual(doc["readiness"], "ready")
+        self.assertEqual(doc["extracted_text"], "old text")
+        # The skipped run must not have freed the holder's reservation either
+        # (released only via the finally above).
+        self.assertFalse(pipeline.is_extraction_reserved(self.doc["id"]))
+
     def test_prereserved_token_ownership_transfer(self):
         token = pipeline.try_reserve_extraction(self.doc["id"])
         self.assertIsNotNone(token)

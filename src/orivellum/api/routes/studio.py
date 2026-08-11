@@ -4840,44 +4840,60 @@ def start_library_retranscribe(doc_id: str):
         )
 
     try:
-        with _transcribe_jobs_lock:
-            for j in _transcribe_jobs.values():
-                if j.get("doc_id") == doc_id and j["state"] not in _TRANSCRIBE_TERMINAL:
-                    raise HTTPException(
-                        409, "A re-transcription for this document is already running"
-                    )
-            _prune_transcribe_jobs()
-            job_id = str(uuid.uuid4())
-            _transcribe_jobs[job_id] = {
-                "state": "running",
-                "stage": "queued",
-                "filename": doc.get("title") or content_path,
-                "cancel": threading.Event(),
-                "text": None,
-                "engine": None,
-                "word_count": None,
-                "doc_id": doc_id,
-                "error": None,
-            }
-
-        from orivellum.api.executor import _tracked_submit
-
-        _tracked_submit(
-            _run_retranscribe_job,
-            job_id,
-            doc_id,
-            str(file_path),
-            db,
-            token,
-            kind="transcribe",
-            label=f"retranscribe:{(doc.get('title') or '')[:30]}",
-        )
+        job_id = _dispatch_retranscribe_job(doc, doc_id, content_path, str(file_path), db, token)
     except Exception:
         # The job never got ownership of the reservation — release it so the
         # document isn't locked out until restart.
         release_extraction(doc_id, token)
         raise
     return {"job_id": job_id}
+
+
+def _dispatch_retranscribe_job(
+    doc: dict, doc_id: str, content_path: str, file_path: str, db, token: str
+) -> str:
+    """Register the job entry and submit the worker; raises on any failure.
+
+    On a submit failure the freshly created job entry is removed so the
+    dashboard never shows a permanently "running" row with no worker — the
+    caller releases the extraction reservation.
+    """
+    with _transcribe_jobs_lock:
+        for j in _transcribe_jobs.values():
+            if j.get("doc_id") == doc_id and j["state"] not in _TRANSCRIBE_TERMINAL:
+                raise HTTPException(409, "A re-transcription for this document is already running")
+        _prune_transcribe_jobs()
+        job_id = str(uuid.uuid4())
+        _transcribe_jobs[job_id] = {
+            "state": "running",
+            "stage": "queued",
+            "filename": doc.get("title") or content_path,
+            "cancel": threading.Event(),
+            "text": None,
+            "engine": None,
+            "word_count": None,
+            "doc_id": doc_id,
+            "error": None,
+        }
+
+    from orivellum.api.executor import _tracked_submit
+
+    try:
+        _tracked_submit(
+            _run_retranscribe_job,
+            job_id,
+            doc_id,
+            file_path,
+            db,
+            token,
+            kind="transcribe",
+            label=f"retranscribe:{(doc.get('title') or '')[:30]}",
+        )
+    except Exception:
+        with _transcribe_jobs_lock:
+            _transcribe_jobs.pop(job_id, None)
+        raise
+    return job_id
 
 
 @router.delete("/studio/transcribe/{job_id}")

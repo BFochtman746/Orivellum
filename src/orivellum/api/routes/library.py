@@ -1399,6 +1399,10 @@ def library_explode_zips(background_tasks: BackgroundTasks):
     child documents so users see content rather than opaque zip containers.
     Safe to call multiple times — already-exploded archives will just
     re-enumerate (dedup by SHA-256 prevents duplicate child docs).
+
+    Reservation-unaware by design (like uploads): each queued run self-reserves
+    inside process_document and silently skips docs already extracting — this
+    endpoint never returns 409 for individual archives.
     """
     db = get_db()
     lib_root = _library_root()
