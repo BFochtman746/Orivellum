@@ -1170,6 +1170,11 @@ function AudiobookTab({
   // compare against this ref, not the workId they captured at call time.
   const currentWorkRef = useRef(workId);
   currentWorkRef.current = mode === "work" ? workId : "";
+  // Same live-target ref for document renders: async generate/discovery
+  // callbacks must compare against this, never the docId captured at call
+  // time, so a mid-flight document/mode switch can't attach the wrong job.
+  const currentDocRef = useRef("");
+  currentDocRef.current = mode === "document" ? (docId ?? "") : "";
   const [loading, setLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioName, setAudioName] = useState("audiobook.mp3");
@@ -1504,18 +1509,16 @@ function AudiobookTab({
 
   const selectedVoiceMeta = voices.find(v => v.id === voiceId);
 
-  // Cleanup: cancel any in-flight document job when the component unmounts.
-  // Work jobs are deliberately NOT cancelled — a 10–30 minute book render
-  // keeps going in the background (a browser alert fires when it's ready),
-  // and thanks to the segment cache a re-opened tab can resume regardless.
+  // Cleanup on unmount: detach the UI only — NEVER cancel the server jobs.
+  // Both work and document renders deliberately keep going when the user
+  // navigates away (a browser alert fires when they're ready), and a
+  // re-opened Studio rediscovers them via the /active endpoints and
+  // re-attaches live progress.
   useEffect(() => {
     return () => {
       if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
       workTracker.detach();
-      if (vsAbJobIdRef.current) {
-        apiFetch(`${BASE}/studio/tts/document/${vsAbJobIdRef.current}`, { method: "DELETE" }).catch(() => {});
-        vsAbJobIdRef.current = null;
-      }
+      vsAbJobIdRef.current = null;
     };
   }, []);
 
@@ -1534,11 +1537,12 @@ function AudiobookTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workId, mode]);
 
-  // Switching document or source mode likewise detaches the UI from a running
-  // document render. Unlike work renders, the server job is CANCELLED (the
-  // same deliberate policy as unmount) — document renders are short and have
-  // no background-completion alert, but finished segments stay cached so a
-  // later Generate resumes instead of starting over.
+  // Switching document or source mode detaches the UI from a running
+  // document render. Unlike navigation/unmount (where the job survives so it
+  // can finish in the background), an explicit switch to a DIFFERENT target
+  // cancels the old render — two concurrent document renders would contend
+  // for the TTS engine, and finished segments stay cached so a later
+  // Generate resumes instead of starting over.
   useEffect(() => {
     if (vsAbJobIdRef.current) {
       if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
@@ -1676,6 +1680,30 @@ function AudiobookTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, workId]);
 
+  // Rediscover a document render that's still running for the selected
+  // document — mirrors the work-job discovery above. The server job survives
+  // navigation/unmount, so coming back to the Studio must re-show live
+  // progress (segments done/total + reused count) instead of a stale
+  // Generate button.
+  useEffect(() => {
+    if (mode !== "document" || !docId) return;
+    let cancelled = false;
+    apiFetch(`${BASE}/studio/tts/document/active`)
+      .then(async r => {
+        if (cancelled || !r.ok) return;
+        const data = await r.json();
+        if (cancelled) return;
+        const mine = (data.jobs ?? []).find((j: any) => j.doc_id === docId);
+        if (mine && !vsAbJobIdRef.current) {
+          attachDocJob(mine.job_id, mine);
+          toast.info("Reconnected to the render already running for this document");
+        }
+      })
+      .catch(() => {/* discovery is optional — Generate still works */});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, docId]);
+
   async function handleGenerate() {
     const hasTarget = mode === "work" ? !!workId : !!docId;
     if (!hasTarget) return;
@@ -1730,69 +1758,108 @@ function AudiobookTab({
     }
 
     // Document mode: async job flow
+    const targetDoc = docId; // the doc this request is FOR — never trust closure state after an await
     const toastId = toast.loading("Starting audiobook generation…");
     try {
       const resp = await apiFetch(`${BASE}/studio/tts/document`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ doc_id: docId, voice: voiceId, speed, acx_mastering: acx }),
+        body: JSON.stringify({ doc_id: targetDoc, voice: voiceId, speed, acx_mastering: acx }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+        const detail = (err as any).detail;
+        // 409 = a render for this document is already running on the server
+        // (e.g. remount discovery raced this click) — re-attach to it
+        // instead of surfacing an error.
+        if (resp.status === 409 && detail?.job_id) {
+          toast.dismiss(toastId);
+          if (currentDocRef.current === targetDoc) {
+            attachDocJob(detail.job_id);
+            toast.info("This document is already rendering — reconnected to the running job");
+          } else {
+            setLoading(false);
+          }
+          return;
+        }
+        throw new Error(
+          typeof detail === "string" ? detail : detail?.message ?? `HTTP ${resp.status}`,
+        );
       }
       const { job_id, total_segments } = await resp.json();
       toast.dismiss(toastId);
-      vsAbJobIdRef.current = job_id;
-      setVsAbJobId(job_id);
-      setVsAbSegsTotal(total_segments);
-      setVsAbSegsDone(0);
-      setVsAbCachedSegs(0);
-      // loading stays true while polling
-      const iv: ReturnType<typeof setInterval> = setInterval(async () => {
-        // The user may have switched document/mode (detach) or started
-        // another job — this closure must never update state for a stale job.
-        if (vsAbJobIdRef.current !== job_id) { clearInterval(iv); return; }
-        const stopPolling = () => {
-          clearInterval(iv);
-          if (vsAbPollRef.current === iv) vsAbPollRef.current = null;
-        };
-        try {
-          const sr = await apiFetch(`${BASE}/studio/tts/document/${job_id}/status`);
-          if (vsAbJobIdRef.current !== job_id) { clearInterval(iv); return; }
-          if (!sr.ok) {
-            if (sr.status === 404) {
-              stopPolling();
-              vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
-              toast.error("Server restarted — audiobook job was lost. Please try again.");
-            }
-            return;
-          }
-          const status = await sr.json();
-          setVsAbSegsDone(status.segments_done ?? 0);
-          setVsAbCachedSegs(status.cached_segments ?? 0);
-          const terminal = ["done", "failed", "cancelled"].includes(status.state);
-          if (terminal) {
-            stopPolling();
-            vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
-            if (status.state === "done") {
-              const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`;
-              setAudioUrl(serveUrl);
-              setAudioName(`${docs.find((d: any) => d.id === docId)?.title ?? "audiobook"}.mp3`);
-              toast.success("Audiobook ready — tap play below");
-            } else if (status.state === "failed") {
-              toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
-            } else {
-              toast("Generation stopped — finished parts are saved. Generate again to resume.");
-            }
-          }
-        } catch { /* transient poll errors */ }
-      }, 2000);
-      vsAbPollRef.current = iv;
+      // The user switched document/mode while the POST was in flight: the
+      // new job belongs to a target that is no longer selected. Cancel it
+      // (finished segments stay cached for resume) rather than attaching
+      // its progress to whatever is selected now.
+      if (currentDocRef.current !== targetDoc) {
+        apiFetch(`${BASE}/studio/tts/document/${job_id}`, { method: "DELETE" }).catch(() => {});
+        setLoading(false);
+        return;
+      }
+      attachDocJob(job_id, { total_segments });
     } catch (e: any) {
       toast.error(`Audiobook failed: ${e.message}`, { id: toastId, duration: 10_000 });
       setLoading(false);
     }
+  }
+
+  // Point the progress UI at a document render job (freshly started or
+  // rediscovered via /studio/tts/document/active) and begin polling it.
+  // Clears any older interval first so a discovery/Generate race can never
+  // leave two timers polling.
+  function attachDocJob(
+    job_id: string,
+    snap?: { segments_done?: number; total_segments?: number; cached_segments?: number },
+  ) {
+    if (vsAbJobIdRef.current === job_id) return; // already attached
+    if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
+    vsAbJobIdRef.current = job_id;
+    setVsAbJobId(job_id);
+    setVsAbSegsTotal(snap?.total_segments ?? 0);
+    setVsAbSegsDone(snap?.segments_done ?? 0);
+    setVsAbCachedSegs(snap?.cached_segments ?? 0);
+    setLoading(true); // stays true while polling
+    const iv: ReturnType<typeof setInterval> = setInterval(async () => {
+      // The user may have switched document/mode (detach) or started
+      // another job — this closure must never update state for a stale job.
+      if (vsAbJobIdRef.current !== job_id) { clearInterval(iv); return; }
+      const stopPolling = () => {
+        clearInterval(iv);
+        if (vsAbPollRef.current === iv) vsAbPollRef.current = null;
+      };
+      try {
+        const sr = await apiFetch(`${BASE}/studio/tts/document/${job_id}/status`);
+        if (vsAbJobIdRef.current !== job_id) { clearInterval(iv); return; }
+        if (!sr.ok) {
+          if (sr.status === 404) {
+            stopPolling();
+            vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
+            toast.error("Server restarted — audiobook job was lost. Please try again.");
+          }
+          return;
+        }
+        const status = await sr.json();
+        setVsAbSegsDone(status.segments_done ?? 0);
+        setVsAbCachedSegs(status.cached_segments ?? 0);
+        const terminal = ["done", "failed", "cancelled"].includes(status.state);
+        if (terminal) {
+          stopPolling();
+          vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
+          if (status.state === "done") {
+            const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`;
+            setAudioUrl(serveUrl);
+            setAudioName(`${docs.find((d: any) => d.id === docId)?.title ?? "audiobook"}.mp3`);
+            toast.success("Audiobook ready — tap play below");
+          } else if (status.state === "failed") {
+            toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
+          } else {
+            toast("Generation stopped — finished parts are saved. Generate again to resume.");
+          }
+        }
+      } catch { /* transient poll errors */ }
+    }, 2000);
+    vsAbPollRef.current = iv;
   }
 
   async function handleCancelDocGenerate() {

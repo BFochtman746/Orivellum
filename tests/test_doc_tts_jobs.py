@@ -71,10 +71,21 @@ class _DocTTSTestBase(unittest.TestCase):
 
     # ── helpers ────────────────────────────────────────────────────────────────
 
-    def _seed_job(self, jid: str, state: str, finished_at: float | None) -> None:
+    def _seed_job(
+        self,
+        jid: str,
+        state: str,
+        finished_at: float | None,
+        doc_id: str = "doc-1",
+        started_at: float | None = None,
+    ) -> None:
         self.studio._doc_tts_jobs[jid] = {
             "state": state,
+            "doc_id": doc_id,
+            "doc_title": "Test Doc",
+            "started_at": started_at if started_at is not None else time.time(),
             "segments_done": 0,
+            "cached_segments": 0,
             "total_segments": 3,
             "cancel": threading.Event(),
             "mp3_path": None,
@@ -82,6 +93,65 @@ class _DocTTSTestBase(unittest.TestCase):
             "error": None,
             **({"finished_at": finished_at} if finished_at is not None else {}),
         }
+
+
+class TestActiveDocTTSJobs(_DocTTSTestBase):
+    """GET /studio/tts/document/active — re-attach discovery for a re-opened
+    Studio. A document render deliberately survives navigation away from the
+    page; this endpoint is how the UI finds it again."""
+
+    def test_lists_only_non_terminal_jobs_newest_first(self):
+        base = time.time()
+        with self.studio._doc_tts_jobs_lock:
+            self._seed_job("old-run", "running", None, doc_id="doc-a", started_at=base - 60)
+            self._seed_job("new-run", "running", None, doc_id="doc-b", started_at=base)
+            self._seed_job("halfway", "cancelling", None, doc_id="doc-c", started_at=base - 30)
+            self._seed_job("finished", "done", base, doc_id="doc-d")
+            self._seed_job("crashed", "failed", base, doc_id="doc-e")
+        resp = self.client.get("/api/studio/tts/document/active")
+        self.assertEqual(resp.status_code, 200)
+        jobs = resp.json()["jobs"]
+        self.assertEqual([j["job_id"] for j in jobs], ["new-run", "halfway", "old-run"])
+        # Re-attach needs the doc to match on and the progress to show —
+        # segments done/total and the reused-segment count.
+        mine = jobs[0]
+        self.assertEqual(mine["doc_id"], "doc-b")
+        self.assertIn("segments_done", mine)
+        self.assertIn("total_segments", mine)
+        self.assertIn("cached_segments", mine)
+        # The threading.Event must never be serialised.
+        self.assertNotIn("cancel", mine)
+
+    def test_empty_registry_returns_empty_list(self):
+        resp = self.client.get("/api/studio/tts/document/active")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["jobs"], [])
+
+    def test_start_conflicts_with_running_render_for_same_document(self):
+        """POST /studio/tts/document must refuse a duplicate render for a
+        document that is already rendering and hand back the live job_id so
+        the client re-attaches (remount discovery racing a Generate click)."""
+        with self.studio._doc_tts_jobs_lock:
+            self._seed_job("live", "running", None, doc_id="doc-1")
+        resp = self.client.post(
+            "/api/studio/tts/document",
+            json={"doc_id": "doc-1", "voice": "af_heart"},
+        )
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["detail"]["job_id"], "live")
+
+    def test_start_conflict_ignores_terminal_and_other_doc_jobs(self):
+        """Terminal jobs for the same doc, or running jobs for OTHER docs,
+        must not block a new render — only 404/422 from the missing test doc
+        should surface (never a 409)."""
+        with self.studio._doc_tts_jobs_lock:
+            self._seed_job("old-done", "done", time.time(), doc_id="doc-1")
+            self._seed_job("other-live", "running", None, doc_id="doc-2")
+        resp = self.client.post(
+            "/api/studio/tts/document",
+            json={"doc_id": "doc-1", "voice": "af_heart"},
+        )
+        self.assertNotEqual(resp.status_code, 409)
 
 
 class TestDocTTSJobRegistry(_DocTTSTestBase):

@@ -4557,9 +4557,25 @@ def synthesize_document(body: DocumentTTSRequest):
     HTTP response returns in milliseconds.  Poll
     GET  /studio/tts/document/{job_id}/status  for progress.
     Send DELETE /studio/tts/document/{job_id}  to cancel.
+
+    409 when a render for the SAME document is already running — the detail
+    carries the live job_id so the client re-attaches instead of launching a
+    duplicate render that would contend for the TTS engine (e.g. when
+    remount-discovery races a Generate click).
     """
     db = get_db()
     cfg = get_config()
+
+    with _doc_tts_jobs_lock:
+        for jid, j in _doc_tts_jobs.items():
+            if j.get("doc_id") == body.doc_id and j.get("state") not in _DOC_TTS_TERMINAL:
+                raise HTTPException(
+                    409,
+                    detail={
+                        "message": "A render for this document is already running.",
+                        "job_id": jid,
+                    },
+                )
 
     doc, full_text = _collect_doc_text(db, body.doc_id)
     segments = _split_text_into_segments(full_text)[: body.max_segments]
@@ -4572,8 +4588,24 @@ def synthesize_document(body: DocumentTTSRequest):
     cancel_event = threading.Event()
 
     with _doc_tts_jobs_lock:
+        # Re-check under the SAME lock as the insert — two concurrent POSTs
+        # for one document must never both pass the cheap pre-check above.
+        for jid, j in _doc_tts_jobs.items():
+            if j.get("doc_id") == body.doc_id and j.get("state") not in _DOC_TTS_TERMINAL:
+                raise HTTPException(
+                    409,
+                    detail={
+                        "message": "A render for this document is already running.",
+                        "job_id": jid,
+                    },
+                )
         _doc_tts_jobs[job_id] = {
             "state": "running",
+            # doc_id/doc_title/started_at let a re-opened Studio rediscover
+            # this job via GET /studio/tts/document/active and re-attach.
+            "doc_id": body.doc_id,
+            "doc_title": doc.get("title"),
+            "started_at": time.time(),
             "segments_done": 0,
             "cached_segments": 0,
             "total_segments": len(segments),
@@ -4602,6 +4634,29 @@ def synthesize_document(body: DocumentTTSRequest):
     )
 
     return {"job_id": job_id, "total_segments": len(segments)}
+
+
+@router.get("/studio/tts/document/active")
+def list_active_doc_tts_jobs():
+    """Return every document-audiobook job that is still running.
+
+    Mirrors GET /studio/tts/work/active: a document render deliberately keeps
+    going when the Studio unmounts, so a re-opened Studio uses this to
+    rediscover the job for the selected document and re-attach its progress
+    view (segments done/total, reused-segment count). Terminal jobs are
+    excluded — their results are fetched per-job.
+    """
+    with _doc_tts_jobs_lock:
+        jobs = [
+            {
+                "job_id": jid,
+                **{k: v for k, v in j.items() if k != "cancel"},
+            }
+            for jid, j in _doc_tts_jobs.items()
+            if j.get("state") not in _DOC_TTS_TERMINAL
+        ]
+    jobs.sort(key=lambda j: j.get("started_at") or 0.0, reverse=True)
+    return {"jobs": jobs}
 
 
 @router.get("/studio/tts/document/{job_id}/status")
