@@ -1360,6 +1360,7 @@ type AudioEnhanceSetupProgress = {
   stage: "resolving" | "downloading" | "installing" | "verifying";
   detail: string | null;
   packages: number;
+  done: number;
   total_mb: number;
   last_line: string | null;
   elapsed_s: number;
@@ -1517,6 +1518,30 @@ function AudioEnhancementCard() {
                       </span>
                     )}
                   </p>
+                  {data.setup_progress?.stage === "downloading" && data.setup_progress.packages > 0 && (
+                    <div className="pl-[18px] pr-1 flex items-center gap-2" data-testid="setup-progress-bar">
+                      <div
+                        className="flex-1 h-1.5 rounded-full overflow-hidden"
+                        style={{ background: 'var(--gilt-soft)' }}
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={data.setup_progress.packages}
+                        aria-valuenow={Math.min(data.setup_progress.done, data.setup_progress.packages)}
+                        aria-label="Package downloads completed"
+                      >
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            background: 'var(--gilt)',
+                            width: `${Math.min(100, Math.round((data.setup_progress.done / data.setup_progress.packages) * 100))}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+                        {Math.min(data.setup_progress.done, data.setup_progress.packages)}/{data.setup_progress.packages}
+                      </span>
+                    </div>
+                  )}
                   {data.setup_progress?.detail && (
                     <p className="font-mono text-[11px] text-muted-foreground break-all pl-[18px]">
                       {data.setup_progress.detail}
