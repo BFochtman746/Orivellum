@@ -877,6 +877,12 @@ function RecommendTab({
                       </Button>
                     )}
                   </div>
+
+                  {/* Try your own line — the moment you're choosing between
+                      narrators is exactly when you want to hear YOUR text. */}
+                  <div className="pt-2 border-t border-border/40">
+                    <CustomLinePreview voiceId={rec.voice_id} globalAudio={globalAudio} />
+                  </div>
                 </div>
               ))}
             </div>
@@ -1057,6 +1063,11 @@ function DesignTab({
                         Use Voice
                       </Button>
                     )}
+                  </div>
+
+                  {/* Try your own line — hear the designed match speak YOUR text */}
+                  <div className="pt-2 border-t border-border/40">
+                    <CustomLinePreview voiceId={match.voice_id} globalAudio={globalAudio} />
                   </div>
                 </div>
               ))}
