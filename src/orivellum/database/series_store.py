@@ -205,6 +205,28 @@ class SeriesStore:
             raise SeriesError(f"Work {work_id!r} not found.")
         if int(volume) < 1:
             raise SeriesError("volume must be >= 1")
+        # Inserting an already-canonized book AHEAD of existing members would
+        # instantly make its facts binding on them — canon the later books
+        # were never verified against.  A book with existing canon may only
+        # join at the end (no later volumes).
+        conn = db.read_conn()
+        later = conn.execute(
+            "SELECT 1 FROM series_member WHERE series_id=? AND volume > ? LIMIT 1",
+            (series_id, int(volume)),
+        ).fetchone()
+        if later:
+            facts = conn.execute(
+                "SELECT COUNT(*) AS n FROM canon_fact WHERE work_id=? AND status='active'",
+                (work_id,),
+            ).fetchone()
+            if int(facts["n"]):
+                raise SeriesError(
+                    "Refused: this Work already has established canon "
+                    f"({facts['n']} active fact(s)) — inserting it ahead of "
+                    "existing volumes would silently bind them to canon they "
+                    "were never verified against. Add it as the latest "
+                    "volume, or retract its facts first."
+                )
         mid = str(uuid.uuid4())
         try:
             with db.governed_write(

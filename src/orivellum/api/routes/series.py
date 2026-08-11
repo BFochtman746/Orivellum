@@ -116,7 +116,12 @@ def add_member(series_id: str, req: MemberAdd):
 @router.delete("/{series_id}/members/{work_id}")
 def remove_member(series_id: str, work_id: str):
     db = get_db()
-    if not SeriesStore(db).remove_member(series_id, work_id):
+    try:
+        removed = SeriesStore(db).remove_member(series_id, work_id)
+    except SeriesError as e:
+        # Continuity-protected removal — actionable refusal, not a 500.
+        raise HTTPException(409, str(e)) from e
+    if not removed:
         raise HTTPException(404, "That Work is not a member of this series")
     return {"ok": True}
 

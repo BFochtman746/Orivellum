@@ -355,6 +355,73 @@ class SeriesContinuityGuardTests(_Base):
         self.assertEqual(self.store.delete_series(self.sid), "has_continuity")
         self.assertIsNotNone(self.store.get_series(self.sid))
 
+    def test_add_canonized_work_ahead_of_existing_volumes_refused(self):
+        """Inserting an already-canonized book earlier would bind later books
+        to canon they were never verified against."""
+        newcomer = self.db.create_work(title="Prequel")
+        self.canon.create_fact(
+            statement="Prequel law", classification="INVENTED",
+            signed_by="author", work_id=newcomer["id"],
+        )
+        self.store.remove_member(self.sid, self.book1["id"])  # free volume 1
+        with self.assertRaises(SeriesError):
+            self.store.add_member(self.sid, newcomer["id"], volume=1)
+        # Joining as the LATEST volume is fine — nothing later depends on it.
+        s = self.store.add_member(self.sid, newcomer["id"], volume=4)
+        self.assertEqual(s["members"][-1]["work_id"], newcomer["id"])
+
+    def test_supersede_keeps_series_scope(self):
+        """A revision changes what a fact SAYS, never where it applies."""
+        base = self.canon.create_fact(
+            statement="Series law", classification="INVENTED",
+            signed_by="author", series_id=self.sid,
+        )
+        # Bare supersede (no series_id passed) inherits the series scope.
+        revised = self.canon.create_fact(
+            statement="Series law, clarified", classification="INVENTED",
+            signed_by="author", supersedes=base["id"],
+        )
+        self.assertEqual(revised["series_id"], self.sid)
+        # Rescoping to another series, to a book, or dropping to a different
+        # explicit scope is refused.
+        other = self.store.create_series(title="Other")
+        with self.assertRaises(CanonFactError):
+            self.canon.create_fact(
+                statement="x", classification="INVENTED", signed_by="author",
+                supersedes=revised["id"], series_id=other["id"],
+            )
+        with self.assertRaises(CanonFactError):
+            self.canon.create_fact(
+                statement="x", classification="INVENTED", signed_by="author",
+                supersedes=revised["id"], work_id=self.book1["id"],
+            )
+
+    def test_supersede_keeps_book_scope(self):
+        fact = self._book_fact(self.book1["id"])
+        with self.assertRaises(CanonFactError):
+            self.canon.create_fact(
+                statement="x", classification="INVENTED", signed_by="author",
+                supersedes=fact["id"],  # work_id omitted → global: refused
+            )
+        revised = self.canon.create_fact(
+            statement="revised", classification="INVENTED", signed_by="author",
+            work_id=self.book1["id"], supersedes=fact["id"],
+        )
+        self.assertEqual(revised["work_id"], self.book1["id"])
+
+    def test_supersede_cannot_turn_fact_into_override(self):
+        base = self.canon.create_fact(
+            statement="Series law", classification="INVENTED",
+            signed_by="author", series_id=self.sid,
+        )
+        plain = self._book_fact(self.book2["id"])
+        with self.assertRaises(CanonFactError):
+            self.canon.create_fact(
+                statement="x", classification="INVENTED", signed_by="author",
+                work_id=self.book2["id"], supersedes=plain["id"],
+                overrides=base["id"],
+            )
+
 
 class LoomInheritanceTests(_Base):
     def setUp(self):
@@ -450,6 +517,20 @@ class SeriesApiTests(unittest.TestCase):
             )
             self.assertEqual(r.status_code, 200, r.text)
         return sid
+
+    def test_protected_member_removal_is_409(self):
+        """Continuity-protected removals surface as an actionable refusal."""
+        sid = self._make_series()
+        CanonStore(self.db).create_fact(
+            statement="Book one law", classification="INVENTED",
+            signed_by="author", work_id=self.book1["id"],
+        )
+        r = self.client.delete(f"/api/series/{sid}/members/{self.book1['id']}")
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertIn("later volumes", r.json()["detail"])
+        # The unprotected latest volume still removes cleanly.
+        r = self.client.delete(f"/api/series/{sid}/members/{self.book2['id']}")
+        self.assertEqual(r.status_code, 200, r.text)
 
     def test_crud_and_membership_conflicts(self):
         sid = self._make_series()

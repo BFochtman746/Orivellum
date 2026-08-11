@@ -233,6 +233,62 @@ class CanonStore:
             CanonStore._check_override_target(conn, work_id=work_id, overrides=overrides)
 
     @staticmethod
+    def _check_supersede_scope(
+        conn: Any,
+        supersedes: str,
+        *,
+        work_id: str | None,
+        series_id: str | None,
+        overrides: str | None,
+    ) -> tuple[str | None, str | None]:
+        """A revision KEEPS its predecessor's scope — supersede is for
+        changing what a fact SAYS, never where it applies.
+
+        Without this, a revision could quietly move series canon to global
+        or another book, destroying the original authority scope.  Rescoping
+        = retract, then establish anew.  Returns the effective
+        ``(series_id, overrides)`` after inheritance.
+        """
+        old = conn.execute(
+            "SELECT work_id, series_id, overrides FROM canon_fact WHERE id=?",
+            (supersedes,),
+        ).fetchone()
+        if old is None:
+            return series_id, overrides
+        if work_id != old["work_id"]:
+            raise CanonFactError(
+                "Refused: a revision keeps its predecessor's scope — it "
+                "cannot move the fact to a different book. Retract and "
+                "re-establish to rescope canon."
+            )
+        if series_id is None:
+            series_id = old["series_id"]
+        elif series_id != old["series_id"]:
+            raise CanonFactError(
+                "Refused: a revision keeps its predecessor's series scope. "
+                "Retract and re-establish to rescope canon."
+            )
+        # Override lifecycle: superseding an override REVISES the book's
+        # departure — the replacement stays an override of the same target.
+        # A bare supersede would otherwise flip the old override to
+        # 'superseded' and silently resurrect the series/global fact.
+        if old["overrides"] is not None:
+            if overrides is None:
+                overrides = old["overrides"]
+            elif overrides != old["overrides"]:
+                raise CanonFactError(
+                    "Refused: superseding an override cannot retarget it — "
+                    "retract the override instead to restore the series "
+                    "fact, then create a new override."
+                )
+        elif overrides is not None:
+            raise CanonFactError(
+                "Refused: a revision cannot turn an ordinary fact into an "
+                "override — retract it and create the override explicitly."
+            )
+        return series_id, overrides
+
+    @staticmethod
     def _check_override_target(conn: Any, *, work_id: str | None, overrides: str) -> None:
         if work_id is None:
             raise CanonFactError(
@@ -332,29 +388,13 @@ class CanonStore:
             + (f" overrides={overrides}" if overrides else ""),
         ):
             if supersedes:
-                old = db._conn.execute(
-                    "SELECT work_id, series_id, overrides FROM canon_fact WHERE id=?",
-                    (supersedes,),
-                ).fetchone()
-                # Override lifecycle: superseding an override REVISES the
-                # book's departure — the replacement stays an override of the
-                # same target.  Without this, a bare supersede would flip the
-                # old override to 'superseded' and silently resurrect the
-                # series/global fact for that book.
-                if old is not None and old["overrides"] is not None:
-                    if work_id != old["work_id"]:
-                        raise CanonFactError(
-                            "Refused: an override can only be superseded by a "
-                            "fact scoped to the SAME book."
-                        )
-                    if overrides is None:
-                        overrides = old["overrides"]
-                    elif overrides != old["overrides"]:
-                        raise CanonFactError(
-                            "Refused: superseding an override cannot retarget "
-                            "it — retract the override instead to restore the "
-                            "series fact, then create a new override."
-                        )
+                series_id, overrides = self._check_supersede_scope(
+                    db._conn,
+                    supersedes,
+                    work_id=work_id,
+                    series_id=series_id,
+                    overrides=overrides,
+                )
                 cur = db._conn.execute(
                     "UPDATE canon_fact SET status='superseded' WHERE id=? AND status='active'",
                     (supersedes,),
