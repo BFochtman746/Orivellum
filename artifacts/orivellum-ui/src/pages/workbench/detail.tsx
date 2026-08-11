@@ -37,6 +37,15 @@ type WbProof = {
   verdict: "proven" | "provable" | "failed" | "unverified";
   workbooks: Record<string, WbProofFile>;
 };
+type WbTests = {
+  passed?: boolean;
+  output?: string;
+  attempts?: number;
+  tests_run?: number;
+  test_file?: string;
+  skipped?: boolean;
+  reason?: string;
+};
 type WbVersion = {
   id: string;
   version_no: number;
@@ -114,6 +123,48 @@ function ProofGates({ proof }: { proof: WbProof }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+function TestReport({ tests }: { tests: WbTests }) {
+  if (tests.skipped) {
+    return (
+      <p className="mt-2 text-[10px] text-muted-foreground" data-testid="wb-tests-skipped">
+        Tests skipped — {tests.reason || "nothing to test"}
+      </p>
+    );
+  }
+  return (
+    <div className="mt-2 text-[10px]" data-testid="wb-tests">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span
+          className={`px-1.5 py-0.5 rounded border font-medium ${
+            tests.passed ? "text-emerald-700 border-emerald-300" : "text-red-700 border-red-300"
+          }`}
+        >
+          {tests.passed ? "✓ Tests passed" : "✕ Tests failed"}
+        </span>
+        {!!tests.tests_run && (
+          <span className="text-muted-foreground">
+            {tests.tests_run} test{tests.tests_run === 1 ? "" : "s"} run
+          </span>
+        )}
+        {!!tests.attempts && tests.attempts > 1 && (
+          <span className="text-muted-foreground">
+            after {tests.attempts} runs (AI repaired the build)
+          </span>
+        )}
+        {tests.test_file && <span className="font-mono text-muted-foreground">{tests.test_file}</span>}
+      </div>
+      {tests.output && (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-muted-foreground">Test output</summary>
+          <pre className="mt-1 p-2 rounded bg-muted/50 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
+            {tests.output}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }
@@ -562,6 +613,11 @@ export default function WorkbenchDetail() {
                   <CheckCircle2 className="h-3 w-3" /> Proven
                 </Badge>
               )}
+              {v.verdict === "tested" && (
+                <Badge variant="outline" className="gap-1 text-emerald-700 border-emerald-300">
+                  <CheckCircle2 className="h-3 w-3" /> Tested
+                </Badge>
+              )}
               {v.verdict === "verified" && (
                 <Badge variant="outline" className="gap-1 text-emerald-700 border-emerald-300">
                   <CheckCircle2 className="h-3 w-3" /> Checks passed
@@ -590,6 +646,9 @@ export default function WorkbenchDetail() {
             {v.note && <p className="text-xs text-muted-foreground mt-1">{v.note}</p>}
             {!!(v.checks as { proof?: WbProof })?.proof && (
               <ProofGates proof={(v.checks as { proof: WbProof }).proof} />
+            )}
+            {!!(v.checks as { tests?: WbTests })?.tests && (
+              <TestReport tests={(v.checks as { tests: WbTests }).tests} />
             )}
             <div className="mt-3 space-y-1">
               {v.files.map(f => (

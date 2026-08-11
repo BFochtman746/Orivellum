@@ -1,0 +1,204 @@
+"""Code projects must pass their own generated tests before a Workbench
+version counts as good.
+
+Covers:
+- happy path: build → generated tests run in the sandbox → verdict 'tested',
+  test file ships with the version, output stored in checks_json
+- repair loop: a build whose tests fail is fixed by the LLM and re-tested;
+  attempts recorded
+- persistent failure: no version is published, the error names the tests
+- test-generation failure blocks the version (never silently untested)
+- projects with no Python files skip testing honestly ('skipped', verdict
+  'verified' not 'tested')
+"""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from tests.test_workbench import _make_app
+
+_GOOD_SCRIPT = """\
+import pathlib
+out = pathlib.Path("out")
+out.mkdir(exist_ok=True)
+(out / "calc.py").write_text("def add(a, b):\\n    return a + b\\n")
+print("built calc")
+"""
+
+_BAD_SCRIPT = """\
+import pathlib
+out = pathlib.Path("out")
+out.mkdir(exist_ok=True)
+(out / "calc.py").write_text("def add(a, b):\\n    return a - b\\n")
+print("built calc (buggy)")
+"""
+
+_NO_PY_SCRIPT = """\
+import pathlib
+out = pathlib.Path("out")
+out.mkdir(exist_ok=True)
+(out / "README.md").write_text("docs only")
+print("built docs")
+"""
+
+_TESTS = """\
+import unittest
+import calc
+
+
+class TestCalc(unittest.TestCase):
+    def test_add(self):
+        self.assertEqual(calc.add(2, 3), 5)
+
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+
+
+def _llm_results(*texts):
+    """Sequence of LLMResult stubs; None text means a failed call."""
+    from orivellum.capabilities.llm import LLMResult
+
+    return [
+        LLMResult(t, t is not None, "test", 0, error=None if t is not None else "down")
+        for t in texts
+    ]
+
+
+class TestCodeProjectTests(unittest.TestCase):
+    def _build(self, tmp, llm_side_effect, instruction="add function"):
+        from orivellum.capabilities.workbench import run_build
+
+        _, db, cfg = _make_app(tmp)
+        p = db.create_wb_project("Calc", "code", "a calculator module")
+        with patch("orivellum.capabilities.llm.llm_call", side_effect=llm_side_effect):
+            run_build(db, cfg, p["id"], instruction)
+        return db, cfg, p
+
+    def test_passing_tests_publish_tested_version_with_test_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db, cfg, p = self._build(tmp, _llm_results(_GOOD_SCRIPT, _TESTS))
+            proj = db.get_wb_project(p["id"])
+            self.assertIsNone(proj["last_error"], proj["last_error"])
+            versions = db.list_wb_versions(p["id"])
+            self.assertEqual(len(versions), 1)
+            v = versions[0]
+            self.assertEqual(v["verdict"], "tested")
+            checks = json.loads(v["checks_json"])
+            self.assertTrue(checks["tests"]["passed"])
+            self.assertEqual(checks["tests"]["attempts"], 1)
+            names = [f["name"] for f in json.loads(v["files_json"])]
+            self.assertIn("project_tests.py", names)  # tests ship with the version
+
+            from orivellum.capabilities.workbench import version_dir
+
+            self.assertTrue((version_dir(cfg, p["id"], 1) / "project_tests.py").is_file())
+
+    def test_failing_tests_trigger_repair_loop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # bad build → tests fail → fix returns the good script → retest OK
+            db, _, p = self._build(tmp, _llm_results(_BAD_SCRIPT, _TESTS, _GOOD_SCRIPT))
+            proj = db.get_wb_project(p["id"])
+            self.assertIsNone(proj["last_error"], proj["last_error"])
+            v = db.list_wb_versions(p["id"])[0]
+            self.assertEqual(v["verdict"], "tested")
+            checks = json.loads(v["checks_json"])
+            self.assertTrue(checks["tests"]["passed"])
+            self.assertEqual(checks["tests"]["attempts"], 2)
+
+    def test_persistently_failing_tests_block_the_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # every "fix" returns the same broken script — retries exhaust
+            db, _, p = self._build(tmp, _llm_results(_BAD_SCRIPT, _TESTS, _BAD_SCRIPT, _BAD_SCRIPT))
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("tests failed", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
+
+    def test_testgen_failure_blocks_the_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(tmp, _llm_results(_GOOD_SCRIPT, None))
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("test generation failed", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
+
+    def test_exit_zero_with_no_tests_is_not_a_pass(self):
+        # a test "suite" that just prints and exits 0 must never count
+        no_tests = "print('looks fine')\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(
+                tmp, _llm_results(_GOOD_SCRIPT, no_tests, _GOOD_SCRIPT, _GOOD_SCRIPT)
+            )
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("tests failed", proj["last_error"])
+            self.assertIn("ran no tests", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
+
+    def test_mutating_test_cannot_certify_different_bytes(self):
+        # a test that rewrites calc.py and then passes must only touch the
+        # throwaway copy — the published version keeps the original bytes
+        mutating_tests = """\
+import pathlib
+import unittest
+import calc
+
+pathlib.Path("calc.py").write_text("def add(a, b):\\n    return 999\\n")
+
+
+class TestCalc(unittest.TestCase):
+    def test_add(self):
+        self.assertEqual(calc.add(2, 3), 5)
+
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db, cfg, p = self._build(tmp, _llm_results(_GOOD_SCRIPT, mutating_tests))
+            proj = db.get_wb_project(p["id"])
+            self.assertIsNone(proj["last_error"], proj["last_error"])
+            from orivellum.capabilities.workbench import version_dir
+
+            published = (version_dir(cfg, p["id"], 1) / "calc.py").read_text()
+            self.assertIn("return a + b", published)
+            self.assertNotIn("999", published)
+
+    def test_project_unittest_shadow_cannot_neuter_the_harness(self):
+        # a project shipping its own unittest.py must not shadow the stdlib
+        # harness (which would turn the suite into a no-op or a crash)
+        shadow_script = """\
+import pathlib
+out = pathlib.Path("out")
+out.mkdir(exist_ok=True)
+(out / "calc.py").write_text("def add(a, b):\\n    return a + b\\n")
+(out / "unittest.py").write_text("raise RuntimeError('shadowed!')\\n")
+print("built calc + shadow")
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(tmp, _llm_results(shadow_script, _TESTS))
+            proj = db.get_wb_project(p["id"])
+            self.assertIsNone(proj["last_error"], proj["last_error"])
+            v = db.list_wb_versions(p["id"])[0]
+            self.assertEqual(v["verdict"], "tested")
+            checks = json.loads(v["checks_json"])
+            self.assertTrue(checks["tests"]["passed"])
+            self.assertGreaterEqual(checks["tests"]["tests_run"], 1)
+
+    def test_no_python_files_skips_tests_honestly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(tmp, _llm_results(_NO_PY_SCRIPT))
+            proj = db.get_wb_project(p["id"])
+            self.assertIsNone(proj["last_error"], proj["last_error"])
+            v = db.list_wb_versions(p["id"])[0]
+            self.assertEqual(v["verdict"], "verified")  # never claims 'tested'
+            checks = json.loads(v["checks_json"])
+            self.assertTrue(checks["tests"]["skipped"])
+            self.assertIn("no Python files", checks["tests"]["reason"])
+
+
+if __name__ == "__main__":
+    unittest.main()

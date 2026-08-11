@@ -65,3 +65,9 @@ versions; execute generated tests for code versions.
 - Promotion must happen BEFORE `_snapshot()` hashes files, or version rows disagree with disk.
 - Proof travels by bytes: a latest version without its own proof (analysis/revert copies) inherits an earlier proof only when the xlsx name+sha256 sets are identical.
 - Archive gate: `latest_proof_status` + `UnprovenError` → route 409 `{code:"unproven"}`; UI force-confirm retries with `{force:true}`.
+
+## Code project self-tests (build loop)
+- Code builds generate a unittest file (stdlib-only) and run it in the Workshop sandbox; failures feed the LLM repair loop (fix build script → rebuild → re-verify → re-run SAME tests). Version verdict `tested` only on a real pass.
+- Exit 0 is NOT a pass: parse unittest's "Ran N tests" and require N≥1, or empty/no-op suites silently certify garbage.
+- Tests run against an ISOLATED COPY of out/ — a mutating test can only touch the throwaway copy, so a pass always certifies the exact published bytes; the passing test file is copied into the version afterwards.
+- Sandbox runner injection: preload real `unittest` BEFORE putting the project dir on sys.path (a project unittest.py would shadow the harness), and strip the runner from sys.argv (unittest.main() parses argv and treats the test path as a test-name selector). `python -I` + runpy.run_path never adds the script dir to sys.path — must insert it explicitly.

@@ -44,6 +44,7 @@ import hashlib
 import json
 import logging
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -260,6 +261,224 @@ def _run_build_script(script: str, workdir: pathlib.Path, cfg, db, request: str)
     return {"ok": False, "error": "Max retries exceeded"}
 
 
+# ── Code project tests ────────────────────────────────────────────────────────
+
+_TEST_FILE = "project_tests.py"
+_TEST_OUTPUT_CAP = 4000
+
+_TESTGEN_SYSTEM = (
+    "You write ONE Python test file and nothing else — no prose, no markdown "
+    "fences. Rules:\n"
+    "- Standard library ONLY, built on unittest. No pip, no network, no "
+    "subprocess.\n"
+    "- The project's files sit in the SAME directory as the test file; import "
+    "modules by file name (e.g. `import main` for main.py).\n"
+    f"- Never import {_TEST_FILE} itself.\n"
+    "- If a file is a script with top-level side effects rather than importable "
+    "functions, run it with runpy.run_path and assert on its observable "
+    "output or files.\n"
+    "- Write a handful of meaningful, deterministic assertions covering the "
+    "behavior that was requested — no sleeps, no randomness, no network.\n"
+    '- End with `if __name__ == "__main__": unittest.main()` so failures exit '
+    "non-zero."
+)
+
+
+def _generate_tests(cfg, db, proj: dict, instruction: str, out_dir: pathlib.Path) -> str:
+    from orivellum.capabilities.llm import llm_call
+    from orivellum.capabilities.workshop import _clean_script
+
+    gen = llm_call(
+        [
+            {"role": "system", "content": _TESTGEN_SYSTEM},
+            {
+                "role": "user",
+                "content": f"PROJECT BRIEF:\n{proj['brief']}\n\n"
+                f"WHAT THIS ITERATION WAS ASKED TO DO:\n{instruction}\n\n"
+                f"PROJECT FILES:\n{_describe_inputs(proj['kind'], out_dir)}\n\n"
+                "Write the test file now.",
+            },
+        ],
+        cfg=cfg,
+        db=db,
+        purpose="workbench.testgen",
+        temperature=0.1,
+        max_tokens=4000,
+        timeout=120,
+    )
+    if not (gen.ok and gen.text):
+        raise RuntimeError(f"test generation failed: {gen.error or 'empty reply'}")
+    code = _clean_script(gen.text)
+    try:
+        ast.parse(code)
+    except SyntaxError as exc:
+        raise RuntimeError(f"generated test file is not valid Python: {exc.msg}") from exc
+    return code
+
+
+def _test_runner_source() -> str:
+    """The Workshop sandbox runner, with the test file's directory put on
+    sys.path first — `python -I` + runpy never adds it, and the generated
+    tests must import the project's sibling modules."""
+    from orivellum.capabilities.workshop import _SANDBOX_RUNNER
+
+    marker = 'runpy.run_path(sys.argv[1], run_name="__main__")'
+    if marker not in _SANDBOX_RUNNER:  # runner contract changed — fail loudly
+        raise RuntimeError("sandbox runner no longer matches the test-runner injection point")
+    return _SANDBOX_RUNNER.replace(
+        marker,
+        # Preload the REAL stdlib harness before the project dir joins
+        # sys.path — a project file named unittest.py must not be able to
+        # shadow it and turn the suite into a silent no-op. Strip the runner
+        # from argv too: unittest.main() parses sys.argv and would treat the
+        # test file path as a test-name selector.
+        "import os\n"
+        "import unittest  # noqa: F401 — preload before project dir shadows stdlib\n"
+        "_target = sys.argv[1]\n"
+        "sys.path.insert(0, os.path.dirname(os.path.abspath(_target)))\n"
+        "sys.argv = sys.argv[1:]\n"
+        'runpy.run_path(_target, run_name="__main__")',
+    )
+
+
+def _run_project_tests(test_code: str, out_dir: pathlib.Path, workdir: pathlib.Path) -> dict:
+    """Execute the generated test file in the build sandbox against an
+    ISOLATED COPY of the built project — a test that mutates project files
+    can only mutate the throwaway copy, so a pass always certifies the exact
+    bytes that get published. Exit 0 alone is not a pass: the suite must have
+    actually run at least one test (unittest's 'Ran N tests' line)."""
+    from orivellum.capabilities.workshop import _sandbox_env, _sandbox_preexec
+
+    test_dir = workdir / "_testrun"
+    if test_dir.exists():
+        shutil.rmtree(test_dir)
+    shutil.copytree(out_dir, test_dir)
+    test_path = test_dir / _TEST_FILE
+    test_path.write_text(test_code, encoding="utf-8")
+    runner_path = workdir / "_test_runner.py"
+    runner_path.write_text(_test_runner_source(), encoding="utf-8")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", str(runner_path), str(test_path)],
+            capture_output=True,
+            text=True,
+            timeout=_SCRIPT_TIMEOUT_S,
+            cwd=str(test_dir),
+            env=_sandbox_env(str(workdir)),
+            preexec_fn=_sandbox_preexec if sys.platform != "win32" else None,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "passed": False,
+            "output": f"tests timed out ({_SCRIPT_TIMEOUT_S}s)",
+            "tests_run": 0,
+        }
+    output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+    m = re.search(r"Ran (\d+) tests?", output)
+    tests_run = int(m.group(1)) if m else 0
+    passed = result.returncode == 0 and tests_run >= 1
+    if result.returncode == 0 and tests_run < 1:
+        output = "test suite ran no tests — exit 0 does not count as a pass\n" + output
+    return {"passed": passed, "output": output[-_TEST_OUTPUT_CAP:], "tests_run": tests_run}
+
+
+def _fix_script_for_tests(db, cfg, instruction, script, test_code, test_output) -> str:
+    """Ask the LLM to repair the build script so its output passes the tests."""
+    from orivellum.capabilities.llm import llm_call
+    from orivellum.capabilities.workshop import _clean_script
+
+    fix = llm_call(
+        [
+            {
+                "role": "system",
+                "content": "You are a Python debugging expert. A workbench build script "
+                "produced project files that FAIL their tests. Fix the BUILD SCRIPT so "
+                "the project it writes passes the tests. Do not weaken or game the "
+                "tests. Return ONLY the corrected raw build script.",
+            },
+            {
+                "role": "user",
+                "content": f"Request:\n{instruction[:500]}\n\n"
+                f"Build script:\n```python\n{script}\n```\n\n"
+                f"Test file:\n```python\n{test_code}\n```\n\n"
+                f"Test output:\n{test_output[-2000:]}",
+            },
+        ],
+        cfg=cfg,
+        db=db,
+        purpose="workbench.testfix",
+        temperature=0.1,
+        max_tokens=8000,
+        timeout=120,
+    )
+    if not (fix.ok and fix.text):
+        raise RuntimeError(f"test-repair generation failed: {fix.error or 'empty reply'}")
+    return _clean_script(fix.text)
+
+
+def _rebuild_for_tests(db, cfg, kind, instruction, work, out, script) -> str:
+    """Re-run a repaired build script into a fresh out/ and re-verify.
+    Returns the script actually executed (may differ after syntax fixes)."""
+    shutil.rmtree(out)
+    out.mkdir()
+    run = _run_build_script(script, work, cfg, db, instruction)
+    if not run["ok"]:
+        raise RuntimeError(f"rebuild after test failure failed: {run['error']}")
+    ok, checks = _verify_output(kind, out)
+    if not ok:
+        raise RuntimeError(
+            "verification failed after test repair: "
+            + "; ".join(checks.get("problems") or [checks.get("error", "unknown")])
+        )
+    return run["script"]
+
+
+def _pretest_code_build(db, cfg, proj, instruction, work, out, script) -> dict | None:
+    """For non-xlsx builds: structural check first, then the generated test
+    suite. Returns the tests record, or None for xlsx (proof harness covers
+    those)."""
+    if proj["kind"] == "xlsx":
+        return None
+    ok, checks = _verify_output(proj["kind"], out)
+    if not ok:
+        raise RuntimeError(
+            "verification failed: "
+            + "; ".join(checks.get("problems") or [checks.get("error", "unknown")])
+        )
+    return _test_code_project(db, cfg, proj, instruction, work, out, script)
+
+
+def _test_code_project(db, cfg, proj, instruction, work, out, script) -> dict:
+    """Generate a test file for the built code project, run it sandboxed, and
+    feed failures back into the LLM repair loop (rebuild → re-verify → re-run
+    the SAME tests). Returns the record for checks_json['tests']; raises when
+    the tests still fail after retries — the version is then never published."""
+    if not any(p.suffix == ".py" and p.name != _TEST_FILE for p in out.rglob("*") if p.is_file()):
+        return {"skipped": True, "reason": "no Python files to test"}
+    test_code = _generate_tests(cfg, db, proj, instruction, out)
+    for attempt in range(_MAX_FIX_RETRIES + 1):
+        res = _run_project_tests(test_code, out, work)
+        if res["passed"]:
+            # ship the passing test file with the version — the project bytes
+            # it certified are untouched (tests ran on an isolated copy)
+            (out / _TEST_FILE).write_text(test_code, encoding="utf-8")
+            return {
+                "passed": True,
+                "output": res["output"],
+                "attempts": attempt + 1,
+                "tests_run": res["tests_run"],
+                "test_file": _TEST_FILE,
+            }
+        if attempt >= _MAX_FIX_RETRIES:
+            raise RuntimeError(
+                f"project tests failed after {attempt + 1} run(s):\n{res['output'][-800:]}"
+            )
+        logger.warning("Workbench tests attempt %d failed: %s", attempt + 1, res["output"][:400])
+        script = _fix_script_for_tests(db, cfg, instruction, script, test_code, res["output"])
+        script = _rebuild_for_tests(db, cfg, proj["kind"], instruction, work, out, script)
+    raise RuntimeError("Max test retries exceeded")  # pragma: no cover
+
+
 # ── Verification ──────────────────────────────────────────────────────────────
 
 
@@ -334,11 +553,15 @@ def _verify_output(kind: str, out_dir: pathlib.Path, prove: bool = False) -> tup
 
 def _proof_verdict(checks: dict | None) -> str:
     """Version verdict from a checks dict: 'proven' / 'unverified' when the
-    six-gate harness ran, plain 'verified' otherwise (non-xlsx kinds)."""
+    six-gate harness ran; 'tested' when the project's own generated tests
+    passed; plain 'verified' otherwise."""
     proof = (checks or {}).get("proof")
-    if not proof:
-        return "verified"
-    return {"proven": "proven", "unverified": "unverified"}.get(proof["verdict"], "verified")
+    if proof:
+        return {"proven": "proven", "unverified": "unverified"}.get(proof["verdict"], "verified")
+    tests = (checks or {}).get("tests")
+    if tests and tests.get("passed"):
+        return "tested"
+    return "verified"
 
 
 class UnprovenError(ValueError):
@@ -444,12 +667,19 @@ def run_build(db, cfg, project_id: str, instruction: str) -> None:
             if not run["ok"]:
                 raise RuntimeError(run["error"])
 
+            # Code projects: generate + run the project's own tests in the
+            # sandbox, feeding failures back to the LLM repair loop. Raises
+            # when tests never pass — the version is never published.
+            tests = _pretest_code_build(db, cfg, proj, instruction, work, out, run["script"])
+
             ok, checks = _verify_output(proj["kind"], out, prove=True)
             if not ok:
                 raise RuntimeError(
                     "verification failed: "
                     + "; ".join(checks.get("problems") or [checks.get("error", "unknown")])
                 )
+            if tests is not None:
+                checks["tests"] = tests
 
             # Accept: publish files FIRST (staging dir + atomic rename), and
             # only then commit the version row — a crash can leave an unused
