@@ -89,6 +89,7 @@
 - [GitHub CI rules](orivellum-ci.md) — runners lack ffmpeg/kokoro/secrets; pnpm needs packageManager pin + lib build before tsc; never patch one target from concurrent coroutines (leaks mocks).
 - [Quality gates (8-phase CI)](orivellum-quality-gates.md) — shrink-only baselines + lint ratchet; mutmut 3 config quirks; fail-closed gate rule; GENESIS ledger hash bug lesson.
 - [Re-extraction knowledge hygiene](orivellum-retranscribe.md) — re-running process_document must be preceded by delete_document_knowledge(); text-hash dedup keeps stale rows alive otherwise.
+- [Extraction reservation](orivellum-extraction-reservation.md) — token-based per-doc claim serializes every pipeline run; routes pre-reserve for 409s; token-matched release makes double-free impossible.
 - [In-browser mic recording](orivellum-mic-recording.md) — MediaRecorder needs a session-generation guard on getUserMedia+onstop; test mic flows via addInitScript getUserMedia stub (no audio devices in container).
 - [Audit remediation patterns](orivellum-audit-remediation.md) — internal_error helper, CAS transitions, router-level require_auth on every new router, bg_jobs upsert-before-submit, percent-encoded traversal tests.
 - [Orivellum Runner xlsx proving](orivellum-runner.md) — standalone harness at orivellum-runner/; surgery-only writes, six proof gates, candidate→rename certification, formulas==1.3.4 engine.

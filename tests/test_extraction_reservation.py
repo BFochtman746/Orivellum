@@ -174,6 +174,46 @@ class ConcurrentPipelineTest(unittest.TestCase):
         # (released only via the finally above).
         self.assertFalse(pipeline.is_extraction_reserved(self.doc["id"]))
 
+    def test_stale_token_submission_does_not_run_pipeline(self):
+        """A transferred token that is no longer the current reservation must
+        NOT grant ownership: the run no-ops instead of racing the true holder."""
+        stale = pipeline.try_reserve_extraction(self.doc["id"])
+        pipeline.release_extraction(self.doc["id"], stale)
+        # A new (true) holder now owns the document
+        current = pipeline.try_reserve_extraction(self.doc["id"])
+        try:
+            with mock.patch.object(pipeline, "extract", return_value=_fake_result()) as m:
+                pipeline.process_document(
+                    doc_id=self.doc["id"],
+                    file_path=str(self.file),
+                    kind="text",
+                    work_id=None,
+                    title="Note",
+                    db=self.db,
+                    reservation_token=stale,
+                )
+                m.assert_not_called()
+            # The stale run must not have freed the true holder's claim
+            self.assertTrue(pipeline.is_extraction_reserved(self.doc["id"]))
+        finally:
+            pipeline.release_extraction(self.doc["id"], current)
+
+    def test_invalid_token_with_no_active_reservation_noops(self):
+        """A token for a reservation that no longer exists must not run the
+        pipeline either — ownership is never assumed from a nonempty token."""
+        with mock.patch.object(pipeline, "extract", return_value=_fake_result()) as m:
+            pipeline.process_document(
+                doc_id=self.doc["id"],
+                file_path=str(self.file),
+                kind="text",
+                work_id=None,
+                title="Note",
+                db=self.db,
+                reservation_token="not-a-real-token",
+            )
+            m.assert_not_called()
+        self.assertFalse(pipeline.is_extraction_reserved(self.doc["id"]))
+
     def test_prereserved_token_ownership_transfer(self):
         token = pipeline.try_reserve_extraction(self.doc["id"])
         self.assertIsNotNone(token)
@@ -227,6 +267,52 @@ class ReprocessRoute409Test(unittest.TestCase):
             r2 = self.client.post(f"/api/library/{self.doc_id}/reprocess?force=true")
             self.assertEqual(r2.status_code, 200)
         self.assertFalse(pipeline.is_extraction_reserved(self.doc_id))
+
+
+class ExplodeZipsReservationTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.app, self.db, self.cfg = _make_app(self._tmp.name)
+        self.client = TestClient(self.app, headers=AUTH_HEADERS)
+        import zipfile
+
+        lib = Path(self.cfg.data_dir) / "library"
+        lib.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(lib / "bundle.zip", "w") as zf:
+            zf.writestr("inner.txt", "hello from inside " * 10)
+        doc = self.db.create_document(title="bundle.zip", kind="zip", content_path="bundle.zip")
+        self.db.update_document_extracted(doc["id"], "old summary", 3, readiness="ready")
+        self.doc_id = doc["id"]
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_explode_zips_skips_reserved_archive_untouched(self):
+        """An archive mid-extraction must be skipped ENTIRELY — no warning
+        wipe, no readiness reset — never mutating the active run's document."""
+        token = pipeline.try_reserve_extraction(self.doc_id)
+        try:
+            r = self.client.post("/api/library/explode-zips")
+            self.assertEqual(r.status_code, 200)
+            body = r.json()
+            self.assertEqual(body["queued"], 0)
+            self.assertEqual(body["skipped"], 1)
+            doc = self.db.get_document(self.doc_id)
+            self.assertEqual(doc["readiness"], "ready")
+            self.assertEqual(doc["extracted_text"], "old summary")
+            # The holder's reservation survived the call
+            self.assertTrue(pipeline.is_extraction_reserved(self.doc_id))
+        finally:
+            pipeline.release_extraction(self.doc_id, token)
+
+    def test_explode_zips_reserves_and_releases(self):
+        r = self.client.post("/api/library/explode-zips")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["queued"], 1)
+        # BackgroundTasks ran during the request — reservation released after
+        self.assertFalse(pipeline.is_extraction_reserved(self.doc_id))
+        doc = self.db.get_document(self.doc_id)
+        self.assertEqual(doc["readiness"], "ready")
 
 
 class RetranscribeRoute409Test(unittest.TestCase):

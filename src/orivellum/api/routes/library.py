@@ -1400,9 +1400,10 @@ def library_explode_zips(background_tasks: BackgroundTasks):
     Safe to call multiple times — already-exploded archives will just
     re-enumerate (dedup by SHA-256 prevents duplicate child docs).
 
-    Reservation-unaware by design (like uploads): each queued run self-reserves
-    inside process_document and silently skips docs already extracting — this
-    endpoint never returns 409 for individual archives.
+    Each archive is reserved through the shared document-level extraction
+    reservation BEFORE any state is touched — an archive that is already
+    extracting is skipped entirely (no warning wipe, no readiness reset) and
+    counted in ``skipped`` rather than mutating the active run's document.
     """
     db = get_db()
     lib_root = _library_root()
@@ -1413,6 +1414,7 @@ def library_explode_zips(background_tasks: BackgroundTasks):
         ).fetchall()
 
     queued = 0
+    skipped = 0
     for row in rows:
         content_path = row["content_path"]
         if content_path:
@@ -1424,25 +1426,41 @@ def library_explode_zips(background_tasks: BackgroundTasks):
             logger.warning("ZIP explode: file missing for doc %s — skipping", row["id"])
             continue
 
-        db.delete_extraction_warnings(row["id"])
-        db.update_document_extracted(row["id"], "", 0, readiness="imported", error_message=None)
-        background_tasks.add_task(
-            process_document,
-            doc_id=row["id"],
-            file_path=str(file_path),
-            kind="zip",
-            work_id=row["work_id"],
-            title=row["title"] or file_path.name,
-            db=db,
-        )
+        # Reserve BEFORE any destructive step so a ZIP mid-extraction is left
+        # completely untouched by this call.
+        token = try_reserve_extraction(row["id"])
+        if token is None:
+            skipped += 1
+            logger.info("ZIP explode: doc %s already extracting — skipped", row["id"])
+            continue
+
+        try:
+            db.delete_extraction_warnings(row["id"])
+            db.update_document_extracted(row["id"], "", 0, readiness="imported", error_message=None)
+            background_tasks.add_task(
+                process_document,
+                doc_id=row["id"],
+                file_path=str(file_path),
+                kind="zip",
+                work_id=row["work_id"],
+                title=row["title"] or file_path.name,
+                db=db,
+                reservation_token=token,
+            )
+        except Exception:
+            # The queued pipeline never got ownership — release the claim.
+            release_extraction(row["id"], token)
+            raise
         queued += 1
         logger.info("Queued ZIP explosion for doc=%s", row["id"])
 
     return {
         "queued": queued,
+        "skipped": skipped,
         "message": (
             f"Queued {queued} ZIP archive(s) for extraction. "
             "Each file inside will become its own library document."
+            + (f" Skipped {skipped} already being processed." if skipped else "")
         ),
     }
 

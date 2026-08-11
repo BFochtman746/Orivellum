@@ -419,6 +419,12 @@ def is_extraction_reserved(doc_id: str) -> bool:
         return doc_id in _reserved_docs
 
 
+def _owns_reservation(doc_id: str, token: str) -> bool:
+    """True when *token* is the reservation currently registered for *doc_id*."""
+    with _reservations_lock:
+        return _reserved_docs.get(doc_id) == token
+
+
 def process_document(
     doc_id: str,
     file_path: str,
@@ -442,12 +448,25 @@ def process_document(
     ownership transfers here and the reservation is still released in the
     ``finally`` below.
     """
-    token = reservation_token or try_reserve_extraction(doc_id)
-    if token is None:
-        logger.warning(
-            "Doc %s (%s) — extraction already in flight; skipping duplicate run", doc_id, title
-        )
-        return
+    if reservation_token is not None:
+        # A transferred token is only ownership if it is STILL the registered
+        # reservation for this document.  A stale or forged token must never
+        # let a second pipeline run concurrently with the true holder.
+        if not _owns_reservation(doc_id, reservation_token):
+            logger.warning(
+                "Doc %s (%s) — supplied reservation token is not current; skipping duplicate run",
+                doc_id,
+                title,
+            )
+            return
+        token = reservation_token
+    else:
+        token = try_reserve_extraction(doc_id)
+        if token is None:
+            logger.warning(
+                "Doc %s (%s) — extraction already in flight; skipping duplicate run", doc_id, title
+            )
+            return
     try:
         _process_document_reserved(doc_id, file_path, kind, work_id, title, db)
     finally:
