@@ -87,6 +87,7 @@ class OrivellumDB:
         self._path = path
         self._lock = threading.RLock()
         self._suspend_commit = False  # True inside atomic() — see _maybe_commit
+        self._txn_owner: int | None = None  # thread ident owning the atomic() txn
         self._local = threading.local()  # per-thread read connections
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
@@ -180,7 +181,7 @@ class OrivellumDB:
                     UNIQUE(scope, key)
                 )
             """)
-            self._conn.commit()
+            self._maybe_commit()
 
             current = self._get_setting("schema_version", "0")
             current_v = int(current)
@@ -205,7 +206,7 @@ class OrivellumDB:
                                     else:
                                         raise
                         self._set_setting("schema_version", str(version))
-                        self._conn.commit()
+                        self._maybe_commit()
                     logger.info("  Applied migration v%d: %s", version, description)
                 except Exception as exc:
                     logger.error("Migration v%d failed: %s", version, exc)
@@ -339,7 +340,7 @@ class OrivellumDB:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (tid, name, kind_label, system_prompt, hints_json, work_id, now, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return self.get_extraction_template(tid)  # type: ignore[return-value]
 
     def update_extraction_template(
@@ -386,7 +387,7 @@ class OrivellumDB:
         vals = [v for _, v in cols] + [template_id]
         with self._lock:
             self._conn.execute(f"UPDATE extraction_templates SET {set_clause} WHERE id=?", vals)
-            self._conn.commit()
+            self._maybe_commit()
         return self.get_extraction_template(template_id)
 
     def delete_extraction_template(self, template_id: str) -> bool:
@@ -398,7 +399,7 @@ class OrivellumDB:
             if not row:
                 return False
             self._conn.execute("DELETE FROM extraction_templates WHERE id=?", (template_id,))
-            self._conn.commit()
+            self._maybe_commit()
         return True
 
     def get_template_for_doc(
@@ -546,26 +547,44 @@ class OrivellumDB:
             (_uuid(), event_type, object_id, object_type, json.dumps(payload or {}), _now()),
         )
 
+    def _in_atomic(self) -> bool:
+        """True when THIS thread owns an open :meth:`atomic` transaction.
+
+        Ownership-aware on purpose: only the owning thread's commits are
+        deferred, so an unrelated writer can never be silently absorbed
+        into (or prematurely flush) someone else's transaction.  Unrelated
+        writers are serialized out anyway — ``atomic`` holds the DB lock
+        for its whole block.
+        """
+        return self._suspend_commit and self._txn_owner == threading.get_ident()
+
     def _maybe_commit(self) -> None:
-        """Commit unless an :meth:`atomic` transaction is in progress."""
-        if not self._suspend_commit:
+        """Commit unless this thread is inside an :meth:`atomic` block.
+
+        Every mutation method in this class commits through here — a plain
+        ``self._conn.commit()`` is forbidden, otherwise that method would
+        prematurely flush a caller's open transaction.
+        """
+        if not self._in_atomic():
             self._conn.commit()
 
     @contextmanager
     def atomic(self) -> Generator[None, None, None]:
         """Group multiple mutation-method calls into ONE transaction.
 
-        Holds the DB lock for the whole block; participating methods (those
-        that commit via ``_maybe_commit``) defer their commits.  On success
-        everything commits once; on ANY exception the whole transaction is
-        rolled back and the exception re-raised — no partial state survives.
-        Nested ``atomic`` blocks join the outermost transaction.
+        Holds the DB lock for the whole block (no other writer can touch
+        the shared connection); participating methods defer their commits
+        via ``_maybe_commit``.  On success everything commits once; on ANY
+        exception the whole transaction is rolled back and the exception
+        re-raised — no partial state survives.  Nested ``atomic`` blocks on
+        the same thread join the outermost transaction.
         """
         with self._lock:
-            if self._suspend_commit:  # nested — join the outer transaction
+            if self._in_atomic():  # nested — join the outer transaction
                 yield
                 return
             self._suspend_commit = True
+            self._txn_owner = threading.get_ident()
             try:
                 yield
                 self._conn.commit()
@@ -574,6 +593,7 @@ class OrivellumDB:
                 raise
             finally:
                 self._suspend_commit = False
+                self._txn_owner = None
 
     @contextmanager
     def governed_write(
@@ -596,7 +616,7 @@ class OrivellumDB:
         On any exception the transaction is rolled back and the exception is
         re-raised unchanged.
 
-        **The caller must NOT call** ``self._conn.commit()`` inside the
+        **The caller must NOT call** ``self._maybe_commit()`` inside the
         ``with`` block — ``governed_write`` is the only committer.
 
         ``audit_level`` controls how much governance overhead is emitted:
@@ -819,14 +839,20 @@ class OrivellumDB:
                 if audit_level == "full":
                     self._audit_tx(operation, object_id, object_type, actor=actor, detail=detail)
                     self._emit_outbox_tx(event_type, object_id, object_type, payload or {})
-                _real_conn.commit()
+                if not self._in_atomic():
+                    # Inside an atomic() block the OUTER transaction is the
+                    # only committer — this governed write rides along.
+                    _real_conn.commit()
             except Exception:
                 self._conn = _real_conn  # always restore
                 _real_conn.set_trace_callback(None)
-                try:
-                    _real_conn.rollback()
-                except Exception:
-                    pass
+                if not self._in_atomic():
+                    # Never roll back a caller's open atomic() transaction —
+                    # the re-raise below makes atomic() roll it ALL back.
+                    try:
+                        _real_conn.rollback()
+                    except Exception:
+                        pass
                 raise
 
     def verify_audit_chain(self) -> tuple[bool, str]:
@@ -910,7 +936,7 @@ class OrivellumDB:
                 "UPDATE outbox SET dispatched_at=? WHERE id=? AND dispatched_at IS NULL",
                 (now, event_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return cur.rowcount > 0
 
     # =========================================================================
@@ -949,7 +975,7 @@ class OrivellumDB:
                     before_hash=before_hash,
                     after_hash=after_hash,
                 )
-                self._conn.commit()
+                self._maybe_commit()
         except Exception as exc:
             logger.warning("audit write failed: %s", exc)
 
@@ -1526,7 +1552,7 @@ class OrivellumDB:
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (_uuid(), now, method, path, status, latency_ms, ip or "", user_agent),
                 )
-                self._conn.commit()
+                self._maybe_commit()
         except Exception:
             pass
 
@@ -1574,7 +1600,7 @@ class OrivellumDB:
                         now,
                     ),
                 )
-                self._conn.commit()
+                self._maybe_commit()
         except Exception:
             pass  # non-fatal — table may not exist on old schemas
 
@@ -1845,7 +1871,7 @@ class OrivellumDB:
                     " VALUES (?, ?, ?, ?)",
                     (new_text, role, msg_id, conv_id),
                 )
-                self._conn.commit()
+                self._maybe_commit()
         except Exception as exc:  # noqa: BLE001
             logger.debug("FTS sync skipped for message %s: %s", msg_id, exc)
 
@@ -1926,7 +1952,7 @@ class OrivellumDB:
                        VALUES (?, ?, 'processing', ?)""",
                     (conv_id, client_msg_id, now),
                 )
-                self._conn.commit()
+                self._maybe_commit()
                 user_msg = {
                     "id": mid,
                     "conversation_id": conv_id,
@@ -1971,7 +1997,7 @@ class OrivellumDB:
                        VALUES (?, ?, 'processing', ?)""",
                     (conv_id, client_msg_id, now),
                 )
-                self._conn.commit()
+                self._maybe_commit()
                 return ("generate", None, user_dict)
 
             state, ai_msg_id = slot[0], slot[1]
@@ -1994,7 +2020,7 @@ class OrivellumDB:
                         WHERE conversation_id=? AND client_msg_id=?""",
                     (now, conv_id, client_msg_id),
                 )
-                self._conn.commit()
+                self._maybe_commit()
                 return ("generate", None, user_dict)
 
             # Active 'processing' slot — another request is generating.
@@ -2019,7 +2045,7 @@ class OrivellumDB:
                     WHERE conversation_id=? AND client_msg_id=?""",
                 (assistant_msg_id, conv_id, client_msg_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def update_conversation(
         self,
@@ -2059,7 +2085,7 @@ class OrivellumDB:
                     "UPDATE conversations SET updated_at=? WHERE id=?",
                     (now, conv_id),
                 )
-                self._conn.commit()
+                self._maybe_commit()
             return self.get_conversation(conv_id)
         updates["version"] = None  # placeholder; actual bump done via SQL below
         set_clause = ", ".join(
@@ -2110,7 +2136,7 @@ class OrivellumDB:
                     "UPDATE conversations SET context_summary=? WHERE id=?",
                     (summary, conv_id),
                 )
-            self._conn.commit()
+            self._maybe_commit()
 
     def set_conversation_web_search(self, conv_id: str, enabled: bool) -> dict | None:
         """Toggle web search grounding on/off for a conversation.
@@ -2131,7 +2157,7 @@ class OrivellumDB:
                 "UPDATE conversations SET web_search_enabled=?, updated_at=? WHERE id=?",
                 (1 if enabled else 0, now, conv_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return self.get_conversation(conv_id)
 
     def set_conversation_mail_context(self, conv_id: str, enabled: bool) -> dict | None:
@@ -2156,7 +2182,7 @@ class OrivellumDB:
                 "UPDATE conversations SET mail_context_enabled=?, updated_at=? WHERE id=?",
                 (1 if enabled else 0, now, conv_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return self.get_conversation(conv_id)
 
     def delete_conversation(self, conv_id: str) -> bool:
@@ -2303,13 +2329,13 @@ class OrivellumDB:
                        updated_at=excluded.updated_at""",
                 (doc_id, int(part), float(time), int(part_count), int(saved_at), now),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def delete_read_position(self, doc_id: str) -> None:
         """Forget the listening position for a document (finished or declined)."""
         with self._lock:
             self._conn.execute("DELETE FROM read_positions WHERE doc_id=?", (doc_id,))
-            self._conn.commit()
+            self._maybe_commit()
 
     def update_document_lifecycle(self, doc_id: str, lifecycle: str) -> bool:
         """Set the lifecycle state for a document.
@@ -3600,7 +3626,7 @@ class OrivellumDB:
                 "UPDATE chunks SET context_prefix=? WHERE id=?",
                 (prefix, chunk_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def delete_chunks(self, doc_id: str) -> None:
         """Remove all chunks for a document (e.g. before re-extracting)."""
@@ -3766,7 +3792,7 @@ class OrivellumDB:
                 "UPDATE documents SET meta=? WHERE id=?",
                 (_jdump(meta), doc_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def clear_reset_marker(self, doc_id: str) -> None:
         """Remove meta['reset_in_progress'] once the sequence completes."""
@@ -3781,7 +3807,7 @@ class OrivellumDB:
                     "UPDATE documents SET meta=? WHERE id=?",
                     (_jdump(meta), doc_id),
                 )
-                self._conn.commit()
+                self._maybe_commit()
 
     def upsert_book_chapters(self, doc_id: str, work_id: str | None, chapters: list[dict]) -> int:
         """Replace all book_chapters rows for a document with new extractions.
@@ -3957,7 +3983,7 @@ class OrivellumDB:
                    VALUES (?, ?, 'running', 'loading', ?, ?)""",
                 (tid, work_id, now, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return self.get_trailer(tid)  # type: ignore[return-value]
 
     def get_trailer(self, trailer_id: str) -> dict | None:
@@ -3994,7 +4020,7 @@ class OrivellumDB:
                    error=?, updated_at=? WHERE id=?""",
                 (status, phase, package_json, error, now, trailer_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def list_pipeline_chapters(self, pipeline_id: str) -> list[dict]:
         """Return all chapters linked to a book pipeline, ordered by seq.
@@ -4035,7 +4061,7 @@ class OrivellumDB:
                    updated_at=? WHERE status='running' AND updated_at < ?""",
                 (now, cutoff),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return cur.rowcount
 
     # -------------------------------------------------------------------------
@@ -4051,7 +4077,7 @@ class OrivellumDB:
                    VALUES(?,?,?,?,'inbox',?,?)""",
                 (bid, day, text, source, now, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
             row = self._conn.execute("SELECT * FROM note_blocks WHERE id=?", (bid,)).fetchone()
         return dict(row)
 
@@ -4087,7 +4113,7 @@ class OrivellumDB:
                    updated_at=? WHERE id=? AND status='inbox'""",
                 (json.dumps(proposal), _now(), block_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return cur.rowcount == 1
 
     def set_note_block_error(self, block_id: str, error: str) -> None:
@@ -4096,7 +4122,7 @@ class OrivellumDB:
                 "UPDATE note_blocks SET error=?, updated_at=? WHERE id=?",
                 (error[:300], _now(), block_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def claim_note_block(self, block_id: str, new_status: str, expected: str = "proposed") -> bool:
         """Atomically move a block out of ``expected`` status. Only the
@@ -4106,7 +4132,7 @@ class OrivellumDB:
                 "UPDATE note_blocks SET status=?, updated_at=? WHERE id=? AND status=?",
                 (new_status, _now(), block_id, expected),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return cur.rowcount == 1
 
     def mark_note_block_filed(self, block_id: str, paths: list[str]) -> None:
@@ -4116,7 +4142,7 @@ class OrivellumDB:
                    WHERE id=? AND status='approved'""",
                 (json.dumps(paths), _now(), block_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def delete_note_block(self, block_id: str) -> bool:
         """Delete a block that is still in the inbox (undo a capture)."""
@@ -4124,7 +4150,7 @@ class OrivellumDB:
             cur = self._conn.execute(
                 "DELETE FROM note_blocks WHERE id=? AND status='inbox'", (block_id,)
             )
-            self._conn.commit()
+            self._maybe_commit()
         return cur.rowcount == 1
 
     def upsert_note_report(self, day: str, report: str, block_ids: list[str]) -> None:
@@ -4137,7 +4163,7 @@ class OrivellumDB:
                      block_ids=excluded.block_ids, updated_at=excluded.updated_at""",
                 (day, report, json.dumps(block_ids), now, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def get_note_report(self, day: str) -> dict | None:
         with self._lock:
@@ -4165,7 +4191,7 @@ class OrivellumDB:
                    VALUES (?,?,?,?,'running','[]',?,?)""",
                 (sid, work_id, seed_prompt, context_type, n_domains, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return self.get_brainstorm_session(sid)  # type: ignore[return-value]
 
     def update_brainstorm_session(
@@ -4187,7 +4213,7 @@ class OrivellumDB:
                    WHERE id=?""",
                 (status, _json.dumps(ideas), ca, session_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def get_brainstorm_session(self, session_id: str) -> dict | None:
         with self._lock:
@@ -4285,7 +4311,7 @@ class OrivellumDB:
                     now,
                 ),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return artifact_id
 
     # -------------------------------------------------------------------------
@@ -4640,7 +4666,7 @@ class OrivellumDB:
                     f"DELETE FROM vectors WHERE object_type='knowledge' AND object_id IN ({ph})",
                     batch,
                 )
-            self._conn.commit()
+            self._maybe_commit()
         self.audit(
             "knowledge.pruned_for_reprocess",
             object_id=doc_id,
@@ -4746,7 +4772,7 @@ class OrivellumDB:
                     now,
                 ),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return eid
 
     def get_memory_evidence(self, evidence_id: str) -> dict | None:
@@ -4767,7 +4793,7 @@ class OrivellumDB:
         """
         with self._lock:
             cur = self._conn.execute("DELETE FROM memory_evidence WHERE id=?", (evidence_id,))
-            self._conn.commit()
+            self._maybe_commit()
         return cur.rowcount > 0
 
     # -------------------------------------------------------------------------
@@ -4859,7 +4885,7 @@ class OrivellumDB:
             )
             # Sync FTS index (v101+) — best-effort, non-fatal
             self._sync_memory_fts(new_id, key, value)
-            self._conn.commit()
+            self._maybe_commit()
         return True
 
     def update_memory_fact(self, memory_id: str, value: str) -> bool:
@@ -4907,7 +4933,7 @@ class OrivellumDB:
             )
             # Sync FTS index (v101+) — best-effort, non-fatal
             self._sync_memory_fts(corrected_id, key, value)
-            self._conn.commit()
+            self._maybe_commit()
         return True
 
     def get_current_memory_facts(
@@ -5204,7 +5230,7 @@ class OrivellumDB:
                          AND valid_from < ?""",
                     (now_str, cutoff),
                 )
-                self._conn.commit()
+                self._maybe_commit()
                 return result.rowcount
             except Exception:
                 return 0
@@ -5252,7 +5278,7 @@ class OrivellumDB:
                        VALUES (?,?,?,?,0)""",
                     (conflict_id, memory_id_a, memory_id_b, now),
                 )
-                self._conn.commit()
+                self._maybe_commit()
                 # Fetch what was actually stored (INSERT OR IGNORE may have been
                 # a no-op if a concurrent write beat us)
                 row = self._conn.execute(
@@ -5329,7 +5355,7 @@ class OrivellumDB:
                        WHERE id=? AND resolved=0""",
                     (resolution, now, conflict_id),
                 )
-                self._conn.commit()
+                self._maybe_commit()
             return result.rowcount > 0
         except Exception as exc:
             logger.debug("resolve_memory_conflict failed: %s", exc)
@@ -5408,7 +5434,7 @@ class OrivellumDB:
                     self._conn.rollback()
                     return False, "Conflict already resolved (race)"
 
-                self._conn.commit()
+                self._maybe_commit()
             return True, ""
 
         except Exception as exc:
@@ -5435,7 +5461,7 @@ class OrivellumDB:
                    VALUES(?,?,?,?)""",
                 (chunk_id, conv_id, text[:8000], _now()),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return chunk_id
 
     def search_conversation_chunks(self, query: str, limit: int = 5) -> list[dict]:
@@ -5728,7 +5754,7 @@ class OrivellumDB:
         try:
             with self._lock:
                 self._conn.execute("DELETE FROM work_gap_cache WHERE work_id=?", (work_id,))
-                self._conn.commit()
+                self._maybe_commit()
         except Exception:
             logger.warning("Gap cache invalidation failed for work %s", work_id, exc_info=True)
 
@@ -5948,7 +5974,7 @@ class OrivellumDB:
                        WHERE bg_jobs.state NOT IN ('done','failed')""",
                     (job_id, kind, label, state, attempts, error, now, now),
                 )
-                self._conn.commit()
+                self._maybe_commit()
         except Exception as exc:
             logger.warning("bg_job_upsert failed for %s: %s", job_id, exc)
 
@@ -5974,7 +6000,7 @@ class OrivellumDB:
                         "UPDATE bg_jobs SET state=?, error=?, attempts=?, updated_at=? WHERE id=?",
                         (state, error, attempts, now, job_id),
                     )
-                self._conn.commit()
+                self._maybe_commit()
         except Exception as exc:
             logger.warning("bg_job_set_state failed for %s: %s", job_id, exc)
 
@@ -5995,7 +6021,7 @@ class OrivellumDB:
                        WHERE state IN ('running', 'queued')""",
                     (now,),
                 )
-                self._conn.commit()
+                self._maybe_commit()
                 return cur.rowcount or 0
         except Exception as exc:
             logger.warning("bg_job_reconcile_orphans failed: %s", exc)
@@ -6532,7 +6558,7 @@ class OrivellumDB:
                    created_at,updated_at) VALUES(?,?,?,?, 'active',0,?,?)""",
                 (pid, title, kind, brief, now, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return self.get_wb_project(pid)
 
     def get_wb_project(self, project_id: str) -> dict | None:
@@ -6562,7 +6588,7 @@ class OrivellumDB:
                 f"UPDATE wb_projects SET {cols}, updated_at=? WHERE id=?",
                 (*sets.values(), _now(), project_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
 
     def claim_wb_build(self, project_id: str, *, require_active: bool = True) -> bool:
         """Atomically claim a project for a mutating operation (build, revert,
@@ -6575,19 +6601,19 @@ class OrivellumDB:
                 f"UPDATE wb_projects SET building=1, updated_at=? WHERE id=? AND building=0{cond}",
                 (_now(), project_id),
             )
-            self._conn.commit()
+            self._maybe_commit()
             return cur.rowcount == 1
 
     def delete_wb_version(self, version_id: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM wb_versions WHERE id=?", (version_id,))
-            self._conn.commit()
+            self._maybe_commit()
 
     def delete_wb_project(self, project_id: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM wb_versions WHERE project_id=?", (project_id,))
             self._conn.execute("DELETE FROM wb_projects WHERE id=?", (project_id,))
-            self._conn.commit()
+            self._maybe_commit()
 
     def create_wb_version(
         self,
@@ -6625,7 +6651,7 @@ class OrivellumDB:
                 ),
             )
             self._conn.execute("UPDATE wb_projects SET updated_at=? WHERE id=?", (now, project_id))
-            self._conn.commit()
+            self._maybe_commit()
         return {
             "id": vid,
             "project_id": project_id,
@@ -6815,7 +6841,7 @@ class OrivellumDB:
                    VALUES (?,?,?,?,?,?,?,?)""",
                 (pid, work_id, name, brief, "active", json.dumps(config or {}), now, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
             row = self._conn.execute("SELECT * FROM forge_projects WHERE id=?", (pid,)).fetchone()
         return self._forge_project_dict(row)
 
@@ -6863,7 +6889,7 @@ class OrivellumDB:
         vals = list(updates.values()) + [project_id]
         with self._lock:
             self._conn.execute(f"UPDATE forge_projects SET {set_clause} WHERE id=?", vals)
-            self._conn.commit()
+            self._maybe_commit()
 
     def delete_forge_project(self, project_id: str) -> None:
         """Hard-delete a forge project row by id.
@@ -6874,7 +6900,7 @@ class OrivellumDB:
         """
         with self._lock:
             self._conn.execute("DELETE FROM forge_projects WHERE id=?", (project_id,))
-            self._conn.commit()
+            self._maybe_commit()
 
     def create_forge_job(
         self,
@@ -6906,7 +6932,7 @@ class OrivellumDB:
                     "{}",
                 ),
             )
-            self._conn.commit()
+            self._maybe_commit()
             row = self._conn.execute("SELECT * FROM forge_jobs WHERE id=?", (jid,)).fetchone()
         return self._forge_job_dict(row)
 
@@ -6942,7 +6968,7 @@ class OrivellumDB:
         vals = list(updates.values()) + [job_id]
         with self._lock:
             self._conn.execute(f"UPDATE forge_jobs SET {set_clause} WHERE id=?", vals)
-            self._conn.commit()
+            self._maybe_commit()
 
     def append_forge_event(
         self, job_id: str, phase: str, message: str, data: dict | None = None
@@ -6957,7 +6983,7 @@ class OrivellumDB:
                    VALUES (?,?,?,?,?,?)""",
                 (eid, job_id, phase, message, data_json, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
         return {
             "id": eid,
             "job_id": job_id,
@@ -7018,7 +7044,7 @@ class OrivellumDB:
                        content_json=excluded.content_json, sha256=excluded.sha256""",
                 (aid, job_id, artifact_type, content_json, sha, now),
             )
-            self._conn.commit()
+            self._maybe_commit()
             row = self._conn.execute(
                 "SELECT * FROM forge_artifacts WHERE job_id=? AND artifact_type=?",
                 (job_id, artifact_type),

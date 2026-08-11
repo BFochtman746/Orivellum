@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -1161,6 +1162,58 @@ class CommitPhaseAtomicityTests(AtlasBase):
         after = sorted(
             (n["chapter_id"], n["name"], n["evidence_offset"])
             for n in self.db.list_graph_nodes(work_ids=[self.work_id])
+        )
+        self.assertEqual(after, before)
+
+    def test_concurrent_writer_cannot_flush_failing_commit(self):
+        """A normal DB mutation on another thread, issued WHILE a failing
+        _commit_plan transaction is open, must neither commit the plan's
+        partial state nor be lost itself."""
+        import threading
+
+        _seed_chapter(self.db, self.work_id, 0, "One", _CH_TEXT)
+        _seed_chapter(self.db, self.work_id, 1, "Two", _CH_TEXT)
+        with patch("orivellum.capabilities.llm.llm_call", _StubLLM(dict(self._GOOD))):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        before = sorted(
+            (n["chapter_id"], n["name"]) for n in self.db.list_graph_nodes(work_ids=[self.work_id])
+        )
+
+        real_create = self.db.create_graph_node
+        calls = {"n": 0}
+        writer_started = threading.Event()
+        writer = threading.Thread(
+            target=lambda: (
+                writer_started.set(),
+                self.db.set_setting("concurrent_probe", "written"),
+            )
+        )
+
+        def flaky_create(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                # First chapter already deleted+reinserted inside the open
+                # transaction — fire the concurrent writer NOW, give it a
+                # moment to block on the DB lock, then fail the plan.
+                writer.start()
+                writer_started.wait(timeout=5)
+                time.sleep(0.2)
+                raise sqlite3.OperationalError("database or disk is full")
+            return real_create(*args, **kwargs)
+
+        with (
+            patch("orivellum.capabilities.llm.llm_call", _StubLLM(dict(self._GOOD))),
+            patch.object(self.db, "create_graph_node", side_effect=flaky_create),
+            self.assertRaises(sqlite3.OperationalError),
+        ):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        writer.join(timeout=5)
+        self.assertFalse(writer.is_alive())
+        # The concurrent write landed …
+        self.assertEqual(self.db.get_setting("concurrent_probe", ""), "written")
+        # … and the failed plan left NO partial graph state behind.
+        after = sorted(
+            (n["chapter_id"], n["name"]) for n in self.db.list_graph_nodes(work_ids=[self.work_id])
         )
         self.assertEqual(after, before)
 
