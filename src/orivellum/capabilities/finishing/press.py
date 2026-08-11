@@ -265,6 +265,23 @@ def _chapters_for_book(conn: sqlite3.Connection, slug: str, work_id: str) -> lis
     return chs
 
 
+def _orphan_slots(conn: sqlite3.Connection, slug: str, chapters: list[dict]) -> list[int]:
+    """Epigraph slots pointing at chapter numbers that no longer exist.
+
+    Chapters can be deleted or renumbered upstream (the manuscript is the
+    source of truth) — a stale slot must surface loudly, never be silently
+    dropped.
+    """
+    valid = {c["number"] for c in chapters}
+    return [
+        r["number"]
+        for r in conn.execute(
+            "SELECT number FROM press_epigraph WHERE book=? ORDER BY number", (slug,)
+        ).fetchall()
+        if r["number"] not in valid
+    ]
+
+
 def _ledger_append(conn: sqlite3.Connection, scope: str, kind: str, payload: Any) -> str:
     row = conn.execute(
         "SELECT seq,hash FROM press_ledger WHERE scope=? ORDER BY seq DESC LIMIT 1", (scope,)
@@ -351,6 +368,7 @@ def get_book(slug: str) -> dict | None:
     b = dict(row)
     b["style"] = json.loads(b["style"])
     b["chapters"] = _chapters_for_book(conn, slug, b["work_id"] or "")
+    b["orphan_epigraph_slots"] = _orphan_slots(conn, slug, b["chapters"])
     return b
 
 
@@ -434,11 +452,13 @@ def set_epigraph_slot(slug: str, number: int, has_epigraph: bool = True) -> dict
     if has_epigraph and style.get("epigraphs") == "off":
         raise ValueError("Style epigraph policy is OFF; cannot add an epigraph slot.")
     work_id = row["work_id"] or ""
-    if not work_id:
+    if has_epigraph and not work_id:
         raise ValueError("Book is not linked to a Work — there are no real chapters yet.")
-    chs = {c["number"]: c for c in _real_chapters(work_id)}
+    chs = {c["number"]: c for c in _real_chapters(work_id)} if work_id else {}
     ch = chs.get(number)
-    if not ch:
+    if has_epigraph and not ch:
+        # Clearing is always allowed (stale slots must be removable); adding
+        # requires the chapter to actually exist in the manuscript.
         raise KeyError(f"Chapter {number} does not exist in the manuscript.")
     if has_epigraph:
         conn.execute(
@@ -454,8 +474,8 @@ def set_epigraph_slot(slug: str, number: int, has_epigraph: bool = True) -> dict
     conn.commit()
     return {
         "number": number,
-        "title": ch["title"],
-        "words": ch["words"],
+        "title": ch["title"] if ch else "",
+        "words": ch["words"] if ch else 0,
         "has_epigraph": has_epigraph,
         "header": chapter_header(style.get("chapter_style", "arabic"), number),
     }
@@ -552,6 +572,7 @@ def verify(slug: str) -> dict:
     work_id = b["work_id"] or ""
     chs = _chapters_for_book(conn, slug, work_id)
     nums = [c["number"] for c in chs]
+    orphans = _orphan_slots(conn, slug, chs)
     checks = {
         "style_locked": bool(b["style_locked"]),
         "linked_to_work": bool(work_id),
@@ -560,6 +581,7 @@ def verify(slug: str) -> dict:
         "chapters_titled": all(c["title"] for c in chs) if chs else False,
         "chapters_have_text": all(c["has_text"] for c in chs) if chs else False,
         "epigraph_policy": True,
+        "epigraph_slots_valid": not orphans,
         "front_matter": bool(b["has_front"]),
         "back_matter": bool(b["has_back"]),
     }

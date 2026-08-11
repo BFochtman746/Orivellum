@@ -246,26 +246,44 @@ function PressDetail({ slug }: { slug: string }) {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {!b.work_id ? (
-            <div className="border border-dashed rounded-lg p-3 space-y-2">
-              <p className="text-xs text-muted-foreground">
-                Link this book to a Work — chapters come from the manuscript, never typed here.
-              </p>
-              <div className="flex gap-2">
-                <select className="flex-1 h-7 text-xs border border-border rounded px-2 bg-background"
-                  value={linkWorkId} onChange={e => setLinkWorkId(e.target.value)}>
-                  <option value="">Select a Work…</option>
-                  {(worksData?.works ?? []).map((w: any) => (
-                    <option key={w.id} value={w.id}>{w.title}</option>
-                  ))}
-                </select>
-                <Button size="sm" className="h-7 text-xs" disabled={!linkWorkId || linkWork.isPending}
-                  onClick={() => linkWork.mutate(linkWorkId)}>
-                  Link
-                </Button>
+          <div className={`rounded-lg p-3 space-y-2 border ${b.work_id ? "border-border" : "border-dashed"}`}>
+            <p className="text-xs text-muted-foreground">
+              {b.work_id
+                ? <>Manuscript: <span className="font-medium text-foreground">{(worksData?.works ?? []).find((w: any) => w.id === b.work_id)?.title ?? b.work_id}</span></>
+                : "Link this book to a Work — chapters come from the manuscript, never typed here."}
+            </p>
+            <div className="flex gap-2">
+              <select className="flex-1 h-7 text-xs border border-border rounded px-2 bg-background"
+                value={linkWorkId} onChange={e => setLinkWorkId(e.target.value)}>
+                <option value="">{b.work_id ? "Change linked Work…" : "Select a Work…"}</option>
+                {(worksData?.works ?? []).map((w: any) => (
+                  <option key={w.id} value={w.id}>{w.title}</option>
+                ))}
+              </select>
+              <Button size="sm" className="h-7 text-xs" disabled={!linkWorkId || linkWorkId === b.work_id || linkWork.isPending}
+                onClick={() => linkWork.mutate(linkWorkId)}>
+                {b.work_id ? "Relink" : "Link"}
+              </Button>
+            </div>
+          </div>
+          {(b.orphan_epigraph_slots ?? []).length > 0 && (
+            <div className="rounded-lg border p-2 text-xs space-y-1" style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", color: "var(--rust)" }}>
+              <div className="flex items-center gap-1.5">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                Epigraph slots point at chapters that no longer exist:
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {b.orphan_epigraph_slots.map((n: number) => (
+                  <button key={n} className="border rounded px-1.5 py-0.5 hover:bg-muted"
+                    title="Remove stale slot"
+                    onClick={() => setEpigraphSlot.mutate({ number: n, has_epigraph: false })}>
+                    ch {n} ✕
+                  </button>
+                ))}
               </div>
             </div>
-          ) : chapters.length === 0 ? (
+          )}
+          {!b.work_id ? null : chapters.length === 0 ? (
             <p className="text-xs text-muted-foreground text-center py-2">
               No chapters in the linked Work yet — extract or draft them in the manuscript first.
             </p>

@@ -188,6 +188,32 @@ class PressTests(unittest.TestCase):
         vr = press.verify(slug)
         self.assertEqual(vr["word_count"], 5500)
 
+    def test_verify_fails_on_orphan_epigraph_slot(self):
+        # Slot on chapter 2, then the manuscript shrinks to one chapter.
+        _seed_main_db(self._tmp.name, [(0, "One", _words(100)), (1, "Two", _words(100))], "shrink")
+        slug = _styled_book("Shrinking Book", work_id="shrink")
+        press.set_epigraph_slot(slug, 2, has_epigraph=True)
+        conn = sqlite3.connect(str(Path(self._tmp.name) / "orivellum.db"))
+        conn.execute("DELETE FROM book_chapters WHERE work_id='shrink' AND seq=1")
+        conn.commit()
+        conn.close()
+        vr = press.verify(slug)
+        self.assertFalse(vr["checks"]["epigraph_slots_valid"])
+        self.assertFalse(vr["passed"])
+        book = press.get_book(slug)
+        self.assertEqual(book["orphan_epigraph_slots"], [2])
+        # stale slots must be removable even though the chapter is gone
+        press.set_epigraph_slot(slug, 2, has_epigraph=False)
+        self.assertTrue(press.verify(slug)["checks"]["epigraph_slots_valid"])
+
+    def test_relink_surfaces_stale_slots(self):
+        _seed_main_db(self._tmp.name, [(0, "Solo", _words(100))], "tiny")
+        slug = _styled_book("Relinked Book")  # starts on WORK_ID (2 chapters)
+        press.set_epigraph_slot(slug, 2, has_epigraph=True)
+        press.link_work(slug, "tiny")  # chapter 2 no longer exists
+        vr = press.verify(slug)
+        self.assertFalse(vr["checks"]["epigraph_slots_valid"])
+
     def test_verify_blocks_unapproved_epigraph(self):
         slug = _styled_book("Unapproved Epigraph")
         press.lock_style(slug, "Author X")
