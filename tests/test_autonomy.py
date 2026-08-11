@@ -91,7 +91,7 @@ class AutonomyBase(unittest.TestCase):
             self.db._conn.commit()
         return oid
 
-    def _seed_finding(self, chapter_id, seq, severity="critical"):
+    def _seed_finding(self, chapter_id, seq, severity="critical", quote=None):
         fid = str(uuid.uuid4())
         with self.db._lock:
             self.db._conn.execute(
@@ -109,7 +109,7 @@ class AutonomyBase(unittest.TestCase):
                     "the war ended in spring",
                     1,
                     0,
-                    "the war ended in autumn",
+                    quote or "the war ended in autumn",
                     seq,
                     10,
                     "spring vs autumn contradiction",
@@ -152,7 +152,7 @@ class AutonomyBase(unittest.TestCase):
 
         return fake
 
-    def _run(self, budget=None, draft=None, battery=None, constory=None):
+    def _run(self, budget=None, draft=None, battery=None):
         run_id = self.db.create_autonomy_run(
             self.work_id, {**autonomy.DEFAULT_BUDGET, **(budget or {})}
         )
@@ -160,11 +160,6 @@ class AutonomyBase(unittest.TestCase):
             patch.object(autonomy, "run_loom_draft", draft or self._fake_draft()),
             patch.object(
                 autonomy, "run_battery", battery or (lambda db, cfg, wid: _clean_battery())
-            ),
-            patch.object(
-                autonomy,
-                "run_constory_check",
-                constory or (lambda db, cfg, *, work_id: {"chapters": 0}),
             ),
         ):
             result = autonomy.run_autonomy(self.db, _cfg(), run_id=run_id, work_id=self.work_id)
@@ -299,30 +294,91 @@ class TestInjectedErrorHalts(AutonomyBase):
 class TestBoundedRevision(AutonomyBase):
     def test_finding_fixed_by_surgical_edit_lets_run_continue(self):
         cid = self._seed_chapter(1)
-        state = {}
+        state = {"calls": 0}
 
         def battery(db, cfg, wid):
-            state["fid"] = self._seed_finding(cid, 1)
+            # First check: inject a finding whose quote exists verbatim in
+            # the drafted text.  Post-revise re-check: the committed edit
+            # resolved it — this call closes the finding (as the real
+            # ConStory open-finding swap would) and comes back clean.
+            state["calls"] += 1
+            if state["calls"] == 1:
+                state["fid"] = self._seed_finding(cid, 1, quote="Drafted prose for chapter 1.")
+            elif "fid" in state:
+                self._fix_finding(state["fid"])
             return _clean_battery()
 
         def edit(db, cfg, **kwargs):
             self.assertEqual(kwargs.get("author"), "")  # never signed
             self.assertFalse(kwargs.get("accept_regression"))
+            self.assertIn("Drafted prose", kwargs.get("instruction", ""))
             return {"committed": True}
-
-        def recheck(db, cfg, *, work_id):
-            self._fix_finding(state["fid"])
-            return {"chapters": 1}
 
         self.db.latest_assay_signature = lambda *a: {"decision": "go"}  # type: ignore[method-assign]
         with patch("orivellum.capabilities.band.surgical_edit", edit):
-            _run_id, result = self._run(battery=battery, constory=recheck)
+            _run_id, result = self._run(battery=battery)
         self.assertEqual(result["status"], "done")
+        self.assertEqual(state["calls"], 2)  # the FULL battery ran again
         entry = result["report"]["chapters"][0]
         self.assertFalse(entry["halted"])
         self.assertEqual(len(entry["revisions"]), 1)
         self.assertTrue(entry["revisions"][0]["committed"])
         self.assertEqual(self._queued_halts(), [])
+
+    def test_stale_quote_refuses_edit_and_halts(self):
+        # A finding whose quote is NOT in the current text must never be
+        # edited on stale offsets — the edit is refused and the run halts.
+        cid = self._seed_chapter(1)
+
+        def battery(db, cfg, wid):
+            with self.db._lock:
+                exists = self.db._conn.execute(
+                    "SELECT COUNT(*) c FROM narrative_finding"
+                ).fetchone()["c"]
+            if not exists:
+                self._seed_finding(cid, 1, quote="a passage that was already edited away")
+            return _clean_battery()
+
+        called = {"edit": False}
+
+        def edit(db, cfg, **kwargs):
+            called["edit"] = True
+            return {"committed": True}
+
+        with patch("orivellum.capabilities.band.surgical_edit", edit):
+            _run_id, result = self._run(battery=battery)
+        self.assertEqual(result["status"], "halted")
+        self.assertFalse(called["edit"])  # never edited an unrelated span
+        entry = result["report"]["chapters"][0]
+        self.assertIn("not found verbatim", entry["revisions"][0]["reasons"][0])
+
+    def test_revision_never_erases_hard_blockers(self):
+        # An errored blocking check plus a chapter finding: no revision may
+        # be attempted, and the hard blocker must survive to the halt.
+        cid = self._seed_chapter(1)
+
+        def battery(db, cfg, wid):
+            self._seed_finding(cid, 1, quote="Drafted prose for chapter 1.")
+            return {
+                "instruments": [],
+                "constory": {"status": "error", "error": "gateway down"},
+                "ced": {},
+            }
+
+        called = {"edit": False}
+
+        def edit(db, cfg, **kwargs):
+            called["edit"] = True
+            return {"committed": True}
+
+        with patch("orivellum.capabilities.band.surgical_edit", edit):
+            _run_id, result = self._run(battery=battery)
+        self.assertEqual(result["status"], "halted")
+        self.assertFalse(called["edit"])
+        self.assertIn(
+            "continuity check failed to run",
+            result["report"]["chapters"][0]["reasons"][0],
+        )
 
 
 class TestSignaturesStayHuman(AutonomyBase):
@@ -339,6 +395,19 @@ class TestSignaturesStayHuman(AutonomyBase):
         with self.db._lock:
             sigs = self.db._conn.execute("SELECT COUNT(*) c FROM assay_signature").fetchone()["c"]
         self.assertEqual(sigs, 0)
+
+    def test_unsigned_gate_in_reached_range_halts_mid_book(self):
+        # Drafting has reached D15's chapter range (45+) — the unsigned gate
+        # must halt THIS chapter, not wait for the whole book to finish.
+        self._seed_chapter(46)
+        _run_id, result = self._run()
+        self.assertEqual(result["status"], "halted")
+        entry = result["report"]["chapters"][0]
+        self.assertTrue(entry["drafted"])
+        self.assertTrue(any("unsigned gate gate.d15" in r for r in entry["reasons"]))
+        with self.db._lock:
+            sigs = self.db._conn.execute("SELECT COUNT(*) c FROM assay_signature").fetchone()["c"]
+        self.assertEqual(sigs, 0)  # halted, queued — and NEVER signed
 
     def test_signed_gates_complete_cleanly(self):
         self._seed_chapter(1, text="Already drafted prose. " * 30)
@@ -362,22 +431,38 @@ class TestRunClaim(AutonomyBase):
         with self.assertRaises(RuntimeError):
             self.db.create_autonomy_run(self.work_id)
 
-    def test_crashed_run_finishes_row_as_error(self):
+    def test_crashed_battery_halts_and_queues_never_passes(self):
+        # A crashed check battery is a BLOCKER, not an invisible pass and
+        # not an unqueued error.
         self._seed_chapter(1)
 
         def boom(db, cfg, wid):
             raise RuntimeError("battery exploded")
 
+        _run_id, result = self._run(battery=boom)
+        self.assertEqual(result["status"], "halted")
+        self.assertIn("check battery crashed", result["report"]["chapters"][0]["reasons"][0])
+        self.assertEqual(len(self._queued_halts()), 1)
+        self._no_running_rows()
+
+    def test_crashed_run_finishes_row_as_error_and_queues(self):
+        self._seed_chapter(1)
+
+        def boom(db, work_id, exclude=None):
+            raise RuntimeError("infrastructure exploded")
+
         run_id = self.db.create_autonomy_run(self.work_id, autonomy.DEFAULT_BUDGET)
         with (
-            patch.object(autonomy, "run_loom_draft", self._fake_draft()),
-            patch.object(autonomy, "run_battery", boom),
+            patch.object(autonomy, "_next_chapter", boom),
             self.assertRaises(RuntimeError),
         ):
             autonomy.run_autonomy(self.db, _cfg(), run_id=run_id, work_id=self.work_id)
         run = self.db.get_autonomy_run(run_id)
         self.assertEqual(run["status"], "error")
-        self.assertIn("battery exploded", run["stop_reason"])
+        self.assertIn("infrastructure exploded", run["stop_reason"])
+        # Even the crash left a review-queue item and a terminal report.
+        self.assertEqual(len(self._queued_halts()), 1)
+        self.assertTrue(run["report"].get("crashed"))
         self._no_running_rows()
 
     def test_recover_orphaned_runs_releases_claims(self):
@@ -408,15 +493,37 @@ class TestNightshiftPass(AutonomyBase):
         self._seed_chapter(1)
         self.db.latest_assay_signature = lambda *a: {"decision": "go"}  # type: ignore[method-assign]
         report: list[str] = []
+
+        def sync_submit(fn, *args, kind="", label="", **kwargs):
+            # Run inline so the test can assert on the finished run row; the
+            # production path dispatches through the shared executor.
+            fn(*args, **kwargs)
+            return True
+
         with (
             patch.object(autonomy, "run_loom_draft", self._fake_draft()),
             patch.object(autonomy, "run_battery", lambda db, cfg, wid: _clean_battery()),
+            patch("orivellum.api.executor.submit_bg", sync_submit),
         ):
             autonomy.run_nightshift_pass(self.db, _cfg(), report)
         self.assertTrue(any("Unattended Book" in line for line in report))
         runs = self.db.list_autonomy_runs(self.work_id)
         self.assertEqual(len(runs), 1)
         self.assertIn(runs[0]["status"], ("done", "halted"))
+        self._no_running_rows()
+
+    def test_dispatch_refused_releases_the_claim(self):
+        self.db.set_setting("autonomy_nightshift_enabled", "true")
+        work = self.db.get_work(self.work_id)
+        meta = work["meta"] if isinstance(work["meta"], dict) else json.loads(work["meta"] or "{}")
+        meta["autonomy_optin"] = True
+        self.db.update_work(self.work_id, meta=meta)
+        report: list[str] = []
+        with patch("orivellum.api.executor.submit_bg", lambda *a, **k: False):
+            autonomy.run_nightshift_pass(self.db, _cfg(), report)
+        self.assertTrue(any("dispatch refused" in line for line in report))
+        runs = self.db.list_autonomy_runs(self.work_id)
+        self.assertEqual(runs[0]["status"], "error")
         self._no_running_rows()
 
 

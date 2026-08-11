@@ -9,10 +9,11 @@ Guarantees, in order of importance:
 - **Signatures stay human, forever.**  The runner never writes an
   ``assay_signature`` row and never calls a resolver with an author.  An
   unsigned signature gate (D15–D17) halts the run and queues a review item.
-- **Fail closed.**  Any open critical/high narrative finding, any failing or
-  errored BLOCKING instrument, an errored ConStory check, or a LOOM
-  escalation halts the chapter.  A check that could not run never counts as
-  clean.
+- **Fail closed.**  Any open critical/high narrative finding, any BLOCKING
+  instrument whose verdict is not explicitly clean, an errored ConStory
+  check, a crashed check battery, or a LOOM escalation halts the chapter.
+  A check that could not run never counts as clean, and the FULL battery is
+  re-run after any revision — a revision can never erase an earlier blocker.
 - **Halts leave a clean queue.**  Every halt inserts ONE ``suggestions`` row
   (kind ``autonomy_halt``) carrying the full context — run id, chapter,
   reasons, finding ids — which the unified review queue surfaces as
@@ -33,7 +34,6 @@ import time
 import uuid
 from typing import Any
 
-from orivellum.capabilities.constory import run_constory_check
 from orivellum.capabilities.loom import run_loom_draft
 from orivellum.capabilities.position import run_battery
 from orivellum.database.db import OrivellumDB, _now
@@ -41,7 +41,10 @@ from orivellum.database.db import OrivellumDB, _now
 logger = logging.getLogger(__name__)
 
 SIGNATURE_GATES = ("gate.d15", "gate.d16", "gate.d17")
-_FAILING_VERDICTS = ("confirmed_drift", "out_of_envelope", "structural_violations")
+# Fail-closed ALLOWLIST: a blocking instrument only counts as clean when its
+# verdict is explicitly one of these.  Unknown, missing, or "couldn't
+# measure" verdicts (no_baseline, no_chapters, locked, …) all block.
+_PASS_VERDICTS = ("clean", "pass")
 _BLOCKING_SEVERITIES = ("critical", "high")
 
 # Bounded revision: at most this many findings get ONE surgical-edit attempt
@@ -147,8 +150,9 @@ def _instrument_blockers(db: OrivellumDB, battery: dict) -> list[str]:
     reasons: list[str] = []
     for inst in battery.get("instruments", []):
         key = inst.get("key")
-        failed = inst.get("status") != "done" or inst.get("verdict") in _FAILING_VERDICTS
-        if not failed:
+        # ALLOWLIST, fail closed: only an explicit clean verdict passes.
+        ok = inst.get("status") == "done" and inst.get("verdict") in _PASS_VERDICTS
+        if ok:
             continue
         contract = db.get_assay_instrument(key)
         if contract is not None and assay.is_blocking(contract):
@@ -157,11 +161,19 @@ def _instrument_blockers(db: OrivellumDB, battery: dict) -> list[str]:
     return reasons
 
 
-def _unsigned_gates(db: OrivellumDB, work_id: str) -> list[str]:
+def _unsigned_gates(db: OrivellumDB, work_id: str, *, upto_seq: int | None = None) -> list[str]:
     """Signature gates without a live open/go decision.  The runner reports
-    them — it NEVER signs them."""
+    them — it NEVER signs them.  With ``upto_seq``, only gates whose chapter
+    range has been REACHED by drafting count (an unsigned late-book gate must
+    not block early chapters); without it, every unsigned gate counts."""
+    from orivellum.capabilities.assay import gates  # noqa: PLC0415
+
     pending = []
     for key in SIGNATURE_GATES:
+        if upto_seq is not None:
+            lo, _hi = gates.GATE_RANGES.get(key, (0, 0))
+            if upto_seq < lo:
+                continue  # not yet reached — nothing to sign
         sig = db.latest_assay_signature(work_id, key)
         if sig is None or sig["decision"] not in ("open", "go"):
             pending.append(key)
@@ -214,11 +226,19 @@ def _revise_finding(db: OrivellumDB, cfg: Any, chapter: dict, finding: dict) -> 
         ).fetchone()
     text = (row["text"] if row else "") or ""
     quote = finding.get("contradiction_quote") or ""
-    offset = int(finding.get("contradiction_offset") or 0)
+    # Ground the edit band against the CURRENT text: an earlier edit this run
+    # may have shifted every stored offset.  A quote that no longer appears
+    # verbatim is refused — never edit an unrelated span on stale offsets.
+    if not text or not quote.strip():
+        return {"committed": False, "reasons": ["no chapter text or empty finding quote"]}
+    offset = text.find(quote)
+    if offset < 0:
+        return {
+            "committed": False,
+            "reasons": ["contradiction quote not found verbatim in current text"],
+        }
     start = max(0, offset - _BAND_PAD)
-    end = min(len(text), offset + max(len(quote), 1) + _BAND_PAD)
-    if end <= start or not text:
-        return {"committed": False, "reasons": ["finding offsets outside chapter text"]}
+    end = min(len(text), offset + len(quote) + _BAND_PAD)
     instruction = (
         f"Fix this {finding.get('category', 'continuity')} contradiction without "
         f"changing anything else. Established fact: {finding.get('fact_quote', '')!r}. "
@@ -241,29 +261,45 @@ def _revise_finding(db: OrivellumDB, cfg: Any, chapter: dict, finding: dict) -> 
         return {"committed": False, "reasons": [f"band edit failed: {exc}"]}
 
 
-def _check_chapter(
-    db: OrivellumDB, cfg: Any, work_id: str, seq: int
-) -> tuple[list[str], list[dict], dict]:
-    """Full battery + blocker evaluation.  Returns (reasons, chapter-scoped
-    blocking findings, battery summary)."""
+def _check_chapter(db: OrivellumDB, cfg: Any, work_id: str, seq: int) -> dict:
+    """Full battery + blocker evaluation.  Returns a structured verdict:
+
+    - ``hard``: blockers a revision can NEVER clear (errored ConStory,
+      failing/unmeasurable blocking instruments, unsigned signature gates
+      whose chapter range drafting has reached);
+    - ``finding_reasons`` / ``chapter_findings``: open critical/high
+      narrative findings (the only category bounded revision may address);
+    - ``summary``: what the report stores.
+
+    Callers must re-run this WHOLE check after any revision — post-edit state
+    is only clean if the full battery says so again."""
     battery = run_battery(db, cfg, work_id)
-    reasons: list[str] = []
+    hard: list[str] = []
     constory = battery.get("constory", {})
     if constory.get("status") != "done":
-        reasons.append(f"continuity check failed to run: {constory.get('error')}")
-    reasons.extend(_instrument_blockers(db, battery))
+        hard.append(f"continuity check failed to run: {constory.get('error')}")
+    hard.extend(_instrument_blockers(db, battery))
+    hard.extend(
+        f"unsigned gate {key} — signatures stay human"
+        for key in _unsigned_gates(db, work_id, upto_seq=seq)
+    )
     findings = _open_blocking_findings(db, work_id)
+    finding_reasons = []
     if findings:
-        reasons.append(
+        finding_reasons.append(
             f"{len(findings)} open critical/high finding(s): "
             + ", ".join(f"{f['severity']}/{f['category']}" for f in findings[:5])
         )
-    summary = {
-        "instruments": battery.get("instruments", []),
-        "constory_status": constory.get("status"),
-        "open_blocking_findings": len(findings),
+    return {
+        "hard": hard,
+        "finding_reasons": finding_reasons,
+        "chapter_findings": _chapter_findings(findings, seq),
+        "summary": {
+            "instruments": battery.get("instruments", []),
+            "constory_status": constory.get("status"),
+            "open_blocking_findings": len(findings),
+        },
     }
-    return reasons, _chapter_findings(findings, seq), summary
 
 
 def _draft_chapter(db: OrivellumDB, cfg: Any, work_id: str, chapter: dict) -> tuple[bool, str]:
@@ -295,16 +331,16 @@ def _budget_stop(
     return None
 
 
-def _try_revise(
+def _revise_chapter(
     db: OrivellumDB,
     cfg: Any,
-    work_id: str,
     chapter: dict,
     chapter_findings: list[dict],
     entry: dict,
-) -> tuple[list[str], list[dict]]:
-    """Bounded revise loop for the just-drafted chapter, then a re-check.
-    Returns the post-revise (reasons, still-open chapter findings)."""
+) -> None:
+    """Bounded revise: ONE surgical-edit attempt per finding, capped.  The
+    caller must re-run the FULL check afterwards — this never clears
+    anything itself."""
     for finding in chapter_findings[:MAX_REVISE_FINDINGS]:
         result = _revise_finding(db, cfg, chapter, finding)
         entry["revisions"].append(
@@ -314,17 +350,6 @@ def _try_revise(
                 "reasons": result.get("reasons", []),
             }
         )
-    try:
-        # Raises on LLM failure and leaves stored findings untouched — a
-        # re-check that could not run can never clear a blocker.
-        run_constory_check(db, cfg, work_id=work_id)
-    except Exception as exc:
-        return [f"post-revise continuity re-check failed: {exc}"], []
-    findings = _open_blocking_findings(db, work_id)
-    reasons = []
-    if findings:
-        reasons.append(f"{len(findings)} open critical/high finding(s) after bounded revision")
-    return reasons, _chapter_findings(findings, int(chapter["seq"]))
 
 
 def run_autonomy(db: OrivellumDB, cfg: Any, *, run_id: str, work_id: str) -> dict:
@@ -334,7 +359,23 @@ def run_autonomy(db: OrivellumDB, cfg: Any, *, run_id: str, work_id: str) -> dic
         result = _run(db, cfg, run_id=run_id, work_id=work_id)
     except Exception as exc:
         logger.exception("Autonomy run failed (work=%s)", work_id)
-        db.finish_autonomy_run(run_id, status="error", stop_reason=str(exc))
+        # Even a crash must leave a review-queue item and a terminal report —
+        # an unattended run may not fail invisibly.  Best effort: if even the
+        # queue insert fails, the error row still records the crash.
+        report: dict = {"work_id": work_id, "crashed": True, "error": str(exc)}
+        try:
+            sid = _queue_halt(
+                db,
+                run_id=run_id,
+                work_id=work_id,
+                chapter=None,
+                title="unattended run crashed",
+                reasons=[str(exc)[:500]],
+            )
+            report["queued_review_items"] = [sid]
+        except Exception:
+            logger.exception("Autonomy crash queue item failed (run=%s)", run_id)
+        db.finish_autonomy_run(run_id, status="error", report=report, stop_reason=str(exc))
         raise
     db.finish_autonomy_run(
         run_id,
@@ -440,13 +481,32 @@ def _run(db: OrivellumDB, cfg: Any, *, run_id: str, work_id: str) -> dict:  # no
             continue
         entry["drafted"] = True
 
-        reasons, chapter_findings, entry["check"] = _check_chapter(
-            db, cfg, work_id, int(chapter["seq"])
-        )
-        if reasons and chapter_findings:
-            reasons, chapter_findings = _try_revise(
-                db, cfg, work_id, chapter, chapter_findings, entry
-            )
+        # Check → (bounded revise) → FULL re-check.  A crashed battery is a
+        # blocker, never an invisible pass; a revision can only clear a
+        # finding by making the whole battery come back clean again.
+        try:
+            check = _check_chapter(db, cfg, work_id, int(chapter["seq"]))
+        except Exception as exc:
+            check = {
+                "hard": [f"check battery crashed: {exc}"],
+                "finding_reasons": [],
+                "chapter_findings": [],
+                "summary": {"crashed": str(exc)},
+            }
+        if not check["hard"] and check["chapter_findings"]:
+            _revise_chapter(db, cfg, chapter, check["chapter_findings"], entry)
+            try:
+                check = _check_chapter(db, cfg, work_id, int(chapter["seq"]))
+            except Exception as exc:
+                check = {
+                    "hard": [f"post-revise re-check crashed: {exc}"],
+                    "finding_reasons": [],
+                    "chapter_findings": [],
+                    "summary": {"crashed": str(exc)},
+                }
+        entry["check"] = check["summary"]
+        reasons = check["hard"] + check["finding_reasons"]
+        chapter_findings = check["chapter_findings"]
         if reasons:
             entry["halted"], entry["reasons"] = True, reasons
             halted_ids.add(chapter["id"])
@@ -501,18 +561,28 @@ def run_nightshift_pass(db: OrivellumDB, cfg: Any, report: list[str]) -> None:
     if not optins:
         report.append("Autonomy: no Works opted in")
         return
+    from orivellum.api.executor import submit_bg  # noqa: PLC0415
+
     for work in optins[:MAX_NIGHTSHIFT_WORKS]:
         try:
             rid = db.create_autonomy_run(work["id"], budget_from_settings(db))
         except RuntimeError:
             report.append(f"Autonomy: {work['title']} — skipped (run already in flight)")
             continue
-        try:
-            result = run_autonomy(db, cfg, run_id=rid, work_id=work["id"])
-            report.append(
-                f"Autonomy: {work['title']} — {result['status']} "
-                f"({result['stop_reason']}; {result['consumed']['chapters']} chapter(s), "
-                f"{len(result['report']['queued_review_items'])} queued)"
-            )
-        except Exception as exc:
-            report.append(f"Autonomy: {work['title']} — error: {exc}")
+        # Dispatch through the shared executor — a run can take up to its
+        # minute budget, and nightshift's remaining passes must not wait on
+        # it.  We hold the claim: a refused dispatch must release the row.
+        dispatched = submit_bg(
+            run_autonomy,
+            db,
+            cfg,
+            run_id=rid,
+            work_id=work["id"],
+            kind="autonomy_run",
+            label=f"autonomy:{work['id']}",
+        )
+        if dispatched:
+            report.append(f"Autonomy: {work['title']} — run dispatched ({rid})")
+        else:
+            db.finish_autonomy_run(rid, status="error", stop_reason="background dispatch refused")
+            report.append(f"Autonomy: {work['title']} — dispatch refused, claim released")
