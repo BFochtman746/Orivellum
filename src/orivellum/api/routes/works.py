@@ -752,6 +752,38 @@ def list_narrative_findings(
         disposition=disposition,
         limit=limit,
     )
+    # Cross-book labels: when a finding contradicts a canon fact that was
+    # established in a DIFFERENT book (an earlier volume of this Work's
+    # series), name both books so the surface reads "book 2 vs book 1".
+    fact_ids = {f.get("canon_fact_id") for f in findings if f.get("canon_fact_id")}
+    if fact_ids:
+        from orivellum.database.series_store import SeriesStore  # noqa: PLC0415
+
+        store = SeriesStore(db)
+        marks = ",".join("?" for _ in fact_ids)
+        rows = db.read_conn().execute(
+            f"SELECT id, work_id, series_id FROM canon_fact WHERE id IN ({marks})",
+            list(fact_ids),
+        ).fetchall()
+        fact_scope = {r["id"]: dict(r) for r in rows}
+        titles: dict[str, str] = {}
+        for f in findings:
+            scope = fact_scope.get(f.get("canon_fact_id") or "")
+            if not scope:
+                continue
+            src = scope["work_id"]
+            if src and src != work_id:
+                if src not in titles:
+                    src_work = db.get_work(src)
+                    titles[src] = (src_work or {}).get("title") or src
+                membership = store.series_for_work(src)
+                f["cross_book"] = {
+                    "work_id": src,
+                    "title": titles[src],
+                    "volume": (membership or {}).get("volume"),
+                }
+            elif scope["series_id"]:
+                f["series_scoped"] = True
     return {"work_id": work_id, "findings": findings, "count": len(findings)}
 
 

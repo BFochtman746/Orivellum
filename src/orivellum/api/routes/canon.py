@@ -29,12 +29,14 @@ class FactCreate(BaseModel):
     statement: str
     classification: str
     signed_by: str
-    work_id: str | None = None  # None = series-wide (whole trilogy)
+    work_id: str | None = None  # None = global (or series-wide via series_id)
     source_ref: str = ""
     parent_ids: list[str] = []
     established_chapter: int | None = None
     established_offset: int | None = None
     supersedes: str | None = None
+    series_id: str | None = None  # scope the fact to ONE series (work_id must be None)
+    overrides: str | None = None  # book-scoped fact overriding a series/global fact
 
 
 class RetractBody(BaseModel):
@@ -47,6 +49,7 @@ def list_facts(
     work_id: str | None = Query(default=None),
     series_only: bool = Query(default=False),
     include_series: bool = Query(default=True),
+    series_id: str | None = Query(default=None),
     classification: str | None = Query(default=None),
     status: str | None = Query(default=None),
     limit: int = Query(default=1000),
@@ -56,6 +59,7 @@ def list_facts(
         work_id=work_id,
         series_only=series_only,
         include_series=include_series,
+        series_id=series_id,
         classification=classification.upper() if classification else None,
         status=status,
         limit=limit,
@@ -121,6 +125,8 @@ def create_fact(req: FactCreate, db=Depends(get_db)):
             established_chapter=req.established_chapter,
             established_offset=req.established_offset,
             supersedes=req.supersedes,
+            series_id=req.series_id,
+            overrides=req.overrides,
         )
     except CanonFactError as e:
         raise HTTPException(422, str(e)) from e

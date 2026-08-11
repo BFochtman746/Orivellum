@@ -165,32 +165,57 @@ def replay_world_state(db: OrivellumDB, work_id: str, *, upto_seq: int) -> dict:
     """Rebuild the accumulated world state from the world graph, folding
     chapters 1..upto_seq-1 forward IN ORDER (overwrite semantics), so a
     resumed draft is conditioned on the true state — never a stale table.
+
+    When the Work is a later volume of a series, EVERY chapter of every
+    earlier volume is folded first (in volume order): book 2 is drafted
+    and verified against the accumulated state of book 1, with the current
+    book's own chapters folded last so its updates win on overlap.
     """
+    from orivellum.database.series_store import SeriesStore  # noqa: PLC0415
+
     db.clear_world_state(work_id)
-    with db._lock:
-        rows = db._conn.execute(
-            """SELECT n.node_type, n.name, n.description, n.attributes,
+    folded = 0
+
+    def _fold(source_work_id: str, *, seq_limit: int | None) -> None:
+        nonlocal folded
+        q = """SELECT n.node_type, n.name, n.description, n.attributes,
                       COALESCE(c.seq, 0) AS seq
                FROM graph_node n
                LEFT JOIN book_chapters c ON c.id = n.chapter_id
-               WHERE n.work_id=? AND COALESCE(c.seq, 0) < ?
-               ORDER BY seq, n.created_at""",
-            (work_id, upto_seq),
-        ).fetchall()
-    folded = 0
-    for r in rows:
-        key = f"{r['node_type']}:{r['name']}".strip()
-        parts = [p for p in [str(r["description"] or "").strip()] if p]
-        try:
-            attrs = json.loads(r["attributes"] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            attrs = {}
-        for k, v in sorted(attrs.items()):
-            parts.append(f"{k}={v}")
-        value = "; ".join(parts) or "(present)"
-        db.commit_world_state(work_id, {key: value}, source_chapter_seq=int(r["seq"]))
-        folded += 1
-    return {"folded_nodes": folded, "keys": len(db.get_world_state(work_id))}
+               WHERE n.work_id=?"""
+        args: list = [source_work_id]
+        if seq_limit is not None:
+            q += " AND COALESCE(c.seq, 0) < ?"
+            args.append(seq_limit)
+        q += " ORDER BY seq, n.created_at"
+        with db._lock:
+            rows = db._conn.execute(q, args).fetchall()
+        for r in rows:
+            key = f"{r['node_type']}:{r['name']}".strip()
+            parts = [p for p in [str(r["description"] or "").strip()] if p]
+            try:
+                attrs = json.loads(r["attributes"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                attrs = {}
+            for k, v in sorted(attrs.items()):
+                parts.append(f"{k}={v}")
+            value = "; ".join(parts) or "(present)"
+            db.commit_world_state(work_id, {key: value}, source_chapter_seq=int(r["seq"]))
+            folded += 1
+
+    # Earlier volumes first, fully, in volume order; the current book folds
+    # last, so overlapping keys resolve to the latest state (fold ORDER is
+    # what decides precedence — source_chapter_seq is display metadata
+    # relative to the volume that established the key).
+    prior_ids = SeriesStore(db).prior_volume_work_ids(work_id)
+    for prior_id in prior_ids:
+        _fold(prior_id, seq_limit=None)
+    _fold(work_id, seq_limit=upto_seq)
+    return {
+        "folded_nodes": folded,
+        "keys": len(db.get_world_state(work_id)),
+        "prior_volumes": len(prior_ids),
+    }
 
 
 # ── Personas + knowledge horizons ─────────────────────────────────────────────
@@ -199,16 +224,36 @@ def replay_world_state(db: OrivellumDB, work_id: str, *, upto_seq: int) -> dict:
 def _personas_for_cast(db: OrivellumDB, work_id: str, cast: list[str]) -> list[dict]:
     """Approved personas for the cast present.  A missing persona is a
     refusal, not a silent gap — undirected characters are how knowledge and
-    memory errors happen."""
+    memory errors happen.
+
+    Series inheritance: a character's persona carries across volumes.  A
+    name with no approved persona in THIS book falls back to the NEAREST
+    earlier volume's approved persona (marked ``inherited_from_work_id``).
+    Approving a local persona with the same name is the explicit per-book
+    override — it always wins over inheritance."""
+    from orivellum.database.series_store import SeriesStore  # noqa: PLC0415
+
     approved = {p["name"].lower(): p for p in db.list_loom_personas(work_id, status="approved")}
+    prior_ids = list(reversed(SeriesStore(db).prior_volume_work_ids(work_id)))
     out, missing = [], []
     for name in cast:
-        p = approved.get(str(name).strip().lower())
+        key = str(name).strip().lower()
+        p = approved.get(key)
+        if p is None:
+            for prior_id in prior_ids:  # nearest earlier volume first
+                prior = {
+                    q["name"].lower(): q
+                    for q in db.list_loom_personas(prior_id, status="approved")
+                }.get(key)
+                if prior is not None:
+                    p = {**prior, "inherited_from_work_id": prior_id}
+                    break
         (out.append(p) if p else missing.append(str(name)))
     if missing:
         raise LoomError(
             "no approved persona for cast member(s): " + ", ".join(missing)
             + " — personas are review-gated and must be approved before drafting"
+            + " (earlier volumes of the series were also checked)"
         )
     return out
 
@@ -227,20 +272,35 @@ def _horizon_fact_ids(persona: dict, act: int) -> list[str]:
 
 
 def _facts_by_ids(db: OrivellumDB, work_id: str, fact_ids: list[str]) -> list[dict]:
+    """Horizon facts, restricted to what is VISIBLE to this Work — its own
+    facts plus series/global facts and earlier volumes' facts, minus any
+    fact this book has overridden (canon_store.FACT_VISIBILITY_SQL)."""
+    from orivellum.database.canon_store import (  # noqa: PLC0415
+        FACT_VISIBILITY_SQL,
+        fact_visibility_args,
+    )
+
     if not fact_ids:
         return []
     marks = ",".join("?" for _ in fact_ids)
     with db._lock:
         rows = db._conn.execute(
             f"""SELECT id, statement, classification FROM canon_fact
-                WHERE work_id=? AND status='active' AND id IN ({marks})""",
-            [work_id, *fact_ids],
+                WHERE status='active' AND id IN ({marks})
+                AND {FACT_VISIBILITY_SQL}""",
+            [*fact_ids, *fact_visibility_args(work_id)],
         ).fetchall()
     return [dict(r) for r in rows]
 
 
 def _facts_for_entities(db: OrivellumDB, work_id: str, entities: list[str]) -> list[dict]:
-    """Retrieved canon facts for every entity named in the contract."""
+    """Retrieved canon facts for every entity named in the contract —
+    resolved across the Work's series (earlier volumes bind later ones)."""
+    from orivellum.database.canon_store import (  # noqa: PLC0415
+        FACT_VISIBILITY_SQL,
+        fact_visibility_args,
+    )
+
     seen: dict[str, dict] = {}
     with db._lock:
         for entity in entities:
@@ -248,10 +308,11 @@ def _facts_for_entities(db: OrivellumDB, work_id: str, entities: list[str]) -> l
             if len(name) < 2:
                 continue
             rows = db._conn.execute(
-                """SELECT id, statement, classification FROM canon_fact
-                   WHERE work_id=? AND status='active' AND statement LIKE ?
+                f"""SELECT id, statement, classification FROM canon_fact
+                   WHERE status='active' AND statement LIKE ?
+                   AND {FACT_VISIBILITY_SQL}
                    ORDER BY created_at LIMIT ?""",
-                (work_id, f"%{name}%", FACTS_PER_ENTITY),
+                (f"%{name}%", *fact_visibility_args(work_id), FACTS_PER_ENTITY),
             ).fetchall()
             for r in rows:
                 seen[r["id"]] = dict(r)
@@ -314,7 +375,10 @@ def assemble_context(
 
     entities = cast + [str(contract.get("location") or "")]
     facts = _facts_for_entities(db, work_id, entities)
-    voice = db.get_assay_baseline(work_id, "voice_envelope")
+    from orivellum.database.series_store import resolve_assay_baseline  # noqa: PLC0415
+
+    voice_resolved = resolve_assay_baseline(db, work_id, "voice_envelope")
+    voice = voice_resolved["payload"] if voice_resolved else None
 
     raw_blocks = {
         "contract": json.dumps(contract, ensure_ascii=False, indent=1),
@@ -342,6 +406,16 @@ def assemble_context(
         "blocks": blocks,
         "context_report": report,
         "word_range": _word_range(contract),
+        # Provenance: which volume the voice envelope came from (series
+        # inheritance) — None when the work has no resolvable envelope.
+        "voice_source": (
+            {
+                "work_id": voice_resolved["source_work_id"],
+                "inherited": voice_resolved["inherited"],
+            }
+            if voice_resolved
+            else None
+        ),
     }
 
 

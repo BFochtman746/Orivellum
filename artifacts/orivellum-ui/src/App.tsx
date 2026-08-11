@@ -13,6 +13,8 @@ import { Input } from '@/components/ui/input';
 import WorksList from '@/pages/works/index';
 import WorkDetail from '@/pages/works/detail';
 import WorkIntelligence from '@/pages/works/intelligence';
+import SeriesList from '@/pages/series/index';
+import SeriesDetail from '@/pages/series/detail';
 import { useParams, useLocation } from 'wouter';
 import Chat from '@/pages/chat/index';
 import Library from '@/pages/library/index';
@@ -131,6 +133,8 @@ function RoutedPages() {
         <Route path="/works">{() => <RouteWithBoundary component={WorksList} />}</Route>
         <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
         <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>
+        <Route path="/series">{() => <RouteWithBoundary component={SeriesList} />}</Route>
+        <Route path="/series/:seriesId">{() => <RouteWithBoundary component={SeriesDetail} />}</Route>
         <Route path="/chat">{() => <RouteWithBoundary component={Chat} />}</Route>
         <Route path="/notes">{() => <RouteWithBoundary component={NotesPage} />}</Route>
         <Route path="/library">{() => <RouteWithBoundary component={Library} />}</Route>

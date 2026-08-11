@@ -689,6 +689,7 @@ def create_app() -> FastAPI:
         position,
         projects,
         review,
+        series,
         studio,
         system,
         topics,
@@ -737,6 +738,7 @@ def create_app() -> FastAPI:
         operations,
         workbench,
         wa,
+        series,
     ]
     for module in _route_modules:
         app.include_router(module.router)

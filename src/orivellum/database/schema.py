@@ -3058,4 +3058,50 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             WHERE certification = 'shadow'
     """,
     ),
+    # v132 — SERIES (M18): series as a first-class scope.
+    #
+    # series          — a named, ordered group of Works (e.g. a trilogy).
+    # series_member   — ordered membership; volume is 1-based and unique per
+    #                   series; a Work belongs to AT MOST ONE series (unique
+    #                   index on work_id) so authority resolution is never
+    #                   ambiguous.
+    # canon_fact.series_id — a fact scoped to ONE series (work_id must be
+    #                   NULL): it binds every member volume.  Legacy facts
+    #                   with work_id NULL and series_id NULL stay global
+    #                   (the pre-series "series-wide" semantics).
+    # canon_fact.overrides — a BOOK-scoped fact may explicitly override a
+    #                   series/global fact for that book only; the target
+    #                   stays active for every other volume.  Overrides are
+    #                   explicit records — a book can never silently shadow
+    #                   series canon.
+    (
+        132,
+        "SERIES: series + ordered members; canon facts scoped to a series with per-book overrides",
+        """
+        CREATE TABLE IF NOT EXISTS series (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS series_member (
+            id TEXT PRIMARY KEY,
+            series_id TEXT NOT NULL REFERENCES series(id),
+            work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            volume INTEGER NOT NULL CHECK(volume >= 1),
+            created_at TEXT NOT NULL,
+            UNIQUE(series_id, work_id),
+            UNIQUE(series_id, volume)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_series_member_work
+            ON series_member(work_id);
+        ALTER TABLE canon_fact ADD COLUMN series_id TEXT REFERENCES series(id);
+        ALTER TABLE canon_fact ADD COLUMN overrides TEXT REFERENCES canon_fact(id);
+        CREATE INDEX IF NOT EXISTS idx_canon_fact_series
+            ON canon_fact(series_id, status);
+        CREATE INDEX IF NOT EXISTS idx_canon_fact_overrides
+            ON canon_fact(overrides)
+    """,
+    ),
 ]

@@ -314,8 +314,13 @@ def _render_fact_lines(prior_facts: list[dict], canon_facts: list[dict]) -> list
     ride along with EVERY batch (they are few and severity-relevant).
     """
     canon_lines = [
-        f"C{i}: (canon, {c.get('classification') or 'INFERRED'}) "
-        f"{str(c.get('statement') or '')[:_MAX_FACT_STATEMENT]}"
+        f"C{i}: (canon, {c.get('classification') or 'INFERRED'}"
+        + (
+            f", established in earlier volume \u201c{c['source_book']}\u201d"
+            if c.get("source_book")
+            else ""
+        )
+        + f") {str(c.get('statement') or '')[:_MAX_FACT_STATEMENT]}"
         for i, c in enumerate(canon_facts)
     ]
     fact_lines = [
@@ -616,6 +621,16 @@ def _run_locked(db: OrivellumDB, cfg: Any, *, work_id: str) -> dict:
     from orivellum.database.canon_store import CanonStore  # noqa: PLC0415
 
     canon_facts = CanonStore(db).list_facts(work_id=work_id, status="active", limit=200)
+
+    # Series continuity: list_facts resolves the full visible set — this
+    # book's facts, series/global facts, and facts established by EARLIER
+    # volumes.  Annotate cross-book facts with their source book so the
+    # prompt (and any resulting finding) names both books explicitly.
+    for fact in canon_facts:
+        src = fact.get("work_id")
+        if src and src != work_id:
+            source = db.get_work(src)
+            fact["source_book"] = (source or {}).get("title") or src
 
     # Stage everything first — no deletes until every LLM call succeeded.
     all_facts: list[dict] = []
