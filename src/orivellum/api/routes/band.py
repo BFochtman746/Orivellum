@@ -33,6 +33,9 @@ class EditBody(BaseModel):
     end: int = Field(gt=0)
     instruction: str = Field(min_length=1, max_length=2000)
     base_fingerprint: str = Field(min_length=8, max_length=64)
+    # Echo of the exact selected text — the server refuses when [start, end)
+    # doesn't reproduce it (guards client/server offset-encoding drift).
+    band_text: str = Field(min_length=1, max_length=20_000)
     author: str = Field(default="", max_length=200)
     accept_regression: bool = False
 
@@ -68,7 +71,7 @@ async def band_edit(chapter_id: str, body: EditBody):
             surgical_edit, db, cfg,
             chapter_id=chapter_id, start=body.start, end=body.end,
             instruction=body.instruction,
-            base_fingerprint=body.base_fingerprint,
+            base_fingerprint=body.base_fingerprint, band_text=body.band_text,
             author=body.author, accept_regression=body.accept_regression,
         )
     except BandBusy as e:

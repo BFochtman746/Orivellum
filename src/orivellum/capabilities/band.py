@@ -127,24 +127,54 @@ def get_chapter_overview(db: OrivellumDB, chapter_id: str) -> dict:
 # ── Checkpoint (doctrine: before extraction, always) ─────────────────────────
 
 
-def _ensure_checkpoint(db: OrivellumDB, ch: dict) -> None:
-    """Guarantee the CURRENT chapter text exists as a revision row.
+def _checkpoint_current(db: OrivellumDB, ch: dict, *, expected_fp: str) -> None:
+    """Guarantee the CURRENT chapter text exists as a revision row — in ONE
+    transaction that re-reads the live text and validates the fingerprint.
 
-    Covers chapters whose text predates the revision table (imported or
-    hand-edited) — their pre-edit state must be restorable too.
+    A concurrent writer (e.g. a LOOM draft) that lands between loading the
+    chapter and checkpointing would otherwise get a stale checkpoint appended
+    ON TOP of its newer revision — corrupted lineage.  Here the live text
+    must still match the fingerprint this edit declared, or we refuse BEFORE
+    anything is written.
     """
-    text = ch.get("text") or ""
-    head = db.get_head_chapter_revision(ch["id"])
-    if head is not None and (head.get("text") or "") == text:
-        return
     prov = db.get_provenance(ch["id"], "book_chapter") if hasattr(db, "get_provenance") else None
     origin = (prov or {}).get("origin") or "human"
-    db.create_chapter_revision(
-        ch["id"], ch["work_id"], text,
-        meta={"checkpoint": True,
-              "note": "pre-edit checkpoint of untracked chapter text"},
-        origin=origin, created_by="checkpoint",
-    )
+    if origin not in ("human", "ai_assisted", "ai_generated"):
+        origin = "human"
+    from orivellum.database.db import _now  # noqa: PLC0415
+
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT text FROM book_chapters WHERE id=?", (ch["id"],)
+        ).fetchone()
+        if row is None:
+            raise BandError("chapter vanished before checkpoint")
+        text = row["text"] or ""
+        if fingerprint(text) != expected_fp:
+            db._conn.rollback()
+            raise BandError(
+                "chapter text changed before the checkpoint could be taken — "
+                "stale fingerprint, edit refused; reload and retry"
+            )
+        head_row = db._conn.execute(
+            """SELECT rev, text FROM loom_chapter_revision WHERE chapter_id=?
+               ORDER BY rev DESC LIMIT 1""",
+            (ch["id"],),
+        ).fetchone()
+        if head_row is not None and (head_row["text"] or "") == text:
+            return  # current text is already captured
+        head = int(head_row["rev"]) if head_row is not None else 0
+        db._conn.execute(
+            """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
+               text, word_count, meta, created_at, parent_rev, origin,
+               created_by, edit_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)""",
+            (str(uuid.uuid4()), ch["id"], ch["work_id"], head + 1, text,
+             len(text.split()),
+             json.dumps({"checkpoint": True,
+                         "note": "pre-edit checkpoint of untracked chapter text"}),
+             _now(), head or None, origin, "checkpoint"),
+        )
+        db._conn.commit()
 
 
 # ── Delta verification (band vs canon facts + world state) ───────────────────
@@ -426,7 +456,7 @@ def _commit_revision(
 def surgical_edit(
     db: OrivellumDB, cfg: Any, *, chapter_id: str, start: int, end: int,
     instruction: str, base_fingerprint: str, author: str = "",
-    accept_regression: bool = False,
+    accept_regression: bool = False, band_text: str | None = None,
 ) -> dict:
     """The full BAND flow.  Returns ``{"committed": True, ...}`` on success or
     ``{"committed": False, "reasons": [...]}`` when regression gates refuse.
@@ -441,6 +471,7 @@ def surgical_edit(
             db, cfg, chapter_id=chapter_id, start=start, end=end,
             instruction=instruction, base_fingerprint=base_fingerprint,
             author=author, accept_regression=accept_regression,
+            band_text=band_text,
         )
     finally:
         lock.release()
@@ -481,7 +512,7 @@ def _validate_edit_request(
 
 def _surgical_edit_locked(
     db, cfg, *, chapter_id, start, end, instruction, base_fingerprint,
-    author, accept_regression,
+    author, accept_regression, band_text=None,
 ) -> dict:
     instruction = (instruction or "").strip()
     author = (author or "").strip()
@@ -493,9 +524,18 @@ def _surgical_edit_locked(
         base_fingerprint=base_fingerprint, author=author,
         accept_regression=accept_regression,
     )
+    # Boundary echo check: the caller states the exact text it selected.  Any
+    # indexing drift between client and server (e.g. UTF-16 code units vs
+    # Unicode code points) makes text[start:end] differ from what the author
+    # saw — refuse rather than edit an unselected span.
+    if band_text is not None and text[start:end] != band_text:
+        raise BandError(
+            "band text mismatch — the declared boundaries do not select the "
+            "text you highlighted (offset encoding drift?); reselect the band"
+        )
 
-    # Doctrine: checkpoint BEFORE extraction.
-    _ensure_checkpoint(db, ch)
+    # Doctrine: checkpoint BEFORE extraction — atomically fingerprint-guarded.
+    _checkpoint_current(db, ch, expected_fp=base_fingerprint)
 
     before, band, after = text[:start], text[start:end], text[end:]
     llm_ids: list = []
@@ -589,7 +629,7 @@ def restore_revision(db: OrivellumDB, *, chapter_id: str, rev: int,
         if (full.get("text") or "") == text:
             raise BandError(f"revision {rev} is already the current text")
         # Current state is preserved as a checkpoint before the restore lands.
-        _ensure_checkpoint(db, ch)
+        _checkpoint_current(db, ch, expected_fp=fingerprint(text))
         stored = _commit_revision(
             db, ch, full["text"] or "", expected_fp=fingerprint(text),
             origin=str(full.get("origin") or "human"),

@@ -239,6 +239,19 @@ export function ChapterBandDialog({
 
 // ─── Edit panel ───────────────────────────────────────────────────────────────
 
+/** Python slices strings by Unicode code points; textarea selections report
+ *  UTF-16 code units. Convert so the server edits exactly what was selected
+ *  (the server additionally verifies via the band_text echo). */
+function utf16ToCodePoints(text: string, utf16Offset: number): number {
+  let cp = 0;
+  for (let i = 0; i < utf16Offset && i < text.length; ) {
+    const code = text.codePointAt(i)!;
+    i += code > 0xffff ? 2 : 1;
+    cp++;
+  }
+  return cp;
+}
+
 function EditPanel({ data, onDone }: { data: ChapterOverview; onDone: () => void }) {
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
   const [instruction, setInstruction] = useState("");
@@ -254,10 +267,11 @@ function EditPanel({ data, onDone }: { data: ChapterOverview; onDone: () => void
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          start: sel!.start,
-          end: sel!.end,
+          start: utf16ToCodePoints(data.text, sel!.start),
+          end: utf16ToCodePoints(data.text, sel!.end),
           instruction: instruction.trim(),
           base_fingerprint: data.fingerprint,
+          band_text: data.text.slice(sel!.start, sel!.end),
           author: author.trim(),
           accept_regression: acceptRegression,
         }),

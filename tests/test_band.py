@@ -374,6 +374,50 @@ class TestClaimAndLineage(BandBase):
             self.db.create_chapter_revision(
                 self.chapter_id, self.work_id, "x", origin="alien")
 
+    def test_band_text_echo_guards_offset_drift(self):
+        # Astral chars: "𝕄ara…" — a UTF-16 client would report shifted
+        # offsets; the band_text echo refuses the mismatch instead of
+        # editing an unselected span.
+        text = "The 𝕄oon rose. Mara counted the wagons twice. Tobin slept."
+        cid = self._seed_chapter(4, text=text)
+        start = text.index("Mara")
+        end = text.index("Tobin")
+        with patch("orivellum.capabilities.llm.llm_call", StubLLM()), \
+                self.assertRaisesRegex(BandError, "band text mismatch"):
+            band.surgical_edit(
+                self.db, _cfg(), chapter_id=cid, start=start + 1, end=end + 1,
+                instruction="x", base_fingerprint=band.fingerprint(text),
+                band_text=text[start:end])
+        # Correct code-point offsets + matching echo commit cleanly.
+        with patch("orivellum.capabilities.llm.llm_call", StubLLM()):
+            result = band.surgical_edit(
+                self.db, _cfg(), chapter_id=cid, start=start, end=end,
+                instruction="make it three times",
+                base_fingerprint=band.fingerprint(text),
+                band_text=text[start:end])
+        self.assertTrue(result["committed"])
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT text FROM book_chapters WHERE id=?", (cid,)).fetchone()
+        self.assertTrue(row["text"].startswith("The 𝕄oon rose. "))
+        self.assertTrue(row["text"].endswith("Tobin slept."))
+
+    def test_checkpoint_refuses_on_concurrent_write(self):
+        # A writer (e.g. LOOM) lands between chapter load and checkpoint:
+        # the atomic checkpoint validates the live fingerprint and refuses
+        # BEFORE writing anything — never a stale checkpoint in the lineage.
+        ch = {"id": self.chapter_id, "work_id": self.work_id}
+        with self.db._lock:
+            self.db._conn.execute(
+                "UPDATE book_chapters SET text=? WHERE id=?",
+                (CHAPTER + " New sentence from a concurrent draft.",
+                 self.chapter_id))
+            self.db._conn.commit()
+        with self.assertRaisesRegex(BandError, "before the checkpoint"):
+            band._checkpoint_current(
+                self.db, ch, expected_fp=band.fingerprint(CHAPTER))
+        self.assertEqual(self.db.list_chapter_revisions(self.chapter_id), [])
+
     def test_no_text_chapter_refused(self):
         cid = self._seed_chapter(3, text="")
         with patch("orivellum.capabilities.llm.llm_call", StubLLM()), \
