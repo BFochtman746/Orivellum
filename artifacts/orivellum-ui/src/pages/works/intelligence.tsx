@@ -106,7 +106,10 @@ const GAP_DOT: Record<string, string> = {
 
 // ── Stages with AI workers ────────────────────────────────────────────────────
 
-const WORKER_STAGES = new Set(["B0","B1","B2","B3","B4","B5"]);
+// Stages with an AI worker: B0–B3 (planning) + B6/B7 (continuity + fact check).
+// B4 (Chapter Extraction) and B5 (Chapter Drafting) have no LLM worker.
+// Must match _STAGE_CFG in src/orivellum/capabilities/pipeline_workers.py.
+const WORKER_STAGES = new Set(["B0", "B1", "B2", "B3", "B6", "B7"]);
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
@@ -234,7 +237,7 @@ export default function WorkIntelligence() {
   const needsArtifact = pipelineStage && WORKER_STAGES.has(pipelineStage) && !artifactDone;
   const hasBlockers = pipelineFindings.length > 0;
   const readyToAdvance = pipeline && !WORKER_STAGES.has(pipelineStage ?? "") && !hasBlockers;
-  // For B0-B5: ready if artifact done and no blockers
+  // For worker stages: ready if artifact done and no blockers
   const readyToAdvanceWorker = pipeline && WORKER_STAGES.has(pipelineStage ?? "") && artifactDone && !hasBlockers;
 
   const allReady = !complLoading && !gapsLoading;
