@@ -4411,15 +4411,18 @@ def get_doc_tts_status(job_id: str):
 @router.delete("/studio/tts/document/{job_id}")
 def cancel_doc_tts(job_id: str):
     """Signal cancellation for a running document TTS job."""
+    # Check + signal + transition atomically: the worker may flip the job to a
+    # terminal state (done/failed) at any moment, and a non-atomic sequence
+    # could overwrite that terminal state with "cancelling" — leaving an entry
+    # that is never prunable because the worker has already exited.
     with _doc_tts_jobs_lock:
         job = _doc_tts_jobs.get(job_id)
-    if job is None:
-        raise HTTPException(404, f"TTS job {job_id!r} not found")
-    if job["state"] != "running":
-        return {"ok": True, "state": job["state"]}
-    job["cancel"].set()
-    with _doc_tts_jobs_lock:
-        _doc_tts_jobs[job_id]["state"] = "cancelling"
+        if job is None:
+            raise HTTPException(404, f"TTS job {job_id!r} not found")
+        if job["state"] != "running":
+            return {"ok": True, "state": job["state"]}
+        job["cancel"].set()
+        job["state"] = "cancelling"
     return {"ok": True, "state": "cancelling"}
 
 

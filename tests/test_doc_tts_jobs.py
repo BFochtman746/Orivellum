@@ -175,6 +175,24 @@ class TestDocTTSJobRegistry(_DocTTSTestBase):
             self.assertNotIn("no-ts", self.studio._doc_tts_jobs)
             self.assertEqual(len(self.studio._doc_tts_jobs), cap)
 
+    def test_cancel_cannot_overwrite_terminal_state(self):
+        """Cancel racing job completion: once the worker has written a terminal
+        state, DELETE must NOT overwrite it with 'cancelling' (the worker has
+        exited — such an entry would never become prunable again)."""
+        base = time.time()
+        for state in ("done", "failed", "error", "cancelled"):
+            jid = f"finished-{state}"
+            self._seed_job(jid, state, base)
+            resp = self.client.delete(f"/api/studio/tts/document/{jid}")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json()["state"], state)
+            with self.studio._doc_tts_jobs_lock:
+                job = self.studio._doc_tts_jobs[jid]
+                self.assertEqual(job["state"], state)
+                self.assertFalse(job["cancel"].is_set())
+                # Still terminal → still prunable.
+                self.assertIn(job["state"], self.studio._DOC_TTS_TERMINAL)
+
     def test_cancel_unknown_job_404(self):
         resp = self.client.delete("/api/studio/tts/document/nope")
         self.assertEqual(resp.status_code, 404)
