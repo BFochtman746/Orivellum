@@ -38,6 +38,7 @@ _VALID_TYPES = {
     "noteblock",
     "canon_fact",
     "position",
+    "loom_persona",
 }
 
 
@@ -353,6 +354,36 @@ def review_queue(limit: int = 200):
             }
         )
 
+    # 9. LOOM personas awaiting approval (drafting uses ONLY approved ones)
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT p.id, p.work_id, p.name, p.created_at, w.title AS work_title
+               FROM loom_persona p
+               LEFT JOIN works w ON w.id = p.work_id
+               WHERE p.status='proposed'
+               ORDER BY p.created_at ASC LIMIT 300""",
+        ).fetchall()
+    for r in rows:
+        key = f"loom_persona:{r['id']}"
+        if key in deferred:
+            continue
+        items.append(
+            {
+                "id": key,
+                "item_type": "loom_persona",
+                "title": f"Persona: {r['name']}",
+                "description": (
+                    "Character persona for the drafting engine — diction profile "
+                    "and knowledge horizon. Drafting refuses until you approve it."
+                ),
+                "confidence": 0.15,
+                "work_id": r["work_id"],
+                "work_title": r["work_title"],
+                "evidence": {"name": r["name"]},
+                "created_at": r["created_at"],
+            }
+        )
+
     # Most uncertain first; None confidence treated as 0.5
     items.sort(key=lambda i: i["confidence"] if i["confidence"] is not None else 0.5)
     counts: dict[str, int] = {}
@@ -385,6 +416,7 @@ _PENDING_SQL = {
     "noteblock": "SELECT 1 FROM note_blocks WHERE id=? AND status='proposed'",
     "canon_fact": "SELECT 1 FROM wa_canon_proposals WHERE id=? AND status='proposed'",
     "position": "SELECT 1 FROM position_proposal WHERE id=? AND status='proposed'",
+    "loom_persona": "SELECT 1 FROM loom_persona WHERE id=? AND status='proposed'",
 }
 
 
@@ -438,6 +470,7 @@ def review_resolve(
         "noteblock": lambda: _resolve_noteblock(db, item_id, body),
         "duplicate": lambda: _resolve_duplicate(db, item_id, body),
         "position": lambda: _resolve_position(db, item_id, body),
+        "loom_persona": lambda: _resolve_loom_persona(db, item_id, body),
     }
     if body.decision == "defer":
         result = _defer(db, item_type, item_id, body.reason)
@@ -706,6 +739,22 @@ def _resolve_position(db, item_id: str, body: ResolveBody) -> dict:
         installed = "voice_envelope baseline"
     return {"ok": True, "decision": decision, "kind": proposal["kind"],
             "installed": installed}
+
+
+def _resolve_loom_persona(db, item_id: str, body: ResolveBody) -> dict:
+    """Approve/reject a LOOM persona.  Personas ground every character agent,
+    so they are authority — an author signature is mandatory (LAW 4) and the
+    resolution is an atomic claim."""
+    author = (body.author or "").strip()
+    if not author:
+        raise HTTPException(422, "Approving a persona requires your signature (author)")
+    decision = "approved" if body.decision == "approve" else "rejected"
+    result = db.resolve_loom_persona(item_id, decision=decision, author=author)
+    if result == "not_found":
+        raise HTTPException(404, f"Persona {item_id!r} not found")
+    if result == "conflict":
+        raise HTTPException(409, "Persona was already resolved")
+    return {"ok": True, "decision": decision}
 
 
 def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:

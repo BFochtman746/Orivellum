@@ -8084,6 +8084,248 @@ class OrivellumDB:
 
     # ── /POSITION ────────────────────────────────────────────────────────────
 
+    # ── LOOM (E2 — chapter drafting engine) ──────────────────────────────────
+
+    def create_loom_persona(self, work_id: str, name: str, payload: dict) -> str:
+        """Create a persona record in 'proposed' status (review-gated: only an
+        author signature approves it; drafting uses ONLY approved personas)."""
+        pid = str(uuid.uuid4())
+        now = _now()
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """INSERT INTO loom_persona(id, work_id, name, payload, status,
+                       created_at, updated_at) VALUES(?,?,?,?,'proposed',?,?)""",
+                    (pid, work_id, name.strip(), json.dumps(payload), now, now),
+                )
+            except sqlite3.IntegrityError as e:
+                raise ValueError(f"persona {name!r} already exists for this work") from e
+            self._conn.commit()
+        return pid
+
+    def _loom_persona_row(self, row) -> dict:
+        d = dict(row)
+        d["payload"] = json.loads(d["payload"] or "{}")
+        return d
+
+    def get_loom_persona(self, persona_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM loom_persona WHERE id=?", (persona_id,)
+            ).fetchone()
+        return self._loom_persona_row(row) if row else None
+
+    def list_loom_personas(self, work_id: str, status: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM loom_persona WHERE work_id=?"
+        params: list = [work_id]
+        if status:
+            sql += " AND status=?"
+            params.append(status)
+        sql += " ORDER BY name"
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [self._loom_persona_row(r) for r in rows]
+
+    def resolve_loom_persona(self, persona_id: str, *, decision: str, author: str) -> str:
+        """Atomic conditional resolution — 'ok' | 'conflict' | 'not_found'.
+        The author signature is mandatory (LAW 4)."""
+        if decision not in ("approved", "rejected"):
+            raise ValueError(f"invalid persona decision {decision!r}")
+        if not author or not author.strip():
+            raise ValueError("persona resolution requires an author signature")
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE loom_persona SET status=?, resolved_by=?, resolved_at=?,
+                   updated_at=? WHERE id=? AND status='proposed'""",
+                (decision, author.strip(), now, now, persona_id),
+            )
+            self._conn.commit()
+            if cur.rowcount > 0:
+                return "ok"
+            exists = self._conn.execute(
+                "SELECT 1 FROM loom_persona WHERE id=?", (persona_id,)
+            ).fetchone()
+        return "conflict" if exists else "not_found"
+
+    def get_world_state(self, work_id: str) -> dict[str, dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT key, value, source_chapter_seq FROM loom_world_state WHERE work_id=?",
+                (work_id,),
+            ).fetchall()
+        return {
+            r["key"]: {"value": r["value"], "source_chapter_seq": r["source_chapter_seq"]}
+            for r in rows
+        }
+
+    def commit_world_state(
+        self, work_id: str, updates: dict[str, str], *, source_chapter_seq: int
+    ) -> None:
+        """Overwrite semantics: new key inserts, existing key replaces."""
+        if not updates:
+            return
+        now = _now()
+        with self._lock:
+            for key, value in updates.items():
+                self._conn.execute(
+                    """INSERT INTO loom_world_state(work_id, key, value,
+                       source_chapter_seq, updated_at) VALUES(?,?,?,?,?)
+                       ON CONFLICT(work_id, key) DO UPDATE SET
+                         value=excluded.value,
+                         source_chapter_seq=excluded.source_chapter_seq,
+                         updated_at=excluded.updated_at""",
+                    (work_id, str(key), str(value), source_chapter_seq, now),
+                )
+            self._conn.commit()
+
+    def clear_world_state(self, work_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM loom_world_state WHERE work_id=?", (work_id,))
+            self._conn.commit()
+
+    def create_chapter_revision(
+        self, chapter_id: str, work_id: str, text: str, meta: dict | None = None
+    ) -> dict:
+        """Append a NEW revision row (rev = max+1, allocated under the lock)."""
+        rid = str(uuid.uuid4())
+        wc = len(text.split())
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(rev), 0) AS m FROM loom_chapter_revision WHERE chapter_id=?",
+                (chapter_id,),
+            ).fetchone()
+            rev = int(row["m"]) + 1
+            self._conn.execute(
+                """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
+                   text, word_count, meta, created_at) VALUES(?,?,?,?,?,?,?,?)""",
+                (rid, chapter_id, work_id, rev, text, wc, json.dumps(meta or {}), _now()),
+            )
+            self._conn.commit()
+        return {"id": rid, "rev": rev, "word_count": wc}
+
+    def list_chapter_revisions(self, chapter_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, chapter_id, work_id, rev, word_count, meta, created_at
+                   FROM loom_chapter_revision WHERE chapter_id=? ORDER BY rev""",
+                (chapter_id,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["meta"] = json.loads(d["meta"] or "{}")
+            out.append(d)
+        return out
+
+    def get_chapter_revision(self, revision_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM loom_chapter_revision WHERE id=?", (revision_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["meta"] = json.loads(d["meta"] or "{}")
+        return d
+
+    def create_loom_run(self, work_id: str, chapter_id: str) -> str:
+        """Claim + create a drafting run.  Refuses while another run for the
+        same work is 'running' — the row IS the claim."""
+        run_id = str(uuid.uuid4())
+        with self._lock:
+            busy = self._conn.execute(
+                "SELECT id FROM loom_run WHERE work_id=? AND status='running'",
+                (work_id,),
+            ).fetchone()
+            if busy is not None:
+                raise RuntimeError("a LOOM drafting run for this work is already running")
+            self._conn.execute(
+                """INSERT INTO loom_run(id, work_id, chapter_id, status, started_at)
+                   VALUES(?,?,?,'running',?)""",
+                (run_id, work_id, chapter_id, _now()),
+            )
+            self._conn.commit()
+        return run_id
+
+    def finish_loom_run(
+        self, run_id: str, *, status: str, evidence: dict | None = None,
+        error: str | None = None,
+    ) -> None:
+        if status not in ("done", "escalated", "error"):
+            raise ValueError(f"invalid loom run finish status {status!r}")
+        with self._lock:
+            self._conn.execute(
+                """UPDATE loom_run SET status=?, evidence=?, error=?, finished_at=?
+                   WHERE id=?""",
+                (status, json.dumps(evidence or {}), error, _now(), run_id),
+            )
+            self._conn.commit()
+
+    def _loom_run_row(self, row) -> dict:
+        d = dict(row)
+        d["evidence"] = json.loads(d["evidence"] or "{}")
+        return d
+
+    def get_loom_run(self, run_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM loom_run WHERE id=?", (run_id,)
+            ).fetchone()
+        return self._loom_run_row(row) if row else None
+
+    def list_loom_runs(self, work_id: str, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM loom_run WHERE work_id=? ORDER BY started_at DESC LIMIT ?",
+                (work_id, max(1, min(limit, 200))),
+            ).fetchall()
+        return [self._loom_run_row(r) for r in rows]
+
+    def record_provenance(
+        self, artifact_id: str, artifact_kind: str, *, origin: str,
+        llm_call_ids: list[int] | None = None, declared_by: str = "",
+    ) -> None:
+        """Upsert a provenance row, MERGING llm_call_ids (the audit trail only
+        ever grows).  Origin follows the KDP definition — tool-created content
+        is 'ai_generated' even after heavy editing."""
+        if origin not in ("human", "ai_assisted", "ai_generated"):
+            raise ValueError(f"invalid provenance origin {origin!r}")
+        new_ids = [i for i in (llm_call_ids or []) if i is not None]
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT llm_call_ids FROM artifact_provenance
+                   WHERE artifact_id=? AND artifact_kind=?""",
+                (artifact_id, artifact_kind),
+            ).fetchone()
+            existing = json.loads(row["llm_call_ids"]) if row else []
+            merged = existing + [i for i in new_ids if i not in existing]
+            self._conn.execute(
+                """INSERT INTO artifact_provenance(artifact_id, artifact_kind,
+                   origin, llm_call_ids, declared_by) VALUES(?,?,?,?,?)
+                   ON CONFLICT(artifact_id, artifact_kind) DO UPDATE SET
+                     origin=excluded.origin,
+                     llm_call_ids=excluded.llm_call_ids,
+                     declared_by=excluded.declared_by""",
+                (artifact_id, artifact_kind, origin, json.dumps(merged), declared_by),
+            )
+            self._conn.commit()
+
+    def get_provenance(self, artifact_id: str, artifact_kind: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT * FROM artifact_provenance
+                   WHERE artifact_id=? AND artifact_kind=?""",
+                (artifact_id, artifact_kind),
+            ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["llm_call_ids"] = json.loads(d["llm_call_ids"] or "[]")
+        return d
+
+    # ── /LOOM ────────────────────────────────────────────────────────────────
+
     def close(self) -> None:
         with self._lock:
             # Close the main writer connection.

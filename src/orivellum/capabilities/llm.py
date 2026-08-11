@@ -35,6 +35,13 @@ class LLMResult:
     completion_tokens: int | None = None
     error: str | None = None
     finish_reason: str | None = None
+    # Row id of this call in llm_calls — the provenance audit trail
+    # (artifact_provenance.llm_call_ids).  None when telemetry was skipped.
+    call_id: int | None = None
+    # Token-level logprobs (OpenAI ``choices[0].logprobs.content`` list) when
+    # the caller requested them via ``extra={"logprobs": True, ...}`` and the
+    # endpoint provided them.  None = not measured, never "certain".
+    logprobs: list | None = None
 
 
 def decode_tok_per_s(n_tokens: int | None, decode_seconds: float) -> float | None:
@@ -63,18 +70,21 @@ def record_llm_call(
     ttft_ms: float | None = None,
     tok_per_s: float | None = None,
     streamed: bool = False,
-) -> None:
+) -> int | None:
     """Best-effort telemetry insert.  Never raises.
+
+    Returns the ``llm_calls`` row id (the provenance audit-trail handle) or
+    ``None`` when telemetry was skipped/failed.
 
     ``ttft_ms`` (time-to-first-token) and ``tok_per_s`` (decode rate) are only
     meaningful for streaming calls; leave them ``None`` when unknown — the
     measurement layer treats NULL as "not measured", never as zero.
     """
     if db is None:
-        return
+        return None
     try:
         with db._lock:
-            db._conn.execute(
+            cur = db._conn.execute(
                 "INSERT INTO llm_calls (purpose, model, latency_ms, prompt_tokens,"
                 " completion_tokens, ok, error, ttft_ms, tok_per_s, streamed)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -92,8 +102,10 @@ def record_llm_call(
                 ),
             )
             db._conn.commit()
+            return cur.lastrowid
     except Exception as exc:  # pragma: no cover — telemetry must never break callers
         logger.debug("llm_calls telemetry insert failed: %s", exc)
+        return None
 
 
 def llm_call(
@@ -144,6 +156,7 @@ def llm_call(
     p_tok: int | None = None
     c_tok: int | None = None
     err: str | None = None
+    logprobs: list | None = None
     try:
         import httpx
 
@@ -154,6 +167,9 @@ def llm_call(
             choice = data["choices"][0]
             text = choice["message"]["content"]
             finish_reason = choice.get("finish_reason")
+            lp = choice.get("logprobs") or {}
+            if isinstance(lp, dict) and isinstance(lp.get("content"), list):
+                logprobs = lp["content"]
             usage = data.get("usage") or {}
             p_tok = usage.get("prompt_tokens")
             c_tok = usage.get("completion_tokens")
@@ -167,7 +183,7 @@ def llm_call(
     # This under-reports the true decode rate (prompt processing is included)
     # but is directionally useful; streaming calls record the precise rate.
     _tps = c_tok / (latency_ms / 1000.0) if ok and c_tok and latency_ms > 0 else None
-    record_llm_call(
+    call_id = record_llm_call(
         db,
         purpose=purpose,
         model=model,
@@ -187,4 +203,6 @@ def llm_call(
         c_tok,
         err,
         finish_reason=finish_reason if err is None else None,
+        call_id=call_id,
+        logprobs=logprobs,
     )

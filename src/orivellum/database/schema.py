@@ -2898,4 +2898,89 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON position_proposal(status, work_id);
     """,
     ),
+    # v128 — LOOM (E2): the chapter drafting engine.
+    #
+    # loom_persona — character records used to ground drafting: diction
+    # profile + knowledge horizon (which canon facts the character can know,
+    # per act boundary).  Review-gated: rows are created 'proposed' and only
+    # an author signature approves them; drafting uses ONLY approved rows.
+    #
+    # loom_world_state — the accumulated world state, one key per fact of
+    # the world, overwrite semantics (new key inserts, existing replaces).
+    # Rebuilt deterministically from the world graph when resuming mid-book.
+    #
+    # loom_chapter_revision — every draft lands as a NEW revision row;
+    # approved chapters are never overwritten.
+    #
+    # loom_run — one row per drafting run; the row is the claim (created
+    # 'running' under the write lock, always finished done/escalated/error).
+    #
+    # artifact_provenance — KDP-definition provenance (spec 2.4): content a
+    # tool created is 'ai_generated' even after heavy editing; llm_call_ids
+    # is the audit trail of every gateway call that produced the artifact.
+    (
+        128,
+        "LOOM drafting engine: personas, world state, chapter revisions, runs, provenance",
+        """
+        CREATE TABLE IF NOT EXISTS loom_persona (
+            id          TEXT PRIMARY KEY,
+            work_id     TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            name        TEXT NOT NULL,
+            payload     TEXT NOT NULL DEFAULT '{}',
+            status      TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN
+                ('proposed','approved','rejected')),
+            resolved_by TEXT,
+            resolved_at TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            UNIQUE(work_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_loom_persona_work
+            ON loom_persona(work_id, status);
+        CREATE TABLE IF NOT EXISTS loom_world_state (
+            work_id            TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            key                TEXT NOT NULL,
+            value              TEXT NOT NULL,
+            source_chapter_seq INTEGER NOT NULL DEFAULT 0,
+            updated_at         TEXT NOT NULL,
+            PRIMARY KEY (work_id, key)
+        );
+        CREATE TABLE IF NOT EXISTS loom_chapter_revision (
+            id         TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES book_chapters(id) ON DELETE CASCADE,
+            work_id    TEXT NOT NULL,
+            rev        INTEGER NOT NULL,
+            text       TEXT NOT NULL,
+            word_count INTEGER NOT NULL DEFAULT 0,
+            meta       TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            UNIQUE(chapter_id, rev)
+        );
+        CREATE INDEX IF NOT EXISTS idx_loom_rev_chapter
+            ON loom_chapter_revision(chapter_id, rev);
+        CREATE TABLE IF NOT EXISTS loom_run (
+            id          TEXT PRIMARY KEY,
+            work_id     TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            chapter_id  TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'running' CHECK (status IN
+                ('running','done','escalated','error')),
+            evidence    TEXT NOT NULL DEFAULT '{}',
+            error       TEXT,
+            started_at  TEXT NOT NULL,
+            finished_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_loom_run_work
+            ON loom_run(work_id, started_at);
+        CREATE TABLE IF NOT EXISTS artifact_provenance (
+            artifact_id         TEXT NOT NULL,
+            artifact_kind       TEXT NOT NULL,
+            origin              TEXT NOT NULL CHECK (origin IN
+                ('human','ai_assisted','ai_generated')),
+            llm_call_ids        TEXT NOT NULL DEFAULT '[]',
+            human_edit_fraction REAL,
+            declared_by         TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (artifact_id, artifact_kind)
+        );
+    """,
+    ),
 ]
