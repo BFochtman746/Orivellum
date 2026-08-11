@@ -105,4 +105,5 @@
 - [Pipeline context compiler](orivellum-context-compiler.md) — budgets apply to exact rendered blocks; B0/B1/B3 acceptance gates are deterministic code, never a model.
 - [ConStory contradiction checker](orivellum-constory.md) — severity computed at the DB write path (never model/caller); LAW 3 grounding enforced on insert; atomic open-finding swap; claim-before-dispatch.
 - [ASSAY instrument registry](orivellum-assay.md) — run row is the claim; blocking computed never stored; machine never renders gate go/no-go; judge never the drafter; strict validation of model output.
+- [LOOM drafting engine](orivellum-loom.md) — beat controller escalates never rewrites; critic/drafter model split; strict narrator selection; atomic approved-chapter guard; entropy NULL = not measured.
 - [ATLAS-O world graph](orivellum-atlas.md) — closed-schema typed graph; never strip text before grounding offsets; discard (never coerce) ungrounded output; per-work build lock; harvest feeds graph, get_work_graph merges it.
