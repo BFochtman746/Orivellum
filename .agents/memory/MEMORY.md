@@ -107,4 +107,5 @@
 - [ASSAY instrument registry](orivellum-assay.md) — run row is the claim; blocking computed never stored; machine never renders gate go/no-go; judge never the drafter; strict validation of model output; PROMOTION: shadow co-runs + disposition-scored precision gate certification.
 - [LOOM drafting engine](orivellum-loom.md) — beat controller escalates never rewrites; critic/drafter model split; strict narrator selection; atomic approved-chapter guard; entropy NULL = not measured.
 - [ATLAS-O world graph](orivellum-atlas.md) — closed-schema typed graph; never strip text before grounding offsets; discard (never coerce) ungrounded output; per-work build lock; harvest feeds graph, get_work_graph merges it.
+- [FORCE detectors & RIPPLE simulation](orivellum-force-ripple.md) — deterministic Tier-2 detectors, shadow-on-first-seed-only; ripple = sorted BFS, honest truncation, evidence path per reported impact.
 - [BAND surgical edits + lineage](orivellum-band.md) — band_text echo guards UTF-16/code-point drift; checkpoint is atomic + fingerprint-guarded; gates fail closed; delta findings live in revision meta, never narrative_finding.
