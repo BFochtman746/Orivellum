@@ -108,4 +108,5 @@
 - [LOOM drafting engine](orivellum-loom.md) — beat controller escalates never rewrites; critic/drafter model split; strict narrator selection; atomic approved-chapter guard; entropy NULL = not measured.
 - [ATLAS-O world graph](orivellum-atlas.md) — closed-schema typed graph; never strip text before grounding offsets; discard (never coerce) ungrounded output; per-work build lock; harvest feeds graph, get_work_graph merges it.
 - [FORCE detectors & RIPPLE simulation](orivellum-force-ripple.md) — deterministic Tier-2 detectors, shadow-on-first-seed-only; ripple = sorted BFS, honest truncation, evidence path per reported impact.
+- [Series continuity](orivellum-series.md) — one FACT_VISIBILITY_SQL clause for forward-only cross-book canon; override supersede inherits target; membership mutations guarded once canon exists.
 - [BAND surgical edits + lineage](orivellum-band.md) — band_text echo guards UTF-16/code-point drift; checkpoint is atomic + fingerprint-guarded; gates fail closed; delta findings live in revision meta, never narrative_finding.
