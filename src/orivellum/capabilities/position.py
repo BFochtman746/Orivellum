@@ -144,10 +144,17 @@ def _t5_canon(db: Any, work_id: str) -> dict:
 
 
 def _t6_voice(db: Any, work_id: str) -> dict:
-    baseline = db.get_assay_baseline(work_id, "voice_envelope")
+    # Effective baseline: local, or inherited from an earlier volume of the
+    # same series — inheritance satisfies the check, with provenance shown.
+    from orivellum.database.series_store import resolve_assay_baseline  # noqa: PLC0415
+
+    resolved = resolve_assay_baseline(db, work_id, "voice_envelope")
+    baseline = (resolved or {}).get("payload")
     return _test("T6", "Voice baseline exists", baseline is not None,
                  {"stored": baseline is not None,
-                  "source": (baseline or {}).get("source")})
+                  "source": (baseline or {}).get("source"),
+                  "inherited": bool((resolved or {}).get("inherited")),
+                  "source_work_id": (resolved or {}).get("source_work_id")})
 
 
 def _press_book(work_id: str) -> tuple[dict | None, str | None]:

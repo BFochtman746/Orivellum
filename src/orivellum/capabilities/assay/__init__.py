@@ -645,7 +645,17 @@ def _dispatch(
 def _run_voice_envelope(
     db: Any, work_id: str, chapter_id: str | None, thresholds: dict
 ) -> dict:
-    envelope = db.get_assay_baseline(work_id, "voice_envelope")
+    # Series voice continuity: a later volume with no local envelope is
+    # verified against the nearest EARLIER volume's approved envelope — a
+    # local baseline always wins.  Provenance travels in the evidence.
+    from orivellum.database.series_store import resolve_assay_baseline  # noqa: PLC0415
+
+    resolved = resolve_assay_baseline(db, work_id, "voice_envelope")
+    envelope = (resolved or {}).get("payload")
+    baseline_source = {
+        "inherited": bool((resolved or {}).get("inherited")),
+        "source_work_id": (resolved or {}).get("source_work_id"),
+    }
     chapters = _load_chapters(db, work_id, chapter_id)
     if not chapters:
         return {"verdict": "no_chapters", "score": None, "evidence": {}, "findings": []}
@@ -688,7 +698,7 @@ def _run_voice_envelope(
     return {
         "verdict": "pass" if not findings else "deviations",
         "score": round(inside / len(chapters), 3),
-        "evidence": {"per_chapter": per_chapter},
+        "evidence": {"per_chapter": per_chapter, "baseline_source": baseline_source},
         "findings": findings,
     }
 

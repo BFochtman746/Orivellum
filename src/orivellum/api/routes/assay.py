@@ -278,9 +278,17 @@ def set_voice_baseline(work_id: str, req: BaselineRequest):
 
 @router.get("/assay/works/{work_id}/voice-baseline")
 def get_voice_baseline(work_id: str):
+    """The EFFECTIVE voice baseline: local, or inherited from the nearest
+    earlier volume of the same series (provenance included)."""
     db = get_db()
     _require_work(db, work_id)
-    baseline = db.get_assay_baseline(work_id, "voice_envelope")
-    if baseline is None:
+    from orivellum.database.series_store import resolve_assay_baseline  # noqa: PLC0415
+
+    resolved = resolve_assay_baseline(db, work_id, "voice_envelope")
+    if resolved is None:
         raise HTTPException(status_code=404, detail="no voice baseline stored")
-    return {"baseline": baseline}
+    return {
+        "baseline": resolved["payload"],
+        "inherited": bool(resolved.get("inherited")),
+        "source_work_id": resolved.get("source_work_id"),
+    }

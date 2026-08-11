@@ -495,6 +495,72 @@ class LoomInheritanceTests(_Base):
         self.assertIsNone(resolve_assay_baseline(self.db, lone["id"], "voice_envelope"))
 
 
+class SeriesVoiceVerificationTests(_Base):
+    """Voice CONTINUITY, not just context: the voice-envelope instrument
+    verifies a later volume against the inherited earlier-volume envelope."""
+
+    def setUp(self):
+        super().setUp()
+        from orivellum.capabilities import assay
+
+        self.assay = assay
+        self._add_all()
+        assay.seed_instruments(self.db)
+
+    def _run_voice(self, work_id, chapter_id=None):
+        from unittest.mock import patch
+
+        from tests.test_assay import _cfg, _StubLLM
+
+        with patch("orivellum.capabilities.llm.llm_call", _StubLLM()):
+            return self.assay.run_instrument(
+                self.db, _cfg(), key="voice.envelope",
+                work_id=work_id, chapter_id=chapter_id,
+            )
+
+    def test_book2_verified_against_inherited_book1_envelope(self):
+        from tests.test_assay import LECTURE, NORMAL
+
+        self.assay.build_voice_baseline(
+            self.db, self.book1["id"], reference_text=NORMAL
+        )
+        on_voice = _seed_chapter(self.db, self.book2["id"], 1, "One", NORMAL)
+        off_voice = _seed_chapter(self.db, self.book2["id"], 2, "Two", LECTURE)
+
+        run = self._run_voice(self.book2["id"], chapter_id=off_voice)
+        self.assertEqual(run["verdict"], "deviations",
+                         "book 2 must be checked against book 1's envelope")
+        src = run["evidence"]["baseline_source"]
+        self.assertTrue(src["inherited"])
+        self.assertEqual(src["source_work_id"], self.book1["id"])
+
+        run2 = self._run_voice(self.book2["id"], chapter_id=on_voice)
+        self.assertEqual(run2["verdict"], "pass")
+
+    def test_local_baseline_beats_inherited(self):
+        from tests.test_assay import LECTURE, NORMAL
+
+        self.assay.build_voice_baseline(
+            self.db, self.book1["id"], reference_text=NORMAL
+        )
+        self.assay.build_voice_baseline(
+            self.db, self.book2["id"], reference_text=LECTURE
+        )
+        ch = _seed_chapter(self.db, self.book2["id"], 1, "One", LECTURE)
+        run = self._run_voice(self.book2["id"], chapter_id=ch)
+        self.assertEqual(run["verdict"], "pass",
+                         "book 2's own envelope must win over book 1's")
+        self.assertFalse(run["evidence"]["baseline_source"]["inherited"])
+
+    def test_standalone_work_still_honestly_no_baseline(self):
+        from tests.test_assay import NORMAL
+
+        lone = self.db.create_work(title="Standalone")
+        _seed_chapter(self.db, lone["id"], 1, "One", NORMAL)
+        run = self._run_voice(lone["id"])
+        self.assertEqual(run["verdict"], "no_baseline")
+
+
 class SeriesApiTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
