@@ -1047,6 +1047,69 @@ class PartialRebuildAtomicityTests(AtlasBase):
         self.assertEqual(self._snapshot(), before)
 
 
+class NonContiguousPartialRebuildTests(AtlasBase):
+    """A doc owning non-contiguous chapters: changing its earlier chapter
+    must invalidate its later rebuilt chapter's stale inconsistency."""
+
+    def test_changed_earlier_chapter_invalidates_later_finding(self):
+        doc_a = self.db.create_document(
+            title="Interlude", source="a.txt", kind="book", work_id=self.work_id
+        )["id"]
+        doc_b = self.db.create_document(
+            title="Main", source="b.txt", kind="book", work_id=self.work_id
+        )["id"]
+        t0_cedar = _FILLER + " The gate of Uz was made of cedar."
+        t1 = _FILLER + " An interlude passed quietly in Uz."
+        t2 = _FILLER + " The gate of Uz was made of iron."
+        # Doc B owns chapters 0 AND 2 (non-contiguous); doc A owns chapter 1.
+        ch0 = _seed_chapter(self.db, self.work_id, 0, "One", t0_cedar, doc_id=doc_b)
+        _seed_chapter(self.db, self.work_id, 1, "Two", t1, doc_id=doc_a)
+        ch2 = _seed_chapter(self.db, self.work_id, 2, "Three", t2, doc_id=doc_b)
+
+        def propose(prompt):
+            # Always re-proposes the cedar/iron conflict for chapter 3 —
+            # survival depends purely on evidence grounding in ch0's text.
+            if "seq 2)" in prompt:
+                return [
+                    {
+                        "description": "Gate material",
+                        "current_quote": "The gate of Uz was made of iron.",
+                        "prior_chapter_seq": 0,
+                        "prior_quote": "The gate of Uz was made of cedar.",
+                        "reasoning": "conflict",
+                    }
+                ]
+            return []
+
+        stub = _StubLLM(
+            {
+                "atlas.events": [],
+                "atlas.entities": [],
+                "atlas.relations": [],
+                "atlas.attributes": {},
+                "atlas.propose": propose,
+                "atlas.verify": {"verdict": "confirmed"},
+            }
+        )
+        with patch("orivellum.capabilities.llm.llm_call", stub):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        rows = self.db.list_graph_inconsistencies(work_id=self.work_id)
+        self.assertEqual([r["chapter_id"] for r in rows], [ch2])
+
+        # Chapter 1 (doc B's earlier chapter) is edited: cedar becomes iron.
+        # Rebuilding doc B must drop the stale finding — the prior-side
+        # quote no longer grounds in the changed chapter text.
+        with self.db._lock:
+            self.db._conn.execute(
+                "UPDATE book_chapters SET text=? WHERE id=?",
+                (_FILLER + " The gate of Uz was made of iron.", ch0),
+            )
+            self.db._conn.commit()
+        with patch("orivellum.capabilities.llm.llm_call", stub):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id, doc_id=doc_b)
+        self.assertEqual(self.db.list_graph_inconsistencies(work_id=self.work_id), [])
+
+
 class CommitPhaseAtomicityTests(AtlasBase):
     """A DB error DURING plan application must roll back the whole
     transaction — never leave the graph partially deleted/rebuilt."""
