@@ -36,7 +36,10 @@ from orivellum.capabilities.constory import (
     ConStoryLLMError,
     compute_ced,
     compute_severity,
+    dedupe_key,
+    release_run_claim,
     run_constory_check,
+    try_claim_run,
 )
 from orivellum.database.canon_store import CanonStore
 from orivellum.database.db import OrivellumDB, _now
@@ -453,6 +456,155 @@ class TestFindingRoutes(ConStoryBase):
         self.assertEqual(body["counts"]["by_severity"]["critical"], 1)
         self.assertEqual(body["book"]["findings"], 4)
         self.assertEqual(len(body["chapters"]), 3)
+
+
+# ── Storage boundary (LAW 3 in the write path) ───────────────────────────────
+
+
+class TestStorageBoundary(ConStoryBase):
+    def _base_kwargs(self, **over):
+        quote = "Mara's brown eyes narrowed"
+        kwargs = dict(
+            work_id=self.work_id,
+            chapter_id=self.ch[2],
+            category="factual_detail",
+            subtype="appearance_mismatch",
+            fact_quote="Mara's eyes were green as river glass",
+            fact_chapter=1,
+            fact_offset=CH1.index("Mara's eyes were green as river glass"),
+            contradiction_quote=quote,
+            contradiction_chapter=2,
+            contradiction_offset=CH2.index(quote),
+            reasoning="eye colour changed",
+            dedupe_key=dedupe_key("appearance_mismatch", 1, 0, 2, CH2.index(quote)),
+        )
+        kwargs.update(over)
+        return kwargs
+
+    def test_grounded_insert_accepted_and_severity_computed(self):
+        fid = self.db.create_narrative_finding(**self._base_kwargs())
+        self.assertIsNotNone(fid)
+        stored = self.db.get_narrative_finding(fid)
+        # severity is computed by the write path, never supplied.
+        self.assertEqual(stored["severity"], "medium")
+
+    def test_refuses_ungrounded_contradiction_quote(self):
+        with self.assertRaises(ValueError):
+            self.db.create_narrative_finding(
+                **self._base_kwargs(contradiction_quote="The dragon burned the city")
+            )
+        with self.assertRaises(ValueError):
+            self.db.create_narrative_finding(
+                **self._base_kwargs(contradiction_offset=3)  # wrong offset
+            )
+
+    def test_refuses_ungrounded_fact_quote(self):
+        with self.assertRaises(ValueError):
+            self.db.create_narrative_finding(
+                **self._base_kwargs(fact_quote="Mara owned a falcon")
+            )
+
+    def test_refuses_out_of_schema_subtype_and_category_mismatch(self):
+        with self.assertRaises(ValueError):
+            self.db.create_narrative_finding(**self._base_kwargs(subtype="vibe_shift"))
+        with self.assertRaises(ValueError):
+            self.db.create_narrative_finding(**self._base_kwargs(category="worldbuilding"))
+
+    def test_refuses_severity_kwarg(self):
+        with self.assertRaises(TypeError):
+            self.db.create_narrative_finding(
+                **self._base_kwargs(), severity="low"  # noqa: B026
+            )
+
+    def test_chapter_zero_requires_canon(self):
+        with self.assertRaises(ValueError):
+            self.db.create_narrative_finding(
+                **self._base_kwargs(fact_chapter=0, fact_offset=0)
+            )
+        fid = self.db.create_narrative_finding(
+            **self._base_kwargs(
+                fact_chapter=0, fact_offset=0,
+                fact_quote=CANON_STATEMENT,
+                canon_class="HISTORICAL",
+                canon_fact_id=self.canon["id"],
+            )
+        )
+        self.assertEqual(self.db.get_narrative_finding(fid)["severity"], "critical")
+
+    def test_wrong_work_or_seq_refused(self):
+        other = self.db.create_work("Other", work_type="writing")["id"]
+        with self.assertRaises(ValueError):
+            self.db.create_narrative_finding(**self._base_kwargs(work_id=other))
+        with self.assertRaises(ValueError):
+            self.db.create_narrative_finding(**self._base_kwargs(contradiction_chapter=3))
+
+
+# ── Long-chapter windowing ────────────────────────────────────────────────────
+
+
+class TestWindowing(unittest.TestCase):
+    """A contradiction past the 16k model-view cap is still detected."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = OrivellumDB(str(Path(self._tmp.name) / "test.db"))
+        self.work_id = self.db.create_work("Long One", work_type="writing")["id"]
+        filler = ("The caravan crossed the dunes without incident. " * 400)[:18_000]
+        self.late_quote = "Mara's brown eyes narrowed at the horizon"
+        self.long_ch2 = filler + " " + self.late_quote + "."
+        _seed_chapter(self.db, self.work_id, 1, "One", CH1)
+        _seed_chapter(self.db, self.work_id, 2, "Two", self.long_ch2)
+
+    def tearDown(self):
+        self.db.close()
+        self._tmp.cleanup()
+
+    def test_finding_past_16k_offset(self):
+        late_quote = self.late_quote
+
+        def stub(messages, **kwargs):
+            purpose = kwargs.get("purpose", "")
+            prompt = messages[0]["content"]
+            if purpose == "constory.extract":
+                payload = {"facts": CH1_FACTS} if "river glass" in prompt else {"facts": []}
+            elif purpose == "constory.pair":
+                if "brown eyes narrowed at the horizon" in prompt:
+                    payload = {"contradictions": [{
+                        "fact_ref": "F0", "quote": late_quote,
+                        "subtype": "appearance_mismatch",
+                        "reasoning": "eye colour changed",
+                    }]}
+                else:
+                    payload = {"contradictions": []}
+            elif purpose == "constory.verify":
+                payload = {"verdict": "confirmed", "reasoning": "checked"}
+            else:
+                return SimpleNamespace(ok=False, text=None, error="?")
+            return SimpleNamespace(ok=True, text=json.dumps(payload), error=None)
+
+        with patch("orivellum.capabilities.llm.llm_call", stub):
+            result = run_constory_check(self.db, _cfg(), work_id=self.work_id)
+        self.assertEqual(result["findings_created"], 1)
+        f = self.db.list_narrative_findings(self.work_id)[0]
+        self.assertGreater(f["contradiction_offset"], 16_000)
+        self.assertEqual(
+            self.long_ch2[f["contradiction_offset"]:
+                          f["contradiction_offset"] + len(f["contradiction_quote"])],
+            f["contradiction_quote"],
+        )
+
+
+# ── Run claim ─────────────────────────────────────────────────────────────────
+
+
+class TestRunClaim(unittest.TestCase):
+    def test_claim_refuse_release(self):
+        wid = "claim-test-work"
+        self.assertTrue(try_claim_run(wid))
+        self.assertFalse(try_claim_run(wid))          # second claim refused
+        release_run_claim(wid, error="executor unavailable")
+        self.assertTrue(try_claim_run(wid))           # released -> claimable
+        release_run_claim(wid)
 
 
 if __name__ == "__main__":

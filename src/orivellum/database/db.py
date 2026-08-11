@@ -7404,18 +7404,35 @@ class OrivellumDB:
         contradiction_chapter: int,
         contradiction_offset: int,
         reasoning: str = "",
-        severity: str = "medium",
         canon_class: str | None = None,
         canon_fact_id: str | None = None,
         detector: str = "constory",
         dedupe_key: str = "",
     ) -> str | None:
-        """Store one verified story contradiction (LAW 3 on both sides).
+        """Store one verified story contradiction (LAW 3 enforced HERE).
+
+        The write path is the guarantee: the subtype must be one of the 19
+        (and match its category), severity is COMPUTED from
+        (subtype, canon_class) — callers cannot supply one — and BOTH quotes
+        must appear verbatim at their claimed offsets in the actual chapter
+        text (a fact side with chapter 0 must be canon-backed instead).
+        Ungrounded findings are refused outright.
 
         Returns the new id, or None when a finding with the same dedupe key
         already exists for this work (re-runs never resurrect dispositioned
         findings as fresh 'open' rows).
         """
+        from orivellum.capabilities.constory import (  # noqa: PLC0415
+            SUBTYPE_CATEGORY,
+            compute_severity,
+        )
+
+        if SUBTYPE_CATEGORY.get(subtype) != category or not category:
+            raise ValueError(
+                f"narrative finding subtype {subtype!r} is not in category {category!r} "
+                "(closed 19-subtype schema)"
+            )
+        severity = compute_severity(subtype, canon_class)  # raises on unknowns
         for label, quote in (("fact", fact_quote), ("contradiction", contradiction_quote)):
             if not quote or not quote.strip():
                 raise ValueError(f"narrative finding requires a {label} quote (LAW 3)")
@@ -7429,6 +7446,44 @@ class OrivellumDB:
             raise ValueError("narrative finding requires a dedupe_key")
         fid = _uuid()
         with self._lock:
+            # LAW 3 at the storage boundary — verify both offsets against the
+            # real manuscript text before anything is written.
+            ch = self._conn.execute(
+                "SELECT work_id, seq, text FROM book_chapters WHERE id=?",
+                (chapter_id,),
+            ).fetchone()
+            if ch is None or ch["work_id"] != work_id:
+                raise ValueError(f"chapter {chapter_id!r} not found in work {work_id!r}")
+            if int(ch["seq"]) != contradiction_chapter:
+                raise ValueError(
+                    f"contradiction_chapter {contradiction_chapter} does not match "
+                    f"chapter {chapter_id!r} (seq {ch['seq']})"
+                )
+            text = ch["text"] or ""
+            end = contradiction_offset + len(contradiction_quote)
+            if text[contradiction_offset:end] != contradiction_quote:
+                raise ValueError(
+                    "contradiction quote does not appear at the claimed offset (LAW 3)"
+                )
+            if fact_chapter > 0:
+                grounded = any(
+                    ((r["text"] or "")[fact_offset : fact_offset + len(fact_quote)])
+                    == fact_quote
+                    for r in self._conn.execute(
+                        "SELECT text FROM book_chapters WHERE work_id=? AND seq=?",
+                        (work_id, fact_chapter),
+                    ).fetchall()
+                )
+                if not grounded:
+                    raise ValueError(
+                        "fact quote does not appear at the claimed offset in "
+                        f"chapter {fact_chapter} (LAW 3)"
+                    )
+            elif canon_class is None:
+                raise ValueError(
+                    "a finding without a prose fact position (fact_chapter=0) "
+                    "must contradict a canon fact (canon_class required)"
+                )
             cur = self._conn.execute(
                 """INSERT INTO narrative_finding(id, work_id, chapter_id, category,
                        subtype, fact_quote, fact_chapter, fact_offset,
@@ -7550,6 +7605,25 @@ class OrivellumDB:
             )
             self._maybe_commit()
             return cur.rowcount
+
+    def replace_open_narrative_findings(
+        self, work_id: str, findings: list[dict], *, detector: str = "constory"
+    ) -> dict:
+        """Atomically swap the work's open findings for a fresh detection set.
+
+        ONE transaction: delete still-open rows, insert the new set (the
+        UNIQUE dedupe key silently skips anything the author already
+        dispositioned).  A disposition PATCH can never land between the
+        delete and the inserts, and a failed insert rolls the whole swap
+        back — the previous findings survive intact.
+        """
+        with self.atomic():
+            removed = self.delete_open_narrative_findings(work_id, detector=detector)
+            created = 0
+            for finding in findings:
+                if self.create_narrative_finding(**finding, detector=detector) is not None:
+                    created += 1
+        return {"removed": removed, "created": created, "skipped": len(findings) - created}
 
     # ── /ConStory ─────────────────────────────────────────────────────────────
 

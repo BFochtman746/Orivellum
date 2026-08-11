@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from orivellum.capabilities.atlas import (
     _fence,
     _parse_json,
+    _windows,
     ground_quote_span,
 )
 
@@ -264,37 +265,45 @@ def _extract_chapter_facts(
     text = chapter["text"] or ""
     if not text.strip():
         return []
-    parsed = _call(
-        _EXTRACT_PROMPT.format(
-            max_facts=_MAX_FACTS_PER_CHAPTER,
-            chapter=_fence(text, chapter.get("title") or f"chapter {chapter['seq']}"),
-        ),
-        purpose="constory.extract",
-        cfg=cfg,
-        db=db,
-    )
+    title = chapter.get("title") or f"chapter {chapter['seq']}"
     facts: list[dict] = []
-    for item in (parsed.get("facts") or [])[:_MAX_FACTS_PER_CHAPTER]:
-        if not isinstance(item, dict):
-            continue
-        statement = str(item.get("statement") or "").strip()
-        quote = str(item.get("quote") or "").strip()
-        if not statement or not quote:
-            continue
-        found = ground_quote_span(quote, text)
-        if found is None:
-            logger.debug("constory: discarding ungroundable fact quote %r", quote[:80])
-            continue
-        offset, verbatim = found
-        facts.append(
-            {
-                "statement": statement,
-                "quote": verbatim,
-                "offset": offset,
-                "chapter_id": chapter["id"],
-                "chapter_seq": int(chapter["seq"]),
-            }
+    seen: set[tuple[int, str]] = set()
+    # Long chapters are split into overlapping windows so late scenes are
+    # covered too; grounding always searches the FULL chapter text.
+    for window in _windows(text):
+        parsed = _call(
+            _EXTRACT_PROMPT.format(
+                max_facts=_MAX_FACTS_PER_CHAPTER,
+                chapter=_fence(window, title),
+            ),
+            purpose="constory.extract",
+            cfg=cfg,
+            db=db,
         )
+        for item in (parsed.get("facts") or [])[:_MAX_FACTS_PER_CHAPTER]:
+            if not isinstance(item, dict):
+                continue
+            statement = str(item.get("statement") or "").strip()
+            quote = str(item.get("quote") or "").strip()
+            if not statement or not quote:
+                continue
+            found = ground_quote_span(quote, text)
+            if found is None:
+                logger.debug("constory: discarding ungroundable fact quote %r", quote[:80])
+                continue
+            offset, verbatim = found
+            if (offset, verbatim) in seen:
+                continue
+            seen.add((offset, verbatim))
+            facts.append(
+                {
+                    "statement": statement,
+                    "quote": verbatim,
+                    "offset": offset,
+                    "chapter_id": chapter["id"],
+                    "chapter_seq": int(chapter["seq"]),
+                }
+            )
     return facts
 
 
@@ -356,17 +365,19 @@ def _check_chapter(
     if not batches:
         return []
 
-    fenced = _fence(text, chapter.get("title") or f"chapter {chapter['seq']}")
+    title = chapter.get("title") or f"chapter {chapter['seq']}"
     curr_seq = int(chapter["seq"])
     findings: list[dict] = []
     seen_keys: set[str] = set()
 
-    for batch in batches:
+    # Window the current chapter so contradictions past the model-view cap
+    # are still surfaced; grounding always uses the FULL chapter text.
+    for window, batch in ((w, b) for w in _windows(text) for b in batches):
         parsed = _call(
             _PAIR_PROMPT.format(
                 max_proposals=_MAX_PROPOSALS,
                 facts="\n".join(batch),
-                chapter=fenced,
+                chapter=_fence(window, title),
             ),
             purpose="constory.pair",
             cfg=cfg,
@@ -483,7 +494,8 @@ def _stage_proposal(
         "reasoning": str(
             verdict.get("reasoning") or prop.get("reasoning") or ""
         ).strip(),
-        "severity": compute_severity(subtype, canon_class),
+        # severity intentionally absent — the DB write path computes it from
+        # (subtype, canon_class); nothing upstream may pick it.
         "canon_class": canon_class,
         "canon_fact_id": canon_fact_id,
         "dedupe_key": key,
@@ -516,6 +528,37 @@ def get_run_status(work_id: str) -> dict | None:
 def is_running(work_id: str) -> bool:
     status = get_run_status(work_id)
     return bool(status and status.get("state") == "running")
+
+
+def try_claim_run(work_id: str) -> bool:
+    """Atomically claim a run slot BEFORE dispatching the background worker.
+
+    Marks the run 'running' synchronously so a second POST is refused and
+    the UI's very first status poll already sees an in-flight run.  Returns
+    False when a run is already claimed.
+    """
+    with _RUNS_GUARD:
+        current = _RUNS.get(work_id)
+        if current and current.get("state") == "running":
+            return False
+        _RUNS[work_id] = {
+            "state": "running",
+            "started_at": time.time(),
+            "finished_at": None,
+            "chapters_done": 0,
+            "chapters_total": 0,
+            "findings_created": 0,
+            "error": None,
+        }
+        return True
+
+
+def release_run_claim(work_id: str, *, error: str = "dispatch failed") -> None:
+    """Release a claim whose worker was never dispatched (submit refused)."""
+    with _RUNS_GUARD:
+        current = _RUNS.get(work_id)
+        if current and current.get("state") == "running":
+            current.update(state="error", finished_at=time.time(), error=error)
 
 
 def _set_run(work_id: str, **fields: Any) -> None:
@@ -567,13 +610,12 @@ def _run_locked(db: OrivellumDB, cfg: Any, *, work_id: str) -> dict:
     if len(chapters) == 0:
         return {"chapters": 0, "findings_created": 0, "findings_kept": 0}
 
-    # Sealed/active canon facts for this work (+ series-wide).
-    try:
-        from orivellum.database.canon_store import CanonStore  # noqa: PLC0415
+    # Sealed/active canon facts for this work (+ series-wide).  A load
+    # failure raises — a run that silently skipped canon checking would
+    # report a clean bill of health it never earned.
+    from orivellum.database.canon_store import CanonStore  # noqa: PLC0415
 
-        canon_facts = CanonStore(db).list_facts(work_id=work_id, status="active", limit=200)
-    except Exception:
-        canon_facts = []
+    canon_facts = CanonStore(db).list_facts(work_id=work_id, status="active", limit=200)
 
     # Stage everything first — no deletes until every LLM call succeeded.
     all_facts: list[dict] = []
@@ -592,22 +634,18 @@ def _run_locked(db: OrivellumDB, cfg: Any, *, work_id: str) -> dict:
         all_facts.extend(_extract_chapter_facts(db, cfg, chapter))
         _set_run(work_id, chapters_done=i + 1)
 
-    # Commit: clear still-open constory findings, insert the fresh set.
+    # Commit: ONE transaction swaps still-open findings for the fresh set.
     # Dispositioned rows survive; the UNIQUE dedupe key silently skips any
     # re-detection of a finding the author already dispositioned.
-    removed = db.delete_open_narrative_findings(work_id, detector="constory")
-    created = 0
-    for finding in staged:
-        if db.create_narrative_finding(**finding, detector="constory") is not None:
-            created += 1
+    swap = db.replace_open_narrative_findings(work_id, staged, detector="constory")
     logger.info(
         "constory: work=%s chapters=%d staged=%d created=%d cleared_open=%d",
-        work_id, len(chapters), len(staged), created, removed,
+        work_id, len(chapters), len(staged), swap["created"], swap["removed"],
     )
     return {
         "chapters": len(chapters),
-        "findings_created": created,
-        "findings_kept": len(staged) - created,
+        "findings_created": swap["created"],
+        "findings_kept": swap["skipped"],
     }
 
 

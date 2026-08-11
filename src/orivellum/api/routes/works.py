@@ -679,7 +679,9 @@ def constory_run(work_id: str):
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
-    if constory.is_running(work_id):
+    # Atomic claim BEFORE dispatch: a second POST is refused here, and the
+    # UI's first status poll already sees state='running'.
+    if not constory.try_claim_run(work_id):
         raise HTTPException(409, "A contradiction check is already running for this work")
     cfg = get_config()
 
@@ -690,6 +692,7 @@ def constory_run(work_id: str):
             logger.exception("constory run failed for work %s", work_id)
 
     if not submit_bg(_run, kind="constory", label=f"constory:{work_id}"):
+        constory.release_run_claim(work_id, error="background executor unavailable")
         raise HTTPException(503, "Background executor unavailable — try again shortly")
     return {"started": True, "work_id": work_id}
 
