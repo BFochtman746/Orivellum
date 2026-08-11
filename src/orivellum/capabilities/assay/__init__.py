@@ -385,6 +385,16 @@ def run_instrument(
         db.finish_assay_run(run_id, status="error", error=str(exc)[:500])
         raise
     findings = result.pop("findings", [])
+    # Stamp the computed authority on every run: blocking is derived from
+    # (tier, certification) at execution time — an advisory instrument's
+    # verdict is a measurement, never a gate decision.
+    evidence = result.get("evidence") or {}
+    evidence["authority"] = {
+        "tier": instrument["tier"],
+        "certification": instrument["certification"],
+        "blocking": is_blocking(instrument),
+    }
+    result["evidence"] = evidence
     for f in findings:
         db.create_assay_finding(
             run_id=run_id,
@@ -588,7 +598,7 @@ def _run_d14(db: Any, cfg: Any, work_id: str) -> dict:
                     }
                 )
     return {
-        "verdict": "fail" if confirmed else "pass",
+        "verdict": "confirmed_drift" if confirmed else "clean",
         "score": None,
         "evidence": {
             "chapters_checked": len(chapters),
@@ -654,7 +664,14 @@ def _run_signature_gate(
     if key == "gate.d17":
         failed = _d17_structural(db, work_id, lo, hi, thresholds, evidence, findings)
         if failed:
-            return {"verdict": "fail", "score": None, "evidence": evidence, "findings": findings}
+            # A measurement, not a gate decision: the go/no-go on D17 is the
+            # author's signature, always.
+            return {
+                "verdict": "structural_violations",
+                "score": None,
+                "evidence": evidence,
+                "findings": findings,
+            }
     if signature is None or signature["decision"] not in ("open", "go"):
         return {
             "verdict": "locked",
@@ -688,8 +705,14 @@ def _run_signature_gate(
         )
         if parsed is None:
             raise AssayError(f"{key}: gateway evidence call failed for chapter {ch['seq']}")
+        notes = parsed.get("annotations")
+        if not isinstance(notes, list):
+            raise AssayError(
+                f"{key}: malformed evidence response for chapter {ch['seq']} "
+                "(annotations must be a list)"
+            )
         gathered += 1
-        for note in list(parsed.get("annotations", []))[:8]:
+        for note in notes[:8]:
             findings.append(
                 {
                     "chapter_id": ch["id"],
@@ -709,6 +732,20 @@ def _run_signature_gate(
         "evidence": evidence,
         "findings": findings,
     }
+
+
+def _validated_scores(raw: object, label: str, field: str) -> dict[str, float]:
+    """Pairwise scores must be a map of numeric 0-100 values — fail loud."""
+    if not isinstance(raw, dict) or not raw:
+        raise AssayError(f"judge: malformed pairwise response for {label} ({field})")
+    out: dict[str, float] = {}
+    for cat, val in raw.items():
+        if not isinstance(val, (int, float)) or isinstance(val, bool) or not 0 <= val <= 100:
+            raise AssayError(
+                f"judge: malformed pairwise score for {label} ({field}.{cat})"
+            )
+        out[str(cat)] = float(val)
+    return out
 
 
 def _judge_pairwise_step(
@@ -734,15 +771,25 @@ def _judge_pairwise_step(
         pw = judge.judge_pairwise(db, cfg, model, label, snap["text"], text)
         if pw is None:
             raise AssayError(f"judge: pairwise gateway call failed for {label}")
+        scores_prev = _validated_scores(pw.get("scores_a"), label, "scores_a")
+        scores_cur = _validated_scores(pw.get("scores_b"), label, "scores_b")
+        decreased = sorted(
+            cat
+            for cat, prev_score in scores_prev.items()
+            if cat in scores_cur and scores_cur[cat] < prev_score
+        )
         pw_row = {
             "chapter": ch["seq"],
             "preference": pw.get("preference"),
-            "scores_previous": pw.get("scores_a"),
-            "scores_current": pw.get("scores_b"),
+            "scores_previous": scores_prev,
+            "scores_current": scores_cur,
+            "decreased_categories": decreased,
             "reason": str(pw.get("reason", ""))[:400],
         }
         pairwise_results.append(pw_row)
-        if str(pw.get("preference", "")).upper() == "A":
+        # Regression when the judge prefers the PREVIOUS revision OR any
+        # rubric category scored below its predecessor — surfaced either way.
+        if str(pw.get("preference", "")).upper() == "A" or decreased:
             findings.append(
                 {
                     "chapter_id": ch["id"],
@@ -759,6 +806,33 @@ def _judge_pairwise_step(
     )
 
 
+def _judge_annotations_to_findings(
+    ch: dict | None, level: str, parsed: dict, findings: list[dict]
+) -> None:
+    """Validate a judge response's annotations and convert them to findings.
+
+    Malformed shapes raise (fail loud) — never stored unvalidated.
+    """
+    annotations = parsed.get("annotations")
+    if not isinstance(annotations, dict):
+        raise AssayError(f"judge: malformed {level}-level response (annotations must map)")
+    for category, notes in annotations.items():
+        if not isinstance(notes, list):
+            raise AssayError(f"judge: malformed {level}-level response (category {category!r})")
+        for note in notes[:6]:
+            findings.append(
+                {
+                    "chapter_id": ch["id"] if ch else None,
+                    "unit": f"chapter {ch['seq']}" if ch else "story",
+                    "issue_type": f"{level}.{category}",
+                    "severity": "info",
+                    "classification": "perspectival",
+                    "action": "advisory",
+                    "evidence": {"annotation": str(note)[:600]},
+                }
+            )
+
+
 def _run_judge(
     db: Any, cfg: Any, work_id: str, chapter_id: str | None, thresholds: dict
 ) -> dict:
@@ -771,19 +845,7 @@ def _run_judge(
     evidence: dict = {"model": model, "levels": {}}
 
     def _annotations_to_findings(ch: dict | None, level: str, parsed: dict) -> None:
-        for category, notes in (parsed.get("annotations") or {}).items():
-            for note in list(notes)[:6]:
-                findings.append(
-                    {
-                        "chapter_id": ch["id"] if ch else None,
-                        "unit": f"chapter {ch['seq']}" if ch else "story",
-                        "issue_type": f"{level}.{category}",
-                        "severity": "info",
-                        "classification": "perspectival",
-                        "action": "advisory",
-                        "evidence": {"annotation": str(note)[:600]},
-                    }
-                )
+        _judge_annotations_to_findings(ch, level, parsed, findings)
 
     # Story level (whole-work runs only).
     if chapter_id is None:

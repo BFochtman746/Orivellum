@@ -340,16 +340,36 @@ class TestD14(AssayBase):
         self.assertEqual(by_type["catalog"]["classification"], "confirmed")
         self.assertEqual(by_type["theology_lecture"]["severity"], "info")
         self.assertEqual(by_type["theology_lecture"]["classification"], "unconfirmed_signature")
-        self.assertEqual(run["verdict"], "fail")
+        self.assertEqual(run["verdict"], "confirmed_drift")
         self.assertGreaterEqual(run["evidence"]["confirmed"], 1)
         # every confirmation went through the gateway with the original quotes
         confirm_calls = [c for c in stub.calls if c["purpose"] == "assay.d14.confirm"]
         self.assertEqual(len(confirm_calls), len(findings))
 
+    def test_string_boolean_never_confirms(self):
+        """Strict JSON boolean required: {"confirmed": "false"} is malformed,
+        not a confirmation — it must stay an unconfirmed advisory."""
+        self._seed_book()
+
+        class _SneakyStub(_StubLLM):
+            def __call__(self, messages, **kwargs):
+                if kwargs.get("purpose") == "assay.d14.confirm":
+                    self.calls.append({"purpose": "assay.d14.confirm"})
+                    return SimpleNamespace(
+                        ok=True, text=json.dumps({"confirmed": "false"}), error=None
+                    )
+                return super().__call__(messages, **kwargs)
+
+        run, findings, _ = self._run("gate.d14", stub=_SneakyStub())
+        self.assertEqual(run["verdict"], "clean")
+        for f in findings:
+            self.assertEqual(f["classification"], "unconfirmed_signature")
+            self.assertEqual(f["severity"], "info")
+
     def test_gateway_down_never_fails_a_chapter(self):
         self._seed_book()
         run, findings, _ = self._run("gate.d14", stub=_StubLLM(down=True))
-        self.assertEqual(run["verdict"], "pass")
+        self.assertEqual(run["verdict"], "clean")
         for f in findings:
             self.assertEqual(f["severity"], "info")
             self.assertEqual(f["classification"], "unconfirmed_signature")
@@ -393,7 +413,7 @@ class TestSignatureGates(AssayBase):
     def test_d17_structural_conditions_run_unsigned(self):
         _seed_chapter(self.db, self.work_id, 5, "Five", RESTORATION)
         run, findings, stub = self._run("gate.d17")
-        self.assertEqual(run["verdict"], "fail")
+        self.assertEqual(run["verdict"], "structural_violations")
         self.assertEqual(stub.calls, [])  # deterministic — no model involved
         structural = [f for f in findings if f["classification"] == "structural"]
         self.assertTrue(structural)
@@ -449,6 +469,39 @@ class TestJudge(AssayBase):
         self.assertEqual(len(regressions), 1)
         self.assertEqual(regressions[0]["action"], "review_regression")
 
+    def test_score_decrease_is_a_regression_even_when_preferred(self):
+        """A response preferring B while lowering a rubric category still
+        surfaces a regression — never silently accepted."""
+        ch_id = _seed_chapter(self.db, self.work_id, 1, "One", NORMAL)
+        self._run("judge.hierarchical", chapter_id=ch_id)
+        with self.db._lock:
+            self.db._conn.execute(
+                "UPDATE book_chapters SET text=? WHERE id=?", (NORMAL + " More.", ch_id)
+            )
+            self.db._conn.commit()
+        # default stub prefers B but scores_b (60) < scores_a (70)
+        run, findings, _ = self._run("judge.hierarchical", chapter_id=ch_id)
+        regressions = [f for f in findings if f["issue_type"] == "pairwise_regression"]
+        self.assertEqual(len(regressions), 1)
+        self.assertEqual(
+            regressions[0]["evidence"]["decreased_categories"], ["hook_and_close"]
+        )
+
+    def test_malformed_annotations_fail_loud(self):
+        chapters = self._seed_book()
+
+        class _MalformedStub(_StubLLM):
+            def __call__(self, messages, **kwargs):
+                if kwargs.get("purpose") == "assay.judge.chapter":
+                    return SimpleNamespace(
+                        ok=True, text=json.dumps({"annotations": "not a map"}), error=None
+                    )
+                return super().__call__(messages, **kwargs)
+
+        with self.assertRaises(assay.AssayError):
+            self._run("judge.hierarchical", stub=_MalformedStub(), chapter_id=chapters[1])
+        self.assertEqual(self.db.list_assay_runs(self.work_id)[0]["status"], "error")
+
     def test_gateway_failure_marks_run_error(self):
         chapters = self._seed_book()
         with self.assertRaises(assay.AssayError):
@@ -486,6 +539,25 @@ class TestRunsAndBattery(AssayBase):
                 self.assertEqual(f["force_check"], key)
                 self.assertTrue(f["issue_type"], key)
                 self.assertIn(f["severity"], ("critical", "high", "medium", "low", "info"), key)
+
+    def test_every_run_stamps_computed_authority(self):
+        """Blocking is computed at execution: advisory instruments carry
+        blocking=false in every run's evidence."""
+        self._seed_book()
+        run, _, _ = self._run("gate.d13")
+        auth = run["evidence"]["authority"]
+        self.assertEqual(auth["certification"], "advisory")
+        self.assertFalse(auth["blocking"])
+        self.assertEqual(auth["tier"], 1)
+
+    def test_cross_work_chapter_refused_at_claim(self):
+        other = self.db.create_work("Other", work_type="writing")["id"]
+        foreign_ch = _seed_chapter(self.db, other, 1, "X", NORMAL)
+        inst = self.db.get_assay_instrument("drift.catalog")
+        with self.assertRaises(ValueError):
+            self.db.create_assay_run(
+                instrument_id=inst["id"], work_id=self.work_id, chapter_id=foreign_ch
+            )
 
     def test_unregistered_instrument_refused(self):
         with self.assertRaises(assay.AssayError):

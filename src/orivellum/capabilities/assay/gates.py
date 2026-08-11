@@ -147,9 +147,10 @@ def confirm_detection(
         if raw.startswith("```"):
             raw = raw.strip("`").lstrip("json").strip()
         parsed = json.loads(raw)
-        return {
-            "confirmed": bool(parsed.get("confirmed")),
-            "reason": str(parsed.get("reason", ""))[:400],
-        }
     except (ValueError, AttributeError):
         return {"confirmed": None, "reason": "unparseable confirmation response"}
+    verdict = parsed.get("confirmed") if isinstance(parsed, dict) else None
+    if not isinstance(verdict, bool):
+        # Strict JSON boolean required — "false"/"yes"/1 never confirm.
+        return {"confirmed": None, "reason": "malformed confirmation (non-boolean)"}
+    return {"confirmed": verdict, "reason": str(parsed.get("reason", ""))[:400]}

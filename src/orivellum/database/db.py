@@ -7714,6 +7714,15 @@ class OrivellumDB:
         claim, taken under the write lock, so double-dispatch is impossible."""
         run_id = str(uuid.uuid4())
         with self._lock:
+            if chapter_id is not None:
+                owned = self._conn.execute(
+                    "SELECT 1 FROM book_chapters WHERE id=? AND work_id=?",
+                    (chapter_id, work_id),
+                ).fetchone()
+                if owned is None:
+                    raise ValueError(
+                        f"chapter {chapter_id!r} does not belong to work {work_id!r}"
+                    )
             busy = self._conn.execute(
                 """SELECT id FROM assay_run
                    WHERE instrument_id=? AND work_id=? AND status='running'""",
