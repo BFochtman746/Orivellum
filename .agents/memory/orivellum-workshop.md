@@ -42,8 +42,9 @@ openpyxl, python-pptx, python-docx, reportlab, matplotlib — all usable in gene
 Workshop scripts run via `_SANDBOX_RUNNER`: scrubbed env (never parent os.environ — it holds secrets), `python -I`, POSIX rlimits (skipped on win32), and socket-layer denial (patch `socket`/`_socket` connection entry points, NOT import blocking — reportlab and python-pptx import urllib internals and break under import blocks). **Why:** best-effort guard against hallucinated network/exfil; explicitly not an adversarial boundary (no OS isolation on the Windows target). Regression tests generate real PDF/PPTX inside the sandbox.
 
 ## Sandbox filesystem boundary
-- Generated-code sandboxes must split READ-ONLY (interpreter + dependencies) from WRITABLE (workdir + explicitly granted output dirs) — blanket access under sys.prefix would let scripts tamper with installed packages.
-**Why:** completion review rejected a single-tier allowlist as a host-integrity risk.
+- Generated-code sandboxes must split READ-ONLY (interpreter + dependencies) from WRITABLE (workdir + explicitly granted output dirs).
+**Why:** blanket access under sys.prefix would let scripts tamper with installed packages — a host-integrity hole even on a single-operator machine.
+- Process creation (subprocess/os.system/exec/fork/spawn) must be audit-denied: a child process does not inherit the audit hook, so any spawn is a full sandbox escape.
 - Never ban ctypes imports in the sandbox — numpy (pulled in by openpyxl) imports ctypes at import time, killing legit builds.
 - System mime.types tables must stay readable: stdlib mimetypes opens them on instantiation; they exist on CI runners but not this container, so the gap only shows in CI.
 - Reject symlinks at every output-consumption point INCLUDING fallback candidate selection — a link can otherwise launder outside bytes into a published artifact.

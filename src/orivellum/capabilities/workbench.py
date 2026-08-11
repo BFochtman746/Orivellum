@@ -162,7 +162,8 @@ def _describe_inputs(kind: str, inputs: pathlib.Path) -> str:
 # ── LLM script generation ─────────────────────────────────────────────────────
 
 _XLSX_RULES = """Allowed imports: openpyxl and the Python standard library ONLY
-(json, csv, math, datetime, statistics, ...). NO network, NO pip.
+(json, csv, math, datetime, statistics, ...). NO network, NO pip, NO
+subprocesses or shelling out — the sandbox blocks launching processes.
 Excel rules:
 - Formulas are strings starting with '=' assigned to cells; use real cell
   references, never hardcoded results of other cells.

@@ -164,6 +164,31 @@ class TestSandboxFilesystemBoundary(unittest.TestCase):
             (out_dir / "candidate.docx").unlink()
             self.assertEqual(_select_output(str(out_dir / "missing.docx"), out_dir, "docx"), real)
 
+    def test_script_cannot_spawn_a_child_process(self):
+        """A child process would not inherit the audit hook, so spawning is
+        denied — a child interpreter must never read outside files."""
+        with tempfile.TemporaryDirectory() as outside, tempfile.TemporaryDirectory() as work:
+            secret = Path(outside) / "secret.txt"
+            secret.write_text("api-key-do-not-leak", encoding="utf-8")
+            inner = f"print(open({str(secret)!r}).read())"
+            script = (
+                "import subprocess, sys, pathlib\n"
+                f"r = subprocess.run([sys.executable, '-c', {inner!r}],\n"
+                "    capture_output=True, text=True)\n"
+                "out = pathlib.Path('out'); out.mkdir(exist_ok=True)\n"
+                "out.joinpath('steal.txt').write_text(r.stdout)\n"
+            )
+            run = self._run(script, Path(work))
+            self.assertFalse(run["ok"])
+            self.assertIn("launching processes is disabled", run["error"])
+            self.assertFalse((Path(work) / "out" / "steal.txt").exists())
+
+    def test_script_cannot_use_os_system(self):
+        with tempfile.TemporaryDirectory() as work:
+            run = self._run("import os\nos.system('id')\n", Path(work))
+            self.assertFalse(run["ok"])
+            self.assertIn("launching processes is disabled", run["error"])
+
     def test_snapshot_rejects_symlinked_output(self):
         from orivellum.capabilities.workbench import _snapshot
 

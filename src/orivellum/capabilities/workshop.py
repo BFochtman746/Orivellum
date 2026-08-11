@@ -543,6 +543,13 @@ def _audit(event, args):
             _require(target, True)
     elif event in ("os.link", "os.symlink"):
         raise PermissionError("Sandbox: creating links is disabled.")
+    elif event in (
+        "subprocess.Popen", "os.system", "os.exec", "os.spawn",
+        "os.posix_spawn", "os.fork", "os.forkpty", "pty.spawn",
+    ):
+        # A child process would not inherit this audit hook, so any spawn or
+        # re-exec is a full sandbox escape. Denied outright.
+        raise PermissionError("Sandbox: launching processes is disabled.")
 
 
 sys.addaudithook(_audit)
