@@ -365,6 +365,12 @@ def execute_workshop(
         }
 
     final_path = Path(output_path)
+    if final_path.is_symlink():
+        return {
+            "ok": False,
+            "error": "Generated output is a symlink — rejected.",
+            "script": script,
+        }
     if not final_path.exists():
         # LLM may have saved with slightly different path — search the dir
         candidates = sorted(out_dir.glob(f"*.{fmt}"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -445,9 +451,64 @@ def _clean_script(raw: str) -> str:
 # determined to escape (ctypes, re-exec) needs OS-level isolation, which is
 # not available on the Windows deployment target.
 _SANDBOX_RUNNER = """\
+import os
+import sys
+
+# ── Filesystem allowlist (audit hook) ────────────────────────────────────────
+# Generated code may only open files under its working directory, the Python
+# installation (stdlib + site-packages), and any extra directories the parent
+# explicitly granted via ORIVELLUM_SANDBOX_ALLOW. Audit hooks cannot be
+# removed once installed, so this holds for the life of the process.
+_CWD = os.path.realpath(os.getcwd())
+_ALLOWED = [_CWD]
+for _p in [
+    sys.prefix, sys.base_prefix, sys.exec_prefix,
+    getattr(sys, "base_exec_prefix", ""),
+] + list(sys.path):
+    if _p:
+        _ALLOWED.append(os.path.realpath(_p))
+for _extra in (os.environ.get("ORIVELLUM_SANDBOX_ALLOW") or "").split(os.pathsep):
+    if _extra:
+        _ALLOWED.append(os.path.realpath(_extra))
+_ALLOWED = tuple(dict.fromkeys(_ALLOWED))
+_DEVNULL = os.path.realpath(os.devnull)
+
+
+def _allowed_path(raw):
+    try:
+        path = os.fsdecode(raw)
+    except (TypeError, ValueError):
+        return False
+    rp = os.path.realpath(path)
+    if rp == _DEVNULL:
+        return True
+    return any(rp == a or rp.startswith(a + os.sep) for a in _ALLOWED)
+
+
+def _audit(event, args):
+    if event == "open":
+        target = args[0] if args else None
+        if target is None or isinstance(target, int):
+            return  # re-opening an fd that was already vetted at open time
+        if not _allowed_path(target):
+            raise PermissionError(
+                "Sandbox: file access outside the working directory "
+                "is disabled: %r" % (target,))
+    elif event in ("os.rename", "os.remove", "os.rmdir"):
+        for target in args[:2]:
+            if target is not None and not isinstance(target, int):
+                if not _allowed_path(target):
+                    raise PermissionError(
+                        "Sandbox: file access outside the working directory "
+                        "is disabled: %r" % (target,))
+    elif event in ("os.link", "os.symlink"):
+        raise PermissionError("Sandbox: creating links is disabled.")
+
+
+sys.addaudithook(_audit)
+
 import _socket
 import socket
-import sys
 
 
 def _deny(*_a, **_k):
@@ -475,9 +536,11 @@ runpy.run_path(sys.argv[1], run_name="__main__")
 """
 
 
-def _sandbox_env(tmp: str) -> dict:
+def _sandbox_env(tmp: str, allow: list[str] | None = None) -> dict:
     """Minimal environment for the sandboxed script — never the parent's
-    os.environ (which carries API keys and session secrets)."""
+    os.environ (which carries API keys and session secrets). *allow* grants
+    the script's audit hook extra directories beyond its working dir (e.g.
+    the Workshop's output dir)."""
     env = {
         "HOME": tmp,
         "TMPDIR": tmp,
@@ -486,6 +549,8 @@ def _sandbox_env(tmp: str) -> dict:
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    if allow:
+        env["ORIVELLUM_SANDBOX_ALLOW"] = os.pathsep.join(allow)
     for key in ("PATH", "SYSTEMROOT", "WINDIR", "COMSPEC"):  # Windows needs these
         if os.environ.get(key):
             env[key] = os.environ[key]
@@ -532,7 +597,7 @@ def _run_script_safely(
                     text=True,
                     timeout=60,
                     cwd=tmp,
-                    env=_sandbox_env(tmp),
+                    env=_sandbox_env(tmp, allow=[os.path.dirname(output_path)]),
                     preexec_fn=_sandbox_preexec if sys.platform != "win32" else None,
                 )
                 stdout = result.stdout[:3000]

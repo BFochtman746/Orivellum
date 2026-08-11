@@ -40,3 +40,8 @@ openpyxl, python-pptx, python-docx, reportlab, matplotlib — all usable in gene
 
 ## Sandbox (Aug 2026)
 Workshop scripts run via `_SANDBOX_RUNNER`: scrubbed env (never parent os.environ — it holds secrets), `python -I`, POSIX rlimits (skipped on win32), and socket-layer denial (patch `socket`/`_socket` connection entry points, NOT import blocking — reportlab and python-pptx import urllib internals and break under import blocks). **Why:** best-effort guard against hallucinated network/exfil; explicitly not an adversarial boundary (no OS isolation on the Windows target). Regression tests generate real PDF/PPTX inside the sandbox.
+
+## Sandbox filesystem boundary
+- The shared sandbox runner's audit hook allowlists file access to cwd + Python install + ORIVELLUM_SANDBOX_ALLOW dirs; audit hooks are irremovable, portable to Windows (unlike preexec rlimits).
+- Never ban ctypes imports in the sandbox — numpy (pulled in by openpyxl) imports ctypes at import time, so legit xlsx builds die instantly.
+- Symlinks are denied twice: os.symlink is audit-blocked in-sandbox, and _snapshot/output consumption reject any symlink so a link can't launder outside bytes into a published version.

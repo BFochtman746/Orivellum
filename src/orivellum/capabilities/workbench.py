@@ -94,9 +94,14 @@ def _sha256(path: pathlib.Path) -> str:
 
 
 def _snapshot(dir_path: pathlib.Path) -> list[dict]:
-    """Relative name + size + sha256 for every file under *dir_path*."""
+    """Relative name + size + sha256 for every file under *dir_path*.
+
+    Symlinks are rejected outright: a link smuggled into the output could
+    make the published version serve bytes from outside the sandbox."""
     out = []
     for p in sorted(dir_path.rglob("*")):
+        if p.is_symlink():
+            raise ValueError(f"symlink in output is not allowed: {p.relative_to(dir_path)}")
         if p.is_file():
             out.append(
                 {
