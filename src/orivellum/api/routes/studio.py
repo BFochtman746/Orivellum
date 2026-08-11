@@ -1914,6 +1914,94 @@ def _get_voice_casting(db, work_id: str) -> dict[str, str]:
     return {k: v for k, v in casting.items() if isinstance(v, str) and v}
 
 
+# Chapter-first books: when a document's extracted book_chapters cover at
+# least this share of its chunk text, casting/rendering switches to one unit
+# per structural chapter.  Below the threshold we stay per-document — the
+# heading parser drops any text before the first heading, so rendering from
+# sparse chapter rows could silently shrink the book.
+_CHAPTER_UNIT_MIN_COVERAGE = 0.7
+
+
+def _load_work_cast_units(db, work_id: str) -> list[dict]:
+    """Ordered casting/narration units for a Work's ready documents.
+
+    A document expands into its structural chapters (book_chapters rows, in
+    seq order) when it has at least two chapters with text and their combined
+    length covers most of the document — multi-POV chapter-first books get
+    per-chapter casting.  Every other document stays a single unit, keyed by
+    its doc id, preserving the historical per-file behavior.
+
+    Unit shape: {"id", "doc_id", "title", "text", "kind": "chapter"|"document"}.
+    For document units ``id == doc_id``.
+    """
+    units: list[dict] = []
+    with db._lock:
+        doc_rows = db._conn.execute(
+            """SELECT d.id, d.title, d.source
+               FROM documents d JOIN objects o ON o.id = d.id
+               WHERE d.work_id=? AND d.readiness='ready'
+               ORDER BY o.created_at""",
+            (work_id,),
+        ).fetchall()
+        for doc in doc_rows:
+            chunk_rows = db._conn.execute(
+                "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
+                (doc["id"],),
+            ).fetchall()
+            doc_text = "\n\n".join(r["text"] for r in chunk_rows) if chunk_rows else ""
+            doc_title = doc["title"] or (
+                doc["source"].split("/")[-1] if doc["source"] else "Chapter"
+            )
+            ch_rows = db._conn.execute(
+                """SELECT id, seq, title, text FROM book_chapters
+                   WHERE source_doc_id=? AND text IS NOT NULL AND text != ''
+                   ORDER BY seq""",
+                (doc["id"],),
+            ).fetchall()
+            use_chapters = False
+            if len(ch_rows) >= 2 and doc_text:
+                covered = sum(len(r["text"]) for r in ch_rows)
+                use_chapters = covered >= _CHAPTER_UNIT_MIN_COVERAGE * len(doc_text)
+            if use_chapters:
+                for r in ch_rows:
+                    units.append(
+                        {
+                            "id": r["id"],
+                            "doc_id": doc["id"],
+                            "title": r["title"] or f"{doc_title} — part {r['seq']}",
+                            "text": r["text"],
+                            "kind": "chapter",
+                        }
+                    )
+            elif doc_text:
+                units.append(
+                    {
+                        "id": doc["id"],
+                        "doc_id": doc["id"],
+                        "title": doc_title,
+                        "text": doc_text,
+                        "kind": "document",
+                    }
+                )
+    return units
+
+
+def _resolve_unit_casting(casting: dict[str, str], units: list[dict]) -> dict[str, str]:
+    """Re-key a saved casting map onto the current units.
+
+    A voice saved for a chapter id wins; a voice saved for the parent document
+    (the pre-chapter format, still what non-chapter Works use) applies to every
+    unit of that document.  Stale keys — e.g. chapter ids invalidated by a
+    re-extraction — simply resolve to nothing and are dropped.
+    """
+    resolved: dict[str, str] = {}
+    for u in units:
+        voice = casting.get(u["id"]) or casting.get(u["doc_id"])
+        if voice:
+            resolved[u["id"]] = voice
+    return resolved
+
+
 class VoiceCastingUpdate(BaseModel):
     # doc_id -> voice_id ("" or missing = narrator default).
     # None = leave the existing casting untouched (narrator-only save).
@@ -1925,20 +2013,19 @@ class VoiceCastingUpdate(BaseModel):
 
 @router.get("/studio/works/{work_id}/casting")
 def get_work_voice_casting(work_id: str):
-    """Return the Work's chapter→voice casting plus its ready chapters."""
+    """Return the Work's chapter→voice casting plus its castable units.
+
+    Chapter-first documents list one row per structural chapter; other
+    documents list one row per file.  ``sections`` is resolved onto the
+    current unit ids so a doc-level voice saved before chapter extraction
+    still shows up on each of that document's chapters.
+    """
     db = get_db()
     work = db.get_work(work_id)
     if not work:
         raise HTTPException(404, f"Work {work_id!r} not found")
-    with db._lock:
-        doc_rows = db._conn.execute(
-            """SELECT d.id, d.title, d.source
-               FROM documents d JOIN objects o ON o.id = d.id
-               WHERE d.work_id=? AND d.readiness='ready'
-               ORDER BY o.created_at""",
-            (work_id,),
-        ).fetchall()
-    casting = _get_voice_casting(db, work_id)
+    units = _load_work_cast_units(db, work_id)
+    casting = _resolve_unit_casting(_get_voice_casting(db, work_id), units)
     narrator = (work.get("meta") or {}).get("narrator_voice")
     return {
         "work_id": work_id,
@@ -1946,11 +2033,13 @@ def get_work_voice_casting(work_id: str):
         "narrator_voice": narrator if isinstance(narrator, str) and narrator else None,
         "documents": [
             {
-                "id": r["id"],
-                "title": r["title"] or (r["source"].split("/")[-1] if r["source"] else "Chapter"),
-                "voice": casting.get(r["id"]),
+                "id": u["id"],
+                "doc_id": u["doc_id"],
+                "kind": u["kind"],
+                "title": u["title"],
+                "voice": casting.get(u["id"]),
             }
-            for r in doc_rows
+            for u in units
         ],
     }
 
@@ -1980,10 +2069,20 @@ def put_work_voice_casting(work_id: str, body: VoiceCastingUpdate):
         raise HTTPException(404, f"Work {work_id!r} not found")
 
     with db._lock:
-        valid_docs = {
+        valid_ids = {
             r["id"]
             for r in db._conn.execute(
                 "SELECT id FROM documents WHERE work_id=?", (work_id,)
+            ).fetchall()
+        }
+        # Structural chapters are castable units too (chapter-first books).
+        valid_ids |= {
+            r["id"]
+            for r in db._conn.execute(
+                """SELECT bc.id FROM book_chapters bc
+                   JOIN documents d ON d.id = bc.source_doc_id
+                   WHERE d.work_id=?""",
+                (work_id,),
             ).fetchall()
         }
 
@@ -1994,14 +2093,16 @@ def put_work_voice_casting(work_id: str, body: VoiceCastingUpdate):
         cleaned = _get_voice_casting(db, work_id)
     else:
         cleaned = {}
-        for doc_id, voice in body.sections.items():
+        for unit_id, voice in body.sections.items():
             if not voice:  # empty string clears the assignment
                 continue
-            if doc_id not in valid_docs:
-                raise HTTPException(422, f"Document {doc_id!r} is not part of this Work")
+            if unit_id not in valid_ids:
+                raise HTTPException(
+                    422, f"Section {unit_id!r} is not a document or chapter of this Work"
+                )
             if voice not in _VOICE_BY_ID and not _is_clone_voice(voice):
                 raise HTTPException(422, f"Unknown voice {voice!r}")
-            cleaned[doc_id] = voice
+            cleaned[unit_id] = voice
         if cleaned:
             meta["voice_casting"] = cleaned
         else:
@@ -2027,26 +2128,14 @@ _CASTING_MAX_CHAPTERS = 80  # chapters beyond this stay on the narrator default
 
 
 def _casting_chapter_context(db, work_id: str) -> list[dict]:
-    """Ready chapters (documents) with a short text snippet each."""
-    with db._lock:
-        doc_rows = db._conn.execute(
-            """SELECT d.id, d.title, d.source
-               FROM documents d JOIN objects o ON o.id = d.id
-               WHERE d.work_id=? AND d.readiness='ready'
-               ORDER BY o.created_at""",
-            (work_id,),
-        ).fetchall()
-        chapters = []
-        for r in doc_rows:
-            title = r["title"] or (r["source"].split("/")[-1] if r["source"] else "Chapter")
-            snippet = ""
-            if len(chapters) < _CASTING_MAX_CHAPTERS:
-                chunk_rows = db._conn.execute(
-                    "SELECT text FROM chunks WHERE doc_id=? ORDER BY page LIMIT 2",
-                    (r["id"],),
-                ).fetchall()
-                snippet = " ".join((c["text"] or "") for c in chunk_rows)[:320]
-            chapters.append({"id": r["id"], "title": title, "snippet": snippet})
+    """Castable units (structural chapters or whole documents) with snippets."""
+    units = _load_work_cast_units(db, work_id)
+    chapters = []
+    for u in units:
+        snippet = ""
+        if len(chapters) < _CASTING_MAX_CHAPTERS:
+            snippet = " ".join((u["text"] or "").split())[:320]
+        chapters.append({"id": u["id"], "title": u["title"], "snippet": snippet})
     return chapters
 
 
@@ -2406,21 +2495,19 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
     db = get_db()
     cfg = get_config()
 
-    # ── Validate work ──────────────────────────────────────────────────────────
-    with db._lock:
-        work_row = db._conn.execute(
-            "SELECT id, title FROM works WHERE id=?", (body.work_id,)
-        ).fetchone()
-    if not work_row:
-        raise HTTPException(404, f"Work {body.work_id!r} not found")
+    # ── Validate work & build the narration plan ──────────────────────────────
+    # doc_texts entries are (unit_id, title, text) — a unit is a structural
+    # chapter for chapter-first documents, the whole document otherwise.
+    work_title, doc_texts = _collect_work_doc_texts(db, body.work_id)
 
-    work_title = work_row["title"] or "Untitled Work"
     voice_meta = _VOICE_BY_ID.get(body.voice, {})
     voice_name = voice_meta.get("name", body.voice)
 
-    # Per-Work voice casting: chapters (documents) may be mapped to their own
-    # voice; anything unmapped uses the narrator voice from the request.
-    casting = _get_voice_casting(db, body.work_id)
+    # Per-Work voice casting resolved onto the narration units: chapters or
+    # documents may be mapped to their own voice; anything unmapped uses the
+    # narrator voice from the request.
+    units = _load_work_cast_units(db, body.work_id)
+    casting = _resolve_unit_casting(_get_voice_casting(db, body.work_id), units)
 
     # Cloned voices exist only on the premium sidecar — reject up front rather
     # than rendering an entire book in an unrelated local narrator. The check
@@ -2433,39 +2520,6 @@ def synthesize_work_audiobook(body: WorkAudiobookRequest):
             "A cloned voice is selected (narrator or chapter casting) but the "
             "premium voice engine (tts_premium_url) is not enabled.",
         )
-
-    # ── Fetch all ready documents in work order ────────────────────────────────
-    with db._lock:
-        doc_rows = db._conn.execute(
-            """SELECT d.id, d.title, d.source
-               FROM documents d JOIN objects o ON o.id = d.id
-               WHERE d.work_id=? AND d.readiness='ready'
-               ORDER BY o.created_at""",
-            (body.work_id,),
-        ).fetchall()
-
-    if not doc_rows:
-        raise HTTPException(
-            422, "No ready documents found in this Work. Process documents in the Library first."
-        )
-
-    # ── Fetch text chunks per document ─────────────────────────────────────────
-    doc_texts: list[tuple[str, str, str]] = []  # (doc_id, title, full_text)
-    with db._lock:
-        for doc in doc_rows:
-            chunks = db._conn.execute(
-                "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
-                (doc["id"],),
-            ).fetchall()
-            if chunks:
-                text = "\n\n".join(r["text"] for r in chunks)
-                doc_title = (
-                    doc["title"] or doc["source"].split("/")[-1] if doc["source"] else "Chapter"
-                )
-                doc_texts.append((doc["id"], doc_title, text))
-
-    if not doc_texts:
-        raise HTTPException(422, "No extracted text found in any document of this Work.")
 
     out_dir = Path(cfg.data_dir) / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -3201,12 +3255,14 @@ def _run_work_tts_job(
 
 
 def _collect_work_doc_texts(db, work_id: str) -> tuple[str, list[tuple[str, str, str]]]:
-    """Resolve a Work's title and its ordered chapter texts.
+    """Resolve a Work's title and its ordered narration unit texts.
 
-    Returns ``(work_title, [(doc_id, title, full_text), ...])`` using the same
-    document selection and ordering as a real render, so callers (job start,
-    resume-info) always agree on the chapter plan. Raises HTTPException on
-    missing Work / no ready documents / no extracted text.
+    Returns ``(work_title, [(unit_id, title, full_text), ...])`` where a unit
+    is a structural chapter for chapter-first documents and the whole document
+    otherwise (see _load_work_cast_units). Every render entry point and the
+    resume-info endpoint use this same plan, so cache keys and progress
+    reporting always agree. Raises HTTPException on missing Work / no ready
+    documents / no extracted text.
     """
     with db._lock:
         work_row = db._conn.execute("SELECT id, title FROM works WHERE id=?", (work_id,)).fetchone()
@@ -3215,31 +3271,17 @@ def _collect_work_doc_texts(db, work_id: str) -> tuple[str, list[tuple[str, str,
     work_title = work_row["title"] or "Untitled Work"
 
     with db._lock:
-        doc_rows = db._conn.execute(
-            """SELECT d.id, d.title, d.source
-               FROM documents d JOIN objects o ON o.id = d.id
-               WHERE d.work_id=? AND d.readiness='ready'
-               ORDER BY o.created_at""",
+        has_ready = db._conn.execute(
+            "SELECT 1 FROM documents WHERE work_id=? AND readiness='ready' LIMIT 1",
             (work_id,),
-        ).fetchall()
-    if not doc_rows:
+        ).fetchone()
+    if not has_ready:
         raise HTTPException(
             422, "No ready documents found in this Work. Process documents in the Library first."
         )
 
-    doc_texts: list[tuple[str, str, str]] = []
-    with db._lock:
-        for doc in doc_rows:
-            chunks = db._conn.execute(
-                "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
-                (doc["id"],),
-            ).fetchall()
-            if chunks:
-                text = "\n\n".join(r["text"] for r in chunks)
-                doc_title = doc["title"] or (
-                    doc["source"].split("/")[-1] if doc["source"] else "Chapter"
-                )
-                doc_texts.append((doc["id"], doc_title, text))
+    units = _load_work_cast_units(db, work_id)
+    doc_texts = [(u["id"], u["title"], u["text"]) for u in units if u["text"]]
 
     if not doc_texts:
         raise HTTPException(422, "No extracted text found in any document of this Work.")
@@ -3269,7 +3311,9 @@ def work_tts_resume_info(body: WorkResumeInfoRequest):
     cfg = get_config()
 
     work_title, doc_texts = _collect_work_doc_texts(db, body.work_id)
-    casting = _get_voice_casting(db, body.work_id)
+    casting = _resolve_unit_casting(
+        _get_voice_casting(db, body.work_id), _load_work_cast_units(db, body.work_id)
+    )
     premium_ok = _is_premium_tts_enabled(cfg)
     voice_name = _VOICE_BY_ID.get(body.voice, {}).get("name", body.voice)
 
@@ -3365,7 +3409,9 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
     # Cloned voices exist only on the premium sidecar — reject before the job
     # is created rather than failing (or worse, mis-narrating) mid-render.
     # Covers the narrator AND every per-chapter cast voice.
-    casting = _get_voice_casting(db, body.work_id)
+    casting = _resolve_unit_casting(
+        _get_voice_casting(db, body.work_id), _load_work_cast_units(db, body.work_id)
+    )
     all_voices = {body.voice} | set(casting.values())
     if any(_is_clone_voice(v) for v in all_voices) and not _is_premium_tts_enabled(cfg):
         raise HTTPException(
