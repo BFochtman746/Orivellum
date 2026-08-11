@@ -321,17 +321,114 @@ def _generate_tests(cfg, db, proj: dict, instruction: str, out_dir: pathlib.Path
     return code
 
 
-def _test_runner_source() -> str:
-    """The Workshop sandbox runner with its script-execution tail replaced by
-    a TRUSTED unittest harness: the runner itself loads the test module,
-    runs the suite through unittest's real loader/runner, and writes a
-    token-authenticated JSON result file. The parent only believes a result
-    carrying the per-run token (delivered via stdin, so neither test nor
-    project code can read it — not even from /proc/self/cmdline). Test/stdout
-    text can never spoof a pass.
+_TEST_SUPERVISOR = '''\
+"""Trusted test supervisor. Never imports or executes test/project code —
+it screens the generated test file statically (AST), then runs it in a
+SEPARATE sandboxed process. Only this process ever sees the auth token
+(read from stdin), so test or project code has no way to forge the
+token-authenticated result file, read the token, or tamper with the
+harness in-process."""
 
-    The real `unittest` is imported before the project dir joins sys.path so
-    a project file named unittest.py cannot shadow the harness."""
+import ast
+import json
+import subprocess
+import sys
+
+_BANNED_MODULES = ("__main__", "gc", "ctypes", "inspect")
+_BANNED_CALLS = ("setattr", "delattr", "globals", "vars", "exec", "eval", "compile")
+
+
+def _screen(tree):
+    """Reject escape/tamper constructs; count real TestCase tests + asserts."""
+    problems, imported, tests, asserts = [], set(), 0, 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                imported.add(a.asname or a.name.split(".")[0])
+                if a.name.split(".")[0] in _BANNED_MODULES:
+                    problems.append("imports " + a.name)
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").split(".")[0] in _BANNED_MODULES:
+                problems.append("imports " + (node.module or ""))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in _BANNED_CALLS:
+                problems.append("calls " + node.func.id)
+        elif isinstance(node, (ast.Assign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                root = t
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                if (
+                    isinstance(t, ast.Attribute)
+                    and isinstance(root, ast.Name)
+                    and root.id in imported
+                ):
+                    problems.append("patches an imported module")
+        elif isinstance(node, ast.ClassDef):
+            bases = [
+                b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", "")
+                for b in node.bases
+            ]
+            if "TestCase" in bases:
+                for item in node.body:
+                    if isinstance(item, ast.FunctionDef) and item.name.startswith("test"):
+                        tests += 1
+        if isinstance(node, ast.Attribute):
+            if node.attr == "_exit":
+                problems.append("uses _exit")
+            elif node.attr.startswith("assert"):
+                asserts += 1
+    return problems, tests, asserts
+
+
+def main():
+    test_path, result_path, runner_path = sys.argv[1], sys.argv[2], sys.argv[3]
+    token = sys.stdin.readline().strip()
+    report = {"token": token, "tests_run": 0, "ok": False}
+    try:
+        with open(test_path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        problems, tests, asserts = _screen(tree)
+        if problems:
+            report["error"] = "test file failed the safety screen: " + "; ".join(
+                sorted(set(problems))
+            )
+        elif tests < 1 or asserts < 1:
+            report["error"] = "test file defines no real tests with assertions"
+        else:
+            proc = subprocess.run(
+                [sys.executable, "-I", runner_path, test_path, str(tests)],
+                capture_output=True,
+                text=True,
+            )
+            sys.stdout.write(proc.stdout or "")
+            sys.stderr.write(proc.stderr or "")
+            report["ok"] = proc.returncode == 0
+            report["tests_run"] = tests if proc.returncode == 0 else 0
+    except Exception as exc:  # explicit in the report, never a silent pass
+        report["error"] = str(exc) or type(exc).__name__
+    with open(result_path, "w", encoding="utf-8") as f:
+        json.dump(report, f)
+    sys.exit(0 if report["ok"] else 1)
+
+
+main()
+'''
+
+
+def _test_runner_source() -> str:
+    """The Workshop sandbox runner (network denial, scrubbed env; rlimits are
+    inherited from the supervisor) with its execution tail swapped for a
+    unittest harness. This process is UNTRUSTED — it never sees the token or
+    result path; its only signal back to the supervisor is the exit code,
+    which requires unittest to have genuinely run at least the statically
+    counted number of tests and succeeded.
+
+    Lessons baked in: import the real `unittest` before the project dir joins
+    sys.path (a project unittest.py would shadow it), and reset sys.argv
+    (unittest parses argv). `python -I` + importlib never adds the script dir
+    to sys.path — insert it explicitly so sibling imports work."""
     from orivellum.capabilities.workshop import _SANDBOX_RUNNER
 
     marker = 'runpy.run_path(sys.argv[1], run_name="__main__")'
@@ -339,12 +436,10 @@ def _test_runner_source() -> str:
         raise RuntimeError("sandbox runner no longer matches the test-runner injection point")
     harness = """\
 import importlib.util
-import json
 import os
 import unittest
 
-_target, _result_path = sys.argv[1], sys.argv[2]
-_token = sys.stdin.readline().strip()
+_target, _expected = sys.argv[1], int(sys.argv[2])
 sys.argv = [_target]
 sys.path.insert(0, os.path.dirname(os.path.abspath(_target)))
 _spec = importlib.util.spec_from_file_location("project_tests_module", _target)
@@ -353,12 +448,7 @@ _spec.loader.exec_module(_mod)
 _result = unittest.TextTestRunner(stream=sys.stderr, verbosity=1).run(
     unittest.defaultTestLoader.loadTestsFromModule(_mod)
 )
-with open(_result_path, "w") as _f:
-    json.dump(
-        {"token": _token, "tests_run": _result.testsRun, "ok": _result.wasSuccessful()},
-        _f,
-    )
-sys.exit(0 if (_result.wasSuccessful() and _result.testsRun >= 1) else 1)
+sys.exit(0 if (_result.wasSuccessful() and _result.testsRun >= _expected >= 1) else 1)
 """
     return _SANDBOX_RUNNER.replace(marker, harness)
 
@@ -367,9 +457,11 @@ def _run_project_tests(test_code: str, out_dir: pathlib.Path, workdir: pathlib.P
     """Execute the generated test file in the build sandbox against an
     ISOLATED COPY of the built project — a test that mutates project files
     can only mutate the throwaway copy, so a pass always certifies the exact
-    bytes that get published. A pass requires the trusted runner's
-    token-authenticated result file reporting >=1 test run and success —
-    exit codes and printed output alone can never certify a pass."""
+    bytes that get published. A pass requires the trusted supervisor's
+    token-authenticated result file: the supervisor screens the test file
+    statically, runs it in a separate untrusted process, and is the only
+    process that ever sees the token — exit codes and printed output alone
+    can never certify a pass, and test code cannot forge the result."""
     from orivellum.capabilities.workshop import _sandbox_env, _sandbox_preexec
 
     test_dir = workdir / "_testrun"
@@ -380,12 +472,21 @@ def _run_project_tests(test_code: str, out_dir: pathlib.Path, workdir: pathlib.P
     test_path.write_text(test_code, encoding="utf-8")
     runner_path = workdir / "_test_runner.py"
     runner_path.write_text(_test_runner_source(), encoding="utf-8")
+    supervisor_path = workdir / "_test_supervisor.py"
+    supervisor_path.write_text(_TEST_SUPERVISOR, encoding="utf-8")
     token = secrets.token_hex(16)
     result_path = workdir / "_test_result.json"
     result_path.unlink(missing_ok=True)
     try:
         result = subprocess.run(
-            [sys.executable, "-I", str(runner_path), str(test_path), str(result_path)],
+            [
+                sys.executable,
+                "-I",
+                str(supervisor_path),
+                str(test_path),
+                str(result_path),
+                str(runner_path),
+            ],
             input=token + "\n",
             capture_output=True,
             text=True,
@@ -416,10 +517,10 @@ def _run_project_tests(test_code: str, out_dir: pathlib.Path, workdir: pathlib.P
             ],
             "tests_run": 0,
         }
+    if report.get("error"):
+        output = str(report["error"]) + "\n" + output
     tests_run = int(report.get("tests_run") or 0)
     passed = result.returncode == 0 and report.get("ok") is True and tests_run >= 1
-    if tests_run < 1:
-        output = "test suite ran no tests — exit 0 does not count as a pass\n" + output
     return {"passed": passed, "output": output[-_TEST_OUTPUT_CAP:], "tests_run": tests_run}
 
 

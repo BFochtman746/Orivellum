@@ -157,7 +157,7 @@ class TestCodeProjectTests(unittest.TestCase):
             )
             proj = db.get_wb_project(p["id"])
             self.assertIn("tests failed", proj["last_error"])
-            self.assertIn("ran no tests", proj["last_error"])
+            self.assertIn("no real tests", proj["last_error"])
             self.assertEqual(db.list_wb_versions(p["id"]), [])
 
     def test_spoofed_test_output_cannot_certify_a_pass(self):
@@ -170,6 +170,58 @@ class TestCodeProjectTests(unittest.TestCase):
             )
             proj = db.get_wb_project(p["id"])
             self.assertIn("tests failed", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
+
+    def test_forged_result_via_main_introspection_is_screened_out(self):
+        # a test that tries to steal the token / result path via __main__ (or
+        # bail out early with os._exit) must be rejected before it ever runs
+        forger = """\
+import __main__
+import os
+import unittest
+
+
+class TestCalc(unittest.TestCase):
+    def test_add(self):
+        self.assertTrue(True)
+        os._exit(0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(
+                tmp, _llm_results(_GOOD_SCRIPT, forger, _GOOD_SCRIPT, _GOOD_SCRIPT)
+            )
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("tests failed", proj["last_error"])
+            self.assertIn("safety screen", proj["last_error"])
+            self.assertEqual(db.list_wb_versions(p["id"]), [])
+
+    def test_monkeypatched_unittest_is_screened_out(self):
+        # neutering the harness in-process must be rejected statically
+        patcher = """\
+import unittest
+
+unittest.TextTestRunner.run = lambda self, suite: None
+
+
+class TestCalc(unittest.TestCase):
+    def test_add(self):
+        self.assertTrue(True)
+
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _, p = self._build(
+                tmp, _llm_results(_GOOD_SCRIPT, patcher, _GOOD_SCRIPT, _GOOD_SCRIPT)
+            )
+            proj = db.get_wb_project(p["id"])
+            self.assertIn("tests failed", proj["last_error"])
+            self.assertIn("safety screen", proj["last_error"])
             self.assertEqual(db.list_wb_versions(p["id"]), [])
 
     def test_mutating_test_cannot_certify_different_bytes(self):
