@@ -102,16 +102,27 @@ class TestProveWorkbook(unittest.TestCase):
             self.assertEqual(_sha(p), before)  # never mutated on failure
             self.assertEqual(list(Path(tmp).glob(".candidate_*")), [])
 
-    def test_promote_false_keeps_file_verbatim(self):
+    def test_promote_false_keeps_file_verbatim_and_never_lies(self):
         from orivellum.capabilities.workbench_proof import prove_workbook
 
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "book.xlsx"
             _good_workbook(p)
             before = _sha(p)
+            # gates pass only after cache repairs the file never received →
+            # 'provable', NOT 'proven' (the verbatim bytes were never gated)
             res = prove_workbook(p, promote=False)
-            self.assertEqual(res["verdict"], "proven")
+            self.assertEqual(res["verdict"], "provable")
             self.assertEqual(_sha(p), before)
+            self.assertTrue(any("verbatim" in msg for msg in res["problems"]))
+
+            # once actually promoted, a promote=False re-run needs no repairs
+            # → the file itself is proven
+            self.assertEqual(prove_workbook(p)["verdict"], "proven")
+            after_promotion = _sha(p)
+            res2 = prove_workbook(p, promote=False)
+            self.assertEqual(res2["verdict"], "proven")
+            self.assertEqual(_sha(p), after_promotion)
 
     def test_missing_harness_is_unverified_never_proven(self):
         from orivellum.capabilities import workbench_proof
@@ -225,6 +236,82 @@ class TestArchiveProofGate(unittest.TestCase):
             )
             path = archive_project(db, cfg, p["id"])
             self.assertTrue(Path(path).is_file())
+
+    def test_archive_refuses_provable_import(self):
+        """An import that would pass only after repairs is NOT archivable as
+        proven — the verbatim bytes were never certified."""
+        from orivellum.capabilities.workbench import UnprovenError, archive_project
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+            _publish_xlsx_version(
+                db,
+                cfg,
+                p["id"],
+                checks={"proof": {"verdict": "provable", "workbooks": {}}},
+            )
+            with self.assertRaises(UnprovenError) as ctx:
+                archive_project(db, cfg, p["id"])
+            self.assertIn("verbatim", str(ctx.exception))
+
+    def test_proof_inherited_when_workbook_bytes_unchanged(self):
+        """Analysis / revert versions copy the workbook forward without
+        re-gating; identical bytes must carry the earlier proof — and
+        different bytes must NOT."""
+        from orivellum.capabilities.workbench import (
+            _publish_version,
+            _snapshot,
+            archive_project,
+            latest_proof_status,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            p = db.create_wb_project("Budget", "xlsx", "b")
+
+            with tempfile.TemporaryDirectory() as tmp2:
+                src = Path(tmp2) / "out"
+                src.mkdir()
+                _good_workbook(src / "model.xlsx")
+                v1_files = _snapshot(src)
+                _publish_version(
+                    db,
+                    cfg,
+                    p["id"],
+                    src,
+                    "build",
+                    v1_files,
+                    {"proof": {"verdict": "proven", "workbooks": {}}},
+                )
+                # analysis-style version: same workbook bytes + a report
+                (src / "ANALYSIS_REPORT.md").write_text("# findings\n")
+                _publish_version(
+                    db, cfg, p["id"], src, "analyze", _snapshot(src), {"analysis": True}
+                )
+
+            proj = db.get_wb_project(p["id"])
+            versions = db.list_wb_versions(p["id"])
+            self.assertEqual(latest_proof_status(proj, versions)[0], "proven")
+            self.assertTrue(Path(archive_project(db, cfg, p["id"])).is_file())
+
+    def test_proof_not_inherited_when_bytes_differ(self):
+        from orivellum.capabilities.workbench import latest_proof_status
+
+        proj = {"kind": "xlsx"}
+        versions = [
+            {
+                "version_no": 1,
+                "files_json": json.dumps([{"name": "m.xlsx", "sha256": "a" * 64}]),
+                "checks_json": json.dumps({"proof": {"verdict": "proven", "workbooks": {}}}),
+            },
+            {
+                "version_no": 2,
+                "files_json": json.dumps([{"name": "m.xlsx", "sha256": "b" * 64}]),
+                "checks_json": json.dumps({}),
+            },
+        ]
+        self.assertEqual(latest_proof_status(proj, versions)[0], "unproven")
 
     def test_non_xlsx_projects_unaffected(self):
         from orivellum.capabilities.workbench import archive_project, project_dir

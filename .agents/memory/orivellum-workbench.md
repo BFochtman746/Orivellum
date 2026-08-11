@@ -58,3 +58,10 @@ versions; execute generated tests for code versions.
 - schema v115 (wb_projects, wb_versions); files at data/workbench/{pid}/v{n}/,
   archives at data/workbench/archives/
 - UI: /workbench + /workbench/:projectId; Studio hub tile (Wrench icon)
+
+## Six-gate proving (workbench_proof.py)
+- Workbench xlsx builds run the Orivellum Runner's six gates in-process (engine+surgery loaded by absolute file path under private module names — NEVER sys.path insertion; an unrelated `runner` package could shadow it). `formulas` is a main-env dep, so no subprocess needed.
+- Honesty rule for non-promoted proofs: gates that pass only after cache/order repairs certify the CANDIDATE, not the verbatim file → verdict `provable`, never `proven`. Imports stay verbatim (promote=False); only builds promote. **Why:** architect review caught imports being archived as "proven" when the archived bytes were never recalculated.
+- Promotion must happen BEFORE `_snapshot()` hashes files, or version rows disagree with disk.
+- Proof travels by bytes: a latest version without its own proof (analysis/revert copies) inherits an earlier proof only when the xlsx name+sha256 sets are identical.
+- Archive gate: `latest_proof_status` + `UnprovenError` → route 409 `{code:"unproven"}`; UI force-confirm retries with `{force:true}`.

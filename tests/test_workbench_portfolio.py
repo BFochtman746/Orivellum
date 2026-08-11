@@ -325,7 +325,13 @@ class TestPortfolioRoutes(unittest.TestCase):
             )
             client = TestClient(app)
             with patch("orivellum.capabilities.llm.llm_call", return_value=_LLM_DOWN):
-                r = client.post(f"/api/workbench/projects/{p['id']}/complete", headers=AUTH_HEADERS)
+                # v1 was never proven (fake bytes) → force past the proof gate;
+                # the gate itself is covered in test_workbench_proof.py
+                r = client.post(
+                    f"/api/workbench/projects/{p['id']}/complete",
+                    headers=AUTH_HEADERS,
+                    json={"force": True},
+                )
             self.assertEqual(r.status_code, 200, r.text)
             body = r.json()
             self.assertTrue(body["archived"])

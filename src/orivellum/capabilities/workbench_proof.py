@@ -55,25 +55,44 @@ def _runner_dir() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parents[3] / "orivellum-runner"
 
 
+_runner_cache: tuple | None = None
+
+
 def _load_runner_modules():
     """Return (engine, surgery) or (None, None) when the harness is missing.
 
-    Never raises — an absent harness must degrade to ``unverified``, not
-    break a build.
+    Loads the two pure modules by absolute file path under private module
+    names — never touches ``sys.path``, so an unrelated ``runner`` package
+    elsewhere in the process can neither be shadowed nor picked up by
+    mistake. Never raises — an absent harness must degrade to
+    ``unverified``, not break a build.
     """
+    global _runner_cache
+    if _runner_cache is not None:
+        return _runner_cache
     try:
-        rd = _runner_dir()
-        if not (rd / "runner" / "jobs" / "xlsx_engine.py").is_file():
-            return None, None
-        if str(rd) not in sys.path:
-            sys.path.insert(0, str(rd))
-        from runner.jobs import xlsx_engine as engine
-        from runner.jobs import xlsx_surgery as surgery
+        import importlib.util
 
-        return engine, surgery
+        jobs = _runner_dir() / "runner" / "jobs"
+
+        def _load(alias: str, path: pathlib.Path):
+            spec = importlib.util.spec_from_file_location(alias, path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot load {path}")
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[alias] = mod
+            spec.loader.exec_module(mod)
+            return mod
+
+        # surgery first — engine's structural helpers reference it lazily,
+        # but the functions we call (recalculate/compare/ERRVALS) do not.
+        surgery = _load("_orivellum_runner_xlsx_surgery", jobs / "xlsx_surgery.py")
+        engine = _load("_orivellum_runner_xlsx_engine", jobs / "xlsx_engine.py")
+        _runner_cache = (engine, surgery)
     except Exception:  # noqa: BLE001
         logger.warning("Orivellum Runner proof modules unavailable", exc_info=True)
-        return None, None
+        _runner_cache = (None, None)
+    return _runner_cache
 
 
 def _unverified(error: str) -> dict:
@@ -90,8 +109,10 @@ def prove_workbook(path: pathlib.Path, promote: bool = True) -> dict[str, Any]:
 
     On ``proven`` with ``promote=True`` the file at *path* is atomically
     replaced by the repaired, fully-gated candidate. With ``promote=False``
-    (imported versions stay verbatim) the gates run against the repaired
-    candidate but the original is never touched.
+    (imported versions stay verbatim) the original is never touched, and the
+    verdict is honest about WHICH bytes passed: ``proven`` only when no
+    repairs were needed (candidate == original); ``provable`` when the gates
+    pass only after repairs the file itself never received.
     """
     engine, surgery = _load_runner_modules()
     if engine is None or surgery is None:
@@ -172,13 +193,33 @@ def _scan_sheet_order(surgery, candidate) -> list[str]:
     return order_bad
 
 
+def _passing_verdict(path, candidate, promote: bool, repaired: bool, problems: list) -> str:
+    """All six gates passed — decide what that honestly certifies."""
+    if promote:
+        candidate.replace(path)  # atomic promotion — gates first, always
+        return "proven"
+    if not repaired:
+        # candidate is byte-equivalent to the original — the file itself
+        # passed every gate
+        return "proven"
+    # gates pass only after repairs the file never received; 'proven' would
+    # certify bytes that were never archived
+    problems.append(
+        "passes all gates only after cache/order repairs; the file itself "
+        "was kept verbatim and would show stale or blank values in Excel"
+    )
+    return "provable"
+
+
 def _run_gates(engine, surgery, path, edits, reordered, refreshed, promote):
     """Apply the repair plan to a hidden candidate, run all six gates against
     it, and promote atomically only when every gate passes (and promotion is
     allowed). The original file is never touched on any other outcome."""
+    import uuid
+
     from openpyxl import load_workbook
 
-    candidate = path.with_name(f".candidate_{path.name}")
+    candidate = path.with_name(f".candidate_{uuid.uuid4().hex[:8]}_{path.name}")
     gates: dict[str, bool] = {}
     problems: list[str] = []
     result: dict[str, Any] = {
@@ -228,9 +269,7 @@ def _run_gates(engine, surgery, path, edits, reordered, refreshed, promote):
             "agreed": cmp2.get("agreed", 0),
         }
         if all(gates.values()):
-            if promote:
-                candidate.replace(path)  # atomic promotion — gates first, always
-            result["verdict"] = "proven"
+            result["verdict"] = _passing_verdict(path, candidate, promote, bool(edits), problems)
         else:
             result["failed_gates"] = sorted(k for k, v in gates.items() if not v)
     except Exception as exc:  # noqa: BLE001
@@ -246,17 +285,16 @@ def prove_outputs(
 ) -> dict[str, Any]:
     """Prove every workbook of a version; aggregate to one verdict.
 
-    proven    — every workbook passed all six gates (promoted when allowed)
-    failed    — at least one workbook failed a gate
+    proven     — every workbook's ACTUAL bytes passed all six gates
+    provable   — gates pass, but only after repairs a verbatim file never got
+    failed     — at least one workbook failed a gate
     unverified — none failed, but at least one could not be recalculated
     """
     per_file: dict[str, dict] = {}
     for p in workbooks:
         per_file[str(p.relative_to(out_dir))] = prove_workbook(p, promote=promote)
     verdicts = {r["verdict"] for r in per_file.values()}
-    overall = (
-        "failed"
-        if "failed" in verdicts
-        else ("unverified" if "unverified" in verdicts else "proven")
-    )
-    return {"verdict": overall, "workbooks": per_file}
+    for worst in ("failed", "unverified", "provable"):
+        if worst in verdicts:
+            return {"verdict": worst, "workbooks": per_file}
+    return {"verdict": "proven", "workbooks": per_file}

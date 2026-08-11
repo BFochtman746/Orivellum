@@ -347,16 +347,36 @@ class UnprovenError(ValueError):
     explicit user confirmation."""
 
 
+def _xlsx_shas(version: dict) -> dict[str, str]:
+    return {
+        f["name"]: f["sha256"]
+        for f in json.loads(version.get("files_json") or "[]")
+        if f["name"].lower().endswith(".xlsx")
+    }
+
+
 def latest_proof_status(proj: dict, versions: list[dict]) -> tuple[str, str]:
     """(status, detail) for the LATEST version of an xlsx project.
 
-    status: 'proven' | 'failed' | 'unverified' | 'unproven' | 'n/a'
+    status: 'proven' | 'provable' | 'failed' | 'unverified' | 'unproven' | 'n/a'
+
+    A latest version without its own proof (analysis reports and reverts
+    copy files forward without re-gating) INHERITS the most recent earlier
+    proof whose workbook set is byte-identical (same names, same sha256) —
+    the proof certifies bytes, and identical bytes carry it.
     """
     if proj["kind"] != "xlsx" or not versions:
         return "n/a", ""
     latest = versions[-1]
-    checks = json.loads(latest["checks_json"] or "{}")
-    proof = checks.get("proof")
+    proof = json.loads(latest["checks_json"] or "{}").get("proof")
+    if not proof:
+        latest_shas = _xlsx_shas(latest)
+        if latest_shas:
+            for v in reversed(versions[:-1]):
+                prior = json.loads(v["checks_json"] or "{}").get("proof")
+                if prior and _xlsx_shas(v) == latest_shas:
+                    proof = prior
+                    break
     if not proof:
         return "unproven", (f"v{latest['version_no']} was never run through the proof gates")
     if proof["verdict"] == "proven":
@@ -729,6 +749,8 @@ def archive_project(db, cfg, project_id: str, allow_unproven: bool = False) -> s
     if status not in ("proven", "n/a") and not allow_unproven:
         why = {
             "failed": "the latest version FAILED the proof gates",
+            "provable": "the latest workbook passes the gates only after repairs "
+            "it never received (imported files stay verbatim)",
             "unverified": "the latest version could not be recalculated",
             "unproven": "the latest version was never proven",
         }[status]

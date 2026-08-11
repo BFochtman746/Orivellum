@@ -27,13 +27,16 @@ const API = `${import.meta.env.BASE_URL}api/workbench`.replace(/\/+/g, "/").repl
 
 type WbFile = { name: string; size: number; sha256: string };
 type WbProofFile = {
-  verdict: "proven" | "failed" | "unverified";
+  verdict: "proven" | "provable" | "failed" | "unverified";
   gates: Record<string, boolean>;
   problems?: string[];
   error?: string;
   recalc?: { formulas_checked: number; agreed: number };
 };
-type WbProof = { verdict: "proven" | "failed" | "unverified"; workbooks: Record<string, WbProofFile> };
+type WbProof = {
+  verdict: "proven" | "provable" | "failed" | "unverified";
+  workbooks: Record<string, WbProofFile>;
+};
 type WbVersion = {
   id: string;
   version_no: number;
@@ -101,7 +104,10 @@ function ProofGates({ proof }: { proof: WbProof }) {
               </span>
             ))
           )}
-          {r.recalc && r.verdict === "proven" && (
+          {r.verdict === "provable" && (
+            <span className="text-amber-700">passes only after repairs — file kept verbatim</span>
+          )}
+          {r.recalc && (r.verdict === "proven" || r.verdict === "provable") && (
             <span className="text-muted-foreground">
               {r.recalc.formulas_checked} formula{r.recalc.formulas_checked === 1 ? "" : "s"} recalculated
             </span>
