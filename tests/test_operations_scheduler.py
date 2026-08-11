@@ -440,6 +440,79 @@ def test_tick_defers_when_a_manual_run_won_admission(db, quiet):
     assert [r["id"] for r in runs] == [manual["operation_id"]]
 
 
+def _seed_terminal_run(db, schedule_id, state, days_old, alerted=0, steps=1):
+    """Insert a finished scheduled run *days_old* days in the past."""
+    from datetime import UTC, timedelta
+
+    op_id = store.create_operation(
+        db, title="Old run", steps=[{"action_id": "notify", "label": "x"}] * steps
+    )
+    ts = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
+    with db._lock:
+        db._conn.execute(
+            "UPDATE operations SET state=?, schedule_id=?, failure_alerted=?, "
+            "created_at=?, updated_at=? WHERE id=?",
+            (state, schedule_id, alerted, ts, ts, op_id),
+        )
+        db._conn.commit()
+    return op_id
+
+
+def _op_count(db, table="operations"):
+    with db._lock:
+        return db._conn.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
+
+
+def test_prune_keeps_recent_runs_and_caps_per_schedule(db, quiet):
+    sched = _make_schedule(db)
+    for i in range(60):
+        _seed_terminal_run(db, sched["id"], "done", days_old=i * 0.01)
+    deleted = store.prune_finished_schedule_runs(db, keep_per_schedule=50)
+    assert deleted == 10
+    runs = scheduler.list_schedule_runs(db, sched["id"], limit=100)
+    assert len(runs) == 50
+    # Step rows of pruned ops are gone too — no orphans.
+    with db._lock:
+        orphan_steps = db._conn.execute(
+            "SELECT COUNT(*) c FROM operation_steps "
+            "WHERE operation_id NOT IN (SELECT id FROM operations)"
+        ).fetchone()["c"]
+    assert orphan_steps == 0
+    # Idempotent: nothing left to delete.
+    assert store.prune_finished_schedule_runs(db, keep_per_schedule=50) == 0
+
+
+def test_prune_drops_ancient_runs_but_keeps_a_little_history(db, quiet):
+    sched = _make_schedule(db)
+    for i in range(20):
+        _seed_terminal_run(db, sched["id"], "done", days_old=100 + i)
+    deleted = store.prune_finished_schedule_runs(db, max_age_days=90, always_keep=5)
+    assert deleted == 15  # dormant schedule never goes fully blank
+    assert len(scheduler.list_schedule_runs(db, sched["id"], limit=100)) == 5
+
+
+def test_prune_never_touches_active_manual_or_unalerted_runs(db, quiet):
+    sched = _make_schedule(db)
+    keep_ids = {
+        _seed_terminal_run(db, sched["id"], "running", days_old=200),  # active
+        _seed_terminal_run(db, sched["id"], "pending", days_old=200),  # active
+        _seed_terminal_run(db, None, "done", days_old=200),  # manual op
+        # failed but its exactly-once alert has not been claimed yet
+        _seed_terminal_run(db, sched["id"], "failed", days_old=200, alerted=0),
+    }
+    doomed = _seed_terminal_run(db, sched["id"], "failed", days_old=200, alerted=1)
+    for _ in range(6):  # push the alerted failure past always_keep
+        _seed_terminal_run(db, sched["id"], "done", days_old=95)
+    deleted = store.prune_finished_schedule_runs(
+        db, keep_per_schedule=50, max_age_days=90, always_keep=5
+    )
+    assert deleted >= 1
+    with db._lock:
+        remaining = {r["id"] for r in db._conn.execute("SELECT id FROM operations").fetchall()}
+    assert keep_ids <= remaining
+    assert doomed not in remaining
+
+
 def test_alert_claim_and_inbox_row_are_transactional(db, quiet):
     """The alert flag and the review-inbox row commit together."""
     sched = _make_schedule(db)

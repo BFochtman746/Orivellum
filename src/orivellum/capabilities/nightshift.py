@@ -10,6 +10,7 @@ Passes (in order):
   2. Temp-file cleanup      — delete zero-byte files from outputs/
   3. Old report pruning     — keep last 30 night reports
   4. Orphan cleanup         — knowledge / chunks with no parent document
+  4b. Automation run pruning — cap terminal scheduled-run history per schedule
   5. Stuck-document retry   — re-queue imported/error/no_text docs (up to 20)
   6. Sparse-doc harvest     — re-harvest docs with < 3 knowledge items
   7. Gap analysis           — detect research gaps for every active Work
@@ -465,6 +466,27 @@ def _pass_orphan_cleanup(db: OrivellumDB, report: list[str]) -> None:
                 pass
     except Exception as exc:
         logger.warning("Orphan cleanup pass failed: %s", exc)
+
+
+def _pass_prune_schedule_runs(db: OrivellumDB, report: list[str]) -> None:
+    """Prune old terminal scheduled runs so automation history never grows forever.
+
+    A nightly automation adds ~365 operations rows a year per schedule. This
+    delegates to ``store.prune_finished_schedule_runs`` (keep the newest 50
+    per schedule; drop runs older than 90 days beyond the newest 5; never
+    touch active runs, manual operations, or un-alerted failures) and reports
+    the count. Idempotent — a second run finds nothing.
+    """
+    try:
+        from orivellum.capabilities.operations.store import prune_finished_schedule_runs
+
+        deleted = prune_finished_schedule_runs(db)
+        if deleted:
+            report.append(f"Pruned {deleted} old automation run(s) from history")
+            logger.info("Nightshift: pruned %d old scheduled operation rows", deleted)
+    except Exception as exc:
+        logger.warning("Schedule-run pruning pass failed: %s", exc)
+        report.append(f"⚠ Automation history pruning: {exc}")
 
 
 def _pass_stuck_docs(db: OrivellumDB, cfg: OrivellumConfig, report: list[str]) -> None:
@@ -1763,6 +1785,10 @@ def _run_nightshift_passes(db: OrivellumDB, cfg: OrivellumConfig) -> None:
     # 4 — Orphaned knowledge / chunks / vectors
     logger.info("Nightshift pass 4/13: orphan cleanup")
     _pass_orphan_cleanup(db, report)
+
+    # 4b — Automation run-history retention
+    logger.info("Nightshift pass 4b: prune old automation runs")
+    _pass_prune_schedule_runs(db, report)
 
     # 5 — Retry stuck documents
     logger.info("Nightshift pass 5/13: stuck document recovery")

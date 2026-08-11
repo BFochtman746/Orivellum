@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -315,6 +315,59 @@ def revert_step(db: OrivellumDB, step_id: str, run_token: str) -> None:
             (step_id, run_token),
         )
         db._conn.commit()
+
+
+# ── Retention ──────────────────────────────────────────────────────────────────
+
+
+def prune_finished_schedule_runs(
+    db: OrivellumDB,
+    keep_per_schedule: int = 50,
+    max_age_days: int = 90,
+    always_keep: int = 5,
+) -> int:
+    """Delete old terminal scheduled runs (and their step rows); return count.
+
+    A nightly automation inserts ~365 operations rows a year per schedule —
+    forever, unless pruned. Deletes runs that are terminal (done/failed/
+    cancelled) AND schedule-linked AND either:
+
+    - beyond the newest ``keep_per_schedule`` runs of their schedule, or
+    - older than ``max_age_days`` and beyond the newest ``always_keep`` runs
+      (a dormant schedule always keeps a little history, never goes blank).
+
+    Active runs (pending/running/paused) and manually started operations
+    (schedule_id IS NULL) are never touched. Failed runs are only pruned once
+    their exactly-once alert has been claimed (``failure_alerted=1`` — the
+    review-inbox row was written in the same transaction as the claim), so a
+    not-yet-alerted failure can never be silently deleted. Idempotent: a
+    second call right after finds nothing to delete.
+    """
+    cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
+    doomed_sql = f"""
+        SELECT id FROM (
+            SELECT id, created_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY schedule_id
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM operations
+            WHERE schedule_id IS NOT NULL AND state IN {OP_TERMINAL!r}
+              AND (state != 'failed' OR failure_alerted = 1)
+        )
+        WHERE rn > ? OR (created_at < ? AND rn > ?)
+    """  # noqa: S608 — OP_TERMINAL is a module constant tuple of literals
+    with db._lock:
+        db._conn.execute(
+            f"DELETE FROM operation_steps WHERE operation_id IN ({doomed_sql})",
+            (keep_per_schedule, cutoff, always_keep),
+        )
+        cur = db._conn.execute(
+            f"DELETE FROM operations WHERE id IN ({doomed_sql})",
+            (keep_per_schedule, cutoff, always_keep),
+        )
+        db._conn.commit()
+    return cur.rowcount
 
 
 # ── Startup reconciliation ─────────────────────────────────────────────────────
