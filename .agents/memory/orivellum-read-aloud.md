@@ -25,3 +25,6 @@ description: Durable lifecycle principles for chunked text-to-speech playback in
 - A player that survives navigation must live in a global provider rendered once in the app shell, not in a page component.
 - Uncontrolled `<audio>` src swaps need a desired-src ref gate: only assign src when it matches the ref captured before the async chain, or a late synthesis result overwrites the track the user just picked.
 - The docked bar must reserve layout space via a shell-level CSS variable so page content is never hidden behind it, and sit below modal/sheet z-layers so dialogs stay usable while listening.
+
+## Offline rescue for resume positions
+Absence cleanup in mergeListeningProgress must never trust a successful server batch alone: a stale local position it lacks is EITHER deleted remotely OR an offline listen whose fire-and-forget PUTs never landed. Rule: rescue-push once first; drop only on 4xx rejection or continued absence >60s after a successful push. Network/5xx retries next merge. Far-future (broken clock) copies are dropped without pushing. Known tradeoff: a delete on another device can be resurrected by an offline device's rescue (no tombstones — follow-up queued).
