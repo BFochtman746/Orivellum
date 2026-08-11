@@ -302,6 +302,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # never block startup on recovery
         logger.warning("LOOM run recovery failed: %s", e)
 
+    # Step 5a.1c: Release AUTONOMY run claims orphaned by the restart — a row
+    # stuck 'running' would block every future unattended run for that work.
+    try:
+        stale_auto = db.recover_orphaned_autonomy_runs()
+        if stale_auto:
+            logger.info("Released %d orphaned autonomy run claim(s) as error", stale_auto)
+    except Exception as e:  # never block startup on recovery
+        logger.warning("Autonomy run recovery failed: %s", e)
+
     # Step 5a.2: Recover operations orphaned by the restart. Any run still
     # 'running' lost its thread — flip it to 'paused' (in-flight step back to
     # 'pending') so the UI offers Resume instead of an eternal spinner.
@@ -661,6 +670,7 @@ def create_app() -> FastAPI:
         actions,
         assay,
         auth,
+        autonomy,
         backups,
         band,
         bench,
@@ -739,6 +749,7 @@ def create_app() -> FastAPI:
         workbench,
         wa,
         series,
+        autonomy,
     ]
     for module in _route_modules:
         app.include_router(module.router)

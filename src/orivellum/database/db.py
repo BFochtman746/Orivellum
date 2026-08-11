@@ -8716,6 +8716,85 @@ class OrivellumDB:
             ).fetchall()
         return [self._loom_run_row(r) for r in rows]
 
+    # ── AUTONOMY runs (M12) ──────────────────────────────────────────────
+
+    def create_autonomy_run(self, work_id: str, budget: dict | None = None) -> str:
+        """Claim + create an unattended run.  Refuses while another autonomy
+        run for the same work is 'running' — the row IS the claim."""
+        run_id = str(uuid.uuid4())
+        with self._lock:
+            busy = self._conn.execute(
+                "SELECT id FROM autonomy_run WHERE work_id=? AND status='running'",
+                (work_id,),
+            ).fetchone()
+            if busy is not None:
+                raise RuntimeError("an autonomy run for this work is already running")
+            self._conn.execute(
+                """INSERT INTO autonomy_run(id, work_id, status, budget, started_at)
+                   VALUES(?,?,'running',?,?)""",
+                (run_id, work_id, json.dumps(budget or {}), _now()),
+            )
+            self._conn.commit()
+        return run_id
+
+    def finish_autonomy_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        consumed: dict | None = None,
+        report: dict | None = None,
+        stop_reason: str | None = None,
+    ) -> None:
+        if status not in ("done", "halted", "stopped", "error"):
+            raise ValueError(f"invalid autonomy run finish status {status!r}")
+        with self._lock:
+            self._conn.execute(
+                """UPDATE autonomy_run SET status=?, consumed=?, report=?,
+                   stop_reason=?, finished_at=? WHERE id=?""",
+                (
+                    status,
+                    json.dumps(consumed or {}),
+                    json.dumps(report or {}),
+                    stop_reason,
+                    _now(),
+                    run_id,
+                ),
+            )
+            self._conn.commit()
+
+    def _autonomy_run_row(self, row) -> dict:
+        d = dict(row)
+        for key in ("budget", "consumed", "report"):
+            d[key] = json.loads(d[key] or "{}")
+        return d
+
+    def get_autonomy_run(self, run_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM autonomy_run WHERE id=?", (run_id,)).fetchone()
+        return self._autonomy_run_row(row) if row else None
+
+    def list_autonomy_runs(self, work_id: str, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM autonomy_run WHERE work_id=? ORDER BY started_at DESC LIMIT ?",
+                (work_id, max(1, min(limit, 200))),
+            ).fetchall()
+        return [self._autonomy_run_row(r) for r in rows]
+
+    def recover_orphaned_autonomy_runs(self) -> int:
+        """Flip 'running' rows lost to a restart to 'error' so the claim is
+        released — never an eternal running row blocking new runs."""
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE autonomy_run SET status='error',
+                   stop_reason='interrupted by restart', finished_at=?
+                   WHERE status='running'""",
+                (_now(),),
+            )
+            self._conn.commit()
+        return cur.rowcount
+
     def record_provenance(
         self,
         artifact_id: str,

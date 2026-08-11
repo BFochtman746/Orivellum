@@ -1816,6 +1816,16 @@ def _run_nightshift_passes(db: OrivellumDB, cfg: OrivellumConfig) -> None:
     logger.info("Nightshift pass 14/15: version-relationship suggestions")
     _pass_version_suggestions(db, report)
 
+    # 14a — Autonomy: unattended draft-check-revise runs (opt-in, M12)
+    logger.info("Nightshift pass 14a: autonomy runs")
+    try:
+        from orivellum.capabilities.autonomy import run_nightshift_pass as _autonomy_pass
+
+        _autonomy_pass(db, cfg, report)
+    except Exception as _auto_exc:
+        logger.warning("Autonomy pass failed (non-fatal): %s", _auto_exc)
+        report.append(f"Autonomy: failed — {_auto_exc}")
+
     # 14b — Mail Steward delta sync (fires only when connected)
     logger.info("Nightshift pass 14b: mail steward delta sync")
     try:

@@ -3106,4 +3106,32 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON canon_fact(overrides)
     """,
     ),
+    # v133 — AUTONOMY (M12): unattended draft → check → revise runner.
+    #
+    # autonomy_run — one row per unattended run; the 'running' row IS the
+    #                claim (at most one per work, like loom_run).  budget /
+    #                consumed / report are JSON snapshots so the run report
+    #                survives exactly as produced.  Signatures are NEVER
+    #                written by the runner — an unsigned gate halts the run
+    #                and queues a review item instead.
+    (
+        133,
+        "AUTONOMY: unattended draft-check-revise runs with budget + halt ledger",
+        """
+        CREATE TABLE IF NOT EXISTS autonomy_run (
+            id          TEXT PRIMARY KEY,
+            work_id     TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            status      TEXT NOT NULL DEFAULT 'running' CHECK (status IN
+                ('running','done','halted','stopped','error')),
+            budget      TEXT NOT NULL DEFAULT '{}',
+            consumed    TEXT NOT NULL DEFAULT '{}',
+            report      TEXT NOT NULL DEFAULT '{}',
+            stop_reason TEXT,
+            started_at  TEXT NOT NULL,
+            finished_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_autonomy_run_work
+            ON autonomy_run(work_id, started_at)
+    """,
+    ),
 ]
