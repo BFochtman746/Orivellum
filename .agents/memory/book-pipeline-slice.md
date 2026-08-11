@@ -26,3 +26,9 @@ BOOK_SM is sequential — `BOOK_SM.allowed_from(state)` always returns exactly o
 **Why:** `book_pipelines` had zero writers before this slice — schema and state machine existed but no API ever created or advanced a pipeline record.
 
 **How to apply:** Any future book-pipeline feature (chapter contracting, WR-04 plan tree) should use the same three routes as the entry point. The pipeline_id links chapters; always check `pipeline_id IS NULL` when querying orphan chapters.
+
+## Stage-worker alignment (Aug 2026)
+- Continuity/Fact Check workers live at B6/B7 (canonical BOOK_STAGE_LABELS); B4=Chapter Extraction, B5=Chapter Drafting have NO LLM workers.
+- `_assert_stage_alignment()` runs at pipeline_workers import and raises RuntimeError on label/stage drift — any new worker must match canonical labels.
+- Worker set must stay in sync in THREE places: `_STAGE_CFG` (pipeline_workers.py), `_ARTIFACT_REQUIRED_FOR` (works.py), and WORKER_STAGES/STAGE_WORKER_LABELS in both book-tab.tsx and intelligence.tsx.
+- Finishing gateway "lemonade" is real now: llm_call epigraphs (abstain contract — want_quote refused pre-model, failure→ABSTAINED, success→UNVERIFIED_DRAFT, attribution never model-invented); covers via studio generate_image through asyncio.run (safe only because finishing routes are sync def → worker thread). Route defaults are "lemonade"; "mock" kept for deterministic tests.
