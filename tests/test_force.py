@@ -110,6 +110,17 @@ class TestForceDetectorsUnit(unittest.TestCase):
         self.assertIn("evidence_chapter", story["evidence"])
         self.assertIn("curve", r["evidence"]["summary"])
 
+    def test_pressure_all_zero_book_is_flat_not_clean(self):
+        """A book with ZERO tension signal everywhere is the flattest
+        possible curve — it must never be reported clean."""
+        chapters = [_chapter(i, STALLED) for i in range(1, 7)]
+        r = _run("force.pressure_curve", chapters)
+        flat = [f for f in r["findings"] if f["issue_type"] == "flat_pressure_curve"]
+        self.assertTrue(flat)
+        self.assertEqual(flat[0]["evidence"]["measures"]["mean_tension_per_1k"], 0.0)
+        self.assertTrue(flat[0]["evidence"]["quote"])
+        self.assertEqual(r["evidence"]["summary"]["cv"], 0.0)
+
     def test_pressure_sag_against_rolling_mean(self):
         chapters = [_chapter(i, LIVELY) for i in range(1, 5)]
         chapters.append(_chapter(5, STALLED))  # tension collapses mid-book
@@ -128,6 +139,19 @@ class TestForceDetectorsUnit(unittest.TestCase):
         self.assertIn("conflict_absent", issues)
         for f in r["findings"]:
             self.assertTrue(f["evidence"]["quote"], f["issue_type"])
+
+    def test_conflict_all_zero_book_never_escalates(self):
+        """Conflict that never appears never escalates — the all-zero book
+        must emit the story-level finding, not pass silently."""
+        chapters = [_chapter(i, STALLED) for i in range(1, 7)]
+        r = _run("force.conflict_escalation", chapters)
+        issues = _issues(r)
+        self.assertIn("no_conflict_escalation", issues)
+        story = next(f for f in r["findings"]
+                     if f["issue_type"] == "no_conflict_escalation")
+        self.assertEqual(story["evidence"]["measures"]["first_third_mean"], 0.0)
+        self.assertEqual(story["evidence"]["measures"]["final_third_mean"], 0.0)
+        self.assertTrue(story["evidence"]["quote"])
 
     def test_conflict_escalation_clean_when_rising(self):
         chapters = [_chapter(i, STALLED) for i in range(1, 3)]

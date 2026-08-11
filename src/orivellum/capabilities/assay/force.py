@@ -320,21 +320,26 @@ def detect_pressure_curve(profiles: list[dict], th: dict) -> tuple[list[dict], d
     summary = {"curve": _curve(profiles, "tension_per_1k")}
     if len(series) >= min_chapters:
         mean = sum(series) / len(series)
+        # A book with ZERO tension signal everywhere is the flattest curve
+        # possible — treat cv as 0, never skip the check (a silent pass on
+        # the all-zero case would be the detector's own worst false negative).
         if mean > 0:
             sd = (sum((x - mean) ** 2 for x in series) / len(series)) ** 0.5
             cv = sd / mean
-            summary["mean"] = round(mean, 2)
-            summary["cv"] = round(cv, 3)
-            if cv < flat_cv:
-                live_now = [p for p in profiles if p["words"] > 0]
-                rep = min(live_now, key=lambda p: abs(p["tension_per_1k"] - mean))
-                findings.append(
-                    _finding(None, "flat_pressure_curve", "medium",
-                             {"measures": {"coefficient_of_variation": round(cv, 3),
-                                           "flat_ceiling": flat_cv,
-                                           "mean_tension_per_1k": round(mean, 2)},
-                              **_story_evidence(rep, "tension_hits")})
-                )
+        else:
+            cv = 0.0
+        summary["mean"] = round(mean, 2)
+        summary["cv"] = round(cv, 3)
+        if cv < flat_cv:
+            live_now = [p for p in profiles if p["words"] > 0]
+            rep = min(live_now, key=lambda p: abs(p["tension_per_1k"] - mean))
+            findings.append(
+                _finding(None, "flat_pressure_curve", "medium",
+                         {"measures": {"coefficient_of_variation": round(cv, 3),
+                                       "flat_ceiling": flat_cv,
+                                       "mean_tension_per_1k": round(mean, 2)},
+                          **_story_evidence(rep, "tension_hits")})
+            )
         # Mid-book sag against the rolling mean of the previous 3 chapters.
         live = [p for p in profiles if p["words"] > 0]
         for i in range(3, len(live) - 1):  # skip opening ramp and final chapter
@@ -369,7 +374,10 @@ def detect_conflict_escalation(profiles: list[dict], th: dict) -> tuple[list[dic
         final_mean = sum(final) / len(final)
         summary["first_third_mean"] = round(first_mean, 2)
         summary["final_third_mean"] = round(final_mean, 2)
-        if final_mean <= first_mean and first_mean > 0:
+        # final <= first is a failure to escalate — INCLUDING the all-zero
+        # book (0 <= 0): conflict that never appears never escalates.  The
+        # only clean shape is a genuine rise (final > first).
+        if final_mean <= first_mean:
             rep = min(live[-third:], key=lambda p: p["conflict_per_1k"])
             findings.append(
                 _finding(None, "no_conflict_escalation", "medium",
