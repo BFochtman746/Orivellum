@@ -1514,6 +1514,23 @@ function AudiobookTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workId, mode]);
 
+  // Switching document or source mode likewise detaches the UI from a running
+  // document render. Unlike work renders, the server job is CANCELLED (the
+  // same deliberate policy as unmount) — document renders are short and have
+  // no background-completion alert, but finished segments stay cached so a
+  // later Generate resumes instead of starting over.
+  useEffect(() => {
+    if (vsAbJobIdRef.current) {
+      if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
+      apiFetch(`${BASE}/studio/tts/document/${vsAbJobIdRef.current}`, { method: "DELETE" }).catch(() => {});
+      vsAbJobIdRef.current = null;
+      setVsAbJobId(null);
+      setLoading(false);
+      toast("Stopped the previous document's render — finished parts are saved for resume.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId, mode]);
+
   // What's already rendered for this Work + settings? (drives "Resume")
   useEffect(() => {
     if (mode !== "work" || !workId || vsWorkJobId) {
@@ -1736,12 +1753,20 @@ function AudiobookTab({
       setVsAbSegsDone(0);
       setVsAbCachedSegs(0);
       // loading stays true while polling
-      vsAbPollRef.current = setInterval(async () => {
+      const iv: ReturnType<typeof setInterval> = setInterval(async () => {
+        // The user may have switched document/mode (detach) or started
+        // another job — this closure must never update state for a stale job.
+        if (vsAbJobIdRef.current !== job_id) { clearInterval(iv); return; }
+        const stopPolling = () => {
+          clearInterval(iv);
+          if (vsAbPollRef.current === iv) vsAbPollRef.current = null;
+        };
         try {
           const sr = await apiFetch(`${BASE}/studio/tts/document/${job_id}/status`);
+          if (vsAbJobIdRef.current !== job_id) { clearInterval(iv); return; }
           if (!sr.ok) {
             if (sr.status === 404) {
-              clearInterval(vsAbPollRef.current!); vsAbPollRef.current = null;
+              stopPolling();
               vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
               toast.error("Server restarted — audiobook job was lost. Please try again.");
             }
@@ -1752,7 +1777,7 @@ function AudiobookTab({
           setVsAbCachedSegs(status.cached_segments ?? 0);
           const terminal = ["done", "failed", "cancelled"].includes(status.state);
           if (terminal) {
-            clearInterval(vsAbPollRef.current!); vsAbPollRef.current = null;
+            stopPolling();
             vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
             if (status.state === "done") {
               const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`;
@@ -1767,6 +1792,7 @@ function AudiobookTab({
           }
         } catch { /* transient poll errors */ }
       }, 2000);
+      vsAbPollRef.current = iv;
     } catch (e: any) {
       toast.error(`Audiobook failed: ${e.message}`, { id: toastId, duration: 10_000 });
       setLoading(false);
