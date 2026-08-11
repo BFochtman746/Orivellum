@@ -4642,14 +4642,24 @@ def _strip_transcript_header(text: str) -> str:
     return text
 
 
-def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
+def _run_retranscribe_job(
+    job_id: str, doc_id: str, file_path: str, db, reservation_token: str = ""
+) -> None:
     """Background worker: re-run the full extraction pipeline on an existing
     Library audio document, then surface the fresh transcript on the job.
 
     Reuses ``process_document`` (not bare ``extract``) so chunks, indexes and
     downstream knowledge stay consistent with the updated transcript — the
     same guarantee the Library reprocess endpoint gives.
+
+    The dispatcher already claimed the document-level extraction reservation
+    and passed its ownership token here.  ``process_document`` releases it on
+    every pipeline path; the ``finally`` below also releases (covering cancel,
+    missing doc, or a crash in the pre-steps) — token-matched release is
+    idempotent, so the double call is safe.
     """
+    from orivellum.capabilities.pipeline import release_extraction
+
     try:
         with _transcribe_jobs_lock:
             job = _transcribe_jobs.get(job_id)
@@ -4713,6 +4723,7 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
             work_id=doc.get("work_id"),
             title=doc.get("title", ""),
             db=db,
+            reservation_token=reservation_token or None,
         )
 
         fresh = db.get_document(doc_id) or {}
@@ -4761,6 +4772,12 @@ def _run_retranscribe_job(job_id: str, doc_id: str, file_path: str, db) -> None:
                     {"state": "error", "error": str(exc)[:300], "finished_at": time.time()}
                 )
     finally:
+        # Release the extraction reservation on every worker exit.  When the
+        # pipeline ran, process_document already released this token and the
+        # call is a no-op; the token match guarantees a reservation taken by
+        # a LATER run can never be freed from here.
+        if reservation_token:
+            release_extraction(doc_id, reservation_token)
         # FA-07 — clear the reset marker on every path that reaches the end of
         # this worker (success OR any handled terminal error): the document now
         # has a truthful terminal readiness that the ordinary stuck-doc pass can
@@ -4799,44 +4816,67 @@ def start_library_retranscribe(doc_id: str):
     if not file_path.exists():
         raise HTTPException(404, "Stored audio file not found — it may have been moved or deleted")
 
-    # Cheap collision guard: "imported" means an extraction is already in
-    # flight for this document (Library reprocess, bulk reprocess, nightshift
-    # recovery, or another Studio job). Stacking a second pipeline run on top
-    # would race on chunks and readiness.
+    # Readiness guard: "imported" means an initial extraction is queued but
+    # may not have started yet (the reservation is only taken when the
+    # pipeline thread begins), so keep this complementary check.
     if doc.get("readiness") == "imported":
         raise HTTPException(
             409, "This document is already being processed — wait for it to finish, then try again"
         )
 
-    with _transcribe_jobs_lock:
-        for j in _transcribe_jobs.values():
-            if j.get("doc_id") == doc_id and j["state"] not in _TRANSCRIBE_TERMINAL:
-                raise HTTPException(409, "A re-transcription for this document is already running")
-        _prune_transcribe_jobs()
-        job_id = str(uuid.uuid4())
-        _transcribe_jobs[job_id] = {
-            "state": "running",
-            "stage": "queued",
-            "filename": doc.get("title") or content_path,
-            "cancel": threading.Event(),
-            "text": None,
-            "engine": None,
-            "word_count": None,
-            "doc_id": doc_id,
-            "error": None,
-        }
+    # Real lock: claim the shared document-level extraction reservation NOW,
+    # before any destructive work is queued.  Every pipeline entry point
+    # (Library reprocess, reprocess-all, nightshift recovery, duplicate
+    # requeues) goes through the same reservation, so two runs can never
+    # interleave on this document.  Ownership transfers to the job, which
+    # passes prereserved=True to process_document; if the job exits before
+    # invoking the pipeline it releases the claim itself.
+    from orivellum.capabilities.pipeline import release_extraction, try_reserve_extraction
 
-    from orivellum.api.executor import _tracked_submit
+    token = try_reserve_extraction(doc_id)
+    if token is None:
+        raise HTTPException(
+            409, "This document is already being processed — wait for it to finish, then try again"
+        )
 
-    _tracked_submit(
-        _run_retranscribe_job,
-        job_id,
-        doc_id,
-        str(file_path),
-        db,
-        kind="transcribe",
-        label=f"retranscribe:{(doc.get('title') or '')[:30]}",
-    )
+    try:
+        with _transcribe_jobs_lock:
+            for j in _transcribe_jobs.values():
+                if j.get("doc_id") == doc_id and j["state"] not in _TRANSCRIBE_TERMINAL:
+                    raise HTTPException(
+                        409, "A re-transcription for this document is already running"
+                    )
+            _prune_transcribe_jobs()
+            job_id = str(uuid.uuid4())
+            _transcribe_jobs[job_id] = {
+                "state": "running",
+                "stage": "queued",
+                "filename": doc.get("title") or content_path,
+                "cancel": threading.Event(),
+                "text": None,
+                "engine": None,
+                "word_count": None,
+                "doc_id": doc_id,
+                "error": None,
+            }
+
+        from orivellum.api.executor import _tracked_submit
+
+        _tracked_submit(
+            _run_retranscribe_job,
+            job_id,
+            doc_id,
+            str(file_path),
+            db,
+            token,
+            kind="transcribe",
+            label=f"retranscribe:{(doc.get('title') or '')[:30]}",
+        )
+    except Exception:
+        # The job never got ownership of the reservation — release it so the
+        # document isn't locked out until restart.
+        release_extraction(doc_id, token)
+        raise
     return {"job_id": job_id}
 
 

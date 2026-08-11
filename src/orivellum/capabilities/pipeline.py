@@ -10,6 +10,7 @@ HTTP response returns immediately after file storage.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -369,15 +370,94 @@ def resolve_file_path(file_path: str, doc_id: str, db: OrivellumDB) -> Path | No
     return None
 
 
+# ── Extraction reservation registry ──────────────────────────────────────────
+# One document must never have two extraction pipelines running at once —
+# concurrent runs both delete/rewrite chunks, knowledge and readiness, and
+# whichever finishes last wins.  Every entry point that reaches
+# process_document (upload, reprocess, reprocess-all, nightshift recovery,
+# duplicate requeues, Studio re-transcribe, folder watch, ZIP children) is
+# serialized through this in-process registry.  In-process is sufficient:
+# all pipelines run as threads of the single API process, and an in-memory
+# set can never leave a stale reservation behind after a crash/restart.
+_reservations_lock = threading.Lock()
+_reserved_docs: dict[str, str] = {}  # doc_id → ownership token
+
+
+def try_reserve_extraction(doc_id: str) -> str | None:
+    """Atomically claim the extraction slot for *doc_id*.
+
+    Returns an ownership token when the caller now holds the reservation, or
+    ``None`` when another extraction run already holds it.  Release with
+    ``release_extraction(doc_id, token)`` — the token makes release safe to
+    call more than once and impossible to free a reservation the caller does
+    not own.
+    """
+    import uuid as _uuid
+
+    with _reservations_lock:
+        if doc_id in _reserved_docs:
+            return None
+        token = _uuid.uuid4().hex
+        _reserved_docs[doc_id] = token
+        return token
+
+
+def release_extraction(doc_id: str, token: str) -> None:
+    """Release the reservation for *doc_id* if *token* still owns it.
+
+    Idempotent, and a stale token can never free a newer reservation taken
+    by a different run.
+    """
+    with _reservations_lock:
+        if _reserved_docs.get(doc_id) == token:
+            del _reserved_docs[doc_id]
+
+
+def is_extraction_reserved(doc_id: str) -> bool:
+    """True when an extraction pipeline currently owns *doc_id*."""
+    with _reservations_lock:
+        return doc_id in _reserved_docs
+
+
 def process_document(
-    doc_id: str, file_path: str, kind: str, work_id: str | None, title: str, db: OrivellumDB
+    doc_id: str,
+    file_path: str,
+    kind: str,
+    work_id: str | None,
+    title: str,
+    db: OrivellumDB,
+    reservation_token: str | None = None,
 ) -> None:
     """Extract, chunk, and harvest a single document.
 
     Safe to call from a daemon thread — catches and logs all exceptions.
     Stores a descriptive error_message on the document when anything fails
     so callers can surface the reason in the UI.
+
+    Concurrency: acquires the document-level extraction reservation before
+    doing any work and releases it on every terminal path (success, error,
+    exception).  If another run already holds the reservation this call logs
+    and returns WITHOUT touching the document.  Callers that already reserved
+    (to give users a clean 409 up front) pass their ``reservation_token`` —
+    ownership transfers here and the reservation is still released in the
+    ``finally`` below.
     """
+    token = reservation_token or try_reserve_extraction(doc_id)
+    if token is None:
+        logger.warning(
+            "Doc %s (%s) — extraction already in flight; skipping duplicate run", doc_id, title
+        )
+        return
+    try:
+        _process_document_reserved(doc_id, file_path, kind, work_id, title, db)
+    finally:
+        release_extraction(doc_id, token)
+
+
+def _process_document_reserved(
+    doc_id: str, file_path: str, kind: str, work_id: str | None, title: str, db: OrivellumDB
+) -> None:
+    """Pipeline body — caller MUST hold the extraction reservation."""
     logger.info("Processing doc %s (%s) kind=%s", doc_id, title, kind)
     try:
         path = resolve_file_path(file_path, doc_id, db)

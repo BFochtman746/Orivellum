@@ -16,7 +16,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import BaseModel, ConfigDict, Field
 
 from orivellum.api._deps import get_config, get_db, require_auth
-from orivellum.capabilities.pipeline import process_document
+from orivellum.capabilities.pipeline import (
+    process_document,
+    release_extraction,
+    try_reserve_extraction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1306,21 +1310,37 @@ def library_reprocess(
             f"File not found at {file_path}. The file may have been moved or deleted.",
         )
 
-    # Clear prior warnings so a fresh run isn't presented alongside stale history
-    db.delete_extraction_warnings(doc_id)
-    # Reset status so the UI shows processing
-    db.update_document_extracted(doc_id, "", 0, readiness="imported", error_message=None)
+    # Claim the document-level extraction reservation BEFORE any destructive
+    # step (warning wipe, readiness reset).  A competing run — another
+    # reprocess, reprocess-all, nightshift recovery, or a Studio
+    # re-transcribe — gets a clean 409 instead of interleaving.
+    token = try_reserve_extraction(doc_id)
+    if token is None:
+        raise HTTPException(
+            409, "This document is already being processed — wait for it to finish, then try again"
+        )
+    try:
+        # Clear prior warnings so a fresh run isn't presented alongside stale history
+        db.delete_extraction_warnings(doc_id)
+        # Reset status so the UI shows processing
+        db.update_document_extracted(doc_id, "", 0, readiness="imported", error_message=None)
 
-    kind = doc.get("kind") or _kind_for(doc.get("title", ""))
-    background_tasks.add_task(
-        process_document,
-        doc_id=doc_id,
-        file_path=str(file_path),
-        kind=kind,
-        work_id=doc.get("work_id"),
-        title=doc.get("title", ""),
-        db=db,
-    )
+        kind = doc.get("kind") or _kind_for(doc.get("title", ""))
+        background_tasks.add_task(
+            process_document,
+            doc_id=doc_id,
+            file_path=str(file_path),
+            kind=kind,
+            work_id=doc.get("work_id"),
+            title=doc.get("title", ""),
+            db=db,
+            reservation_token=token,
+        )
+    except Exception:
+        # The queued pipeline never got ownership — release so the doc
+        # isn't locked out until restart.
+        release_extraction(doc_id, token)
+        raise
     logger.info("Queued reprocess for doc=%s kind=%s", doc_id, kind)
     return {"ok": True, "doc_id": doc_id, "message": "Reprocessing queued"}
 
@@ -1536,21 +1556,53 @@ def queue_library_reprocess(db, background_tasks: BackgroundTasks, force: bool =
             )
             continue
 
-        # Clear stale warnings.  Do NOT flip readiness back to 'imported' here —
-        # the doc is already reserved at '_REPROCESS_RESERVED' (an in-flight
-        # state), which keeps a concurrent caller from re-selecting it.  The
-        # pipeline drives it to a terminal state when it finishes.
-        db.delete_extraction_warnings(doc_id)
+        # Claim the document-level extraction reservation.  The readiness
+        # marker above only guards against a concurrent reprocess-all; the
+        # reservation is shared with EVERY pipeline entry point (single
+        # reprocess, Studio re-transcribe, nightshift recovery, uploads), so
+        # a doc mid-extraction is skipped here instead of double-run.
+        token = try_reserve_extraction(doc_id)
+        if token is None:
+            prior = row["readiness"] or "error"
+            if prior == _REPROCESS_RESERVED:
+                prior = "error"
+            with db._lock:
+                db._conn.execute("UPDATE documents SET readiness=? WHERE id=?", (prior, doc_id))
+                db._conn.commit()
+            skipped += 1
+            skipped_docs.append(
+                {
+                    "id": doc_id,
+                    "title": row["title"] or doc_id[:8],
+                    "kind": kind,
+                    "readiness": prior,
+                }
+            )
+            logger.info("reprocess-all: doc %s already extracting — skipped", doc_id)
+            continue
 
-        background_tasks.add_task(
-            process_document,
-            doc_id=doc_id,
-            file_path=str(file_path),
-            kind=kind,
-            work_id=row["work_id"],
-            title=row["title"] or file_path.name,
-            db=db,
-        )
+        try:
+            # Clear stale warnings.  Do NOT flip readiness back to 'imported'
+            # here — the doc is already reserved at '_REPROCESS_RESERVED' (an
+            # in-flight state), which keeps a concurrent caller from
+            # re-selecting it.  The pipeline drives it to a terminal state
+            # when it finishes.
+            db.delete_extraction_warnings(doc_id)
+
+            background_tasks.add_task(
+                process_document,
+                doc_id=doc_id,
+                file_path=str(file_path),
+                kind=kind,
+                work_id=row["work_id"],
+                title=row["title"] or file_path.name,
+                db=db,
+                reservation_token=token,
+            )
+        except Exception:
+            # The queued pipeline never got ownership — release the claim.
+            release_extraction(doc_id, token)
+            raise
 
         if kind == "zip":
             queued_zips += 1

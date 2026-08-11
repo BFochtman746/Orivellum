@@ -122,7 +122,7 @@ class LibraryRetranscribeTest(unittest.TestCase):
     def test_retranscribe_success_updates_doc_and_job(self):
         doc_id = self._make_audio_doc()
 
-        def fake_pipeline(doc_id, file_path, kind, work_id, title, db):
+        def fake_pipeline(doc_id, file_path, kind, work_id, title, db, **kwargs):
             self.assertEqual(kind, "audio")
             db.update_document_extracted(
                 doc_id, "[Audio transcript: Lecture 1]\nhello fresh world", 3, readiness="ready"
@@ -161,7 +161,7 @@ class LibraryRetranscribeTest(unittest.TestCase):
     def test_pipeline_error_surfaces_on_job(self):
         doc_id = self._make_audio_doc()
 
-        def failing_pipeline(doc_id, file_path, kind, work_id, title, db):
+        def failing_pipeline(doc_id, file_path, kind, work_id, title, db, **kwargs):
             db.update_document_extracted(
                 doc_id, "", 0, readiness="error", error_message="No transcription engine available"
             )
@@ -194,7 +194,7 @@ class LibraryRetranscribeTest(unittest.TestCase):
         )
         self.db.store_vector(old_auto, "knowledge", b"\x00" * 16, 4)
 
-        def fake_pipeline(doc_id, file_path, kind, work_id, title, db):
+        def fake_pipeline(doc_id, file_path, kind, work_id, title, db, **kwargs):
             db.create_knowledge_item(
                 wid, "fact", "the sky is blue", source_doc_id=doc_id, review_status="ai_auto"
             )
@@ -241,7 +241,7 @@ class LibraryRetranscribeTest(unittest.TestCase):
         """Pipeline "succeeds" with a placeholder (no ASR engine) → job errors."""
         doc_id = self._make_audio_doc()
 
-        def placeholder_pipeline(doc_id, file_path, kind, work_id, title, db):
+        def placeholder_pipeline(doc_id, file_path, kind, work_id, title, db, **kwargs):
             # ready, but meta has no "transcription" key — engine never ran
             db.update_document_extracted(
                 doc_id, "Audio file: lecture.mp3\nNote: engine offline", 6, readiness="ready"
@@ -276,7 +276,7 @@ class LibraryRetranscribeTest(unittest.TestCase):
 
         pipeline_ran = threading.Event()
 
-        def tracked_pipeline(doc_id, file_path, kind, work_id, title, db):
+        def tracked_pipeline(doc_id, file_path, kind, work_id, title, db, **kwargs):
             pipeline_ran.set()
 
         with (
@@ -289,9 +289,9 @@ class LibraryRetranscribeTest(unittest.TestCase):
             # can run by patching _tracked_submit to set cancel first.
             real_submit = studio_routes._run_retranscribe_job
 
-            def submit_with_cancel(job_id, doc_id_, file_path, db):
+            def submit_with_cancel(job_id, doc_id_, file_path, db, *args, **kwargs):
                 studio_routes._transcribe_jobs[job_id]["cancel"].set()
-                real_submit(job_id, doc_id_, file_path, db)
+                real_submit(job_id, doc_id_, file_path, db, *args, **kwargs)
 
             with mock.patch.object(
                 studio_routes, "_run_retranscribe_job", side_effect=submit_with_cancel
@@ -310,7 +310,7 @@ class LibraryRetranscribeTest(unittest.TestCase):
         doc_id = self._make_audio_doc()
         release = threading.Event()
 
-        def slow_pipeline(doc_id, file_path, kind, work_id, title, db):
+        def slow_pipeline(doc_id, file_path, kind, work_id, title, db, **kwargs):
             release.wait(timeout=5)
             db.update_document_extracted(doc_id, "x", 1, readiness="ready")
 
