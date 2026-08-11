@@ -406,6 +406,11 @@ def assess_needs(project_id: str):
     _require_active(proj)
     if not db.list_wb_versions(project_id):
         raise HTTPException(409, "nothing to assess — the project has no versions yet")
+    # Claim-before-mutate: holding the build claim keeps shelve/complete/
+    # delete (and a second needs call) out while the model call is in
+    # flight, so the meta write can never land on a changed lifecycle.
+    if not db.claim_wb_build(project_id):
+        raise HTTPException(409, "wait for the running operation to finish first")
     from orivellum.capabilities.workbench_portfolio import generate_needs
 
     try:
@@ -414,6 +419,8 @@ def assess_needs(project_id: str):
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise internal_error(logger, exc, "workbench needs") from exc
+    finally:
+        db.update_wb_project(project_id, building=0)
 
 
 @router.post("/projects/{project_id}/complete")
