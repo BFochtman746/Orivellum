@@ -1916,6 +1916,9 @@ def _get_voice_casting(db, work_id: str) -> dict[str, str]:
 
 class VoiceCastingUpdate(BaseModel):
     sections: dict[str, str]  # doc_id -> voice_id ("" or missing = narrator default)
+    # Per-Work default narrator, persisted with the casting so it survives
+    # leaving the Studio.  None = leave unchanged; "" = clear the saved default.
+    narrator_voice: str | None = None
 
 
 @router.get("/studio/works/{work_id}/casting")
@@ -1934,9 +1937,11 @@ def get_work_voice_casting(work_id: str):
             (work_id,),
         ).fetchall()
     casting = _get_voice_casting(db, work_id)
+    narrator = (work.get("meta") or {}).get("narrator_voice")
     return {
         "work_id": work_id,
         "sections": casting,
+        "narrator_voice": narrator if isinstance(narrator, str) and narrator else None,
         "documents": [
             {
                 "id": r["id"],
@@ -1979,8 +1984,26 @@ def put_work_voice_casting(work_id: str, body: VoiceCastingUpdate):
         meta["voice_casting"] = cleaned
     else:
         meta.pop("voice_casting", None)
+
+    # Persist the Work's default narrator alongside the casting.  Renders may
+    # still override the narrator per run — this only sets what the audiobook
+    # form pre-selects next time the Work is opened.
+    if body.narrator_voice is not None:
+        narrator = body.narrator_voice.strip()
+        if narrator:
+            if narrator not in _VOICE_BY_ID and not _is_clone_voice(narrator):
+                raise HTTPException(422, f"Unknown narrator voice {narrator!r}")
+            meta["narrator_voice"] = narrator
+        else:
+            meta.pop("narrator_voice", None)
+
     db.update_work(work_id, meta=meta)
-    return {"ok": True, "work_id": work_id, "sections": cleaned}
+    return {
+        "ok": True,
+        "work_id": work_id,
+        "sections": cleaned,
+        "narrator_voice": meta.get("narrator_voice"),
+    }
 
 
 # ── AI chapter casting recommender ────────────────────────────────────────────

@@ -1320,6 +1320,11 @@ function AudiobookTab({
         setCastDocs(data.documents ?? []);
         setCastMap(data.sections ?? {});
         setCastDirty(false);
+        // Restore the Work's saved default narrator so the picker doesn't
+        // reset when the user comes back. Renders can still override per run.
+        if (typeof data.narrator_voice === "string" && data.narrator_voice) {
+          setVoiceId(data.narrator_voice);
+        }
       })
       .catch(() => {/* casting is optional — narrator voice still works */});
     return () => { cancelled = true; };
@@ -1331,7 +1336,9 @@ function AudiobookTab({
       const resp = await apiFetch(`${BASE}/studio/works/${workId}/casting`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections: castMap }),
+        // Persist the current narrator with the casting so it's still
+        // selected when the Work is reopened.
+        body: JSON.stringify({ sections: castMap, narrator_voice: voiceId }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -1371,7 +1378,9 @@ function AudiobookTab({
       setCastHints(hints);
       setCastAnalysis(data.casting_analysis ?? "");
       setCastMap(data.sections ?? {});
-      setCastDirty(Object.keys(data.sections ?? {}).length > 0);
+      // A suggested narrator counts as unsaved work too — otherwise a
+      // narrator-only suggestion could never be persisted with Save voices.
+      setCastDirty(Object.keys(data.sections ?? {}).length > 0 || Boolean(data.narrator_voice_id));
       if (data.narrator_voice_id) setVoiceId(data.narrator_voice_id);
       const castCount = Object.keys(data.sections ?? {}).length;
       toast.success(castCount > 0

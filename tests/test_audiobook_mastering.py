@@ -275,6 +275,46 @@ def test_casting_put_roundtrip_and_clear(work_client):
     assert client.get(f"/api/studio/works/{wid}/casting").json()["sections"] == {}
 
 
+def test_casting_persists_narrator_voice_with_the_work(work_client):
+    """Saving a casting can also store the Work's default narrator, and the
+    GET pre-fills it so the picker survives leaving the Studio."""
+    client, _db, wid, did = work_client
+    # No narrator saved yet
+    assert client.get(f"/api/studio/works/{wid}/casting").json()["narrator_voice"] is None
+
+    r = client.put(
+        f"/api/studio/works/{wid}/casting",
+        json={"sections": {did: "bm_george"}, "narrator_voice": "af_heart"},
+    )
+    assert r.status_code == 200 and r.json()["narrator_voice"] == "af_heart"
+    got = client.get(f"/api/studio/works/{wid}/casting").json()
+    assert got["narrator_voice"] == "af_heart"
+    assert got["sections"] == {did: "bm_george"}
+
+    # Omitting narrator_voice leaves the saved default untouched
+    r = client.put(f"/api/studio/works/{wid}/casting", json={"sections": {}})
+    assert r.status_code == 200
+    assert client.get(f"/api/studio/works/{wid}/casting").json()["narrator_voice"] == "af_heart"
+
+    # Unknown narrator is rejected without wiping anything
+    r = client.put(
+        f"/api/studio/works/{wid}/casting",
+        json={"sections": {}, "narrator_voice": "not_a_voice"},
+    )
+    assert r.status_code == 422
+    assert client.get(f"/api/studio/works/{wid}/casting").json()["narrator_voice"] == "af_heart"
+
+    # Clone narrators are allowed; empty string clears the saved default
+    r = client.put(
+        f"/api/studio/works/{wid}/casting",
+        json={"sections": {}, "narrator_voice": "clone:abc123"},
+    )
+    assert r.status_code == 200 and r.json()["narrator_voice"] == "clone:abc123"
+    r = client.put(f"/api/studio/works/{wid}/casting", json={"sections": {}, "narrator_voice": ""})
+    assert r.status_code == 200 and r.json()["narrator_voice"] is None
+    assert client.get(f"/api/studio/works/{wid}/casting").json()["narrator_voice"] is None
+
+
 def test_casting_put_accepts_clone_voice_ids(work_client):
     client, _db, wid, did = work_client
     r = client.put(f"/api/studio/works/{wid}/casting", json={"sections": {did: "clone:abc123"}})
