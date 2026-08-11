@@ -7905,6 +7905,171 @@ class OrivellumDB:
 
     # ── /ASSAY ────────────────────────────────────────────────────────────────
 
+    # ── POSITION — derived-stage audits (E5) ─────────────────────────────────
+
+    def create_position_audit(self, work_id: str) -> str:
+        """Claim + create an audit row.  Refuses (RuntimeError) while an audit
+        for the same work is still 'running' — the row IS the claim, taken
+        under the write lock, so double-dispatch is impossible."""
+        audit_id = str(uuid.uuid4())
+        with self._lock:
+            busy = self._conn.execute(
+                "SELECT id FROM position_audit WHERE work_id=? AND status='running'",
+                (work_id,),
+            ).fetchone()
+            if busy is not None:
+                raise RuntimeError("a position audit for this work is already running")
+            self._conn.execute(
+                """INSERT INTO position_audit(id, work_id, status, run_at)
+                   VALUES(?,?,'running',?)""",
+                (audit_id, work_id, _now()),
+            )
+            self._conn.commit()
+        return audit_id
+
+    def finish_position_audit(
+        self,
+        audit_id: str,
+        *,
+        status: str,
+        derived_stage: str = "",
+        claimed_stage: str | None = None,
+        evidence: dict | None = None,
+        blocking: dict | None = None,
+        error: str | None = None,
+    ) -> None:
+        if status not in ("done", "error"):
+            raise ValueError(f"invalid audit finish status {status!r}")
+        with self._lock:
+            self._conn.execute(
+                """UPDATE position_audit SET status=?, derived_stage=?,
+                   claimed_stage=?, evidence=?, blocking=?, error=?,
+                   finished_at=? WHERE id=?""",
+                (
+                    status, derived_stage, claimed_stage,
+                    json.dumps(evidence or {}), json.dumps(blocking or {}),
+                    error, _now(), audit_id,
+                ),
+            )
+            self._conn.commit()
+
+    def _position_audit_row(self, row) -> dict:
+        d = dict(row)
+        d["evidence"] = json.loads(d["evidence"] or "{}")
+        d["blocking"] = json.loads(d["blocking"] or "{}")
+        return d
+
+    def get_position_audit(self, audit_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM position_audit WHERE id=?", (audit_id,)
+            ).fetchone()
+        return self._position_audit_row(row) if row else None
+
+    def list_position_audits(self, work_id: str, limit: int = 20) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT * FROM position_audit WHERE work_id=?
+                   ORDER BY run_at DESC, rowid DESC LIMIT ?""",
+                (work_id, max(1, min(int(limit), 100))),
+            ).fetchall()
+        return [self._position_audit_row(r) for r in rows]
+
+    def upsert_position_proposal(
+        self,
+        *,
+        proposal_id: str,
+        work_id: str,
+        audit_id: str,
+        kind: str,
+        title: str,
+        payload: dict,
+        evidence: dict | None = None,
+    ) -> bool:
+        """Insert a reconstruction proposal with a caller-supplied
+        DETERMINISTIC id.  Returns True when created; False when a row with
+        that id already exists (re-runs must never clobber a proposal the
+        author already resolved)."""
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT OR IGNORE INTO position_proposal
+                   (id, work_id, audit_id, kind, title, payload, evidence,
+                    status, created_at)
+                   VALUES(?,?,?,?,?,?,?,'proposed',?)""",
+                (
+                    proposal_id, work_id, audit_id, kind, title,
+                    json.dumps(payload), json.dumps(evidence or {}), _now(),
+                ),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def _position_proposal_row(self, row) -> dict:
+        d = dict(row)
+        d["payload"] = json.loads(d["payload"] or "{}")
+        d["evidence"] = json.loads(d["evidence"] or "{}")
+        return d
+
+    def get_position_proposal(self, proposal_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM position_proposal WHERE id=?", (proposal_id,)
+            ).fetchone()
+        return self._position_proposal_row(row) if row else None
+
+    def list_position_proposals(
+        self,
+        *,
+        work_id: str | None = None,
+        status: str | None = None,
+        limit: int = 300,
+    ) -> list[dict]:
+        query = "SELECT * FROM position_proposal WHERE 1=1"
+        params: list[Any] = []
+        if work_id:
+            query += " AND work_id=?"
+            params.append(work_id)
+        if status:
+            query += " AND status=?"
+            params.append(status)
+        query += " ORDER BY created_at ASC, rowid ASC LIMIT ?"
+        params.append(max(1, min(int(limit), 500)))
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [self._position_proposal_row(r) for r in rows]
+
+    def resolve_position_proposal(
+        self,
+        proposal_id: str,
+        *,
+        decision: str,
+        author: str,
+        note: str = "",
+    ) -> str:
+        """Atomically claim + resolve a proposal.  Returns 'ok', 'not_found',
+        or 'conflict' (already resolved).  The conditional UPDATE is the
+        claim — a concurrent resolution loses cleanly."""
+        if decision not in ("approved", "rejected"):
+            raise ValueError(f"invalid proposal decision {decision!r}")
+        if not author or not author.strip():
+            raise ValueError("resolving a proposal requires a non-blank author")
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE position_proposal SET status=?, resolved_by=?, note=?,
+                   resolved_at=? WHERE id=? AND status='proposed'""",
+                (decision, author.strip(), note, _now(), proposal_id),
+            )
+            if cur.rowcount == 0:
+                exists = self._conn.execute(
+                    "SELECT 1 FROM position_proposal WHERE id=?", (proposal_id,)
+                ).fetchone()
+                self._conn.commit()
+                return "conflict" if exists else "not_found"
+            self._conn.commit()
+        return "ok"
+
+    # ── /POSITION ────────────────────────────────────────────────────────────
+
     def close(self) -> None:
         with self._lock:
             # Close the main writer connection.

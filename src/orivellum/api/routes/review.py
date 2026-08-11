@@ -37,6 +37,7 @@ _VALID_TYPES = {
     "quarantine",
     "noteblock",
     "canon_fact",
+    "position",
 }
 
 
@@ -320,6 +321,38 @@ def review_queue(limit: int = 200):
             }
         )
 
+    # 8. POSITION reconstruction proposals awaiting ratification
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT p.id, p.work_id, p.kind, p.title, p.created_at,
+                      w.title AS work_title
+               FROM position_proposal p
+               LEFT JOIN works w ON w.id = p.work_id
+               WHERE p.status='proposed'
+               ORDER BY p.created_at ASC LIMIT 300""",
+        ).fetchall()
+    for r in rows:
+        key = f"position:{r['id']}"
+        if key in deferred:
+            continue
+        items.append(
+            {
+                "id": key,
+                "item_type": "position",
+                "title": r["title"],
+                "description": (
+                    "Reconstruction derived from existing prose — evidence, "
+                    "not authority, until you ratify it."
+                ),
+                # Reconstruction feeds authority — surface near the top.
+                "confidence": 0.15,
+                "work_id": r["work_id"],
+                "work_title": r["work_title"],
+                "evidence": {"kind": r["kind"]},
+                "created_at": r["created_at"],
+            }
+        )
+
     # Most uncertain first; None confidence treated as 0.5
     items.sort(key=lambda i: i["confidence"] if i["confidence"] is not None else 0.5)
     counts: dict[str, int] = {}
@@ -351,6 +384,7 @@ _PENDING_SQL = {
     "quarantine": "SELECT 1 FROM documents WHERE id=? AND quarantined=1",
     "noteblock": "SELECT 1 FROM note_blocks WHERE id=? AND status='proposed'",
     "canon_fact": "SELECT 1 FROM wa_canon_proposals WHERE id=? AND status='proposed'",
+    "position": "SELECT 1 FROM position_proposal WHERE id=? AND status='proposed'",
 }
 
 
@@ -403,6 +437,7 @@ def review_resolve(
         "quarantine": lambda: _resolve_quarantine(db, item_id, body, background_tasks),
         "noteblock": lambda: _resolve_noteblock(db, item_id, body),
         "duplicate": lambda: _resolve_duplicate(db, item_id, body),
+        "position": lambda: _resolve_position(db, item_id, body),
     }
     if body.decision == "defer":
         result = _defer(db, item_type, item_id, body.reason)
@@ -627,6 +662,40 @@ def _resolve_canon_fact(db, item_id: str, body: ResolveBody) -> dict:
     if result["result"] == "conflict":
         raise HTTPException(409, "Proposal was already resolved")
     return {"ok": True, "decision": body.decision, "fact": result["fact"]}
+
+
+def _resolve_position(db, item_id: str, body: ResolveBody) -> dict:
+    """Resolve a POSITION reconstruction proposal (persona / de-facto
+    blueprint / de-facto voice spec).
+
+    Reconstruction becomes authority only through this signature: the
+    proposal row is atomically claimed first, then — for a voice spec — the
+    approved metrics are installed as the work's ASSAY voice baseline (the
+    manuscript is its own voice authority, but only once ratified).
+    """
+    author = (body.author or "").strip()
+    if not author:
+        raise HTTPException(422, "Ratifying a reconstruction requires your signature (author)")
+    proposal = db.get_position_proposal(item_id)
+    if proposal is None:
+        raise HTTPException(404, f"Position proposal {item_id!r} not found")
+
+    decision = "approved" if body.decision == "approve" else "rejected"
+    result = db.resolve_position_proposal(
+        item_id, decision=decision, author=author, note=body.reason or ""
+    )
+    if result == "not_found":
+        raise HTTPException(404, f"Position proposal {item_id!r} not found")
+    if result == "conflict":
+        raise HTTPException(409, "Proposal was already resolved")
+
+    installed = None
+    if decision == "approved" and proposal["kind"] == "voice_spec":
+        # Side effect strictly AFTER the successful atomic claim.
+        db.set_assay_baseline(proposal["work_id"], "voice_envelope", proposal["payload"])
+        installed = "voice_envelope baseline"
+    return {"ok": True, "decision": decision, "kind": proposal["kind"],
+            "installed": installed}
 
 
 def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:

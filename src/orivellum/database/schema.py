@@ -2842,4 +2842,60 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
     """,
     ),
+    # v127 — POSITION: derive where an inherited manuscript truly stands (E5).
+    #
+    # position_audit — one row per audit run.  Stage is DERIVED from evidence
+    # (ten deterministic tests + instrument battery), never trusted from a
+    # status field.  evidence JSON holds every test and its result; blocking
+    # JSON holds the completion plan (backfill / repair / complete).  The row
+    # is the claim: created 'running' under the write lock, always finished
+    # as 'done' or 'error' — a leaked 'running' row is a bug.
+    #
+    # position_proposal — reconstruction proposals (persona / de-facto
+    # blueprint / de-facto voice spec) derived from the prose.  Existing
+    # prose is evidence, not authority: nothing here becomes authority until
+    # the author resolves it through the review gate with a signature.
+    # Canon-fact proposals go through wa_canon_proposals + CanonStore
+    # ratification instead (the existing signed path).  Ids are
+    # deterministic (work+kind+key hash) so re-runs never clobber rows the
+    # author already resolved.
+    (
+        127,
+        "POSITION audit: derived-stage evidence rows + review-gated reconstruction proposals",
+        """
+        CREATE TABLE IF NOT EXISTS position_audit (
+            id            TEXT PRIMARY KEY,
+            work_id       TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            derived_stage TEXT NOT NULL DEFAULT '',
+            claimed_stage TEXT,
+            evidence      TEXT NOT NULL DEFAULT '{}',
+            blocking      TEXT NOT NULL DEFAULT '{}',
+            status        TEXT NOT NULL DEFAULT 'running' CHECK (status IN
+                ('running','done','error')),
+            error         TEXT,
+            run_at        TEXT NOT NULL,
+            finished_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_position_audit_work
+            ON position_audit(work_id, run_at);
+        CREATE TABLE IF NOT EXISTS position_proposal (
+            id          TEXT PRIMARY KEY,
+            work_id     TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            audit_id    TEXT NOT NULL,
+            kind        TEXT NOT NULL CHECK (kind IN
+                ('persona','blueprint','voice_spec')),
+            title       TEXT NOT NULL,
+            payload     TEXT NOT NULL DEFAULT '{}',
+            evidence    TEXT NOT NULL DEFAULT '{}',
+            status      TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN
+                ('proposed','approved','rejected')),
+            resolved_by TEXT,
+            note        TEXT NOT NULL DEFAULT '',
+            created_at  TEXT NOT NULL,
+            resolved_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_position_proposal_status
+            ON position_proposal(status, work_id);
+    """,
+    ),
 ]
