@@ -1048,6 +1048,111 @@ class PartialRebuildAtomicityTests(AtlasBase):
         self.assertEqual(self._snapshot(), before)
 
 
+class AtomicNestedFailureTests(AtlasBase):
+    """Local failure paths of other DB methods, invoked inside an open
+    atomic() transaction, must undo only their OWN writes — never roll
+    back (or silently discard) the caller's earlier work."""
+
+    def _seed_conflict(self):
+        conflict_id = str(uuid.uuid4())
+        with self.db._lock:
+            self.db._conn.execute(
+                """INSERT INTO memory_conflicts
+                       (id, memory_id_a, memory_id_b, detected_at, resolved)
+                   VALUES (?,?,?,?,0)""",
+                (conflict_id, str(uuid.uuid4()), str(uuid.uuid4()), _now()),
+            )
+            self.db._conn.commit()
+        return conflict_id
+
+    def _conflict_resolved(self, conflict_id):
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT resolved FROM memory_conflicts WHERE id=?", (conflict_id,)
+            ).fetchone()
+        return bool(row["resolved"])
+
+    def test_resolve_conflict_failure_inside_atomic_keeps_outer_work(self):
+        conflict_id = self._seed_conflict()
+        real_conn = self.db._conn
+
+        class _FailOnResolve:
+            """Delegates everything; raises only on the conflict UPDATE."""
+
+            def execute(self, sql, params=()):
+                if "UPDATE memory_conflicts" in sql:
+                    raise sqlite3.OperationalError("database or disk is full")
+                return real_conn.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(real_conn, name)
+
+        with self.db.atomic():
+            self.db.set_setting("outer_probe", "kept")
+            self.db._conn = _FailOnResolve()
+            try:
+                ok, msg = self.db.resolve_memory_conflict_atomic(conflict_id, "dismissed")
+            finally:
+                self.db._conn = real_conn
+            self.assertFalse(ok)
+            self.assertIn("Internal error", msg)
+        # Outer transaction committed intact; the failed resolve left no trace.
+        self.assertEqual(self.db.get_setting("outer_probe", ""), "kept")
+        self.assertFalse(self._conflict_resolved(conflict_id))
+
+    def test_resolve_conflict_race_inside_atomic_keeps_outer_work(self):
+        conflict_id = self._seed_conflict()
+        real_conn = self.db._conn
+
+        class _RaceOnResolve:
+            """Resolves the conflict out from under the UPDATE (rowcount 0)."""
+
+            def execute(self, sql, params=()):
+                if "UPDATE memory_conflicts" in sql and "resolved=1" in sql:
+                    real_conn.execute(
+                        "UPDATE memory_conflicts SET resolved=1, resolution='dismissed' "
+                        "WHERE id=?",
+                        (conflict_id,),
+                    )
+                return real_conn.execute(sql, params)
+
+            def __getattr__(self, name):
+                return getattr(real_conn, name)
+
+        with self.db.atomic():
+            self.db.set_setting("outer_probe2", "kept")
+            self.db._conn = _RaceOnResolve()
+            try:
+                ok, msg = self.db.resolve_memory_conflict_atomic(conflict_id, "dismissed")
+            finally:
+                self.db._conn = real_conn
+            self.assertFalse(ok)
+            self.assertIn("race", msg)
+        self.assertEqual(self.db.get_setting("outer_probe2", ""), "kept")
+
+    def test_governed_write_failure_inside_atomic_keeps_outer_work(self):
+        with self.db.atomic():
+            self.db.set_setting("outer_probe3", "kept")
+            with self.assertRaises(RuntimeError), self.db.governed_write(
+                operation="test.op",
+                event_type="test.event",
+                object_id="obj1",
+                object_type="test",
+            ):
+                self.db._conn.execute(
+                    "INSERT INTO memory_conflicts"
+                    "(id, memory_id_a, memory_id_b, detected_at, resolved) "
+                    "VALUES ('gw_probe','a','b','now',0)"
+                )
+                raise RuntimeError("boom")
+        self.assertEqual(self.db.get_setting("outer_probe3", ""), "kept")
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT id FROM memory_conflicts WHERE id='gw_probe'"
+            ).fetchone()
+        self.assertIsNone(row)
+
+
 class NonContiguousPartialRebuildTests(AtlasBase):
     """A doc owning non-contiguous chapters: changing its earlier chapter
     must invalidate its later rebuilt chapter's stale inconsistency."""

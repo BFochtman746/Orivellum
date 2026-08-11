@@ -689,6 +689,26 @@ class OrivellumDB:
             # Snapshot state before yield so Layer C can detect alias-based commits.
             _tx_changes_before = _real_conn.total_changes
 
+            # Inside an atomic() transaction, this governed write must be
+            # locally undoable WITHOUT touching the caller's earlier work —
+            # a full connection rollback would wipe the whole outer
+            # transaction.  A SAVEPOINT scopes every failure path to just
+            # this block's writes.
+            _sp = "gw_sp" if self._in_atomic() else None
+            if _sp:
+                _real_conn.execute(f"SAVEPOINT {_sp}")
+
+            def _undo_local() -> None:
+                """Roll back THIS governed write only (savepoint-aware)."""
+                try:
+                    if _sp:
+                        _real_conn.execute(f"ROLLBACK TO {_sp}")
+                        _real_conn.execute(f"RELEASE {_sp}")
+                    else:
+                        _real_conn.rollback()
+                except Exception:
+                    pass
+
             def _flag() -> None:
                 nonlocal _early_commit_attempted
                 _early_commit_attempted = True
@@ -780,7 +800,7 @@ class OrivellumDB:
                     # can roll them back cleanly after detecting the attempt.
 
                 def rollback(self) -> None:
-                    _real_conn.rollback()
+                    _undo_local()
 
                 def execute(self, sql: str, params: Any = ()) -> _GuardedCursor:
                     if _is_commit_sql(sql):
@@ -824,10 +844,7 @@ class OrivellumDB:
                 _tx_was_committed = not _real_conn.in_transaction and _dml_was_written
 
                 if _early_commit_attempted or _tx_was_committed:
-                    try:
-                        _real_conn.rollback()  # no-op if already committed; clears any remaining state
-                    except Exception:
-                        pass
+                    _undo_local()  # no-op if already committed; clears any remaining state
                     raise RuntimeError(
                         "governed_write: caller issued COMMIT inside the block — "
                         "audit log and outbox were NOT written and the domain change "
@@ -839,20 +856,18 @@ class OrivellumDB:
                 if audit_level == "full":
                     self._audit_tx(operation, object_id, object_type, actor=actor, detail=detail)
                     self._emit_outbox_tx(event_type, object_id, object_type, payload or {})
-                if not self._in_atomic():
+                if _sp:
                     # Inside an atomic() block the OUTER transaction is the
-                    # only committer — this governed write rides along.
+                    # only committer — release the savepoint and ride along.
+                    _real_conn.execute(f"RELEASE {_sp}")
+                else:
                     _real_conn.commit()
             except Exception:
                 self._conn = _real_conn  # always restore
                 _real_conn.set_trace_callback(None)
-                if not self._in_atomic():
-                    # Never roll back a caller's open atomic() transaction —
-                    # the re-raise below makes atomic() roll it ALL back.
-                    try:
-                        _real_conn.rollback()
-                    except Exception:
-                        pass
+                # Savepoint-aware: undoes only THIS block's writes — never a
+                # caller's open atomic() transaction.
+                _undo_local()
                 raise
 
     def verify_audit_chain(self) -> tuple[bool, str]:
@@ -5405,43 +5420,50 @@ class OrivellumDB:
                 if conflict["resolved"]:
                     return False, "Conflict already resolved"
 
-                # 2. Soft-delete the losing memory row (if keep_a or keep_b)
-                if resolution == "keep_a":
-                    drop_id = conflict["memory_id_b"]
-                elif resolution == "keep_b":
-                    drop_id = conflict["memory_id_a"]
-                else:
-                    drop_id = None
+                # All mutations sit behind a SAVEPOINT so local failure paths
+                # only undo THIS method's writes — never an enclosing
+                # atomic() transaction's earlier work.
+                self._conn.execute("SAVEPOINT resolve_conflict")
+                try:
+                    # 2. Soft-delete the losing memory row (if keep_a or keep_b)
+                    if resolution == "keep_a":
+                        drop_id = conflict["memory_id_b"]
+                    elif resolution == "keep_b":
+                        drop_id = conflict["memory_id_a"]
+                    else:
+                        drop_id = None
 
-                if drop_id:
-                    # Soft-delete: only touch rows that are still current
-                    # (valid_to IS NULL).  A missing or already-expired row is
-                    # not an error — the intent (remove that belief) is satisfied.
-                    self._conn.execute(
-                        "UPDATE user_memory SET valid_to=? WHERE id=? AND valid_to IS NULL",
-                        (now, drop_id),
+                    if drop_id:
+                        # Soft-delete: only touch rows that are still current
+                        # (valid_to IS NULL).  A missing or already-expired row
+                        # is not an error — the intent (remove that belief) is
+                        # satisfied.
+                        self._conn.execute(
+                            "UPDATE user_memory SET valid_to=? WHERE id=? AND valid_to IS NULL",
+                            (now, drop_id),
+                        )
+
+                    # 3. Mark conflict resolved — only if no exception above
+                    result = self._conn.execute(
+                        """UPDATE memory_conflicts
+                           SET resolved=1, resolution=?, resolved_at=?
+                           WHERE id=? AND resolved=0""",
+                        (resolution, now, conflict_id),
                     )
-
-                # 3. Mark conflict resolved — only reached if no exception above
-                result = self._conn.execute(
-                    """UPDATE memory_conflicts
-                       SET resolved=1, resolution=?, resolved_at=?
-                       WHERE id=? AND resolved=0""",
-                    (resolution, now, conflict_id),
-                )
-                if result.rowcount == 0:
-                    # Race: another request resolved it between fetch and update
-                    self._conn.rollback()
-                    return False, "Conflict already resolved (race)"
-
+                    if result.rowcount == 0:
+                        # Race: another request resolved it between fetch/update
+                        self._conn.execute("ROLLBACK TO resolve_conflict")
+                        self._conn.execute("RELEASE resolve_conflict")
+                        return False, "Conflict already resolved (race)"
+                except Exception:
+                    self._conn.execute("ROLLBACK TO resolve_conflict")
+                    self._conn.execute("RELEASE resolve_conflict")
+                    raise
+                self._conn.execute("RELEASE resolve_conflict")
                 self._maybe_commit()
             return True, ""
 
         except Exception as exc:
-            try:
-                self._conn.rollback()
-            except Exception:
-                pass
             logger.warning("resolve_memory_conflict_atomic failed: %s", exc)
             return False, f"Internal error: {exc}"
 
