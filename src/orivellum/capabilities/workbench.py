@@ -93,6 +93,12 @@ def _sha256(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
+def _xlsx_files(root: pathlib.Path) -> list[pathlib.Path]:
+    """Every workbook under *root*, case-insensitively — Excel files arrive
+    as .xlsx, .XLSX, or anything in between and all of them are workbooks."""
+    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".xlsx")
+
+
 def _snapshot(dir_path: pathlib.Path) -> list[dict]:
     """Relative name + size + sha256 for every file under *dir_path*.
 
@@ -1074,7 +1080,7 @@ def import_upload(
         stage = pathlib.Path(tmp) / "stage"
         stage.mkdir()
         names = _extract_upload(upload_path, filename, stage)
-        for staged in sorted(stage.rglob("*.xlsx")):
+        for staged in _xlsx_files(stage):
             err = check_xlsx_zip_safety(staged)
             if err:
                 raise ValueError(f"{staged.name}: {err}")
@@ -1092,7 +1098,7 @@ def import_upload(
             # v1 stays byte-for-byte verbatim, but its proof status is known.
             from orivellum.capabilities.workbench_proof import prove_outputs
 
-            workbooks = [p for p in sorted(stage.rglob("*.xlsx")) if p.is_file()]
+            workbooks = _xlsx_files(stage)
             if workbooks:
                 checks["proof"] = prove_outputs(stage, workbooks, promote=False)
         if checks.get("error"):
@@ -1187,7 +1193,7 @@ def repair_and_prove(db, cfg, project_id: str, version_no: int) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         stage = pathlib.Path(tmp) / "stage"
         shutil.copytree(src, stage)
-        workbooks = [p for p in sorted(stage.rglob("*.xlsx")) if p.is_file()]
+        workbooks = _xlsx_files(stage)
         if not workbooks:
             raise ValueError(f"v{version_no} contains no .xlsx workbook to prove")
         from orivellum.capabilities.workbench_proof import prove_outputs

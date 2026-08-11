@@ -529,6 +529,7 @@ def run_analysis(db, cfg, project_id: str, focus: str = "") -> None:
         _describe_inputs,
         _publish_version,
         _snapshot,
+        _xlsx_files,
         version_dir,
     )
 
@@ -555,9 +556,7 @@ def run_analysis(db, cfg, project_id: str, focus: str = "") -> None:
             if kind == "xlsx":
                 findings: dict[str, Any] = {
                     "workbooks": [
-                        analyze_workbook(p)
-                        for p in sorted(out.rglob("*.xlsx"))
-                        if p.name != REPORT_FILENAME
+                        analyze_workbook(p) for p in _xlsx_files(out) if p.name != REPORT_FILENAME
                     ]
                 }
                 if not findings["workbooks"]:

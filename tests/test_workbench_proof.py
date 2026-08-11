@@ -412,6 +412,35 @@ class TestRepairAndProve(unittest.TestCase):
             self.assertEqual(latest_proof_status(proj, versions)[0], "proven")
             self.assertTrue(Path(archive_project(db, cfg, p["id"])).is_file())
 
+    def test_uppercase_xlsx_import_gets_proof_and_repairs(self):
+        """Excel files arrive as .XLSX too — the import must record a
+        'provable' proof and repair & prove must find the workbook."""
+        from orivellum.capabilities.workbench import (
+            import_upload,
+            repair_and_prove,
+            version_dir,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, db, cfg = _make_app(tmp)
+            upload = Path(tmp) / "MODEL.XLSX"
+            _good_workbook(upload)
+
+            proj = import_upload(
+                db, cfg, title="Upper", brief="b", upload_path=upload, filename="MODEL.XLSX"
+            )
+            self.assertEqual(proj["kind"], "xlsx")
+            v1 = db.list_wb_versions(proj["id"])[0]
+            self.assertEqual(json.loads(v1["checks_json"])["proof"]["verdict"], "provable")
+            v1_sha = _sha(version_dir(cfg, proj["id"], 1) / "MODEL.XLSX")
+
+            row = repair_and_prove(db, cfg, proj["id"], 1)
+            self.assertEqual(row["verdict"], "proven")
+            self.assertEqual(_sha(version_dir(cfg, proj["id"], 1) / "MODEL.XLSX"), v1_sha)
+            wb = load_workbook(version_dir(cfg, proj["id"], 2) / "MODEL.XLSX", data_only=True)
+            self.assertEqual(wb["Data"]["A3"].value, 42)
+            wb.close()
+
     def test_failing_workbook_publishes_nothing(self):
         from orivellum.capabilities.workbench import (
             _publish_version,
