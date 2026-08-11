@@ -62,50 +62,67 @@ def _formula_ceiling() -> int:
 _COUNT_XML_BUDGET = 64 * 1024 * 1024
 
 
-def _count_formula_tokens(buf: bytes) -> int:
-    # every formula cell serializes exactly one <f> element (plain, with
-    # attributes, or self-closed shared-formula follower); literal '<' inside
-    # cell text is always XML-escaped, so these tokens cannot occur in data
-    return buf.count(b"<f>") + buf.count(b"<f ") + buf.count(b"<f/")
+class _OverLimit(Exception):
+    """Internal: preflight counter passed the ceiling — stop parsing."""
+
+
+def _feed_sheet_xml(fh, parser, scanned: int) -> int:
+    """Stream one worksheet part into the parser; -1 when the cumulative
+    scan budget is spent."""
+    while True:
+        chunk = fh.read(1 << 16)
+        if not chunk:
+            parser.Parse(b"", True)
+            return scanned
+        scanned += len(chunk)
+        if scanned > _COUNT_XML_BUDGET:
+            return -1
+        parser.Parse(chunk, False)
 
 
 def _count_formula_cells(path: pathlib.Path, limit: int) -> int:
     """Formula cells in the workbook, stopping at ``limit + 1``.
 
-    Streams the worksheet XML directly instead of iterating coordinates —
-    an inflated ``<dimension>`` or a sparse sheet with formulas at row one
-    million serializes only its real cells, so the scan is bounded by actual
-    file content, never by declared grid size. FAIL CLOSED: exhausting the
-    XML scan budget returns ``limit + 1`` (too large to prove safely), never
-    a stall. Returns 0 on unreadable files (the engine reports those
+    Streams the worksheet XML through expat (a real XML parser, so
+    namespace-prefixed ``<x:f>`` and any attribute whitespace count exactly
+    like ``<f t="shared">``) instead of iterating coordinates — an inflated
+    ``<dimension>`` or a sparse sheet with formulas at row one million
+    serializes only its real cells, so the scan is bounded by actual file
+    content, never by declared grid size. Counting by local name ``f`` can
+    only ever over-count exotic non-SpreadsheetML elements — errs toward
+    'too large', never toward running the engine. FAIL CLOSED: exhausting
+    the XML scan budget returns ``limit + 1`` (too large to prove safely),
+    never a stall. Returns 0 on unreadable files (the engine reports those
     honestly itself)."""
-    n = 0
+    import xml.parsers.expat
+
+    state = {"n": 0}
+
+    def _start(tag, _attrs):
+        # expat qnames keep the raw prefix (e.g. 'x:f'); local name decides
+        if tag.rpartition(":")[2] == "f":
+            state["n"] += 1
+            if state["n"] > limit:
+                raise _OverLimit
+
     scanned = 0
     try:
         with zipfile.ZipFile(path) as z:
             for name in z.namelist():
                 if not _SHEET_XML.match(name):
                     continue
+                parser = xml.parsers.expat.ParserCreate()
+                parser.StartElementHandler = _start
                 with z.open(name) as fh:
-                    carry = b""
-                    while True:
-                        chunk = fh.read(1 << 16)
-                        if not chunk:
-                            break
-                        scanned += len(chunk)
-                        if scanned > _COUNT_XML_BUDGET:
-                            return limit + 1
-                        # 2-byte carry so a token split across chunks is seen;
-                        # tokens are 3 bytes, so the carry alone never matches
-                        # and nothing is double-counted
-                        n += _count_formula_tokens(carry + chunk)
-                        if n > limit:
-                            return n
-                        carry = chunk[-2:]
+                    scanned = _feed_sheet_xml(fh, parser, scanned)
+                if scanned < 0:
+                    return limit + 1
+    except _OverLimit:
+        return state["n"]
     except Exception:  # noqa: BLE001
         logger.debug("Formula count failed for %s", path, exc_info=True)
         return 0
-    return n
+    return state["n"]
 
 
 GATE_NAMES = (

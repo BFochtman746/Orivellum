@@ -175,6 +175,48 @@ class TestProveWorkbook(unittest.TestCase):
             self.assertEqual(_count_formula_cells(p, 100), 1)
             self.assertLess(_time.monotonic() - t0, 5.0)
 
+    def test_ceiling_counts_namespaced_and_whitespace_formula_tags(self):
+        """Valid OOXML may serialize formulas as <x:f> or with tabs/newlines
+        before attributes — the preflight must count those exactly like
+        plain <f>, and the engine must never run when they exceed the
+        ceiling. Regression for the byte-token-counter bypass."""
+        import os
+        import zipfile as zf
+        from unittest.mock import MagicMock
+
+        from orivellum.capabilities import workbench_proof
+        from orivellum.capabilities.workbench_proof import _count_formula_cells
+
+        cells = "".join(
+            f'<x:c r="A{r}"><x:f\t{"" if r % 2 else chr(10)}t="normal">1+{r}</x:f>'
+            f"<x:v>{r + 1}</x:v></x:c>"
+            for r in range(1, 6)
+        )
+        sheet = (
+            '<?xml version="1.0"?>'
+            '<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f'<x:sheetData><x:row r="1">{cells}</x:row></x:sheetData></x:worksheet>'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "weird.xlsx"
+            with zf.ZipFile(p, "w") as z:
+                z.writestr("xl/worksheets/sheet1.xml", sheet)
+            self.assertEqual(_count_formula_cells(p, 100), 5)
+            self.assertEqual(_count_formula_cells(p, 3), 4)  # early exit past limit
+
+            engine = MagicMock()
+            engine.recalculate.side_effect = AssertionError("engine must not run")
+            with (
+                patch.dict(os.environ, {"ORIVELLUM_PROOF_FORMULA_CEILING": "3"}),
+                patch.object(
+                    workbench_proof, "_load_runner_modules", return_value=(engine, MagicMock())
+                ),
+            ):
+                res = workbench_proof.prove_workbook(p)
+            self.assertEqual(res["verdict"], "unverified")
+            self.assertIn("too large to prove", res["error"])
+            engine.recalculate.assert_not_called()
+
     def test_scan_budget_fails_closed_as_unverified(self):
         """Exhausting the XML scan budget must report 'too large' (over the
         limit), never hang or silently pass."""
