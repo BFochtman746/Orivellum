@@ -104,20 +104,21 @@ def run_decompose_route(body: DecomposeBody):
     db = get_db()
     config = get_config()
     path = Path(body.archive_path) if body.archive_path else _default_archive()
+    # Normalize BEFORE the existence check: relative caller paths (e.g.
+    # "attached_assets/x.zip") are anchored on ROOT so they resolve the same
+    # regardless of the server's cwd, then containment is enforced.
+    if body.archive_path:
+        if not path.is_absolute():
+            path = ROOT / path
+        if not path.resolve().is_relative_to(_ASSETS_ROOT.resolve()):
+            raise HTTPException(
+                status_code=422,
+                detail="archive_path must point inside attached_assets/",
+            )
     if path is None or not path.exists():
         raise HTTPException(
             status_code=404,
             detail="Writing Architect archive not found; provide archive_path",
-        )
-    # Restrict caller-supplied paths to the attached_assets import root.
-    # Relative caller paths (e.g. "attached_assets/x.zip") are anchored on
-    # ROOT so they resolve the same regardless of the server's cwd.
-    if body.archive_path and not path.is_absolute():
-        path = ROOT / path
-    if body.archive_path and not path.resolve().is_relative_to(_ASSETS_ROOT.resolve()):
-        raise HTTPException(
-            status_code=422,
-            detail="archive_path must point inside attached_assets/",
         )
     data_dir = Path(getattr(config, "data_dir", "data"))
     try:

@@ -203,7 +203,7 @@ function ArchiveTab({
       }
       const j = await r.json();
       toast.success(
-        `Decomposition complete — ${j.extracted ?? j.records ?? "all"} files accounted for`,
+        `Decomposition complete — ${j.inventory ?? "all"} files accounted for`,
       );
       onChanged();
     } catch (e) {

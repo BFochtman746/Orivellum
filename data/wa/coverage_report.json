@@ -1,12 +1,12 @@
 {
   "summary": {
-    "run_id": "332c51d1-c9fa-437f-94fe-940781dea71a",
+    "run_id": "357a91f4-475b-4541-88c3-fc3c81b9f013",
     "archive": "/home/runner/workspace/attached_assets/WRITING_ARCHITECT_1786418757765.zip",
-    "duration_sec": 4.15,
+    "duration_sec": 3.34,
     "inventory": 207,
     "records": 131,
     "proposals_seen": 99,
-    "proposals_new": 99,
+    "proposals_new": 0,
     "coverage": {
       "total_docs": 207,
       "by_status": {
@@ -119,7 +119,7 @@
   },
   "inventory": [
     {
-      "id": "94e5cf1e-747c-4454-a3b9-59b71252c21c",
+      "id": "0a22fb79-5221-491d-9382-58a23bc5db30",
       "rel_path": "WRITING_ARCHITECT/SOVEREIGN_Writing_System_v1.0",
       "filename": "SOVEREIGN_Writing_System_v1.0",
       "layer": "ROOT",
@@ -131,7 +131,7 @@
       "target_kind": null
     },
     {
-      "id": "fed1c935-9337-415b-9d8d-19192ba9c576",
+      "id": "18288265-f91d-48e0-b018-2cae3f5e869d",
       "rel_path": "WRITING_ARCHITECT/Ultimate_Diagnostic.docx",
       "filename": "Ultimate_Diagnostic.docx",
       "layer": "ROOT",
@@ -143,7 +143,7 @@
       "target_kind": "position_spec"
     },
     {
-      "id": "f78007b1-fb23-47d0-a00a-b61fc160ec32",
+      "id": "685a6eff-e273-45c7-8df8-f8f0a6b80d60",
       "rel_path": "WRITING_ARCHITECT/Ultimately_World_Build.docx",
       "filename": "Ultimately_World_Build.docx",
       "layer": "ROOT",
@@ -155,7 +155,7 @@
       "target_kind": null
     },
     {
-      "id": "a4066dc8-9d89-44cd-a8be-517f51ca41ac",
+      "id": "267e6f08-89f4-44c8-8bdd-b8ddc30b10ab",
       "rel_path": "WRITING_ARCHITECT/Universal_Reader_Copy_Master_Protocol_Brian_Fochtman.docx",
       "filename": "Universal_Reader_Copy_Master_Protocol_Brian_Fochtman.docx",
       "layer": "ROOT",
@@ -167,7 +167,7 @@
       "target_kind": null
     },
     {
-      "id": "b7bccc7f-94c7-4349-a29c-6a47ebdb0422",
+      "id": "4efdbff6-f3b9-431e-a259-737c65c07e3d",
       "rel_path": "WRITING_ARCHITECT/CFNetworkDownload_ZMXQIY.md",
       "filename": "CFNetworkDownload_ZMXQIY.md",
       "layer": "ROOT",
@@ -179,7 +179,7 @@
       "target_kind": null
     },
     {
-      "id": "b1d88a3c-6c5d-47dc-982a-d13a26054281",
+      "id": "a4e0fea2-f141-43a8-8038-b3690d0e2801",
       "rel_path": "WRITING_ARCHITECT/MODULE_7_AI_Provenance_Verification_Implementation_Guide.docx",
       "filename": "MODULE_7_AI_Provenance_Verification_Implementation_Guide.docx",
       "layer": "ROOT",
@@ -191,7 +191,7 @@
       "target_kind": "provenance_spec"
     },
     {
-      "id": "af4f40d4-b3a3-4ab8-8fdc-23d595da3835",
+      "id": "4e7a2412-389d-480a-afa5-2ac0963e54da",
       "rel_path": "WRITING_ARCHITECT/SOVEREIGN_v1.2_ReadAloud_Update.docx",
       "filename": "SOVEREIGN_v1.2_ReadAloud_Update.docx",
       "layer": "ROOT",
@@ -203,7 +203,7 @@
       "target_kind": null
     },
     {
-      "id": "bd982de0-f688-4215-93af-437f3f6eb76a",
+      "id": "1b7d1419-1b45-4cce-9db4-a67956cd4534",
       "rel_path": "WRITING_ARCHITECT/AI_Provenance_Verification_System_v2.0.docx",
       "filename": "AI_Provenance_Verification_System_v2.0.docx",
       "layer": "ROOT",
@@ -215,7 +215,7 @@
       "target_kind": "provenance_spec"
     },
     {
-      "id": "56505f5d-bf12-4798-b6a1-97e21559bbd9",
+      "id": "d99298e4-0851-42c4-9511-6a80599b042e",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_Mastery_Operating_System_v2_0.docx",
       "filename": "UNHINDERED_Mastery_Operating_System_v2_0.docx",
       "layer": "ROOT",
@@ -227,7 +227,7 @@
       "target_kind": null
     },
     {
-      "id": "5892ea89-bae1-4176-ac92-9a7d797486e8",
+      "id": "598a04e3-14f8-41b7-abc5-02d6f4ec8162",
       "rel_path": "WRITING_ARCHITECT/Ultimate_Biblical_Research.docx",
       "filename": "Ultimate_Biblical_Research.docx",
       "layer": "ROOT",
@@ -239,7 +239,7 @@
       "target_kind": null
     },
     {
-      "id": "29a44e23-0fbb-411f-8948-032912f26930",
+      "id": "67395c39-49d9-405c-aa5e-4de5f1d30311",
       "rel_path": "WRITING_ARCHITECT/NARRATIVEOS_v21_COMPLETE_MASTER_SYSTEM.docx",
       "filename": "NARRATIVEOS_v21_COMPLETE_MASTER_SYSTEM.docx",
       "layer": "ROOT",
@@ -251,7 +251,7 @@
       "target_kind": null
     },
     {
-      "id": "b9962e62-2279-4bb8-afc7-3855e774b57b",
+      "id": "7a57982b-61ba-4e90-ae4f-5f762b78dedf",
       "rel_path": "WRITING_ARCHITECT/ULTIMATE_PROSE_SYSTEM_v2.1_IMPLEMENTATION.md",
       "filename": "ULTIMATE_PROSE_SYSTEM_v2.1_IMPLEMENTATION.md",
       "layer": "ROOT",
@@ -263,7 +263,7 @@
       "target_kind": "voice_envelope"
     },
     {
-      "id": "46095d60-e3f3-4b4b-91b8-e6864e2055d9",
+      "id": "76f803e6-4331-46a3-9dd2-796346b3c64f",
       "rel_path": "WRITING_ARCHITECT/Book_Bible.docx",
       "filename": "Book_Bible.docx",
       "layer": "ROOT",
@@ -275,7 +275,7 @@
       "target_kind": "canon_proposal"
     },
     {
-      "id": "13a9384c-2171-4518-bc0d-a6dc649a85ce",
+      "id": "c60f2363-fb8f-4dca-982e-88124313b0b2",
       "rel_path": "WRITING_ARCHITECT/The_Held-Breath_Voice.docx",
       "filename": "The_Held-Breath_Voice.docx",
       "layer": "ROOT",
@@ -287,7 +287,7 @@
       "target_kind": "voice_envelope"
     },
     {
-      "id": "b551bbe4-bee5-48d7-afb9-766388c17ca5",
+      "id": "780c381d-8a6e-489e-97f4-a204c7c55d2b",
       "rel_path": "WRITING_ARCHITECT/NARRATIVEOS_v24_3_PROJECT_DEPLOYMENT_LAYER.docx",
       "filename": "NARRATIVEOS_v24_3_PROJECT_DEPLOYMENT_LAYER.docx",
       "layer": "ROOT",
@@ -299,7 +299,7 @@
       "target_kind": null
     },
     {
-      "id": "e6c6a0db-d61e-4b5a-befb-3353541ed50e",
+      "id": "72a29182-126a-484e-b3c2-0c3e74135bd3",
       "rel_path": "WRITING_ARCHITECT/Writing_Architect_Complete_Audit_Report.docx",
       "filename": "Writing_Architect_Complete_Audit_Report.docx",
       "layer": "ROOT",
@@ -311,7 +311,7 @@
       "target_kind": null
     },
     {
-      "id": "fa3c4e79-a371-4a81-9bfe-225e59456c41",
+      "id": "c2196f87-fc97-42e7-9378-9ec6920255e1",
       "rel_path": "WRITING_ARCHITECT/Unified_Writers_Room_System_v4.1.docx",
       "filename": "Unified_Writers_Room_System_v4.1.docx",
       "layer": "ROOT",
@@ -323,7 +323,7 @@
       "target_kind": null
     },
     {
-      "id": "34889e28-e8a6-40dd-81be-729867abff34",
+      "id": "052e02dc-90e2-44fb-9892-a8defbf0573b",
       "rel_path": "WRITING_ARCHITECT/SOVEREIGN_MASTER_v1.4",
       "filename": "SOVEREIGN_MASTER_v1.4",
       "layer": "ROOT",
@@ -335,7 +335,7 @@
       "target_kind": null
     },
     {
-      "id": "9890c30e-788e-43a9-bbf5-939b5b6afb0b",
+      "id": "2f9d7f89-9cae-45fd-acc5-caf81e089258",
       "rel_path": "WRITING_ARCHITECT/SOVEREIGN_MASTER_v1.3",
       "filename": "SOVEREIGN_MASTER_v1.3",
       "layer": "ROOT",
@@ -347,7 +347,7 @@
       "target_kind": null
     },
     {
-      "id": "3b22179d-58d9-4885-a840-2a23306dce7c",
+      "id": "4dd16c1c-857d-4e5f-9443-9e6f6e6120fa",
       "rel_path": "WRITING_ARCHITECT/NARRATIVEOS_v24_4_FINAL_SYSTEM.docx",
       "filename": "NARRATIVEOS_v24_4_FINAL_SYSTEM.docx",
       "layer": "ROOT",
@@ -359,7 +359,7 @@
       "target_kind": null
     },
     {
-      "id": "27fb7ab3-cd70-4ff1-a0a7-decf13da5c1e",
+      "id": "e94b57a1-8adf-489a-8a1c-a15cc7f6f8b5",
       "rel_path": "WRITING_ARCHITECT/Complete_Author_Profile.docx",
       "filename": "Complete_Author_Profile.docx",
       "layer": "ROOT",
@@ -371,7 +371,7 @@
       "target_kind": null
     },
     {
-      "id": "17b4e485-3985-4f60-b542-b5b274a98deb",
+      "id": "d6c2cbfc-216f-423d-97c2-06a60b825819",
       "rel_path": "WRITING_ARCHITECT/The_Voice_Architect.docx",
       "filename": "The_Voice_Architect.docx",
       "layer": "ROOT",
@@ -383,7 +383,7 @@
       "target_kind": "voice_envelope"
     },
     {
-      "id": "e8ad0f34-f19e-487c-813c-835d62bfa262",
+      "id": "9e7aa02b-f8d4-4131-ab92-c298a0a288c5",
       "rel_path": "WRITING_ARCHITECT/NARRATIVEOS_v24_1_HARDENED_SYSTEM.docx",
       "filename": "NARRATIVEOS_v24_1_HARDENED_SYSTEM.docx",
       "layer": "ROOT",
@@ -395,7 +395,7 @@
       "target_kind": null
     },
     {
-      "id": "2f592acd-79e3-4f5e-b9c1-7190f51950e7",
+      "id": "523a947d-c113-4526-9c16-e93ddf736fdf",
       "rel_path": "WRITING_ARCHITECT/THE_ULTIMATE_AI_DETECTION_SYSTEM_v2.0_Implementation_Plan.docx",
       "filename": "THE_ULTIMATE_AI_DETECTION_SYSTEM_v2.0_Implementation_Plan.docx",
       "layer": "ROOT",
@@ -407,7 +407,7 @@
       "target_kind": null
     },
     {
-      "id": "d998d391-ad64-41ea-afbb-d44288636f31",
+      "id": "fde8abd2-19db-48e5-b021-ef5dcb974c8b",
       "rel_path": "WRITING_ARCHITECT/Ultimately_Character_Profile.docx",
       "filename": "Ultimately_Character_Profile.docx",
       "layer": "ROOT",
@@ -419,7 +419,7 @@
       "target_kind": null
     },
     {
-      "id": "87109bd3-8a57-41a3-99f3-e51e89935d92",
+      "id": "b160ff59-9a4f-457a-8e44-dfaf73102e80",
       "rel_path": "WRITING_ARCHITECT/FORGE_v3_3_Complete.docx",
       "filename": "FORGE_v3_3_Complete.docx",
       "layer": "ROOT",
@@ -431,7 +431,7 @@
       "target_kind": null
     },
     {
-      "id": "f1eb5233-4990-4045-ab3c-9814c7ab7ef5",
+      "id": "4d1ceef2-6b25-41c4-952b-e8c242976dc8",
       "rel_path": "WRITING_ARCHITECT/AI_Provenance_Verification_System_v1.0.docx",
       "filename": "AI_Provenance_Verification_System_v1.0.docx",
       "layer": "ROOT",
@@ -443,7 +443,7 @@
       "target_kind": null
     },
     {
-      "id": "6357d80f-e7ce-446d-9c87-0ef6cf8d4a1b",
+      "id": "47e7d724-d6ae-4302-86fd-f5adbe0d2bc0",
       "rel_path": "WRITING_ARCHITECT/Module writing.zip",
       "filename": "Module writing.zip",
       "layer": "ROOT",
@@ -455,7 +455,7 @@
       "target_kind": null
     },
     {
-      "id": "601f107a-cad6-481f-9199-9173da1babab",
+      "id": "0f7d57cf-eec9-42a9-9ee5-88e0b7673288",
       "rel_path": "WRITING_ARCHITECT/ULTIMATE_PROSE_SYSTEM_v2.0_COMPLETE.docx",
       "filename": "ULTIMATE_PROSE_SYSTEM_v2.0_COMPLETE.docx",
       "layer": "ROOT",
@@ -467,7 +467,7 @@
       "target_kind": "voice_envelope"
     },
     {
-      "id": "b4a7c5f5-0358-41fd-8f49-7b65a1acfa0b",
+      "id": "a8ceb2fb-d369-4c30-b18e-1970cf6fabda",
       "rel_path": "WRITING_ARCHITECT/UMS_v23_Exact_System_Files/UMS_v23_COMMAND_CHEAT_SHEET.txt",
       "filename": "UMS_v23_COMMAND_CHEAT_SHEET.txt",
       "layer": "UMS",
@@ -479,7 +479,7 @@
       "target_kind": null
     },
     {
-      "id": "409cfebc-b352-409a-a5a8-a5f8ff965534",
+      "id": "6aa3916b-83a9-44d2-824b-fff1b8cad250",
       "rel_path": "WRITING_ARCHITECT/UMS_v23_Exact_System_Files/UMS_v23_COMPLETE_SYSTEM_MASTER.docx",
       "filename": "UMS_v23_COMPLETE_SYSTEM_MASTER.docx",
       "layer": "UMS",
@@ -491,7 +491,7 @@
       "target_kind": null
     },
     {
-      "id": "fdfe97c6-3eb7-42ec-b5bb-bdb5397c7f01",
+      "id": "5b80f986-58de-4d59-b3e2-62d6dbcec8b4",
       "rel_path": "WRITING_ARCHITECT/UMS_v23_Exact_System_Files/UMS_v23_FINAL_LOCK_CHECKLIST.docx",
       "filename": "UMS_v23_FINAL_LOCK_CHECKLIST.docx",
       "layer": "UMS",
@@ -503,7 +503,7 @@
       "target_kind": null
     },
     {
-      "id": "982a59c0-52fc-47ea-984f-50c134199b47",
+      "id": "01c97079-0b16-4374-94bf-3cd3da6b28c0",
       "rel_path": "WRITING_ARCHITECT/UMS_v23_Exact_System_Files/UMS_v23_CONTROL_SHELL_STRICT.txt",
       "filename": "UMS_v23_CONTROL_SHELL_STRICT.txt",
       "layer": "UMS",
@@ -515,7 +515,7 @@
       "target_kind": null
     },
     {
-      "id": "c89c222b-0027-44fb-9c6a-affa075c16db",
+      "id": "93c4f1f5-45b6-4f02-8117-18b4d8b2940f",
       "rel_path": "WRITING_ARCHITECT/UMS_v23_Exact_System_Files/UMS_v23_RUNTIME_QUICKSTART.docx",
       "filename": "UMS_v23_RUNTIME_QUICKSTART.docx",
       "layer": "UMS",
@@ -527,7 +527,7 @@
       "target_kind": null
     },
     {
-      "id": "15306184-5e1b-496f-80f2-d18702129ed0",
+      "id": "551df5b0-87b9-47e7-8f72-063bc7762c35",
       "rel_path": "WRITING_ARCHITECT/UMS_v23_Exact_System_Files/UMS_v23_SESSION_RESTORE_STATE.txt",
       "filename": "UMS_v23_SESSION_RESTORE_STATE.txt",
       "layer": "UMS",
@@ -539,7 +539,7 @@
       "target_kind": null
     },
     {
-      "id": "a015bbfd-50ab-47e0-b344-55b5d9590a20",
+      "id": "6e9d9451-172e-4cb1-b5d0-0448bb76f1d6",
       "rel_path": "WRITING_ARCHITECT/UMS_v23_Exact_System_Files/README.txt",
       "filename": "README.txt",
       "layer": "UMS",
@@ -551,7 +551,7 @@
       "target_kind": null
     },
     {
-      "id": "aca351eb-f983-4809-8719-efe063ab7322",
+      "id": "409a3766-ffb3-46b4-9780-b99126a6ceeb",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM.zip",
       "filename": "WRITING_SYSTEM.zip",
       "layer": "MODULE_WRITING",
@@ -563,7 +563,7 @@
       "target_kind": null
     },
     {
-      "id": "56e62c33-de83-429d-a402-6a664cc36df9",
+      "id": "bd5a0d03-d742-4974-acfa-4945f392be55",
       "rel_path": "WRITING_ARCHITECT/Module writing/SOVEREIGN_PROGRAM_REPOSITORY_v1.2.0-RC2.zip",
       "filename": "SOVEREIGN_PROGRAM_REPOSITORY_v1.2.0-RC2.zip",
       "layer": "MODULE_WRITING",
@@ -575,7 +575,7 @@
       "target_kind": null
     },
     {
-      "id": "aa6e1920-4919-4d41-990f-ac9396db139b",
+      "id": "01bedfc7-2e72-458e-b00b-fb6b2e2aa602",
       "rel_path": "WRITING_ARCHITECT/Module writing/SOVEREIGN_MASTER_v1.4",
       "filename": "SOVEREIGN_MASTER_v1.4",
       "layer": "MODULE_WRITING",
@@ -587,7 +587,7 @@
       "target_kind": null
     },
     {
-      "id": "16b2b381-36ec-4943-ac70-68c084871a9c",
+      "id": "c2fa82d4-9367-4d00-b13f-f26b520e4a33",
       "rel_path": "WRITING_ARCHITECT/Module writing/SOVEREIGN_MASTER_v1.4 2",
       "filename": "SOVEREIGN_MASTER_v1.4 2",
       "layer": "MODULE_WRITING",
@@ -599,7 +599,7 @@
       "target_kind": null
     },
     {
-      "id": "9f20b489-8fbd-4a7b-9e5f-f7f53dfda54f",
+      "id": "fd17a80b-2701-4325-a83d-65c0fcea7798",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/CH01_BLUEPRINT.docx",
       "filename": "CH01_BLUEPRINT.docx",
       "layer": "WRITING_SYSTEM",
@@ -611,7 +611,7 @@
       "target_kind": null
     },
     {
-      "id": "9c260c4e-3b66-4428-849b-554c5ae2d726",
+      "id": "ea725e15-b4d4-4db9-b3c2-fe79fadf0a0e",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/SYSTEM_README.docx",
       "filename": "SYSTEM_README.docx",
       "layer": "WRITING_SYSTEM",
@@ -623,7 +623,7 @@
       "target_kind": "system_doc"
     },
     {
-      "id": "30bbe30f-47de-46b2-9b56-c1b926618b7b",
+      "id": "87958582-7fbd-4b5b-9677-5f3af40275db",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/CH02_BLUEPRINT.docx",
       "filename": "CH02_BLUEPRINT.docx",
       "layer": "WRITING_SYSTEM",
@@ -635,7 +635,7 @@
       "target_kind": null
     },
     {
-      "id": "efbab98e-c886-435e-ab2c-ea934ab06224",
+      "id": "865b0aae-6663-4a60-ad00-57e84b1dc578",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/MANUSCRIPT_MASTER.docx",
       "filename": "MANUSCRIPT_MASTER.docx",
       "layer": "WRITING_SYSTEM",
@@ -647,7 +647,7 @@
       "target_kind": null
     },
     {
-      "id": "b967f18c-c4b0-435b-bd6a-77d2d939a90f",
+      "id": "5615cfd6-4f58-4993-a56c-adc507e3eaf1",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/package_manifest.json",
       "filename": "package_manifest.json",
       "layer": "UNHINDERED",
@@ -659,7 +659,7 @@
       "target_kind": null
     },
     {
-      "id": "a5d31a00-315f-4a06-bcf7-f210526ffc2b",
+      "id": "1cc58e09-2b3a-4e96-ab8e-059f8ccc67e1",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/SHA256SUMS.txt",
       "filename": "SHA256SUMS.txt",
       "layer": "UNHINDERED",
@@ -671,7 +671,7 @@
       "target_kind": null
     },
     {
-      "id": "601c0cd5-6a9a-4987-b40b-c1eec134662f",
+      "id": "76fe2f5a-a736-4d2c-b31e-93a6a7cf7b37",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/README_FIRST.txt",
       "filename": "README_FIRST.txt",
       "layer": "UNHINDERED",
@@ -683,7 +683,7 @@
       "target_kind": null
     },
     {
-      "id": "4d863c1a-9246-4714-aec3-b9e6b0a82635",
+      "id": "cd7da4df-3870-4a02-8741-f9800a42cd88",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_operation_routes.docx",
       "filename": "runtime_operation_routes.docx",
       "layer": "RUNTIME",
@@ -695,7 +695,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "c0a23c9f-833e-4f2b-b065-3e374cefc683",
+      "id": "24495e7a-98f2-45e3-b76c-3402ef00d12a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_replay_policy.docx",
       "filename": "runtime_replay_policy.docx",
       "layer": "RUNTIME",
@@ -707,7 +707,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "efa9eefc-70dc-46dd-a025-cb48c883bae6",
+      "id": "5ef3041a-f50c-4bb8-afbf-3295ecd2b148",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_trace_and_checkpoint.docx",
       "filename": "schema_trace_and_checkpoint.docx",
       "layer": "RUNTIME",
@@ -719,7 +719,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "e5dcb01f-54d2-4582-a13e-224f618dd870",
+      "id": "df77bc96-c29e-481f-93ec-7b5acc7a9dbe",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_trace_parity_map.docx",
       "filename": "runtime_trace_parity_map.docx",
       "layer": "RUNTIME",
@@ -731,7 +731,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "49f46505-ad79-495e-be8e-38bf99577658",
+      "id": "22e6e1cb-61a8-4bf5-8711-096910fa607f",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_live_validation_protocol.docx",
       "filename": "runtime_live_validation_protocol.docx",
       "layer": "RUNTIME",
@@ -743,7 +743,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "05ab2e42-4e11-4186-b852-d9b821329ccb",
+      "id": "9b378f15-ffd5-4211-b925-a3051d7c8b6a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_equivalence_test_map.docx",
       "filename": "runtime_equivalence_test_map.docx",
       "layer": "RUNTIME",
@@ -755,7 +755,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "315203c9-d466-4956-9b05-8bddd4f2d320",
+      "id": "be9ff1e5-fbdd-49d7-b42d-17126a3b1127",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_shadow_mode_policy.docx",
       "filename": "runtime_shadow_mode_policy.docx",
       "layer": "RUNTIME",
@@ -767,7 +767,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "fc721b59-5aa6-4137-abca-d53f95ebc0da",
+      "id": "8cbc6bd1-7d6e-4d85-8787-3af7df8f16c7",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_override_control_rules.docx",
       "filename": "runtime_override_control_rules.docx",
       "layer": "RUNTIME",
@@ -779,7 +779,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "8acf1c9f-dbfc-4f16-8ccb-57962d39db14",
+      "id": "b503e317-93e9-4f2a-86c6-507600b3d0ab",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_trace_policy.docx",
       "filename": "runtime_trace_policy.docx",
       "layer": "RUNTIME",
@@ -791,7 +791,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "92331a12-bb3e-45b7-8d66-0efa4accdf0f",
+      "id": "19bb39a3-834e-444a-8da2-5d736337a1cf",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_approval_decision_records.docx",
       "filename": "schema_approval_decision_records.docx",
       "layer": "RUNTIME",
@@ -803,7 +803,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "48513615-8363-44a5-bcbf-bc98810cfda0",
+      "id": "2b351ddb-eb6a-4622-8e22-15a79d1e0225",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_baseline_state_registry.docx",
       "filename": "runtime_baseline_state_registry.docx",
       "layer": "RUNTIME",
@@ -815,7 +815,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "914a8068-8450-4e98-b5f9-0f5480fda32f",
+      "id": "3216960b-8a05-46fe-a54e-60b5d51b674a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_engine_equivalence_matrix.docx",
       "filename": "runtime_engine_equivalence_matrix.docx",
       "layer": "RUNTIME",
@@ -827,7 +827,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "73f2f221-49ff-4ba0-b23d-450f64afd3e0",
+      "id": "c6f1b6ad-9496-4469-b1b7-4403a63d2ed2",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_handoff_trace_records.docx",
       "filename": "schema_handoff_trace_records.docx",
       "layer": "RUNTIME",
@@ -839,7 +839,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "6dda3bae-c896-4462-86db-731b24f69815",
+      "id": "fa7c4d33-fa23-4e3f-b443-6cf435d3bc2d",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_trace_event_records.docx",
       "filename": "schema_trace_event_records.docx",
       "layer": "RUNTIME",
@@ -851,7 +851,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "e529fce5-ee95-45ac-902d-d507c1a906f7",
+      "id": "c0419870-3302-4815-8e8f-5b695d62746e",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_promotion_registry.docx",
       "filename": "runtime_promotion_registry.docx",
       "layer": "RUNTIME",
@@ -863,7 +863,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "6ac4d7d6-fab5-4d90-aed4-6f46a9712ac8",
+      "id": "a54158c0-f6b9-4748-a993-95777b113b6f",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_failure_observation_rules.docx",
       "filename": "runtime_failure_observation_rules.docx",
       "layer": "RUNTIME",
@@ -875,7 +875,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "06786554-8994-4f59-9053-a7e254226629",
+      "id": "ce6d554e-8cf3-43a9-a0f5-311c9c45f479",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_observability_summary_records.docx",
       "filename": "schema_observability_summary_records.docx",
       "layer": "RUNTIME",
@@ -887,7 +887,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "d12d50f5-7032-49bd-9bb5-5f9074608284",
+      "id": "473f9764-912b-45a1-a02b-0280ae23b890",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_handoff_trace_rules.docx",
       "filename": "runtime_handoff_trace_rules.docx",
       "layer": "RUNTIME",
@@ -899,7 +899,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "9785fe7f-795a-4c26-b896-0b64ee41d9ea",
+      "id": "c2242017-1c0f-45be-bd9e-5815142a6809",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_runtime_replay_records.docx",
       "filename": "schema_runtime_replay_records.docx",
       "layer": "RUNTIME",
@@ -911,7 +911,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "13abd63f-ebf7-4a0c-ac52-c74f87efe5e5",
+      "id": "72718da4-3291-4345-a3c8-df531159cba6",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_live_test_scenarios.docx",
       "filename": "runtime_live_test_scenarios.docx",
       "layer": "RUNTIME",
@@ -923,7 +923,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "dbf46524-ed7b-40e0-974f-917c90b870b6",
+      "id": "99e4a8fe-8ca5-47b7-afed-f4db053637a2",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_runtime_trace_records.docx",
       "filename": "schema_runtime_trace_records.docx",
       "layer": "RUNTIME",
@@ -935,7 +935,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "f36ece05-e602-4ff4-a0cb-5a0c84cef234",
+      "id": "875435ef-a187-4d9b-8a7f-0426083390b2",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_approval_enforcement_policy.docx",
       "filename": "runtime_approval_enforcement_policy.docx",
       "layer": "RUNTIME",
@@ -947,7 +947,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "a614baa1-ebfb-4942-a78e-80c4ff172af4",
+      "id": "3bdb923d-7436-4858-b297-a11525504e0d",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_equivalence_test_records.docx",
       "filename": "schema_equivalence_test_records.docx",
       "layer": "RUNTIME",
@@ -959,7 +959,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "04af6b35-c3c0-44c6-a9dd-c0222abc8a29",
+      "id": "1cb3614f-158a-4972-bde6-a1a985733419",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_engine_contracts.docx",
       "filename": "schema_engine_contracts.docx",
       "layer": "RUNTIME",
@@ -971,7 +971,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "a727c7ac-2572-4a78-8d15-720d5230d5eb",
+      "id": "32266d66-f2e3-4286-9dd8-8f9399977df7",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_verdicts_and_authority.docx",
       "filename": "schema_verdicts_and_authority.docx",
       "layer": "RUNTIME",
@@ -983,7 +983,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "d5e75a95-852d-4730-91d5-58d38fb96b96",
+      "id": "4439c0db-8a22-4182-8122-9acb92f50f54",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_phase7_activation_status.docx",
       "filename": "runtime_phase7_activation_status.docx",
       "layer": "RUNTIME",
@@ -995,7 +995,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "1aa9f406-c3e6-4739-b4df-63974b79aa8b",
+      "id": "2a6258db-e3c4-4146-813a-87c780c1ea76",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_failure_state_map.docx",
       "filename": "runtime_failure_state_map.docx",
       "layer": "RUNTIME",
@@ -1007,7 +1007,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "98eee458-e684-44b7-832d-7446ec9df35c",
+      "id": "6e5488ff-385d-4fb6-abd9-8040b25340e9",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_engine_input_output.docx",
       "filename": "schema_engine_input_output.docx",
       "layer": "RUNTIME",
@@ -1019,7 +1019,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "5b593106-6004-428b-a4f6-9a674a0dfd88",
+      "id": "fb0b0868-51ad-4a83-8003-dc54131d0af0",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_override_control_records.docx",
       "filename": "schema_override_control_records.docx",
       "layer": "RUNTIME",
@@ -1031,7 +1031,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "cdcf3e01-7908-45f9-9368-562e0950486b",
+      "id": "881630e2-c224-4fda-8123-e09f8adbd3cb",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_overlay_activation_gate.docx",
       "filename": "runtime_overlay_activation_gate.docx",
       "layer": "RUNTIME",
@@ -1043,7 +1043,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "43f17c2f-f9a7-419a-a3d9-e0dcbd26dedd",
+      "id": "994cf607-26c7-46f0-9f79-2754bb818de7",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_activation_readiness_records.docx",
       "filename": "schema_activation_readiness_records.docx",
       "layer": "RUNTIME",
@@ -1055,7 +1055,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "0160e61c-33cd-43b9-a8ef-54572637ad63",
+      "id": "d6adc1dc-23f8-4c54-832b-5d466492d78e",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_go_no_go_rules.docx",
       "filename": "runtime_go_no_go_rules.docx",
       "layer": "RUNTIME",
@@ -1067,7 +1067,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "6f2c54f4-53b7-4886-b7d5-a91601d428a1",
+      "id": "9a5b518f-813b-40f0-8aac-3118699d3853",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_phase5_parity_map.docx",
       "filename": "runtime_phase5_parity_map.docx",
       "layer": "RUNTIME",
@@ -1079,7 +1079,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "98794edc-b6f8-4540-8600-4df567281eaf",
+      "id": "afda1cd4-fc39-43ce-bf56-63ab969022e5",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_phase6_parity_status.docx",
       "filename": "runtime_phase6_parity_status.docx",
       "layer": "RUNTIME",
@@ -1091,7 +1091,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "6ea7ec88-9aa3-4c30-90d8-44b89f3f9def",
+      "id": "f8581915-2a52-4d6e-91a1-6c0f429dcbf9",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_activation_readiness_matrix.docx",
       "filename": "runtime_activation_readiness_matrix.docx",
       "layer": "RUNTIME",
@@ -1103,7 +1103,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "b50fc9aa-312d-4d14-88fe-c154e7133e0f",
+      "id": "7b767240-0c54-4335-b644-04b9ef43f45f",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_observability_matrix.docx",
       "filename": "runtime_observability_matrix.docx",
       "layer": "RUNTIME",
@@ -1115,7 +1115,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "6ee5404a-baad-4782-8024-b4f0c0553d58",
+      "id": "e07c1206-ad94-45b5-bc32-928d5104271a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_law_preservation_checklist.docx",
       "filename": "runtime_law_preservation_checklist.docx",
       "layer": "RUNTIME",
@@ -1127,7 +1127,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "1faace1b-4446-4db2-9019-9843720d4382",
+      "id": "326991d5-13ba-4a05-9f5d-7f3073a4184c",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_engine_registry.docx",
       "filename": "runtime_engine_registry.docx",
       "layer": "RUNTIME",
@@ -1139,7 +1139,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "d877d0d1-cb5d-42b3-b862-777458f83031",
+      "id": "531cbada-b233-430e-b050-2d522280c43b",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_rollback_records.docx",
       "filename": "schema_rollback_records.docx",
       "layer": "RUNTIME",
@@ -1151,7 +1151,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "740cbb14-ef3e-4904-baeb-53f5b341271d",
+      "id": "24d2d986-ae51-402e-b026-83a99066b167",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_overlay_activation_gate_records.docx",
       "filename": "schema_overlay_activation_gate_records.docx",
       "layer": "RUNTIME",
@@ -1163,7 +1163,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "a581670e-15b0-4e88-ad29-0c72b2ba6a27",
+      "id": "a4f8b85a-799e-4c51-8790-84f6028a63fe",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_baseline_state_records.docx",
       "filename": "schema_baseline_state_records.docx",
       "layer": "RUNTIME",
@@ -1175,7 +1175,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "03e1bfaf-e85b-43f9-ad0f-c161c33e5414",
+      "id": "b88b9dfc-ec80-43f5-ba0b-813c12946572",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_law_preservation_records.docx",
       "filename": "schema_law_preservation_records.docx",
       "layer": "RUNTIME",
@@ -1187,7 +1187,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "60f2dc41-0336-4692-8866-84deb37ae941",
+      "id": "8ea1c3bf-9ad0-45c6-888b-4abf34c01e16",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_eval_and_promotion.docx",
       "filename": "schema_eval_and_promotion.docx",
       "layer": "RUNTIME",
@@ -1199,7 +1199,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "6770636e-9e45-4458-813c-e7a4a4e14aef",
+      "id": "19e96a35-83ad-4ce4-9830-dc29775fe1e0",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_approval_matrix.docx",
       "filename": "runtime_approval_matrix.docx",
       "layer": "RUNTIME",
@@ -1211,7 +1211,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "8faf58a4-1471-464b-9a2e-d3cddf576d37",
+      "id": "8cefb7a0-64f3-424e-9e67-996d4d9a0471",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_recovery_routing.docx",
       "filename": "runtime_recovery_routing.docx",
       "layer": "RUNTIME",
@@ -1223,7 +1223,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "dc93b6b0-37eb-43b9-9cf1-35237480b110",
+      "id": "bb1e33b7-a1c1-4260-b450-56fb915b80c7",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_parity_verification_policy.docx",
       "filename": "runtime_parity_verification_policy.docx",
       "layer": "RUNTIME",
@@ -1235,7 +1235,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "f28b1317-4acc-476d-95a1-1527f978cee2",
+      "id": "55822773-04c9-4289-bfc5-0db3212ef510",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_parity_verification_records.docx",
       "filename": "schema_parity_verification_records.docx",
       "layer": "RUNTIME",
@@ -1247,7 +1247,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "2b366b23-4361-4345-a47f-a9fe97053d82",
+      "id": "b93b0916-c834-4e30-9907-35560d8de923",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_promotion_control_matrix.docx",
       "filename": "runtime_promotion_control_matrix.docx",
       "layer": "RUNTIME",
@@ -1259,7 +1259,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "895e99f1-1167-4822-843d-edeb0f850290",
+      "id": "72dc8123-1a27-4c9d-863c-2d728c3a6d56",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_failure_injection_map.docx",
       "filename": "runtime_failure_injection_map.docx",
       "layer": "RUNTIME",
@@ -1271,7 +1271,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "2f799249-317c-4adb-9b46-2849ff154c2e",
+      "id": "40d26061-0b51-43c7-a761-b0ab822e5e17",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_go_no_go_records.docx",
       "filename": "schema_go_no_go_records.docx",
       "layer": "RUNTIME",
@@ -1283,7 +1283,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "2dea5580-041d-46cf-ba38-a23e361e4bbe",
+      "id": "d16f4f3d-93a3-437d-8484-c45fe4e8b4b1",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/NEXT_ACTION_TEMPLATE.txt",
       "filename": "NEXT_ACTION_TEMPLATE.txt",
       "layer": "RUNTIME",
@@ -1295,7 +1295,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "498f14d7-a0b8-4317-a1eb-b9a74cc5c973",
+      "id": "75c40c5b-d493-451d-b625-2bf151897587",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_live_test_scenario_records.docx",
       "filename": "schema_live_test_scenario_records.docx",
       "layer": "RUNTIME",
@@ -1307,7 +1307,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "36ea756e-1cf9-490d-9ac7-8e059e87b9ac",
+      "id": "f8175ea3-66bc-4ed7-9b89-6d302625287c",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_trace_event_map.docx",
       "filename": "runtime_trace_event_map.docx",
       "layer": "RUNTIME",
@@ -1319,7 +1319,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "eba6b7fc-f9e6-4ff9-9727-5c0a5004a2da",
+      "id": "b999611c-0038-4d65-bb8b-3d8df1aa8418",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_engine_equivalence_records.docx",
       "filename": "schema_engine_equivalence_records.docx",
       "layer": "RUNTIME",
@@ -1331,7 +1331,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "ebe4af53-9dda-4439-85a5-2e2439a4752c",
+      "id": "c18f33fa-856d-4f84-877b-f8baea55882e",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_rollback_matrix.docx",
       "filename": "runtime_rollback_matrix.docx",
       "layer": "RUNTIME",
@@ -1343,7 +1343,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "8b8115f7-2084-4bc5-85aa-689059599c52",
+      "id": "0643d1bb-c57b-4f91-88b7-82aebd9106cf",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_shadow_mode_run_records.docx",
       "filename": "schema_shadow_mode_run_records.docx",
       "layer": "RUNTIME",
@@ -1355,7 +1355,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "5e31e634-9082-474a-b904-d44b3c24fbb5",
+      "id": "4d78843f-8c4a-479b-b70a-0adcef0967cc",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_live_validation_run_records.docx",
       "filename": "schema_live_validation_run_records.docx",
       "layer": "RUNTIME",
@@ -1367,7 +1367,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "860f9a36-ea1f-4448-a7e6-a9626e2289d5",
+      "id": "1af9587c-3b62-48aa-9bbe-e4dd66d41b7d",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_runtime_checkpoint_records.docx",
       "filename": "schema_runtime_checkpoint_records.docx",
       "layer": "RUNTIME",
@@ -1379,7 +1379,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "0ccbe89e-094c-4dc1-8a49-f381d5064601",
+      "id": "bd908e00-4223-4590-90fa-bfc89d919063",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_parity_map.docx",
       "filename": "runtime_parity_map.docx",
       "layer": "RUNTIME",
@@ -1391,7 +1391,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "41d53483-fe0b-45f3-b090-666fc7b5912a",
+      "id": "501aecf6-7218-4c29-b80c-42d728b564b5",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_promotion_control_records.docx",
       "filename": "schema_promotion_control_records.docx",
       "layer": "RUNTIME",
@@ -1403,7 +1403,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "e794ff35-2efb-4ecc-afe8-0c36d06d4013",
+      "id": "63c7aa22-cad1-461f-9f26-cbed50451b61",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_approval_trace_map.docx",
       "filename": "runtime_approval_trace_map.docx",
       "layer": "RUNTIME",
@@ -1415,7 +1415,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "421a527e-5bf5-4db6-9e6f-4827911a5af4",
+      "id": "0f31fe32-21c9-4b7b-ab71-de4ad6fc84f7",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_checkpoint_policy.docx",
       "filename": "runtime_checkpoint_policy.docx",
       "layer": "RUNTIME",
@@ -1427,7 +1427,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "3909a57e-4d69-4bd3-8292-2aae1b3982a7",
+      "id": "67d82d97-0a59-46c0-8bea-1e1f5d74d6ee",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_failure_injection_records.docx",
       "filename": "schema_failure_injection_records.docx",
       "layer": "RUNTIME",
@@ -1439,7 +1439,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "9dc27725-4207-4a6e-bb0a-f9dba80eee05",
+      "id": "9fbcc14b-54b7-4519-843d-68d430b738ad",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_failure_state_records.docx",
       "filename": "schema_failure_state_records.docx",
       "layer": "RUNTIME",
@@ -1451,7 +1451,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "1db20091-5854-4e32-86b7-d68ee496593a",
+      "id": "06ffda4e-d627-4561-a412-74216e00577a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/runtime_handoff_rules.docx",
       "filename": "runtime_handoff_rules.docx",
       "layer": "RUNTIME",
@@ -1463,7 +1463,7 @@
       "target_kind": "runtime_policy"
     },
     {
-      "id": "98fa0582-6dc8-4c72-aaa0-4a0ebb6e2970",
+      "id": "c7de6262-336b-432c-9985-af8f6b47ccb7",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_failure_observation_records.docx",
       "filename": "schema_failure_observation_records.docx",
       "layer": "RUNTIME",
@@ -1475,7 +1475,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "4800bba0-d8e8-46e0-a57a-c5311379f096",
+      "id": "4a57f11c-04c2-454a-aab2-cce4d7524468",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RUNTIME/schema_approval_trace_records.docx",
       "filename": "schema_approval_trace_records.docx",
       "layer": "RUNTIME",
@@ -1487,7 +1487,7 @@
       "target_kind": "record_schema"
     },
     {
-      "id": "9a7951e7-a0d5-4622-891c-8425eb6e42ba",
+      "id": "32404514-4304-471e-b7a1-fcc6b14f3a37",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/RUNTIME_RELIABILITY_INTEGRATION_RULES.docx",
       "filename": "RUNTIME_RELIABILITY_INTEGRATION_RULES.docx",
       "layer": "RELIABILITY",
@@ -1499,7 +1499,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "78aa5700-8c34-40ac-bb95-07015ed2af59",
+      "id": "9f208c61-e01e-4025-b997-6bffdafdea3f",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/ARTIFACT_FINGERPRINT_LAYER.docx",
       "filename": "ARTIFACT_FINGERPRINT_LAYER.docx",
       "layer": "RELIABILITY",
@@ -1511,7 +1511,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "7cdc0fea-874e-444a-b3d3-55cbdab2b6b5",
+      "id": "f4d21761-884d-4093-bedf-d75ec1d2bea6",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/BAND_POST_MERGE_VALIDATION.docx",
       "filename": "BAND_POST_MERGE_VALIDATION.docx",
       "layer": "RELIABILITY",
@@ -1523,7 +1523,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "f7ea5c92-2124-40d3-aa52-87accb8f8bc1",
+      "id": "5e8d0954-7a19-45ec-8af3-72d6bccc7435",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/BAND_EDIT_PACKET_SCHEMA.docx",
       "filename": "BAND_EDIT_PACKET_SCHEMA.docx",
       "layer": "RELIABILITY",
@@ -1535,7 +1535,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "09afecc1-6cd2-439d-bfb5-98f354beb38d",
+      "id": "e399a85e-25d5-45de-9f2f-0a16341ccf27",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/TYPED_RUNTIME_STATE_SCHEMA.docx",
       "filename": "TYPED_RUNTIME_STATE_SCHEMA.docx",
       "layer": "RELIABILITY",
@@ -1547,7 +1547,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "b4753ad5-f0d3-406f-83d6-1212b9d0c6e7",
+      "id": "85ec7219-46d1-46b0-b24f-f2bbc999db41",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/CONTEXT_BUDGET_CONTROLLER.docx",
       "filename": "CONTEXT_BUDGET_CONTROLLER.docx",
       "layer": "RELIABILITY",
@@ -1559,7 +1559,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "a9139983-2045-4f63-af54-896d4450d34a",
+      "id": "8cf3d20a-84f5-4942-9129-4e500b20a999",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/REGRESSION_TEST_PACKS.docx",
       "filename": "REGRESSION_TEST_PACKS.docx",
       "layer": "RELIABILITY",
@@ -1571,7 +1571,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "7ce82fc4-d7db-43dd-abb2-7e3a50ef2287",
+      "id": "a9ffe3f7-f183-43a3-9a12-1cf66ac52194",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/CHECKPOINT_REGISTRY_LAYER.docx",
       "filename": "CHECKPOINT_REGISTRY_LAYER.docx",
       "layer": "RELIABILITY",
@@ -1583,7 +1583,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "b4f28dc9-630d-4962-a8a4-fe77f8d375da",
+      "id": "3ab130fb-5c60-40b6-a9f3-dca34fb53632",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/EVALUATION_GATE_LAYER.docx",
       "filename": "EVALUATION_GATE_LAYER.docx",
       "layer": "RELIABILITY",
@@ -1595,7 +1595,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "d994a76c-d168-4df9-b7ae-aeefa174aaf5",
+      "id": "61d5f2cc-aa21-481e-a1cf-a00165b50f36",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/BAND_EXTRACTION_CONTROL_LAYER.docx",
       "filename": "BAND_EXTRACTION_CONTROL_LAYER.docx",
       "layer": "RELIABILITY",
@@ -1607,7 +1607,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "1e195116-fe05-4b7c-9b90-728c9d53f679",
+      "id": "6882a3a3-5fd4-4548-9d9d-3f95f259fbbd",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/PROMOTION_GATE_HARDENING_LAYER.docx",
       "filename": "PROMOTION_GATE_HARDENING_LAYER.docx",
       "layer": "RELIABILITY",
@@ -1619,7 +1619,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "f858e2de-1d03-482a-b685-58023f3286ad",
+      "id": "7bf769ed-82e7-4e9a-9a4e-85337f2a87a4",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/ARTIFACT_LINEAGE_LAYER.docx",
       "filename": "ARTIFACT_LINEAGE_LAYER.docx",
       "layer": "RELIABILITY",
@@ -1631,7 +1631,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "9ab83442-6e25-426c-a0ed-b4ccdc9e7523",
+      "id": "15b8d0b4-3cbf-458b-a2b8-151ff4038384",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/DISPLAY_ROUTING_LAYER.docx",
       "filename": "DISPLAY_ROUTING_LAYER.docx",
       "layer": "RELIABILITY",
@@ -1643,7 +1643,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "3b434134-e184-4e99-b474-0e9fc62d9705",
+      "id": "d7aa3d15-60af-4fa2-8735-f40756c314ca",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/RELIABILITY_LAYER/BAND_REINTEGRATION_RULES.docx",
       "filename": "BAND_REINTEGRATION_RULES.docx",
       "layer": "RELIABILITY",
@@ -1655,7 +1655,7 @@
       "target_kind": "reliability_policy"
     },
     {
-      "id": "e131d6af-c9bd-47d1-b331-c3d121218ba3",
+      "id": "d9598a3c-7260-4000-b3dc-fd54ae9cde15",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_ACTIVE.docx",
       "filename": "STORY_BIBLE_ACTIVE.docx",
       "layer": "STORY_SYSTEM",
@@ -1667,7 +1667,7 @@
       "target_kind": "canon_proposal"
     },
     {
-      "id": "0bd42d4c-c282-445f-9eb4-5e7945ba9ce8",
+      "id": "0647145d-ad79-4a07-93ab-53b91fab1c49",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_MASTER__1.docx",
       "filename": "STORY_BIBLE_MASTER__1.docx",
       "layer": "STORY_SYSTEM",
@@ -1679,7 +1679,7 @@
       "target_kind": "canon_proposal"
     },
     {
-      "id": "83f900a9-496b-40bc-813d-0226f081d061",
+      "id": "875cb1d6-1e09-4a80-906f-c58bccd4fee5",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_VALIDATION_RULES.docx",
       "filename": "STORY_BIBLE_VALIDATION_RULES.docx",
       "layer": "STORY_SYSTEM",
@@ -1691,7 +1691,7 @@
       "target_kind": null
     },
     {
-      "id": "409260a0-c04d-47ec-aa84-173bc1a4b0ca",
+      "id": "22fd382e-f2dc-49d4-993b-7108923b2414",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/CHAPTER_BLUEPRINT_SCHEMA.docx",
       "filename": "CHAPTER_BLUEPRINT_SCHEMA.docx",
       "layer": "STORY_SYSTEM",
@@ -1703,7 +1703,7 @@
       "target_kind": null
     },
     {
-      "id": "9cfd2c87-ba37-41b1-b2ba-12edaeef6c20",
+      "id": "467ba249-f15d-481f-96fa-2fca62b437b4",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/HARD_ENFORCEMENT_LAYER.docx",
       "filename": "HARD_ENFORCEMENT_LAYER.docx",
       "layer": "STORY_SYSTEM",
@@ -1715,7 +1715,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "006689b1-3720-45de-9fa5-83b4cbc03de2",
+      "id": "98a67c1c-82e3-4a4c-9ffe-e14927eed6ba",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/POV_INTERPRETATION_LOCK.docx",
       "filename": "POV_INTERPRETATION_LOCK.docx",
       "layer": "STORY_SYSTEM",
@@ -1727,7 +1727,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "c0a547fb-3169-4d6e-8cc2-6ef0b91940a4",
+      "id": "d7693346-b2b2-4a96-b989-f49ad7c816c3",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/ENFORCEMENT_INTEGRATION_RULES.docx",
       "filename": "ENFORCEMENT_INTEGRATION_RULES.docx",
       "layer": "STORY_SYSTEM",
@@ -1739,7 +1739,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "67dc3a3a-0ba3-422d-9b2a-7323fe5958f8",
+      "id": "88191788-c26e-45c9-b53a-16fefc2a8c7f",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/CHAPTER_CONTINUITY_LINK_MAP__1.docx",
       "filename": "CHAPTER_CONTINUITY_LINK_MAP__1.docx",
       "layer": "STORY_SYSTEM",
@@ -1751,7 +1751,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "758c12df-299a-487c-a3a6-8c21ad844c6f",
+      "id": "780379fa-4973-4534-94fd-90c7dc9f0018",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_UPDATE_POLICY.docx",
       "filename": "STORY_BIBLE_UPDATE_POLICY.docx",
       "layer": "STORY_SYSTEM",
@@ -1763,7 +1763,7 @@
       "target_kind": null
     },
     {
-      "id": "c446e8a7-ca00-47f8-816e-9cb0a439646f",
+      "id": "e3119530-7256-4fd2-b054-c4d059cbe722",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/MIDPOINT_PIVOT_RULE.docx",
       "filename": "MIDPOINT_PIVOT_RULE.docx",
       "layer": "STORY_SYSTEM",
@@ -1775,7 +1775,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "26264f98-4d42-4b36-8c1e-5d5d5f82ca2c",
+      "id": "e421ca7f-05a5-4b5e-a958-fa5e1bff2aee",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/VERIFIED_EXTRACTION_LAYER.docx",
       "filename": "VERIFIED_EXTRACTION_LAYER.docx",
       "layer": "STORY_SYSTEM",
@@ -1787,7 +1787,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "eec4b0e1-fdd0-44fc-bd77-e6f80914e86c",
+      "id": "a8781db2-70f0-49ec-adfa-c38caf734aa2",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_SCHEMA__1.docx",
       "filename": "STORY_BIBLE_SCHEMA__1.docx",
       "layer": "STORY_SYSTEM",
@@ -1799,7 +1799,7 @@
       "target_kind": "table_spec"
     },
     {
-      "id": "70a053e0-51c5-4a5f-adec-fa2c9d1be8d3",
+      "id": "2d7df879-b9af-468d-8434-d311f3323d46",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/PATCH_SOURCE_LOCK_RULES.docx",
       "filename": "PATCH_SOURCE_LOCK_RULES.docx",
       "layer": "STORY_SYSTEM",
@@ -1811,7 +1811,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "85797f1b-f43e-4547-ab76-273d0c57babf",
+      "id": "f8eb4389-2be5-48be-a3bc-3bfd904017e2",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/CHAPTER_BLUEPRINT_SCHEMA__1.docx",
       "filename": "CHAPTER_BLUEPRINT_SCHEMA__1.docx",
       "layer": "STORY_SYSTEM",
@@ -1823,7 +1823,7 @@
       "target_kind": "table_spec"
     },
     {
-      "id": "f3bab167-2a7a-4acc-96b4-8ea7e0f6f65c",
+      "id": "b219e6c9-056b-4094-8b92-f1c530e49a6a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_MASTER.docx",
       "filename": "STORY_BIBLE_MASTER.docx",
       "layer": "STORY_SYSTEM",
@@ -1835,7 +1835,7 @@
       "target_kind": null
     },
     {
-      "id": "933108ac-612b-40fc-809d-a0d67a5e6217",
+      "id": "d0e41484-d906-443a-8c72-e39a1dcbaf17",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/CHAPTER_BLUEPRINT_TEMPLATE.docx",
       "filename": "CHAPTER_BLUEPRINT_TEMPLATE.docx",
       "layer": "STORY_SYSTEM",
@@ -1847,7 +1847,7 @@
       "target_kind": null
     },
     {
-      "id": "c50e32f8-62a6-495c-8070-680040ca0dd7",
+      "id": "ef6eab0b-f85b-42a1-861f-70d931c252dc",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/META_INTRUSION_REWRITE_RULES.docx",
       "filename": "META_INTRUSION_REWRITE_RULES.docx",
       "layer": "STORY_SYSTEM",
@@ -1859,7 +1859,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "293cb366-3a58-40fb-a88e-e7ec1656766b",
+      "id": "5b240d4f-b8ed-4801-b1f9-16be0f8ae758",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_UPDATE_POLICY__1.docx",
       "filename": "STORY_BIBLE_UPDATE_POLICY__1.docx",
       "layer": "STORY_SYSTEM",
@@ -1871,7 +1871,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "bcfdbd07-838b-4b5b-94d1-2bf0d8f140b2",
+      "id": "ec59bf76-1f09-4be9-94ef-39328ba409f6",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/CHAPTER_CONTINUITY_LINK_MAP.docx",
       "filename": "CHAPTER_CONTINUITY_LINK_MAP.docx",
       "layer": "STORY_SYSTEM",
@@ -1883,7 +1883,7 @@
       "target_kind": null
     },
     {
-      "id": "8f953c04-53f4-446e-9ea1-869c4d2577bc",
+      "id": "a113f93f-5155-451c-8dd2-e8e5181ef164",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_SYSTEM_OPERATION_FLOW.docx",
       "filename": "STORY_SYSTEM_OPERATION_FLOW.docx",
       "layer": "STORY_SYSTEM",
@@ -1895,7 +1895,7 @@
       "target_kind": null
     },
     {
-      "id": "b545b1f0-1e7c-4e80-a3ef-da4c30b5ca9b",
+      "id": "8b7ecaf7-fe31-4691-ab23-00bf68c3198d",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/CHAPTER_BLUEPRINT_TEMPLATE__1.docx",
       "filename": "CHAPTER_BLUEPRINT_TEMPLATE__1.docx",
       "layer": "STORY_SYSTEM",
@@ -1907,7 +1907,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "ca3b087d-e7e8-449d-93f2-fbb3124fa2b6",
+      "id": "9318cba8-1852-487f-9974-ac8ed5622c97",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/META_INTEGRITY_CONTROL_LAYER.docx",
       "filename": "META_INTEGRITY_CONTROL_LAYER.docx",
       "layer": "STORY_SYSTEM",
@@ -1919,7 +1919,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "1fd60186-ad36-4d07-9ca8-2e3c5672e9d7",
+      "id": "fbaebec1-9181-43db-a695-a0cf873ce408",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_VALIDATION_RULES__1.docx",
       "filename": "STORY_BIBLE_VALIDATION_RULES__1.docx",
       "layer": "STORY_SYSTEM",
@@ -1931,7 +1931,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "4c91ee13-83dd-44d1-8931-a0d240e3ee79",
+      "id": "aaa2df09-6a89-4f7e-a96f-92bebdf432e2",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/CHAPTER_BLUEPRINT_VALIDATION.docx",
       "filename": "CHAPTER_BLUEPRINT_VALIDATION.docx",
       "layer": "STORY_SYSTEM",
@@ -1943,7 +1943,7 @@
       "target_kind": null
     },
     {
-      "id": "4236c635-fdb3-4fe1-b2c3-8326caa6ecee",
+      "id": "0481c63f-67dc-4cd8-99be-7b70ef776de8",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_BIBLE_SCHEMA.docx",
       "filename": "STORY_BIBLE_SCHEMA.docx",
       "layer": "STORY_SYSTEM",
@@ -1955,7 +1955,7 @@
       "target_kind": null
     },
     {
-      "id": "f98497b0-4e29-4a15-a18d-1e68824d749b",
+      "id": "f442ac8b-4611-411a-827f-0b1c7794c7ee",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/INTEGRITY_LAYER_INTEGRATION_RULES.docx",
       "filename": "INTEGRITY_LAYER_INTEGRATION_RULES.docx",
       "layer": "STORY_SYSTEM",
@@ -1967,7 +1967,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "4464520a-5472-463b-852e-765b141a47d5",
+      "id": "b6358d72-0a19-4311-80af-194106dec46d",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/PRESSURE_DENSITY_LOCK.docx",
       "filename": "PRESSURE_DENSITY_LOCK.docx",
       "layer": "STORY_SYSTEM",
@@ -1979,7 +1979,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "a9cbe3f5-70d9-4fc5-b32d-4f947d984d04",
+      "id": "427723df-ef5d-4a30-bc7d-40a4b8cadee3",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/STORY_SYSTEM_OPERATION_FLOW__1.docx",
       "filename": "STORY_SYSTEM_OPERATION_FLOW__1.docx",
       "layer": "STORY_SYSTEM",
@@ -1991,7 +1991,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "e6c17a05-bd87-4e6d-a0b2-f65dd5979383",
+      "id": "2c45d888-a1a4-46bc-93ba-45619475f839",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/STORY_SYSTEM/CHAPTER_BLUEPRINT_VALIDATION__1.docx",
       "filename": "CHAPTER_BLUEPRINT_VALIDATION__1.docx",
       "layer": "STORY_SYSTEM",
@@ -2003,7 +2003,7 @@
       "target_kind": "story_policy"
     },
     {
-      "id": "b66265c0-9ded-42c9-850f-8d066b2b11ed",
+      "id": "1262473b-ba60-4d00-b4cd-eeec60760633",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/02_OPERATION_MAP__1.docx",
       "filename": "02_OPERATION_MAP__1.docx",
       "layer": "ENGINE",
@@ -2015,7 +2015,7 @@
       "target_kind": null
     },
     {
-      "id": "4442d5d8-bf3e-4cf6-a376-bbb4ac89a3d8",
+      "id": "03e2f303-cc1e-4b90-9c6b-e2340ee16484",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_04_WORLD_DRIFT_DETECTION.docx",
       "filename": "ENGINE_04_WORLD_DRIFT_DETECTION.docx",
       "layer": "ENGINE",
@@ -2027,7 +2027,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "b48635b8-6357-4688-8d4b-d4eef374d816",
+      "id": "5396c91d-eae1-45bf-bfa6-671d18da496b",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_17_THEME_INTEGRITY.docx",
       "filename": "ENGINE_17_THEME_INTEGRITY.docx",
       "layer": "ENGINE",
@@ -2039,7 +2039,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "6e5539ad-25fa-4ba4-b3ca-bad76d39670c",
+      "id": "30491d38-b83b-4655-9f06-494a576a2645",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_08_WORLD_BUILD.docx",
       "filename": "ENGINE_08_WORLD_BUILD.docx",
       "layer": "ENGINE",
@@ -2051,7 +2051,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "ef1226df-856d-4cb9-b3d6-3a7857e3a1b7",
+      "id": "aa18c235-dead-47c4-984f-08cbc0580637",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/NARRATIVEOS_EXECUTION_ENGINE_HARDENED_NEXT3.docx",
       "filename": "NARRATIVEOS_EXECUTION_ENGINE_HARDENED_NEXT3.docx",
       "layer": "ENGINE",
@@ -2063,7 +2063,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "6e15905f-e9dc-4433-8835-cd4f92e41640",
+      "id": "f64a2d49-9875-4a6c-9cbd-d225de42a370",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_03_LORE_DELIVERY.docx",
       "filename": "ENGINE_03_LORE_DELIVERY.docx",
       "layer": "ENGINE",
@@ -2075,7 +2075,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "bf36381c-b5f4-4a5b-85f8-d8a71aa63faa",
+      "id": "97c77828-d24e-4320-9096-f5130ccebe65",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_13_PRESSURE_CURVE__1.docx",
       "filename": "ENGINE_13_PRESSURE_CURVE__1.docx",
       "layer": "ENGINE",
@@ -2087,7 +2087,7 @@
       "target_kind": null
     },
     {
-      "id": "5595e0f8-f5a5-4d9a-b103-280cb2414467",
+      "id": "ca741e0a-3682-4bb4-a470-9a4e32c86f70",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/00_MASTER_KERNEL.docx",
       "filename": "00_MASTER_KERNEL.docx",
       "layer": "ENGINE",
@@ -2099,7 +2099,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "c16e6555-3866-455d-9a26-e5fade2ddf2a",
+      "id": "38524c54-f7c7-4c83-a957-3045c24c2b84",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_11_STRUCTURAL_ENFORCEMENT__1.docx",
       "filename": "ENGINE_11_STRUCTURAL_ENFORCEMENT__1.docx",
       "layer": "ENGINE",
@@ -2111,7 +2111,7 @@
       "target_kind": null
     },
     {
-      "id": "ea7bd042-c155-4c3c-9dd5-ccf184aea73d",
+      "id": "bc8afffa-aa3c-414c-8a74-a388e36699b5",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/STRESS_TEST_LIBRARY.docx",
       "filename": "STRESS_TEST_LIBRARY.docx",
       "layer": "ENGINE",
@@ -2123,7 +2123,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "455cae33-e1fe-40d7-a8ae-8fe2b6e1b334",
+      "id": "76d0f252-72d6-44a7-b90e-dba8a9d1070a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/EXAMPLE_RUNS.docx",
       "filename": "EXAMPLE_RUNS.docx",
       "layer": "ENGINE",
@@ -2135,7 +2135,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "c3223f62-5045-4726-ac15-2e144f30623b",
+      "id": "2b50f84d-55a3-4dc0-904b-88ca6a3e3e26",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/02_OPERATION_MAP.docx",
       "filename": "02_OPERATION_MAP.docx",
       "layer": "ENGINE",
@@ -2147,7 +2147,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "12c2c49a-d3d1-463c-8c71-01fb0a03085c",
+      "id": "ff47147a-0dbf-4be8-bc04-5bc53365b74c",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_11_STRUCTURAL_ENFORCEMENT.docx",
       "filename": "ENGINE_11_STRUCTURAL_ENFORCEMENT.docx",
       "layer": "ENGINE",
@@ -2159,7 +2159,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "af61914b-b0e7-4edd-b248-73b584fc7bca",
+      "id": "febc9d6a-a976-45bc-aa90-d84a7eb55d13",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/NARRATIVEOS_EXECUTION_ENGINE_HARDENED_TOP3.docx",
       "filename": "NARRATIVEOS_EXECUTION_ENGINE_HARDENED_TOP3.docx",
       "layer": "ENGINE",
@@ -2171,7 +2171,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "a4ef5d6e-9afe-4487-8ac5-c4431718009d",
+      "id": "6634672a-2767-404b-9972-90e0d2177ca2",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_INDEX__2.docx",
       "filename": "ENGINE_INDEX__2.docx",
       "layer": "ENGINE",
@@ -2183,7 +2183,7 @@
       "target_kind": null
     },
     {
-      "id": "353f9322-9254-4285-9926-410968de2f35",
+      "id": "16633b49-1947-4951-88fe-1f64f76d14d4",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/01_SHARED_SCHEMAS.docx",
       "filename": "01_SHARED_SCHEMAS.docx",
       "layer": "ENGINE",
@@ -2195,7 +2195,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "b5cfa044-9e41-4a81-81bf-6c6973953613",
+      "id": "b68e0474-3e57-489d-82fd-e52a8fa3cbc4",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/03_EVAL_AND_TRACE_RULES.docx",
       "filename": "03_EVAL_AND_TRACE_RULES.docx",
       "layer": "ENGINE",
@@ -2207,7 +2207,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "cfc50acc-4217-4fc6-9607-f3997b50ba89",
+      "id": "3b5990ee-b94e-42fe-bd6f-afde5f362bb3",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_INDEX__1.docx",
       "filename": "ENGINE_INDEX__1.docx",
       "layer": "ENGINE",
@@ -2219,7 +2219,7 @@
       "target_kind": null
     },
     {
-      "id": "7765f1a9-8850-4742-8938-de3b6ca8a9f1",
+      "id": "1f465cec-ffed-4928-9e11-0ed9403f02fb",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_16_STORY_MOMENTUM.docx",
       "filename": "ENGINE_16_STORY_MOMENTUM.docx",
       "layer": "ENGINE",
@@ -2231,7 +2231,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "19c900c5-a1ce-40de-9626-75372e1f16cc",
+      "id": "406c304e-1d35-42aa-a548-c4e1708e2f12",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_06_CHARACTER_SOCIETY_SYNC.docx",
       "filename": "ENGINE_06_CHARACTER_SOCIETY_SYNC.docx",
       "layer": "ENGINE",
@@ -2243,7 +2243,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "b65b4d41-9221-43b7-ab0d-0c348e2ac910",
+      "id": "0b2107b9-d7a0-4c3d-b027-9a42dec24dd0",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_12_NARRATIVE_PHYSICS.docx",
       "filename": "ENGINE_12_NARRATIVE_PHYSICS.docx",
       "layer": "ENGINE",
@@ -2255,7 +2255,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "ed5b0539-8372-4204-8d02-899bad1e4d62",
+      "id": "a058251a-ed10-4bfb-b765-b6bcf78f3ff6",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_14_CONFLICT_ESCALATION.docx",
       "filename": "ENGINE_14_CONFLICT_ESCALATION.docx",
       "layer": "ENGINE",
@@ -2267,7 +2267,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "22a88822-8206-4330-8d71-5b6d809fa7a0",
+      "id": "5b13d5dd-1226-44d1-9fbf-544acdd13c64",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_17_THEME_INTEGRITY__1.docx",
       "filename": "ENGINE_17_THEME_INTEGRITY__1.docx",
       "layer": "ENGINE",
@@ -2279,7 +2279,7 @@
       "target_kind": null
     },
     {
-      "id": "1663bb76-41dc-4de2-892f-a10436fddff2",
+      "id": "21ef6ff1-8132-4082-ba66-0770f83728a0",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_15_SCENE_PURPOSE.docx",
       "filename": "ENGINE_15_SCENE_PURPOSE.docx",
       "layer": "ENGINE",
@@ -2291,7 +2291,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "4ea98a28-c0cd-4a77-9ec4-257349be6742",
+      "id": "e305f522-fe31-4ac7-be45-1ddf6ed48e68",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_02_AUTHORITY_ARBITRATION.docx",
       "filename": "ENGINE_02_AUTHORITY_ARBITRATION.docx",
       "layer": "ENGINE",
@@ -2303,7 +2303,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "4bac91c0-0610-4927-9ae2-11182b6ef16a",
+      "id": "ade782f6-13f1-418b-be1e-263b88f42009",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_07_LORE_AUDIT.docx",
       "filename": "ENGINE_07_LORE_AUDIT.docx",
       "layer": "ENGINE",
@@ -2315,7 +2315,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "ae7ac995-4177-4b03-a071-7b34eaf6890d",
+      "id": "3ebc2915-1b30-4774-9da5-e6b1184dd75a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_16_STORY_MOMENTUM__1.docx",
       "filename": "ENGINE_16_STORY_MOMENTUM__1.docx",
       "layer": "ENGINE",
@@ -2327,7 +2327,7 @@
       "target_kind": null
     },
     {
-      "id": "864044f2-e5e7-40fc-94c0-2397452e2ab3",
+      "id": "0c6f4516-7ab1-4603-a108-1f3f8011ba61",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_01_DOCX_MERGE.docx",
       "filename": "ENGINE_01_DOCX_MERGE.docx",
       "layer": "ENGINE",
@@ -2339,7 +2339,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "fc43d010-6946-4424-a93f-5a5be78609cf",
+      "id": "0f11ba8a-4e69-4b71-88ef-a4d466817a4e",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_13_PRESSURE_CURVE.docx",
       "filename": "ENGINE_13_PRESSURE_CURVE.docx",
       "layer": "ENGINE",
@@ -2351,7 +2351,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "92970168-dd1f-449b-b30c-a71727cebe55",
+      "id": "4ba04f67-1cae-4b66-bb68-21fec538f64a",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_05_RIPPLE_SIMULATION.docx",
       "filename": "ENGINE_05_RIPPLE_SIMULATION.docx",
       "layer": "ENGINE",
@@ -2363,7 +2363,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "9a63ae59-c07e-4612-a21f-bbdd143bf6c8",
+      "id": "47818828-a6e3-457a-ac55-8ac93d80f2b0",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_INDEX.docx",
       "filename": "ENGINE_INDEX.docx",
       "layer": "ENGINE",
@@ -2375,7 +2375,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "6ce6f53f-aa4b-4b24-a755-2b83351fc218",
+      "id": "26411a92-c7de-48a1-b20d-9f5a1789d1cc",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_15_SCENE_PURPOSE__1.docx",
       "filename": "ENGINE_15_SCENE_PURPOSE__1.docx",
       "layer": "ENGINE",
@@ -2387,7 +2387,7 @@
       "target_kind": null
     },
     {
-      "id": "3702eace-77c2-4996-b2cf-5a65d9eb7871",
+      "id": "ca0650c0-b550-461d-bd6d-7f6398d25b06",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_09_SOCIETY_BUILD.docx",
       "filename": "ENGINE_09_SOCIETY_BUILD.docx",
       "layer": "ENGINE",
@@ -2399,7 +2399,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "d1ee2388-0368-41eb-8525-38e1a06341c8",
+      "id": "4eb2241f-4b3b-4a6a-b3cd-28cdbc6b1780",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/ENGINE/ENGINE_10_RECOVERY_ENGINE.docx",
       "filename": "ENGINE_10_RECOVERY_ENGINE.docx",
       "layer": "ENGINE",
@@ -2411,7 +2411,7 @@
       "target_kind": "engine_contract"
     },
     {
-      "id": "68c5411e-8814-4f2e-8374-87dcf761c721",
+      "id": "9b4959b9-fefe-4f4f-9ef5-0fd8d4c085f6",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/08_-_Templater_Setup_and_Templates.md",
       "filename": "08_-_Templater_Setup_and_Templates.md",
       "layer": "BIBLE_DATA",
@@ -2423,7 +2423,7 @@
       "target_kind": null
     },
     {
-      "id": "679b59a8-a742-48ae-896b-046be0d216b0",
+      "id": "263fb914-5f63-4b87-9e78-48e1ff89e0cc",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/Hebrew_Name_Etymology_Bank.md",
       "filename": "Hebrew_Name_Etymology_Bank.md",
       "layer": "BIBLE_DATA",
@@ -2435,7 +2435,7 @@
       "target_kind": "canon_proposal"
     },
     {
-      "id": "9d3a7ff5-e8bd-4f9d-ab05-9293429b1bb8",
+      "id": "0a5d0d87-ce08-43e0-89b7-4f32b748a439",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/00_-_Master_Command_Center_UPDATED.md",
       "filename": "00_-_Master_Command_Center_UPDATED.md",
       "layer": "BIBLE_DATA",
@@ -2447,7 +2447,7 @@
       "target_kind": null
     },
     {
-      "id": "1971e86f-813b-4730-94c1-12d1a75cb160",
+      "id": "479ba96a-50eb-4ad5-86af-e87232f3358b",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/06_-_Scene_Pressure_Matrix.md",
       "filename": "06_-_Scene_Pressure_Matrix.md",
       "layer": "BIBLE_DATA",
@@ -2459,7 +2459,7 @@
       "target_kind": "pressure_matrix"
     },
     {
-      "id": "f6829139-dccf-4504-acb7-1441f4fbdefc",
+      "id": "4abf3188-b9a9-400d-9806-0e0cc43eaa4c",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/Iron_Age_Material_Culture.md",
       "filename": "Iron_Age_Material_Culture.md",
       "layer": "BIBLE_DATA",
@@ -2471,7 +2471,7 @@
       "target_kind": "canon_proposal"
     },
     {
-      "id": "1a3dad65-b40c-428f-84f5-25d6bbb77e94",
+      "id": "af72f353-5a04-457b-94ce-0cdcaf835436",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/07_-_Dataview_Query_Library.md",
       "filename": "07_-_Dataview_Query_Library.md",
       "layer": "BIBLE_DATA",
@@ -2483,7 +2483,7 @@
       "target_kind": null
     },
     {
-      "id": "3864a6fc-691d-4ac2-934d-6c99939c27d9",
+      "id": "484669d2-8856-488e-ba55-6a5eebd94be9",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/God_as_Character_UPDATED.md",
       "filename": "God_as_Character_UPDATED.md",
       "layer": "BIBLE_DATA",
@@ -2495,7 +2495,7 @@
       "target_kind": "canon_proposal"
     },
     {
-      "id": "aa0dc590-0d20-4094-88fa-070438e1388e",
+      "id": "bb2e84f1-f296-4f45-81f0-506f32050cca",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/Index_-_Motifs_-_Volume_II.md",
       "filename": "Index_-_Motifs_-_Volume_II.md",
       "layer": "BIBLE_DATA",
@@ -2507,7 +2507,7 @@
       "target_kind": "canon_proposal"
     },
     {
-      "id": "cf4b8e53-6bc2-4c7b-b41a-26684b347537",
+      "id": "3ba2cea3-8d95-4465-bfe5-49c69bf0040e",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/Kingship_Ideology.md",
       "filename": "Kingship_Ideology.md",
       "layer": "BIBLE_DATA",
@@ -2519,7 +2519,7 @@
       "target_kind": "canon_proposal"
     },
     {
-      "id": "fe174684-3016-44e6-a61e-7e7dd9f88f01",
+      "id": "f9e75e95-4569-4b3f-bd11-158f811191ab",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/09_-_Graph_View_Configuration.md",
       "filename": "09_-_Graph_View_Configuration.md",
       "layer": "BIBLE_DATA",
@@ -2531,7 +2531,7 @@
       "target_kind": null
     },
     {
-      "id": "4b2e42b7-e4e6-4e42-bca8-3362d5d2fd23",
+      "id": "f4631656-b664-46c5-a0cb-1594cd3202eb",
       "rel_path": "WRITING_ARCHITECT/Module writing/WRITING_SYSTEM/BIBLE_DATA/01_-_Prose_Style_Reference.md",
       "filename": "01_-_Prose_Style_Reference.md",
       "layer": "BIBLE_DATA",
@@ -2543,7 +2543,7 @@
       "target_kind": "voice_envelope"
     },
     {
-      "id": "15a647a9-746f-47c8-ab67-73dbbd20586a",
+      "id": "a656e5af-6595-4b52-a571-17dea1467b63",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/TEMPLATES/UNHINDERED_Chapter_Mastery_Worksheet_v2_0.docx",
       "filename": "UNHINDERED_Chapter_Mastery_Worksheet_v2_0.docx",
       "layer": "UNHINDERED",
@@ -2555,7 +2555,7 @@
       "target_kind": null
     },
     {
-      "id": "52a9e765-bbc0-4e45-b3d6-dea97f7a6e5e",
+      "id": "804b7d9f-0252-47b1-9a49-0272bc570034",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/CONTROL/PROJECT_STATE_MASTERY_SYSTEM_v2_0.json",
       "filename": "PROJECT_STATE_MASTERY_SYSTEM_v2_0.json",
       "layer": "UNHINDERED",
@@ -2567,7 +2567,7 @@
       "target_kind": null
     },
     {
-      "id": "3eaea2a6-fd8f-40b7-bc6d-8a5210c34525",
+      "id": "8db4b001-d49c-4a36-87e8-b44549ebd907",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/CONTROL/UNHINDERED_System_Audit_and_Migration_v2_0.md",
       "filename": "UNHINDERED_System_Audit_and_Migration_v2_0.md",
       "layer": "UNHINDERED",
@@ -2579,7 +2579,7 @@
       "target_kind": null
     },
     {
-      "id": "4c6d571d-17f4-4011-a425-176f652f7d4b",
+      "id": "98994b02-e10d-4aef-b0fe-c0fb10e9c978",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/CONTROL/DOCX_RENDER_QA_v2_0.md",
       "filename": "DOCX_RENDER_QA_v2_0.md",
       "layer": "UNHINDERED",
@@ -2591,7 +2591,7 @@
       "target_kind": null
     },
     {
-      "id": "af533212-6183-4301-9922-7813404fc145",
+      "id": "c21b7969-df8a-499c-a3ac-3195a4f8b5fa",
       "rel_path": "WRITING_ARCHITECT/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/UNHINDERED_MASTERY_SYSTEM_v2_0_2026-06-21/SYSTEM/UNHINDERED_Mastery_Operating_System_v2_0.md",
       "filename": "UNHINDERED_Mastery_Operating_System_v2_0.md",
       "layer": "UNHINDERED",
