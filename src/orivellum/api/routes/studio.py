@@ -1915,7 +1915,9 @@ def _get_voice_casting(db, work_id: str) -> dict[str, str]:
 
 
 class VoiceCastingUpdate(BaseModel):
-    sections: dict[str, str]  # doc_id -> voice_id ("" or missing = narrator default)
+    # doc_id -> voice_id ("" or missing = narrator default).
+    # None = leave the existing casting untouched (narrator-only save).
+    sections: dict[str, str] | None = None
     # Per-Work default narrator, persisted with the casting so it survives
     # leaving the Studio.  None = leave unchanged; "" = clear the saved default.
     narrator_voice: str | None = None
@@ -1953,6 +1955,22 @@ def get_work_voice_casting(work_id: str):
     }
 
 
+def _apply_narrator_update(meta: dict, narrator_voice: str | None) -> None:
+    """Apply a narrator_voice update to a Work meta dict in place.
+
+    None = leave unchanged; "" = clear; otherwise validate and set.
+    """
+    if narrator_voice is None:
+        return
+    narrator = narrator_voice.strip()
+    if not narrator:
+        meta.pop("narrator_voice", None)
+        return
+    if narrator not in _VOICE_BY_ID and not _is_clone_voice(narrator):
+        raise HTTPException(422, f"Unknown narrator voice {narrator!r}")
+    meta["narrator_voice"] = narrator
+
+
 @router.put("/studio/works/{work_id}/casting")
 def put_work_voice_casting(work_id: str, body: VoiceCastingUpdate):
     """Replace the Work's chapter→voice casting map."""
@@ -1969,33 +1987,30 @@ def put_work_voice_casting(work_id: str, body: VoiceCastingUpdate):
             ).fetchall()
         }
 
-    cleaned: dict[str, str] = {}
-    for doc_id, voice in body.sections.items():
-        if not voice:  # empty string clears the assignment
-            continue
-        if doc_id not in valid_docs:
-            raise HTTPException(422, f"Document {doc_id!r} is not part of this Work")
-        if voice not in _VOICE_BY_ID and not _is_clone_voice(voice):
-            raise HTTPException(422, f"Unknown voice {voice!r}")
-        cleaned[doc_id] = voice
-
     meta = dict(work.get("meta") or {})
-    if cleaned:
-        meta["voice_casting"] = cleaned
+
+    if body.sections is None:
+        # Narrator-only save — leave the existing casting untouched.
+        cleaned = _get_voice_casting(db, work_id)
     else:
-        meta.pop("voice_casting", None)
+        cleaned = {}
+        for doc_id, voice in body.sections.items():
+            if not voice:  # empty string clears the assignment
+                continue
+            if doc_id not in valid_docs:
+                raise HTTPException(422, f"Document {doc_id!r} is not part of this Work")
+            if voice not in _VOICE_BY_ID and not _is_clone_voice(voice):
+                raise HTTPException(422, f"Unknown voice {voice!r}")
+            cleaned[doc_id] = voice
+        if cleaned:
+            meta["voice_casting"] = cleaned
+        else:
+            meta.pop("voice_casting", None)
 
     # Persist the Work's default narrator alongside the casting.  Renders may
     # still override the narrator per run — this only sets what the audiobook
     # form pre-selects next time the Work is opened.
-    if body.narrator_voice is not None:
-        narrator = body.narrator_voice.strip()
-        if narrator:
-            if narrator not in _VOICE_BY_ID and not _is_clone_voice(narrator):
-                raise HTTPException(422, f"Unknown narrator voice {narrator!r}")
-            meta["narrator_voice"] = narrator
-        else:
-            meta.pop("narrator_voice", None)
+    _apply_narrator_update(meta, body.narrator_voice)
 
     db.update_work(work_id, meta=meta)
     return {

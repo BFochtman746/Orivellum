@@ -29,6 +29,7 @@ import {
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
 import { SpatialSettingsSync, shouldRollback, type SpatialSettings } from "./spatialSettings";
+import { NarratorSync } from "./narratorSync";
 import {
   VoiceCard, DimensionBar, DIMENSION_COLORS,
   type VoiceEntry, type VoiceDimensions,
@@ -1303,9 +1304,26 @@ function AudiobookTab({
   // previous Work can never be applied to the newly selected one.
   const castGenRef = useRef(0);
 
+  // Per-Work default narrator auto-persist — picking a narrator saves it
+  // without requiring the Chapter Voices "Save voices" button (which only
+  // exists when the Work has ready chapters).
+  const narratorSync = useRef(new NarratorSync()).current;
+  const voiceIdRef = useRef(voiceId);
+  voiceIdRef.current = voiceId;
+  const putNarrator = useCallback(async (wid: string, v: string) => {
+    const r = await apiFetch(`${BASE}/studio/works/${wid}/casting`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      // sections omitted on purpose — narrator-only save leaves casting alone
+      body: JSON.stringify({ narrator_voice: v }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  }, []);
+
   useEffect(() => {
     castGenRef.current += 1;
     if (!workId || mode !== "work") {
+      narratorSync.reset();
       setCastDocs([]); setCastMap({}); setCastDirty(false);
       setCastHints({}); setCastAnalysis("");
       return;
@@ -1322,13 +1340,25 @@ function AudiobookTab({
         setCastDirty(false);
         // Restore the Work's saved default narrator so the picker doesn't
         // reset when the user comes back. Renders can still override per run.
-        if (typeof data.narrator_voice === "string" && data.narrator_voice) {
-          setVoiceId(data.narrator_voice);
-        }
+        const saved = typeof data.narrator_voice === "string" && data.narrator_voice
+          ? data.narrator_voice : null;
+        if (saved) setVoiceId(saved);
+        narratorSync.noteLoaded(workId, saved, voiceIdRef.current);
       })
       .catch(() => {/* casting is optional — narrator voice still works */});
     return () => { cancelled = true; };
-  }, [workId, mode]);
+  }, [workId, mode, narratorSync]);
+
+  // Auto-save the narrator whenever it changes for a loaded Work (debounced,
+  // latest-wins). Render requests still pass the voice explicitly, so this
+  // never blocks a per-run override.
+  useEffect(() => {
+    if (mode !== "work" || !workId) return;
+    narratorSync.select(workId, voiceId, putNarrator);
+  }, [voiceId, workId, mode, narratorSync, putNarrator]);
+
+  // Leaving the page fires any pending narrator save immediately.
+  useEffect(() => () => narratorSync.flush(), [narratorSync]);
 
   async function handleSaveCasting() {
     setCastSaving(true);
@@ -1345,6 +1375,7 @@ function AudiobookTab({
         throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
       }
       setCastDirty(false);
+      narratorSync.noteSaved(workId, voiceId);
       toast.success("Chapter voices saved");
     } catch (e: any) {
       toast.error(`Couldn't save chapter voices: ${e.message}`);

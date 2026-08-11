@@ -296,13 +296,23 @@ def test_casting_persists_narrator_voice_with_the_work(work_client):
     assert r.status_code == 200
     assert client.get(f"/api/studio/works/{wid}/casting").json()["narrator_voice"] == "af_heart"
 
+    # Narrator-only save (sections omitted) leaves the casting untouched —
+    # this is what the auto-persisting narrator picker sends.
+    client.put(f"/api/studio/works/{wid}/casting", json={"sections": {did: "bm_george"}})
+    r = client.put(f"/api/studio/works/{wid}/casting", json={"narrator_voice": "af_sky"})
+    assert r.status_code == 200
+    got = client.get(f"/api/studio/works/{wid}/casting").json()
+    assert got["narrator_voice"] == "af_sky"
+    assert got["sections"] == {did: "bm_george"}
+    client.put(f"/api/studio/works/{wid}/casting", json={"sections": {}})
+
     # Unknown narrator is rejected without wiping anything
     r = client.put(
         f"/api/studio/works/{wid}/casting",
         json={"sections": {}, "narrator_voice": "not_a_voice"},
     )
     assert r.status_code == 422
-    assert client.get(f"/api/studio/works/{wid}/casting").json()["narrator_voice"] == "af_heart"
+    assert client.get(f"/api/studio/works/{wid}/casting").json()["narrator_voice"] == "af_sky"
 
     # Clone narrators are allowed; empty string clears the saved default
     r = client.put(
