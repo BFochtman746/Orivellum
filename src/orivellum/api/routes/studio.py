@@ -4015,6 +4015,22 @@ async def _stream_tts_events(body: TTSRequest):
 #                    mp3_path, filename, error}
 _doc_tts_jobs: dict[str, dict] = {}
 _doc_tts_jobs_lock = threading.Lock()
+_MAX_DOC_TTS_JOBS = 20  # keep the newest N finished jobs in memory
+# Terminal states only — running/cancelling entries are still being written to
+# by their worker thread and must never be evicted. ("error" is written by the
+# pre-flight clone gate; "failed" by the worker's exception handler.)
+_DOC_TTS_TERMINAL = frozenset({"done", "error", "failed", "cancelled"})
+
+
+def _prune_doc_tts_jobs() -> None:
+    """Drop the oldest *terminal* jobs beyond _MAX_DOC_TTS_JOBS (lock held by caller)."""
+    finished = sorted(
+        (jid for jid, j in _doc_tts_jobs.items() if j["state"] in _DOC_TTS_TERMINAL),
+        key=lambda jid: _doc_tts_jobs[jid].get("finished_at") or 0.0,
+    )
+    if len(finished) > _MAX_DOC_TTS_JOBS:
+        for jid in finished[: len(finished) - _MAX_DOC_TTS_JOBS]:
+            _doc_tts_jobs.pop(jid, None)
 
 
 def _run_doc_tts_job(
@@ -4051,6 +4067,7 @@ def _run_doc_tts_job(
                 "This cloned voice needs the premium voice engine "
                 "(tts_premium_url), which is not enabled."
             )
+            _doc_tts_jobs[job_id]["finished_at"] = time.time()
         return
 
     ai_ok = False
@@ -4079,6 +4096,7 @@ def _run_doc_tts_job(
             if cancel_event.is_set():
                 with _doc_tts_jobs_lock:
                     _doc_tts_jobs[job_id]["state"] = "cancelled"
+                    _doc_tts_jobs[job_id]["finished_at"] = time.time()
                 return
 
             wav_path = tmp_dir / f"seg_{idx:04d}.wav"
@@ -4184,6 +4202,7 @@ def _run_doc_tts_job(
         if cancel_event.is_set():
             with _doc_tts_jobs_lock:
                 _doc_tts_jobs[job_id]["state"] = "cancelled"
+                _doc_tts_jobs[job_id]["finished_at"] = time.time()
             return
 
         # ── Concatenate all WAVs → single high-quality MP3 ───────────────────
@@ -4253,6 +4272,7 @@ def _run_doc_tts_job(
                     "state": "done",
                     "mp3_path": rel_path,
                     "filename": mp3_name,
+                    "finished_at": time.time(),
                 }
             )
         # Notify only AFTER the durable done transition — a failure between
@@ -4273,6 +4293,7 @@ def _run_doc_tts_job(
                 {
                     "state": "failed",
                     "error": str(exc)[:300],
+                    "finished_at": time.time(),
                 }
             )
 
@@ -4353,6 +4374,9 @@ def synthesize_document(body: DocumentTTSRequest):
             "filename": None,
             "error": None,
         }
+        # Evict the oldest finished jobs so the registry stays bounded on a
+        # long-running server (mirrors _prune_transcribe_jobs below).
+        _prune_doc_tts_jobs()
 
     from orivellum.api.executor import _tracked_submit
 
