@@ -2617,4 +2617,82 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_canon_supersedes ON canon_fact(supersedes);
     """,
     ),
+    # v124 — ATLAS-O world graph (Masterpiece Pipeline Part 2.2, LAW 2 + LAW 3).
+    #
+    # graph_node / graph_edge — the single typed representation of what is
+    # true in the story.  Node types are a closed set of seven (per the ATLAS
+    # schema); edge types are a closed set in five groups.  Every node and
+    # edge carries a mandatory evidence quote and character offset into the
+    # chapter text (LAW 3) — the insert path in db.py refuses anything
+    # without grounded evidence, and the extractor discards (never coerces)
+    # anything outside the schema.
+    #
+    # graph_inconsistency — cross-chapter contradictions that survived
+    # propose-then-verify.  Both sides carry quote + offset so every finding
+    # is auditable against the manuscript.  Unverified proposals are
+    # discarded, never stored.
+    (
+        124,
+        "ATLAS-O world graph: typed nodes/edges with evidence, verified inconsistencies",
+        """
+        CREATE TABLE IF NOT EXISTS graph_node (
+            id              TEXT PRIMARY KEY,
+            work_id         TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            chapter_id      TEXT REFERENCES book_chapters(id) ON DELETE CASCADE,
+            node_type       TEXT NOT NULL CHECK (node_type IN
+                ('Character','Event','Location','TimePoint','Object','Vehicle','Concept')),
+            name            TEXT NOT NULL CHECK (length(trim(name)) > 0),
+            description     TEXT NOT NULL DEFAULT '',
+            evidence_quote  TEXT NOT NULL CHECK (length(trim(evidence_quote)) > 0),
+            evidence_offset INTEGER NOT NULL CHECK (evidence_offset >= 0),
+            attributes      TEXT NOT NULL DEFAULT '{}',
+            canon_fact_id   TEXT REFERENCES canon_fact(id) ON DELETE SET NULL,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gnode_work    ON graph_node(work_id, node_type);
+        CREATE INDEX IF NOT EXISTS idx_gnode_chapter ON graph_node(chapter_id);
+        CREATE INDEX IF NOT EXISTS idx_gnode_name    ON graph_node(work_id, name);
+
+        CREATE TABLE IF NOT EXISTS graph_edge (
+            id              TEXT PRIMARY KEY,
+            work_id         TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            chapter_id      TEXT REFERENCES book_chapters(id) ON DELETE CASCADE,
+            src             TEXT NOT NULL REFERENCES graph_node(id) ON DELETE CASCADE,
+            dst             TEXT NOT NULL REFERENCES graph_node(id) ON DELETE CASCADE,
+            edge_type       TEXT NOT NULL CHECK (edge_type IN
+                ('performs','undergoes','experiences',
+                 'kinship_with','affinity_with','hostility_with','affiliated_with',
+                 'precedes','occurs_after','causes','contrasts_with','references',
+                 'occurs_at','occurs_on','located_at','present_on',
+                 'possesses','uses','part_of','is_a')),
+            edge_group      TEXT NOT NULL CHECK (edge_group IN
+                ('event_role','social','inter_event','spatiotemporal','object')),
+            evidence_quote  TEXT NOT NULL CHECK (length(trim(evidence_quote)) > 0),
+            evidence_offset INTEGER NOT NULL CHECK (evidence_offset >= 0),
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gedge_work    ON graph_edge(work_id, edge_group);
+        CREATE INDEX IF NOT EXISTS idx_gedge_chapter ON graph_edge(chapter_id);
+        CREATE INDEX IF NOT EXISTS idx_gedge_src     ON graph_edge(src);
+        CREATE INDEX IF NOT EXISTS idx_gedge_dst     ON graph_edge(dst);
+
+        CREATE TABLE IF NOT EXISTS graph_inconsistency (
+            id                   TEXT PRIMARY KEY,
+            work_id              TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            chapter_id           TEXT NOT NULL REFERENCES book_chapters(id) ON DELETE CASCADE,
+            description          TEXT NOT NULL CHECK (length(trim(description)) > 0),
+            current_quote        TEXT NOT NULL CHECK (length(trim(current_quote)) > 0),
+            current_offset       INTEGER NOT NULL CHECK (current_offset >= 0),
+            prior_chapter_id     TEXT NOT NULL REFERENCES book_chapters(id) ON DELETE CASCADE,
+            prior_quote          TEXT NOT NULL CHECK (length(trim(prior_quote)) > 0),
+            prior_offset         INTEGER NOT NULL CHECK (prior_offset >= 0),
+            reasoning            TEXT NOT NULL DEFAULT '',
+            status               TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open','fixed','intentional','wontfix')),
+            created_at           TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ginc_work    ON graph_inconsistency(work_id, status);
+        CREATE INDEX IF NOT EXISTS idx_ginc_chapter ON graph_inconsistency(chapter_id);
+    """,
+    ),
 ]

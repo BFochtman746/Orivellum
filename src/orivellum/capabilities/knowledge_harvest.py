@@ -782,7 +782,7 @@ def _llm_harvest_by_chapters_inner(
                 if not name:
                     continue
                 text = f"{name} ({role}): {desc}" if desc else f"{name} ({role})"
-                kid = db.create_knowledge_item(
+                db.create_knowledge_item(
                     work_id=work_id,
                     kind="character",
                     text=text,
@@ -796,15 +796,9 @@ def _llm_harvest_by_chapters_inner(
                     chapter_id=chapter_id,
                 )
                 created += 1
-                try:
-                    eid = db.upsert_entity(
-                        name,
-                        "character",
-                        meta={"role": role, "description": desc} if desc else {"role": role},
-                    )
-                    db.create_entity_mention(eid, doc_id, work_id, knowledge_id=kid)
-                except Exception:
-                    pass
+                # Characters no longer double-write into the generic entities
+                # store — the ATLAS world graph (built after harvest, below)
+                # is the single typed representation for fiction (LAW 2).
 
             # ── Events ───────────────────────────────────────────────────────
             for evt in (extraction.get("events") or [])[:6]:
@@ -877,12 +871,8 @@ def _llm_harvest_by_chapters_inner(
                     chapter_id=chapter_id,
                 )
                 created += 1
-                try:
-                    sid = db.upsert_entity(subj, "character")
-                    oid = db.upsert_entity(obj, "character")
-                    db.create_entity_edge(sid, oid, pred)
-                except Exception:
-                    pass
+                # Relationships feed the ATLAS graph (typed social edges with
+                # evidence) instead of the untyped entity-edge store (LAW 2).
 
             # ── Themes ───────────────────────────────────────────────────────
             for theme in (extraction.get("themes") or [])[:3]:
@@ -949,4 +939,17 @@ def _llm_harvest_by_chapters_inner(
     # gap/coverage cache so the next read reflects what the book now knows.
     if total_created and work_id:
         db.invalidate_gap_cache(work_id)
+
+    # ── ATLAS-O world graph (LAW 2) ───────────────────────────────────────────
+    # The chapter harvest is the single flow that feeds the typed world graph
+    # — the graph is built here, from the same chapters, rather than growing
+    # a parallel entity store.  Gated by atlas_enabled; never breaks harvest.
+    if work_id and db.get_setting("atlas_enabled", "true").lower() == "true":
+        try:
+            from orivellum.capabilities.atlas import build_work_graph  # noqa: PLC0415
+
+            build_work_graph(db, cfg, work_id=work_id, doc_id=doc_id)
+        except Exception as exc:
+            logger.warning("llm_harvest_by_chapters: atlas graph build failed: %s", exc)
+
     return total_created

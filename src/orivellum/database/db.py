@@ -2761,6 +2761,7 @@ class OrivellumDB:
                             "type": "RELATES",
                         }
                     )
+            self._merge_atlas_graph(work_id, nodes, edges, seen, limit)
             return {
                 "nodes": nodes[:limit],
                 "edges": edges[:limit],
@@ -2844,12 +2845,45 @@ class OrivellumDB:
                         }
                     )
 
+        self._merge_atlas_graph(work_id, nodes, edges, seen, limit)
+
         return {
             "nodes": nodes[:limit],
             "edges": edges[:limit],
             "node_count": len(nodes),
             "edge_count": len(edges),
         }
+
+    def _merge_atlas_graph(
+        self, work_id: str, nodes: list[dict], edges: list[dict], seen: set[str], limit: int
+    ) -> None:
+        """Merge ATLAS-O typed graph rows into a work-graph payload.
+
+        Keeps the graph view showing fiction characters/relationships now
+        that the chapter harvest feeds graph_node/graph_edge instead of the
+        legacy entities store.
+        """
+        for n in self.list_graph_nodes(work_ids=[work_id], limit=max(1, limit)):
+            if n["id"] not in seen:
+                seen.add(n["id"])
+                nodes.append(
+                    {
+                        "id": n["id"],
+                        "label": n["name"],
+                        "type": "entity",
+                        "kind": n["node_type"].lower(),
+                    }
+                )
+        for e in self.list_graph_edges(work_ids=[work_id], limit=limit * 2):
+            if e["src"] in seen and e["dst"] in seen:
+                edges.append(
+                    {
+                        "source": e["src"],
+                        "target": e["dst"],
+                        "label": e["edge_type"].replace("_", " "),
+                        "type": e["edge_type"],
+                    }
+                )
 
     def get_global_graph(
         self,
@@ -6913,6 +6947,301 @@ class OrivellumDB:
         return dict(row) if row else None
 
     # ── /Forge ────────────────────────────────────────────────────────────────
+
+    # =========================================================================
+    # ATLAS-O world graph (LAW 2: one world graph; LAW 3: evidence or it
+    # did not happen).  Node/edge type sets are closed — validated here AND
+    # by CHECK constraints in the schema, so an out-of-schema write is
+    # impossible even if a caller bypasses capabilities/atlas.py.
+    # =========================================================================
+
+    GRAPH_NODE_TYPES: frozenset[str] = frozenset(
+        {"Character", "Event", "Location", "TimePoint", "Object", "Vehicle", "Concept"}
+    )
+    # edge_type -> edge_group (closed set, five groups)
+    GRAPH_EDGE_TYPES: dict[str, str] = {
+        "performs": "event_role",
+        "undergoes": "event_role",
+        "experiences": "event_role",
+        "kinship_with": "social",
+        "affinity_with": "social",
+        "hostility_with": "social",
+        "affiliated_with": "social",
+        "precedes": "inter_event",
+        "occurs_after": "inter_event",
+        "causes": "inter_event",
+        "contrasts_with": "inter_event",
+        "references": "inter_event",
+        "occurs_at": "spatiotemporal",
+        "occurs_on": "spatiotemporal",
+        "located_at": "spatiotemporal",
+        "present_on": "spatiotemporal",
+        "possesses": "object",
+        "uses": "object",
+        "part_of": "object",
+        "is_a": "object",
+    }
+
+    def create_graph_node(
+        self,
+        *,
+        work_id: str,
+        chapter_id: str | None,
+        node_type: str,
+        name: str,
+        evidence_quote: str,
+        evidence_offset: int,
+        description: str = "",
+        attributes: dict | None = None,
+        canon_fact_id: str | None = None,
+    ) -> str:
+        """Insert a world-graph node.  Raises ValueError on schema violations.
+
+        LAW 3: evidence_quote must be non-empty and evidence_offset must be
+        a non-negative integer.  Grounding (that the quote actually appears
+        at the offset) is the extractor's job — see capabilities/atlas.py.
+        """
+        if node_type not in self.GRAPH_NODE_TYPES:
+            raise ValueError(f"node_type {node_type!r} not in ATLAS schema")
+        if not name or not name.strip():
+            raise ValueError("graph node requires a name")
+        if not evidence_quote or not evidence_quote.strip():
+            raise ValueError("graph node requires an evidence quote (LAW 3)")
+        if not isinstance(evidence_offset, int) or evidence_offset < 0:
+            raise ValueError("graph node requires a non-negative evidence offset (LAW 3)")
+        nid = _uuid()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO graph_node(id, work_id, chapter_id, node_type, name,
+                       description, evidence_quote, evidence_offset, attributes,
+                       canon_fact_id, created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    nid,
+                    work_id,
+                    chapter_id,
+                    node_type,
+                    name.strip(),
+                    description or "",
+                    evidence_quote,
+                    evidence_offset,
+                    _jdump(attributes or {}),
+                    canon_fact_id,
+                    _now(),
+                ),
+            )
+            self._conn.commit()
+        return nid
+
+    def update_graph_node_attributes(self, node_id: str, attributes: dict) -> None:
+        """Replace a node's attributes JSON (attribute pass)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE graph_node SET attributes=? WHERE id=?",
+                (_jdump(attributes or {}), node_id),
+            )
+            self._conn.commit()
+
+    def set_graph_node_canon(self, node_id: str, canon_fact_id: str | None) -> None:
+        """Link (or unlink) a node to the sealed canon fact it instantiates."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE graph_node SET canon_fact_id=? WHERE id=?",
+                (canon_fact_id, node_id),
+            )
+            self._conn.commit()
+
+    def create_graph_edge(
+        self,
+        *,
+        work_id: str,
+        chapter_id: str | None,
+        src: str,
+        dst: str,
+        edge_type: str,
+        evidence_quote: str,
+        evidence_offset: int,
+    ) -> str:
+        """Insert a world-graph edge.  Raises ValueError on schema violations.
+
+        The edge_group is derived from the closed edge-type map — callers
+        never pass it, so a type/group mismatch is impossible.
+        """
+        group = self.GRAPH_EDGE_TYPES.get(edge_type)
+        if group is None:
+            raise ValueError(f"edge_type {edge_type!r} not in ATLAS schema")
+        if not evidence_quote or not evidence_quote.strip():
+            raise ValueError("graph edge requires an evidence quote (LAW 3)")
+        if not isinstance(evidence_offset, int) or evidence_offset < 0:
+            raise ValueError("graph edge requires a non-negative evidence offset (LAW 3)")
+        eid = _uuid()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO graph_edge(id, work_id, chapter_id, src, dst, edge_type,
+                       edge_group, evidence_quote, evidence_offset, created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    eid,
+                    work_id,
+                    chapter_id,
+                    src,
+                    dst,
+                    edge_type,
+                    group,
+                    evidence_quote,
+                    evidence_offset,
+                    _now(),
+                ),
+            )
+            self._conn.commit()
+        return eid
+
+    def list_graph_nodes(
+        self,
+        *,
+        work_ids: list[str] | None = None,
+        chapter_id: str | None = None,
+        node_type: str | None = None,
+        name: str | None = None,
+        limit: int = 2000,
+    ) -> list[dict]:
+        """List graph nodes.  work_ids accepts multiple works (trilogy-wide)."""
+        q = "SELECT * FROM graph_node WHERE 1=1"
+        args: list = []
+        if work_ids:
+            q += f" AND work_id IN ({','.join('?' * len(work_ids))})"
+            args.extend(work_ids)
+        if chapter_id:
+            q += " AND chapter_id=?"
+            args.append(chapter_id)
+        if node_type:
+            q += " AND node_type=?"
+            args.append(node_type)
+        if name:
+            q += " AND name=? COLLATE NOCASE"
+            args.append(name)
+        q += " ORDER BY created_at ASC LIMIT ?"
+        args.append(max(1, min(limit, 10000)))
+        rows = self.read_conn().execute(q, args).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["attributes"] = _jload(d.get("attributes"), {})
+            out.append(d)
+        return out
+
+    def list_graph_edges(
+        self,
+        *,
+        work_ids: list[str] | None = None,
+        chapter_id: str | None = None,
+        node_id: str | None = None,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """List graph edges.  node_id matches either endpoint."""
+        q = "SELECT * FROM graph_edge WHERE 1=1"
+        args: list = []
+        if work_ids:
+            q += f" AND work_id IN ({','.join('?' * len(work_ids))})"
+            args.extend(work_ids)
+        if chapter_id:
+            q += " AND chapter_id=?"
+            args.append(chapter_id)
+        if node_id:
+            q += " AND (src=? OR dst=?)"
+            args.extend([node_id, node_id])
+        q += " ORDER BY created_at ASC LIMIT ?"
+        args.append(max(1, min(limit, 20000)))
+        rows = self.read_conn().execute(q, args).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_graph_for_chapter(self, chapter_id: str) -> None:
+        """Drop all graph rows observed in one chapter (idempotent re-extract).
+
+        Edges referencing this chapter's nodes cascade via FK; inconsistencies
+        raised BY this chapter are dropped, but rows where this chapter is
+        only the prior side are kept — they were raised by a later chapter
+        whose extraction is not being redone.
+        """
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,)
+            )
+            self._conn.execute("DELETE FROM graph_edge WHERE chapter_id=?", (chapter_id,))
+            self._conn.execute("DELETE FROM graph_node WHERE chapter_id=?", (chapter_id,))
+            self._conn.commit()
+
+    def create_graph_inconsistency(
+        self,
+        *,
+        work_id: str,
+        chapter_id: str,
+        description: str,
+        current_quote: str,
+        current_offset: int,
+        prior_chapter_id: str,
+        prior_quote: str,
+        prior_offset: int,
+        reasoning: str = "",
+    ) -> str:
+        """Store a VERIFIED cross-chapter inconsistency (LAW 3 on both sides)."""
+        for label, quote, offset in (
+            ("current", current_quote, current_offset),
+            ("prior", prior_quote, prior_offset),
+        ):
+            if not quote or not quote.strip():
+                raise ValueError(f"inconsistency requires a {label} quote (LAW 3)")
+            if not isinstance(offset, int) or offset < 0:
+                raise ValueError(f"inconsistency requires a non-negative {label} offset")
+        iid = _uuid()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO graph_inconsistency(id, work_id, chapter_id, description,
+                       current_quote, current_offset, prior_chapter_id, prior_quote,
+                       prior_offset, reasoning, status, created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,'open',?)""",
+                (
+                    iid,
+                    work_id,
+                    chapter_id,
+                    description,
+                    current_quote,
+                    current_offset,
+                    prior_chapter_id,
+                    prior_quote,
+                    prior_offset,
+                    reasoning or "",
+                    _now(),
+                ),
+            )
+            self._conn.commit()
+        return iid
+
+    def list_graph_inconsistencies(
+        self,
+        *,
+        work_id: str | None = None,
+        chapter_id: str | None = None,
+        status: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict]:
+        q = "SELECT * FROM graph_inconsistency WHERE 1=1"
+        args: list = []
+        if work_id:
+            q += " AND work_id=?"
+            args.append(work_id)
+        if chapter_id:
+            q += " AND chapter_id=?"
+            args.append(chapter_id)
+        if status:
+            q += " AND status=?"
+            args.append(status)
+        q += " ORDER BY created_at ASC LIMIT ?"
+        args.append(max(1, min(limit, 5000)))
+        rows = self.read_conn().execute(q, args).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── /ATLAS-O ──────────────────────────────────────────────────────────────
 
     def close(self) -> None:
         with self._lock:
