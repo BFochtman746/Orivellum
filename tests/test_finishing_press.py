@@ -231,6 +231,11 @@ class PressTests(unittest.TestCase):
         self.assertFalse(vr["passed"])
         with self.assertRaises(ValueError):
             press.seal_package(slug, "publisher", "production", "Author X")
+        # the submission-format exception must NOT bypass stale-slot safety
+        with self.assertRaises(ValueError):
+            press.seal_package(slug, "publisher", "submission", "Author X")
+        with self.assertRaises(ValueError):
+            press.build_package(slug, "publisher", "submission")
         # the approved text must not silently attach to the new Work's ch 1
         book = press.get_book(slug)
         self.assertFalse(book["chapters"][0]["has_epigraph"])

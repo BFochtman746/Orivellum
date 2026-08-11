@@ -640,6 +640,10 @@ def build_package(slug: str, pkg_type: str = "publisher", target: str = "product
     b = dict(row)
     style = json.loads(b["style"])
     vr = verify(slug)
+    if not vr["checks"]["epigraph_slots_valid"]:
+        # Non-bypassable: stale slots mean the epigraph state was authored
+        # against different or nonexistent prose. No package may carry that.
+        raise ValueError("Stale epigraph slots — clear or recreate them before packaging.")
     if not vr["passed"] and not (pkg_type == "publisher" and target == "submission"):
         raise ValueError(
             "Pre-flight failed — package blocked. (Only submission MS format is allowed pre-typeset.)"
@@ -677,6 +681,9 @@ def seal_package(slug: str, pkg_type: str, target: str, author: str, recipient: 
     b = dict(row)
     style = json.loads(b["style"])
     vr = verify(slug)
+    if not vr["checks"]["epigraph_slots_valid"]:
+        # Non-bypassable, even for the submission-format exception.
+        raise ValueError("Stale epigraph slots — clear or recreate them before sealing.")
     if not vr["passed"] and not (pkg_type == "publisher" and target == "submission"):
         raise ValueError("Pre-flight failed — cannot seal.")
     chs = _chapters_for_book(conn, slug, b["work_id"] or "")
