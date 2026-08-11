@@ -408,6 +408,48 @@ class TestKnowledgeHorizon(LoomBase):
         self.assertIn("well water is poisoned", mara_prompt)
         self.assertNotIn("duke secretly funds", mara_prompt)
         self.assertEqual(result["evidence"]["horizon_map"]["Mara"], [f1])
+        # The critic judging Mara's action sees the same horizon-restricted
+        # persona — it cannot enforce what it was never shown.
+        critic_prompt = next(p for p in stub.prompts("loom.critic.action")
+                             if "CHARACTER: Mara" in p)
+        self.assertIn("well water is poisoned", critic_prompt)
+        self.assertNotIn("duke secretly funds",
+                         critic_prompt.split("CANON FACTS IN PLAY")[0])
+
+
+# ── Prompt grounding ──────────────────────────────────────────────────────────
+
+
+class TestPromptGrounding(LoomBase):
+    def test_critic_receives_persona_canon_state_and_closing(self):
+        self._seed_fact("The yard gate is always barred at dusk.")
+        ch1 = self._seed_chapter(1, text="chapter one ends at the barred gate")
+        self._seed_node(ch1, "Location", "Yard", "gate barred")
+        cid2 = self._seed_chapter(2)
+        _run_id, result, stub = self._draft(cid2)
+        self.assertNotIsInstance(result, Exception)
+        critic_prompt = stub.prompts("loom.critic.action")[0]
+        self.assertIn("YOUR CHARACTER", critic_prompt)          # persona block
+        self.assertIn("register", critic_prompt)                # diction profile
+        self.assertIn("yard gate is always barred", critic_prompt)  # canon
+        self.assertIn("Location:Yard", critic_prompt)           # world state
+        self.assertIn("ends at the barred gate", critic_prompt)  # closing passage
+        self.assertIn("CHAPTER CONTRACT", critic_prompt)
+
+    def test_narrator_receives_personas_canon_and_voice(self):
+        self._seed_fact("The yard gate is always barred at dusk.")
+        self.db.set_assay_baseline(self.work_id, "voice_envelope",
+                                   {"register": "spare and plain"})
+        cid = self._seed_chapter(1)
+        _run_id, result, stub = self._draft(cid)
+        self.assertNotIsInstance(result, Exception)
+        narr_prompt = stub.prompts("loom.narrator")[0]
+        self.assertIn("CAST PERSONAS", narr_prompt)
+        self.assertIn("Mara", narr_prompt)
+        self.assertIn("Tobin", narr_prompt)
+        self.assertIn("yard gate is always barred", narr_prompt)  # canon
+        self.assertIn("spare and plain", narr_prompt)             # voice envelope
+        self.assertIn("VOICE ENVELOPE", narr_prompt)
 
 
 # ── Entropy gate ──────────────────────────────────────────────────────────────

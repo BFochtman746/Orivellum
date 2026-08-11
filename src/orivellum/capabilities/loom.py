@@ -411,17 +411,27 @@ def _critic_prompt(ctx: dict, name: str, action: dict) -> str:
     return f"""CHAPTER CONTRACT:
 {ctx["blocks"]["contract"]}
 
+{_persona_block(ctx, name)}
+
+CANON FACTS IN PLAY (the record — proposals must not contradict these):
+{ctx["blocks"]["canon"]}
+
 WORLD STATE:
 {ctx["blocks"]["world_state"]}
+
+PREVIOUS CHAPTER CLOSES (verbatim — the scene continues from here):
+{ctx["blocks"]["closing"]}
 
 CHARACTER: {name}
 PROPOSED ACTION:
 {json.dumps(action, ensure_ascii=False)}
 
 Evaluate the proposal for relevance to the contracted beat, specificity, and
-consistency with the character and scene. Reject vague, out-of-character,
-implausible, or repetitive actions with concrete feedback. If you accept,
-emit the world-state updates the action implies (flat key -> short value).
+consistency with the character's persona (including what they can and cannot
+know), the canon record, and the scene. Reject vague, out-of-character,
+canon-contradicting, implausible, or repetitive actions with concrete
+feedback. If you accept, emit the world-state updates the action implies
+(flat key -> short value).
 JSON only: {{"accept": true|false, "feedback": "…",
 "world_updates": {{"Character:{name}": "new state", "...": "..."}}}}"""
 
@@ -437,6 +447,12 @@ def _narrator_prompt(ctx: dict, accepted: list[dict]) -> str:
 
 VOICE ENVELOPE (write inside it):
 {ctx["blocks"]["voice"]}
+
+CAST PERSONAS (each restricted to what that character can know):
+{ctx["blocks"]["personas"]}
+
+CANON FACTS IN PLAY (the prose must not contradict these):
+{ctx["blocks"]["canon"]}
 
 WORLD STATE:
 {ctx["blocks"]["world_state"]}
