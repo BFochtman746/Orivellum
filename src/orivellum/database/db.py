@@ -6380,7 +6380,7 @@ class OrivellumDB:
         return [dict(r) for r in rows]
 
     def update_wb_project(self, project_id: str, **fields) -> None:
-        allowed = {"title", "brief", "status", "building", "last_error", "archive_path"}
+        allowed = {"title", "brief", "status", "building", "last_error", "archive_path", "meta"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return

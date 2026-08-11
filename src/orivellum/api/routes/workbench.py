@@ -53,6 +53,7 @@ _MAX_IMPORT_UPLOAD_BYTES = 30 * 1024 * 1024  # compressed upload cap
 
 def _project_out(p: dict, versions: list[dict] | None = None) -> dict:
     out = dict(p)
+    out.pop("meta", None)  # raw JSON blob — exposed structured via /rundown
     out["building"] = bool(p.get("building"))
     if versions is not None:
         out["versions"] = [_version_out(v) for v in versions]
@@ -81,8 +82,10 @@ def _get_or_404(db, project_id: str) -> dict:
 
 
 def _require_active(proj: dict) -> None:
+    if proj["status"] == "shelved":
+        raise HTTPException(409, "project is shelved — reactivate it first")
     if proj["status"] != "active":
-        raise HTTPException(409, "project is archived — archived projects are read-only")
+        raise HTTPException(409, "project is completed — completed projects are read-only")
 
 
 def _start_auto_analysis(project_id: str) -> bool:
@@ -132,8 +135,16 @@ def _start_build(project_id: str, instruction: str) -> None:
 
 @router.get("/projects")
 def list_projects(status: str | None = None):
+    """Portfolio wall: every project with its deterministic health score."""
+    from orivellum.capabilities.workbench_portfolio import compute_health
+
     db = get_db()
-    return {"projects": [_project_out(p) for p in db.list_wb_projects(status=status)]}
+    out = []
+    for p in db.list_wb_projects(status=status):
+        item = _project_out(p)
+        item["health"] = compute_health(p, db.list_wb_versions(p["id"]))
+        out.append(item)
+    return {"projects": out}
 
 
 @router.post("/projects")
@@ -371,24 +382,94 @@ def revert_project(project_id: str, body: RevertBody):
     return _version_out(row)
 
 
-@router.post("/projects/{project_id}/complete")
-def complete_project(project_id: str):
+@router.get("/projects/{project_id}/rundown")
+def project_rundown(project_id: str):
+    """Health breakdown + cached needs assessment + close-out record."""
+    from orivellum.capabilities.workbench_portfolio import compute_health, project_meta
+
+    db = get_db()
+    proj = _get_or_404(db, project_id)
+    meta = project_meta(proj)
+    return {
+        "health": compute_health(proj, db.list_wb_versions(project_id)),
+        "needs": meta.get("needs"),
+        "closeout": meta.get("closeout"),
+    }
+
+
+@router.post("/projects/{project_id}/needs")
+def assess_needs(project_id: str):
+    """Generate (and cache) the AI needs assessment. Synchronous — the
+    model call is capped at 90 s and the client shows a spinner."""
     db, cfg = get_db(), get_config()
     proj = _get_or_404(db, project_id)
     _require_active(proj)
+    if not db.list_wb_versions(project_id):
+        raise HTTPException(409, "nothing to assess — the project has no versions yet")
+    from orivellum.capabilities.workbench_portfolio import generate_needs
+
+    try:
+        return {"needs": generate_needs(db, cfg, project_id)}
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise internal_error(logger, exc, "workbench needs") from exc
+
+
+@router.post("/projects/{project_id}/complete")
+def complete_project(project_id: str):
+    """Complete a project: close-out analysis (summary + lessons fed into
+    the knowledge base), then archive every version. The close-out never
+    blocks completion — with the model offline it records stats only."""
+    db, cfg = get_db(), get_config()
+    proj = _get_or_404(db, project_id)
+    _require_active(proj)
+    if not db.list_wb_versions(project_id):
+        raise HTTPException(422, "nothing to archive — the project has no versions")
     if not db.claim_wb_build(project_id):
         raise HTTPException(409, "wait for the running build to finish first")
     try:
         from orivellum.capabilities.workbench import archive_project
+        from orivellum.capabilities.workbench_portfolio import run_closeout
 
+        # Archive first (it can refuse on a hash mismatch); only a project
+        # that actually archived gets a close-out and knowledge lessons.
         path = archive_project(db, cfg, project_id)
+        closeout = run_closeout(db, cfg, project_id)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise internal_error(logger, exc, "workbench archive") from exc
     finally:
         db.update_wb_project(project_id, building=0)
-    return {"archived": True, "archive_path": path}
+    return {"archived": True, "archive_path": path, "closeout": closeout}
+
+
+@router.post("/projects/{project_id}/shelve")
+def shelve_project(project_id: str):
+    """Put a project away without completing it — no close-out, no archive
+    zip, files stay on disk. Reactivate to keep working on it."""
+    db = get_db()
+    proj = _get_or_404(db, project_id)
+    _require_active(proj)
+    if not db.claim_wb_build(project_id):
+        raise HTTPException(409, "wait for the running build to finish first")
+    db.update_wb_project(project_id, status="shelved", building=0)
+    return _project_out(db.get_wb_project(project_id))
+
+
+@router.post("/projects/{project_id}/reactivate")
+def reactivate_project(project_id: str):
+    """Bring a shelved project back to active. Completed projects stay
+    read-only — reactivation is only for shelved ones."""
+    db = get_db()
+    proj = _get_or_404(db, project_id)
+    if proj["status"] != "shelved":
+        raise HTTPException(409, "only shelved projects can be reactivated")
+    if not db.claim_wb_build(project_id, require_active=False):
+        raise HTTPException(409, "wait for the running operation to finish first")
+    db.update_wb_project(project_id, status="active", building=0)
+    return _project_out(db.get_wb_project(project_id))
 
 
 @router.get("/projects/{project_id}/versions/{version_no}/download")

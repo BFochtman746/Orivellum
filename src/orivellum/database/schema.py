@@ -2399,4 +2399,15 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS wb_versions_project ON wb_versions(project_id, version_no);
     """,
     ),
+    # v116 — Workbench portfolio: a `meta` JSON blob on each project holds the
+    # AI needs assessment and the close-out record (summary + lessons). A new
+    # status value 'shelved' (put away without completing) joins 'active' and
+    # 'archived' — no schema change needed for the status itself.
+    (
+        116,
+        "Workbench portfolio: project meta for needs assessment and close-out",
+        """
+        ALTER TABLE wb_projects ADD COLUMN meta TEXT NOT NULL DEFAULT '{}';
+    """,
+    ),
 ]

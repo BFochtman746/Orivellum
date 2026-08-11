@@ -16,12 +16,12 @@ import {
 import {
   ArrowLeft, Loader2, Download, Archive, RotateCcw, Hammer, CheckCircle2,
   AlertCircle, FileSpreadsheet, Code2, Trash2, Send, ScanSearch, Upload,
-  FileText,
+  FileText, Activity, Sparkles, PauseCircle, PlayCircle, GraduationCap,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import type { WbProject } from "./index";
+import { HealthBadge, type WbHealth, type WbProject } from "./index";
 
 const API = `${import.meta.env.BASE_URL}api/workbench`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -37,6 +37,25 @@ type WbVersion = {
   checks: Record<string, unknown>;
 };
 type WbDetail = WbProject & { versions: WbVersion[]; version_count: number };
+
+type WbNeed = { title: string; why: string; priority: "now" | "soon" | "later" };
+type WbRundown = {
+  health: WbHealth;
+  needs: { summary: string; items: WbNeed[]; generated_at: string } | null;
+  closeout: {
+    summary: string;
+    lessons: { text: string; category: string; knowledge_id?: string }[];
+    stats: { version_count: number; days_active: number | null; open_findings: number };
+    note: string | null;
+    completed_at: string;
+  } | null;
+};
+
+const PRIORITY_STYLE: Record<WbNeed["priority"], string> = {
+  now: "text-red-700 border-red-300",
+  soon: "text-amber-700 border-amber-300",
+  later: "text-muted-foreground border-border",
+};
 
 function fmtBytes(n: number) {
   if (n < 1024) return `${n} B`;
@@ -65,6 +84,7 @@ export default function WorkbenchDetail() {
   const [instruction, setInstruction] = useState("");
   const [confirmComplete, setConfirmComplete] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmShelve, setConfirmShelve] = useState(false);
   const [reportVersion, setReportVersion] = useState<number | null>(null);
 
   const { data: proj, isLoading } = useQuery<WbDetail>({
@@ -80,7 +100,42 @@ export default function WorkbenchDetail() {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["wb-project", projectId] });
     queryClient.invalidateQueries({ queryKey: ["wb-projects"] });
+    queryClient.invalidateQueries({ queryKey: ["wb-rundown", projectId] });
   };
+
+  const { data: rundown } = useQuery<WbRundown>({
+    queryKey: ["wb-rundown", projectId],
+    queryFn: () => apiFetch(`${API}/projects/${projectId}/rundown`).then(r => {
+      if (!r.ok) throw new Error("rundown failed");
+      return r.json();
+    }),
+    enabled: !!projectId,
+    staleTime: 10_000,
+  });
+
+  const assessNeeds = useMutation({
+    mutationFn: () =>
+      apiFetch(`${API}/projects/${projectId}/needs`, { method: "POST" })
+        .then(async r => { if (!r.ok) throw new Error((await r.json()).detail ?? "failed"); return r.json(); }),
+    onSuccess: () => { toast.success("Needs assessment updated"); invalidate(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const shelve = useMutation({
+    mutationFn: () =>
+      apiFetch(`${API}/projects/${projectId}/shelve`, { method: "POST" })
+        .then(async r => { if (!r.ok) throw new Error((await r.json()).detail ?? "failed"); return r.json(); }),
+    onSuccess: () => { toast.success("Project shelved — reactivate it any time"); invalidate(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const reactivate = useMutation({
+    mutationFn: () =>
+      apiFetch(`${API}/projects/${projectId}/reactivate`, { method: "POST" })
+        .then(async r => { if (!r.ok) throw new Error((await r.json()).detail ?? "failed"); return r.json(); }),
+    onSuccess: () => { toast.success("Project reactivated"); invalidate(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const iterate = useMutation({
     mutationFn: (text: string) =>
@@ -131,7 +186,13 @@ export default function WorkbenchDetail() {
     mutationFn: () =>
       apiFetch(`${API}/projects/${projectId}/complete`, { method: "POST" })
         .then(async r => { if (!r.ok) throw new Error((await r.json()).detail ?? "failed"); return r.json(); }),
-    onSuccess: () => { toast.success("Project archived — all versions preserved"); invalidate(); },
+    onSuccess: (res: { closeout?: { lessons?: unknown[] } }) => {
+      const n = res.closeout?.lessons?.length ?? 0;
+      toast.success(n > 0
+        ? `Project completed — close-out written, ${n} lesson${n === 1 ? "" : "s"} added to your knowledge`
+        : "Project completed — close-out written and all versions archived");
+      invalidate();
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -154,6 +215,11 @@ export default function WorkbenchDetail() {
   const versions = [...(proj.versions ?? [])].sort((a, b) => b.version_no - a.version_no);
   const latest = versions[0];
   const isArchived = proj.status === "archived";
+  const isShelved = proj.status === "shelved";
+  const isActive = proj.status === "active";
+  const health = rundown?.health;
+  const needs = rundown?.needs;
+  const closeout = rundown?.closeout;
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
@@ -173,13 +239,19 @@ export default function WorkbenchDetail() {
               </Badge>
             )}
             {isArchived && (
-              <Badge variant="secondary" className="gap-1"><Archive className="h-3 w-3" /> Archived</Badge>
+              <Badge variant="secondary" className="gap-1"><Archive className="h-3 w-3" /> Completed</Badge>
             )}
+            {isShelved && (
+              <Badge variant="outline" className="gap-1 text-muted-foreground">
+                <PauseCircle className="h-3 w-3" /> Shelved
+              </Badge>
+            )}
+            <HealthBadge health={health} />
           </h1>
           <p className="text-sm text-muted-foreground mt-1">{proj.brief}</p>
         </div>
-        <div className="flex gap-2 shrink-0">
-          {isArchived ? (
+        <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+          {isArchived && (
             <Button
               variant="outline"
               onClick={() => downloadUrl(`${API}/projects/${projectId}/archive/download`, `${proj.title}.zip`)
@@ -188,15 +260,42 @@ export default function WorkbenchDetail() {
             >
               <Download className="h-4 w-4 mr-1" /> Archive
             </Button>
-          ) : (
+          )}
+          {isShelved && (
             <Button
               variant="outline"
-              disabled={proj.building || versions.length === 0}
-              onClick={() => setConfirmComplete(true)}
-              data-testid="button-wb-complete"
+              disabled={reactivate.isPending}
+              onClick={() => reactivate.mutate()}
+              data-testid="button-wb-reactivate"
             >
-              <Archive className="h-4 w-4 mr-1" /> Complete & archive
+              {reactivate.isPending
+                ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                : <PlayCircle className="h-4 w-4 mr-1" />}
+              Reactivate
             </Button>
+          )}
+          {isActive && (
+            <>
+              <Button
+                variant="ghost"
+                disabled={proj.building || shelve.isPending}
+                onClick={() => setConfirmShelve(true)}
+                data-testid="button-wb-shelve"
+              >
+                <PauseCircle className="h-4 w-4 mr-1" /> Shelve
+              </Button>
+              <Button
+                variant="outline"
+                disabled={proj.building || versions.length === 0 || complete.isPending}
+                onClick={() => setConfirmComplete(true)}
+                data-testid="button-wb-complete"
+              >
+                {complete.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  : <Archive className="h-4 w-4 mr-1" />}
+                Complete
+              </Button>
+            </>
           )}
           <Button variant="ghost" size="icon" onClick={() => setConfirmDelete(true)} data-testid="button-wb-delete">
             <Trash2 className="h-4 w-4 text-muted-foreground" />
@@ -215,7 +314,111 @@ export default function WorkbenchDetail() {
         </div>
       )}
 
-      {!isArchived && (
+      {closeout && (
+        <div className="border rounded-lg p-4 space-y-3" data-testid="card-wb-closeout">
+          <p className="text-sm font-medium flex items-center gap-2">
+            <GraduationCap className="h-4 w-4 text-primary" /> Close-out
+            <span className="text-xs text-muted-foreground font-normal ml-auto">
+              {format(new Date(closeout.completed_at), "MMM d, yyyy")}
+            </span>
+          </p>
+          {closeout.summary && <p className="text-sm">{closeout.summary}</p>}
+          <p className="text-xs text-muted-foreground">
+            {closeout.stats.version_count} version{closeout.stats.version_count === 1 ? "" : "s"}
+            {closeout.stats.days_active != null && <> · {Math.round(closeout.stats.days_active)} days</>}
+            {closeout.stats.open_findings > 0 && <> · {closeout.stats.open_findings} finding(s) still open at completion</>}
+          </p>
+          {closeout.lessons.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Lessons saved to your knowledge
+              </p>
+              {closeout.lessons.map((l, i) => (
+                <div key={i} className="text-sm flex gap-2 items-start">
+                  <Badge variant="outline" className="text-[10px] shrink-0 mt-0.5">{l.category}</Badge>
+                  <span>{l.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {closeout.note && <p className="text-xs text-muted-foreground italic">{closeout.note}</p>}
+        </div>
+      )}
+
+      {health && health.grade !== "new" && health.parts.length > 0 && (
+        <div className="border rounded-lg p-4 space-y-2" data-testid="card-wb-health">
+          <p className="text-sm font-medium flex items-center gap-2">
+            <Activity className="h-4 w-4 text-primary" /> Health rundown
+            <span className="ml-auto"><HealthBadge health={health} /></span>
+          </p>
+          <div className="space-y-1">
+            {health.parts.map((part, i) => (
+              <p key={i} className="text-sm flex items-center gap-2">
+                {part.delta < 0
+                  ? <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                  : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
+                <span className={part.delta < 0 ? "" : "text-muted-foreground"}>{part.label}</span>
+                {part.delta < 0 && <span className="text-xs font-mono text-muted-foreground ml-auto">{part.delta}</span>}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isArchived && versions.length > 0 && (
+        <div className="border rounded-lg p-4 space-y-3" data-testid="card-wb-needs">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" /> What this project needs
+            </p>
+            {needs && (
+              <span className="text-xs text-muted-foreground">
+                {format(new Date(needs.generated_at), "MMM d, HH:mm")}
+              </span>
+            )}
+            {isActive && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto"
+                disabled={proj.building || assessNeeds.isPending}
+                onClick={() => assessNeeds.mutate()}
+                data-testid="button-wb-assess-needs"
+              >
+                {assessNeeds.isPending
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> Assessing…</>
+                  : <><Sparkles className="h-3.5 w-3.5 mr-1" /> {needs ? "Reassess" : "Assess needs"}</>}
+              </Button>
+            )}
+          </div>
+          {!needs ? (
+            <p className="text-sm text-muted-foreground">
+              {assessNeeds.isPending
+                ? "The AI is reading the brief and the latest review — this can take a minute."
+                : "No assessment yet. The AI reads the brief, the findings, and the latest review, then lists the concrete things this project needs."}
+            </p>
+          ) : (
+            <>
+              {needs.summary && <p className="text-sm">{needs.summary}</p>}
+              <div className="space-y-1.5">
+                {needs.items.map((n, i) => (
+                  <div key={i} className="text-sm flex gap-2 items-start">
+                    <Badge variant="outline" className={`text-[10px] shrink-0 mt-0.5 ${PRIORITY_STYLE[n.priority]}`}>
+                      {n.priority}
+                    </Badge>
+                    <div>
+                      <span className="font-medium">{n.title}</span>
+                      {n.why && <span className="text-muted-foreground"> — {n.why}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {isActive && (
         <div className="border rounded-lg p-4 space-y-3">
           <p className="text-sm font-medium flex items-center gap-2">
             <Hammer className="h-4 w-4 text-primary" />
@@ -328,7 +531,7 @@ export default function WorkbenchDetail() {
               >
                 <Download className="h-3.5 w-3.5 mr-1" /> Download
               </Button>
-              {!isArchived && v.version_no !== latest?.version_no && (
+              {isActive && v.version_no !== latest?.version_no && (
                 <Button
                   size="sm" variant="ghost"
                   disabled={proj.building || revert.isPending}
@@ -363,16 +566,36 @@ export default function WorkbenchDetail() {
       <AlertDialog open={confirmComplete} onOpenChange={setConfirmComplete}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Complete & archive this project?</AlertDialogTitle>
+            <AlertDialogTitle>Complete this project?</AlertDialogTitle>
             <AlertDialogDescription>
-              Every version is packed into one archive with a file-hash manifest, and the
-              project becomes read-only. You can still download everything afterwards.
+              Every version is packed into one archive with a file-hash manifest, a close-out
+              analysis is written, and the lessons learned are saved into your knowledge.
+              The project becomes read-only afterwards. If you just want to set it aside
+              for now, use Shelve instead.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => complete.mutate()} data-testid="button-wb-confirm-complete">
-              Archive project
+              Complete project
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmShelve} onOpenChange={setConfirmShelve}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Shelve this project?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The project is put away without a close-out — no archive is made and nothing
+              is deleted. It becomes read-only until you reactivate it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => shelve.mutate()} data-testid="button-wb-confirm-shelve">
+              Shelve project
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
