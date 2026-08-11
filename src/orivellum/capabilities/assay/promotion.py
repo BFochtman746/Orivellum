@@ -63,11 +63,12 @@ def precision_report(db: Any, instrument: dict) -> dict:
     cumulative within the window, so the dashboard can show the trend.
     No dispositions → precision is None (never invented).
     """
-    counts = db.count_assay_dispositions(instrument["id"])
+    epoch = instrument.get("shadow_epoch")
+    counts = db.count_assay_dispositions(instrument["id"], since=epoch)
     tp, fp = counts["true_positives"], counts["false_positives"]
     total = tp + fp
     precision = round(tp / total, 4) if total else None
-    window = db.list_assay_dispositions(instrument["id"])
+    window = db.list_assay_dispositions(instrument["id"], since=epoch)
     w_tp = w_fp = 0
     series: list[dict] = []
     for d in window:

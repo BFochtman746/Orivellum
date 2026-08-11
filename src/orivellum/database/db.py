@@ -7712,9 +7712,10 @@ class OrivellumDB:
             ):
                 self._conn.execute(_UPDATE_SQL, update_params)
                 cur = self._conn.execute(
-                    """UPDATE assay_instrument SET certification='shadow'
+                    """UPDATE assay_instrument SET certification='shadow',
+                       shadow_epoch=?
                        WHERE key=? AND certification='certified'""",
-                    (contract["key"],),
+                    (now, contract["key"]),
                 )
                 if cur.rowcount == 1:
                     self._conn.execute(
@@ -7839,7 +7840,16 @@ class OrivellumDB:
                 # aggregated over the COMPLETE disposition record inside this
                 # same transaction as the status CAS, against the CURRENT
                 # contract's declared bar — never trusted from the caller,
-                # never read from a stale snapshot.
+                # never read from a stale snapshot.  Evidence is scoped to
+                # the current shadow epoch: only findings produced at/after
+                # this shadow entry count, so advisory-era or prior-contract
+                # dispositions can never promote.
+                epoch = fresh.get("shadow_epoch")
+                if not epoch:
+                    raise ValueError(
+                        "instrument has no shadow epoch — it must enter "
+                        "shadow and be tested before certification"
+                    )
                 bar = (fresh.get("thresholds") or {}).get("promotion") or {}
                 min_precision = float(
                     bar.get("min_precision", ASSAY_DEFAULT_MIN_PRECISION)
@@ -7847,7 +7857,7 @@ class OrivellumDB:
                 min_dispositions = int(
                     bar.get("min_dispositions", ASSAY_DEFAULT_MIN_DISPOSITIONS)
                 )
-                tp, fp = self._assay_disposition_counts(fresh["id"])
+                tp, fp = self._assay_disposition_counts(fresh["id"], since=epoch)
                 total = tp + fp
                 if total < min_dispositions:
                     raise ValueError(
@@ -7862,9 +7872,10 @@ class OrivellumDB:
                 precision = computed
                 sample_size = total
             cur = self._conn.execute(
-                """UPDATE assay_instrument SET certification=?, updated_at=?
+                """UPDATE assay_instrument SET certification=?, updated_at=?,
+                   shadow_epoch=CASE WHEN ?='shadow' THEN ? ELSE shadow_epoch END
                    WHERE key=? AND certification=? AND updated_at=?""",
-                (to_status, now, key, frm, fresh["updated_at"]),
+                (to_status, now, to_status, now, key, frm, fresh["updated_at"]),
             )
             if cur.rowcount != 1:
                 raise RuntimeError(
@@ -8101,43 +8112,56 @@ class OrivellumDB:
             )
         return self.get_assay_finding(finding_id)  # type: ignore[return-value]
 
-    def _assay_disposition_counts(self, instrument_id: str) -> tuple[int, int]:
+    def _assay_disposition_counts(
+        self, instrument_id: str, since: str | None = None
+    ) -> tuple[int, int]:
         """(true_positives, false_positives) aggregated over the COMPLETE
-        disposition record — no result cap.  Caller must hold the DB lock
-        (or be inside governed_write)."""
-        row = self._conn.execute(
-            """SELECT
+        disposition record — no result cap.  ``since`` scopes evidence to
+        findings CREATED at/after an epoch (the current shadow entry), so
+        advisory-era or prior-contract dispositions never count.  Caller
+        must hold the DB lock (or be inside governed_write)."""
+        q = """SELECT
                  SUM(CASE WHEN disposition='true_positive' THEN 1 ELSE 0 END) AS tp,
                  COUNT(*) AS total
                FROM assay_finding
                WHERE instrument_id=? AND disposition != 'open'
-                 AND dispositioned_at IS NOT NULL""",
-            (instrument_id,),
-        ).fetchone()
+                 AND dispositioned_at IS NOT NULL"""
+        args: list = [instrument_id]
+        if since is not None:
+            q += " AND created_at >= ?"
+            args.append(since)
+        row = self._conn.execute(q, args).fetchone()
         total = int(row["total"] or 0)
         tp = int(row["tp"] or 0)
         return tp, total - tp
 
-    def count_assay_dispositions(self, instrument_id: str) -> dict:
+    def count_assay_dispositions(
+        self, instrument_id: str, since: str | None = None
+    ) -> dict:
         """Complete, uncapped TP/FP counts for one instrument — the same
         data definition the certification write path enforces against."""
         with self._lock:
-            tp, fp = self._assay_disposition_counts(instrument_id)
+            tp, fp = self._assay_disposition_counts(instrument_id, since=since)
         return {"true_positives": tp, "false_positives": fp}
 
-    def list_assay_dispositions(self, instrument_id: str, limit: int = 200) -> list[dict]:
+    def list_assay_dispositions(
+        self, instrument_id: str, limit: int = 200, since: str | None = None
+    ) -> list[dict]:
         """The most recent dispositioned findings for one instrument,
         returned oldest-first — a rendering window for the rolling-precision
         series only.  Eligibility math must use count_assay_dispositions."""
+        q = """SELECT id, disposition, dispositioned_at, severity, unit, issue_type
+               FROM assay_finding
+               WHERE instrument_id=? AND disposition != 'open'
+                 AND dispositioned_at IS NOT NULL"""
+        args: list = [instrument_id]
+        if since is not None:
+            q += " AND created_at >= ?"
+            args.append(since)
+        q += " ORDER BY dispositioned_at DESC, rowid DESC LIMIT ?"
+        args.append(max(1, min(int(limit), 1000)))
         with self._lock:
-            rows = self._conn.execute(
-                """SELECT id, disposition, dispositioned_at, severity, unit, issue_type
-                   FROM assay_finding
-                   WHERE instrument_id=? AND disposition != 'open'
-                     AND dispositioned_at IS NOT NULL
-                   ORDER BY dispositioned_at DESC, rowid DESC LIMIT ?""",
-                (instrument_id, max(1, min(int(limit), 1000))),
-            ).fetchall()
+            rows = self._conn.execute(q, args).fetchall()
         return [dict(r) for r in reversed(rows)]
 
     def create_assay_signature(

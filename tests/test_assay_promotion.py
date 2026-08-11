@@ -245,6 +245,42 @@ class TestLifecycle(PromotionBase):
             self.db.set_assay_certification(inst["key"], "certified", actor="user")
         self.assertEqual(real_get(inst["key"])["certification"], "shadow")
 
+    def test_advisory_era_evidence_cannot_promote(self):
+        # End-to-end: findings produced and dispositioned while ADVISORY do
+        # not count — the detector must be shadow-TESTED, not just have
+        # historical verdicts.
+        inst = self._register_candidate(in_shadow=False)
+        self._disposition_n(inst, tp=6, fp=0)  # all while advisory
+        self.db.set_assay_certification(inst["key"], "shadow", actor="user")
+        with self.assertRaises(ValueError):
+            self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        # New evidence gathered IN shadow does count.
+        self._disposition_n(self.db.get_assay_instrument(inst["key"]), tp=4, fp=0)
+        self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        event = self.db.list_assay_certification_events(inst["id"])[0]
+        self.assertEqual(event["sample_size"], 4)  # advisory-era 6 excluded
+
+    def test_pre_reseed_evidence_cannot_recertify(self):
+        # A certified instrument demoted by a contract change must RE-EARN
+        # certification with fresh shadow evidence — its old dispositions
+        # belong to the prior contract's epoch.
+        inst = self._register_candidate()
+        self._disposition_n(inst, tp=4, fp=0)
+        self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        changed = dict(CANDIDATE)
+        changed["thresholds"] = dict(
+            CANDIDATE["thresholds"],
+            promotion={"min_precision": 0.8, "min_dispositions": 4},
+        )
+        self.db.upsert_assay_instrument(changed)  # auto-demotes to shadow
+        self.assertEqual(
+            self.db.get_assay_instrument(inst["key"])["certification"], "shadow"
+        )
+        with self.assertRaises(ValueError):
+            self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        self._disposition_n(self.db.get_assay_instrument(inst["key"]), tp=4, fp=0)
+        self.db.set_assay_certification(inst["key"], "certified", actor="user")
+
     def test_caller_supplied_precision_is_ignored_on_certify(self):
         # The ledger records the COMPUTED evidence, never caller claims.
         inst = self._register_candidate()

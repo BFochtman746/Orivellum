@@ -3041,4 +3041,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON assay_certification_event(instrument_id, created_at)
     """,
     ),
+    # v131 — PROMOTION evidence epochs.
+    #
+    # assay_instrument.shadow_epoch — set every time an instrument ENTERS
+    # shadow (lifecycle transition or governed re-seed demotion).  Only
+    # findings created at/after this epoch may count toward certification
+    # evidence: dispositions accumulated while advisory, or under a prior
+    # contract, can never promote.  Backfill: instruments currently in
+    # shadow get their updated_at as the epoch (best available marker).
+    (
+        131,
+        "PROMOTION: shadow_epoch — certification evidence scoped to the current shadow entry",
+        """
+        ALTER TABLE assay_instrument ADD COLUMN shadow_epoch TEXT;
+        UPDATE assay_instrument SET shadow_epoch = updated_at
+            WHERE certification = 'shadow'
+    """,
+    ),
 ]
