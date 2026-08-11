@@ -108,7 +108,8 @@ class SeriesStore:
         if not self._exists(series_id):
             return "not_found"
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM canon_fact WHERE series_id=?", (series_id,)
+            "SELECT COUNT(*) AS n FROM canon_fact WHERE series_id=? AND status='active'",
+            (series_id,),
         ).fetchone()
         if int(row["n"]):
             return "has_canon"
@@ -122,6 +123,15 @@ class SeriesStore:
             object_type="series",
             actor=actor,
         ):
+            # Retracted/superseded facts keep their series_id for history, but
+            # they hold no authority — detach them so a dead scope reference
+            # never makes an obsolete series undeletable (the governed audit
+            # trail retains the deletion event).
+            db._conn.execute(
+                "UPDATE canon_fact SET series_id=NULL "
+                "WHERE series_id=? AND status != 'active'",
+                (series_id,),
+            )
             db._conn.execute("DELETE FROM series_member WHERE series_id=?", (series_id,))
             db._conn.execute("DELETE FROM series WHERE id=?", (series_id,))
         return "ok"

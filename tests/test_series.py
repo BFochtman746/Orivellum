@@ -119,12 +119,17 @@ class SeriesMembershipTests(_Base):
         self.assertEqual(s["members"][-1]["volume"], 5)
 
     def test_delete_refused_while_series_canon_exists(self):
-        self.canon.create_fact(
+        fact = self.canon.create_fact(
             statement="The moon is shattered", classification="INVENTED",
             signed_by="author", series_id=self.sid,
         )
         self.assertEqual(self.store.delete_series(self.sid), "has_canon")
         self.assertIsNotNone(self.store.get_series(self.sid))
+        # Retracting the series canon unblocks deletion — only ACTIVE canon
+        # holds authority; a retracted fact must not make a series immortal.
+        self.canon.retract_fact(fact["id"], signed_by="author")
+        self.assertEqual(self.store.delete_series(self.sid), "ok")
+        self.assertIsNone(self.store.get_series(self.sid))
 
     def test_delete_empty_series_ok(self):
         self.store.add_member(self.sid, self.book1["id"], volume=1)
