@@ -3373,7 +3373,7 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
 
     from orivellum.api.executor import submit_bg as _submit_bg_tts
 
-    _submit_bg_tts(
+    scheduled = _submit_bg_tts(
         _run_work_tts_job,
         job_id,
         body.voice,
@@ -3389,6 +3389,12 @@ def start_work_audiobook_async(body: WorkAudiobookStartRequest):
         kind="studio",
         label=f"work_tts:{job_id[:8]}",
     )
+    if not scheduled:
+        # The executor rejected the job — remove the registry entry so callers
+        # never poll a render that will sit in 'starting' forever.
+        with _work_tts_jobs_lock:
+            _work_tts_jobs.pop(job_id, None)
+        raise HTTPException(503, "The server is too busy to start the render — try again shortly.")
 
     return {"job_id": job_id, "total_chapters": len(doc_texts)}
 

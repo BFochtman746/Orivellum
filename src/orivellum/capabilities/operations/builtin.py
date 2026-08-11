@@ -27,26 +27,50 @@ _PENDING_READINESS = ("imported", "transcribing")
 
 
 def _wait_for_extraction(ctx: OpContext, params: dict) -> dict:
-    """Poll a Work's documents until none are still extracting."""
+    """Poll a Work's documents until none are still extracting.
+
+    Once nothing is pending, the outcome is judged honestly instead of just
+    reporting whatever happened as success:
+
+    - documents in 'error' fail the step (pass allow_failed=true to proceed
+      anyway when the rest of the Work is usable)
+    - zero 'ready' documents fails the step — later steps like the audiobook
+      render would only fail more confusingly
+    """
     work_id = params.get("work_id") or ctx.work_id
     if not work_id:
         raise ValueError("wait_for_extraction needs a work_id")
     timeout_s = float(params.get("timeout_s") or 1800)
     poll_s = float(params.get("poll_s") or 5)
+    allow_failed = bool(params.get("allow_failed"))
     deadline = time.monotonic() + timeout_s
 
     while True:
-        docs = ctx.db.list_documents(work_id=work_id, limit=500)
+        # Large limit so the whole Work is enumerated, never a truncated view.
+        docs = ctx.db.list_documents(work_id=work_id, limit=100000)
         pending = [d for d in docs if d.get("readiness") in _PENDING_READINESS]
         if not pending:
             by_state: dict[str, int] = {}
             for d in docs:
                 r = d.get("readiness") or "unknown"
                 by_state[r] = by_state.get(r, 0) + 1
+            ready = by_state.get("ready", 0)
+            failed = by_state.get("error", 0)
+            if failed and not allow_failed:
+                raise RuntimeError(
+                    f"{failed} document(s) failed extraction ({by_state}). "
+                    "Fix or remove them, or set allow_failed to continue anyway."
+                )
+            if ready == 0:
+                raise RuntimeError(
+                    f"No documents are ready ({by_state or 'no documents in this Work'}) "
+                    "— nothing for the next step to work with."
+                )
             return {
                 "documents": len(docs),
                 "by_readiness": by_state,
-                "summary": f"{by_state.get('ready', 0)} of {len(docs)} documents ready",
+                "summary": f"{ready} of {len(docs)} documents ready"
+                + (f" ({failed} failed, continuing)" if failed else ""),
             }
         if ctx.should_stop():
             raise OperationInterrupted()
@@ -61,12 +85,16 @@ def _wait_for_extraction(ctx: OpContext, params: dict) -> dict:
 
 
 def _render_audiobook(ctx: OpContext, params: dict) -> dict:
-    """Start (or re-attach to) a Work audiobook render and wait for it.
+    """Start (or attach to) a Work audiobook render and wait for it.
 
     If a render for the Work is already in progress the start route answers
-    409 with the live job id — we attach to that job instead of failing, which
-    also makes this step resumable: after a pause or restart, resume simply
-    re-attaches (and the render itself reuses its persistent segment cache).
+    409 with the live job id — we attach to that job instead of failing. That
+    makes pause/resume cheap while the server stays up: pause detaches, resume
+    re-attaches to the same live render.
+
+    The job registry is in-memory, so after a server RESTART there is no job
+    to re-attach to: resume starts a fresh render, which fast-forwards through
+    the work already done via the render's persistent segment cache.
     """
     from fastapi import HTTPException
 
