@@ -76,6 +76,14 @@ function useGlobalAudio() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  // Monotonic request token: only the most recent preview request may touch
+  // the audio element or the loading/playing state. Without this, two rapid
+  // clicks on different samples could let the earlier (slower) fetch
+  // overwrite the later selection or clear its spinner.
+  const reqGenRef = useRef(0);
+  // Last object URL handed to the audio element — revoked when replaced so
+  // repeated previews don't leak blobs for the whole session.
+  const lastUrlRef = useRef<string | null>(null);
   // Maps voice ID → synthesis engine used for its sample ("kokoro" | "espeak").
   // Populated lazily as the user plays samples; persists for the session.
   const [sampleEngines, setSampleEngines] = useState<Record<string, string>>({});
@@ -99,12 +107,14 @@ function useGlobalAudio() {
       return;
     }
 
+    const token = ++reqGenRef.current;
     el.pause();
     setPlayingId(null);
     setLoadingId(voiceId);
 
     try {
       const resp = await apiFetch(`${BASE}/studio/voices/${encodeURIComponent(voiceId)}/sample`);
+      if (token !== reqGenRef.current) return; // superseded by a newer click
       if (!resp.ok) {
         // Surface the server's explanation (e.g. "the voice sidecar is not
         // running") instead of a generic failure — clone samples especially
@@ -122,17 +132,21 @@ function useGlobalAudio() {
       );
 
       const blob = await resp.blob();
-      const url  = URL.createObjectURL(blob);
+      if (token !== reqGenRef.current) return;
+      if (lastUrlRef.current) URL.revokeObjectURL(lastUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      lastUrlRef.current = url;
       el.src = url;
       await el.play();
-      setPlayingId(voiceId);
+      if (token === reqGenRef.current) setPlayingId(voiceId);
     } catch (e: any) {
+      if (token !== reqGenRef.current) return; // a stale request's failure is noise
       const detail = typeof e?.message === "string" && e.message && !/^HTTP \d+$/.test(e.message)
         ? e.message
         : "Could not load sample for this voice";
       toast.error(detail);
     } finally {
-      setLoadingId(null);
+      if (token === reqGenRef.current) setLoadingId(null);
     }
   }, [playingId]);
 
@@ -152,6 +166,7 @@ function useGlobalAudio() {
       return;
     }
 
+    const token = ++reqGenRef.current;
     el.pause();
     setPlayingId(null);
     setLoadingId(key);
@@ -164,29 +179,38 @@ function useGlobalAudio() {
         // route to the premium engine server-side regardless of quality.
         body: JSON.stringify({ text: text.slice(0, 200), voice: voiceId, quality: "draft" }),
       });
+      if (token !== reqGenRef.current) return;
       if (!resp.ok) {
         let msg = "";
         try { msg = (await resp.json())?.detail ?? ""; } catch { /* not JSON */ }
         throw new Error(msg || `HTTP ${resp.status}`);
       }
       const blob = await resp.blob();
+      if (token !== reqGenRef.current) return;
+      if (lastUrlRef.current) URL.revokeObjectURL(lastUrlRef.current);
       const url = URL.createObjectURL(blob);
+      lastUrlRef.current = url;
       el.src = url;
       await el.play();
-      setPlayingId(key);
+      if (token === reqGenRef.current) setPlayingId(key);
     } catch (e: any) {
+      if (token !== reqGenRef.current) return;
       const detail = typeof e?.message === "string" && e.message && !/^HTTP \d+$/.test(e.message)
         ? e.message
         : "Could not synthesize your line with this voice";
       toast.error(detail);
     } finally {
-      setLoadingId(null);
+      if (token === reqGenRef.current) setLoadingId(null);
     }
   }, [playingId]);
 
   const stopAll = useCallback(() => {
+    // Invalidate any in-flight preview fetch too — stopping means nothing
+    // already requested should start playing afterwards.
+    reqGenRef.current++;
     audioRef.current?.pause();
     setPlayingId(null);
+    setLoadingId(null);
   }, []);
 
   return { playingId, loadingId, playVoiceSample, playCustomLine, stopAll, sampleEngines };
@@ -1200,6 +1224,44 @@ function DesignTab({
 
 // ── Audiobook Tab ─────────────────────────────────────────────────────────────
 
+// Per-row voice audition in the Chapter Voices list. Rendered only when the
+// chapter has an explicitly assigned voice; unset rows follow the narrator,
+// which is auditioned via the narrator picker above the list.
+function CastSampleButton({ voiceId, docId, cloneUsable, globalAudio }: {
+  voiceId: string | undefined;
+  docId: string;
+  cloneUsable: Record<string, boolean> | null;
+  globalAudio: ReturnType<typeof useGlobalAudio>;
+}) {
+  if (!voiceId) {
+    // Keep the column width stable so Select triggers align across rows.
+    return <div className="w-8 shrink-0" aria-hidden="true" />;
+  }
+  const isClone = voiceId.startsWith("clone:");
+  // Disabled only when we *know* the clone can't produce a sample (deleted,
+  // consent missing, or sidecar unreachable). If the clone list couldn't be
+  // fetched, stay enabled — the sample endpoint's error message explains.
+  const unavailable = isClone && cloneUsable !== null && !cloneUsable[voiceId];
+  const isLoading = globalAudio.loadingId === voiceId;
+  const isPlaying = globalAudio.playingId === voiceId;
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className={`h-8 w-8 p-0 shrink-0 ${isPlaying ? "text-primary" : "text-muted-foreground"}`}
+      onClick={() => globalAudio.playVoiceSample(voiceId)}
+      disabled={isLoading || unavailable}
+      title={unavailable
+        ? "No sample available — this cloned voice can't be previewed right now"
+        : isPlaying ? "Stop the sample" : "Hear this chapter's voice"}
+      data-testid={`button-cast-sample-${docId}`}
+    >
+      {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+       isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+    </Button>
+  );
+}
+
 function AudiobookTab({
   selectedVoice,
   voices,
@@ -1303,6 +1365,34 @@ function AudiobookTab({
   // Bumped on every Work/mode change so an in-flight casting suggestion for a
   // previous Work can never be applied to the newly selected one.
   const castGenRef = useRef(0);
+
+  // Clone usability for the per-row audition buttons. Fetched lazily, only
+  // when a casted voice is actually a clone (suggested castings and saved
+  // maps can reference clones even though the row Select lists catalog
+  // voices only). Keyed on the exact set of cast clone ids so a Work switch
+  // or cast edit always resets to null (= unknown, buttons enabled) and
+  // refetches — a stale snapshot must never disable a valid clone.
+  const cloneCastKey = [...new Set(
+    Object.values(castMap).filter(v => v?.startsWith("clone:")),
+  )].sort().join(",");
+  const [cloneUsable, setCloneUsable] = useState<Record<string, boolean> | null>(null);
+  useEffect(() => {
+    setCloneUsable(null);
+    if (!cloneCastKey) return;
+    let cancelled = false;
+    apiFetch(`${BASE}/studio/voice-clones`)
+      .then(r => (r.ok ? r.json() : null))
+      .then((data: CloneListResp | null) => {
+        if (cancelled || !data) return;
+        const map: Record<string, boolean> = {};
+        for (const v of data.voices ?? []) {
+          map[`clone:${v.id}`] = data.reachable && v.usable;
+        }
+        setCloneUsable(map);
+      })
+      .catch(() => { /* leave null — buttons fall back to enabled */ });
+    return () => { cancelled = true; };
+  }, [cloneCastKey]);
 
   // Per-Work default narrator auto-persist — picking a narrator saves it
   // without requiring the Chapter Voices "Save voices" button (which only
@@ -2079,6 +2169,12 @@ function AudiobookTab({
                       ))}
                     </SelectContent>
                   </Select>
+                  <CastSampleButton
+                    voiceId={castMap[d.id]}
+                    docId={d.id}
+                    cloneUsable={cloneUsable}
+                    globalAudio={globalAudio}
+                  />
                 </div>
               ))}
             </div>
