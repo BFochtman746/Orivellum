@@ -2478,4 +2478,33 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
     """,
     ),
+    # v120 — Scheduled automations: attach a recurring schedule to any playbook
+    # (built-in or custom). Time fields are LOCAL server time (this is a
+    # local-first personal server), matching the nightshift daemon's precedent;
+    # next_run_at is a naive local ISO timestamp. operations.schedule_id links
+    # runs back to their automation for history; failure_alerted guarantees a
+    # failed scheduled run alerts exactly once.
+    (
+        120,
+        "Operations: scheduled automations",
+        """
+        CREATE TABLE IF NOT EXISTS playbook_schedules (
+            id           TEXT PRIMARY KEY,
+            playbook_id  TEXT NOT NULL,
+            title        TEXT NOT NULL DEFAULT '',
+            work_id      TEXT,
+            cadence      TEXT NOT NULL,
+            time_of_day  TEXT NOT NULL,
+            day_of_week  INTEGER,
+            enabled      INTEGER NOT NULL DEFAULT 1,
+            last_run_at  TEXT,
+            next_run_at  TEXT NOT NULL,
+            created_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS sched_next ON playbook_schedules(enabled, next_run_at);
+        ALTER TABLE operations ADD COLUMN schedule_id TEXT;
+        ALTER TABLE operations ADD COLUMN failure_alerted INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX IF NOT EXISTS operations_schedule ON operations(schedule_id);
+    """,
+    ),
 ]

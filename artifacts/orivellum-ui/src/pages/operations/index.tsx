@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useListWorks, getListWorksQueryKey } from "@workspace/api-client-react";
 import { useGdDark } from "@/lib/useGdDark";
+import { AutomationsSection } from "./automations";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -617,6 +618,8 @@ export default function OperationsPage() {
           ))}
         </div>
       )}
+
+      <AutomationsSection playbooks={playbooks} />
 
       <div className="space-y-3">
         <h2 className="text-sm font-medium flex items-center gap-2">

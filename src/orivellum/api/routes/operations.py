@@ -188,6 +188,104 @@ def start_operation(body: StartOperationRequest):
     return {"operation_id": op_id, "state": "running"}
 
 
+# ── Scheduled automations (literal paths — must precede /{op_id}) ────────────
+
+
+class CreateScheduleRequest(BaseModel):
+    playbook_id: str
+    cadence: str  # daily | weekly
+    time_of_day: str  # HH:MM local
+    day_of_week: int | None = None  # 0=Mon … 6=Sun (weekly)
+    work_id: str | None = None
+    title: str = ""
+
+
+class UpdateScheduleRequest(BaseModel):
+    enabled: bool | None = None
+    cadence: str | None = None
+    time_of_day: str | None = None
+    day_of_week: int | None = None
+
+
+@router.get("/schedules")
+def list_automation_schedules():
+    from orivellum.capabilities.operations import scheduler
+    from orivellum.capabilities.operations.playbooks import get_playbook
+
+    db = get_db()
+    schedules = scheduler.list_schedules(db)
+    for s in schedules:
+        pb = get_playbook(s["playbook_id"], db)
+        s["playbook_title"] = pb["title"] if pb else None
+        s["playbook_missing"] = pb is None
+        runs = scheduler.list_schedule_runs(db, s["id"], limit=1)
+        s["last_run"] = runs[0] if runs else None
+        if s["work_id"]:
+            work = db.get_work(s["work_id"])
+            s["work_title"] = work["title"] if work else None
+        else:
+            s["work_title"] = None
+    return {"schedules": schedules}
+
+
+@router.post("/schedules")
+def create_automation_schedule(body: CreateScheduleRequest):
+    from orivellum.capabilities.operations import scheduler
+
+    try:
+        sched = scheduler.create_schedule(
+            get_db(),
+            body.playbook_id,
+            body.cadence,
+            body.time_of_day,
+            day_of_week=body.day_of_week,
+            work_id=body.work_id,
+            title=body.title,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"schedule": sched}
+
+
+@router.patch("/schedules/{schedule_id}")
+def update_automation_schedule(schedule_id: str, body: UpdateScheduleRequest):
+    from orivellum.capabilities.operations import scheduler
+
+    try:
+        sched = scheduler.update_schedule(
+            get_db(),
+            schedule_id,
+            enabled=body.enabled,
+            cadence=body.cadence,
+            time_of_day=body.time_of_day,
+            day_of_week=body.day_of_week,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if sched is None:
+        raise HTTPException(404, "Schedule not found")
+    return {"schedule": sched}
+
+
+@router.delete("/schedules/{schedule_id}")
+def delete_automation_schedule(schedule_id: str):
+    from orivellum.capabilities.operations import scheduler
+
+    if not scheduler.delete_schedule(get_db(), schedule_id):
+        raise HTTPException(404, "Schedule not found")
+    return {"ok": True}
+
+
+@router.get("/schedules/{schedule_id}/runs")
+def automation_schedule_runs(schedule_id: str):
+    from orivellum.capabilities.operations import scheduler
+
+    db = get_db()
+    if scheduler.get_schedule(db, schedule_id) is None:
+        raise HTTPException(404, "Schedule not found")
+    return {"runs": scheduler.list_schedule_runs(db, schedule_id, limit=20)}
+
+
 @router.get("/{op_id}")
 def get_operation(op_id: str):
     from orivellum.capabilities.operations import store

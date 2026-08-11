@@ -39,19 +39,31 @@ def create_operation(
     work_id: str | None = None,
     playbook_id: str | None = None,
     params: dict | None = None,
+    schedule_id: str | None = None,
 ) -> str:
     """Insert an operation (state=pending) plus its step rows; return op id.
 
-    Each step dict: {action_id, label, params?}.
+    Each step dict: {action_id, label, params?}. ``schedule_id`` links a run
+    started by an automation back to its schedule for run history/alerting.
     """
     op_id = _uid()
     now = _now()
     with db._lock:
         db._conn.execute(
             """INSERT INTO operations
-               (id, title, playbook_id, work_id, params, state, created_at, updated_at)
-               VALUES (?,?,?,?,?,'pending',?,?)""",
-            (op_id, title, playbook_id, work_id, json.dumps(params or {}), now, now),
+               (id, title, playbook_id, work_id, params, state, schedule_id,
+                created_at, updated_at)
+               VALUES (?,?,?,?,?,'pending',?,?,?)""",
+            (
+                op_id,
+                title,
+                playbook_id,
+                work_id,
+                json.dumps(params or {}),
+                schedule_id,
+                now,
+                now,
+            ),
         )
         for i, s in enumerate(steps):
             db._conn.execute(

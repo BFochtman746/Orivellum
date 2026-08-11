@@ -344,6 +344,15 @@ async def lifespan(app: FastAPI):
             logger.info("Folder watch daemon started")
         except Exception as _fw_exc:
             logger.warning("Folder watch daemon could not start (non-fatal): %s", _fw_exc)
+
+        # Automation scheduler — runs user-defined playbook schedules.
+        try:
+            from orivellum.capabilities.operations.scheduler import start_schedule_daemon
+
+            start_schedule_daemon(db=db, cfg=cfg)
+            logger.info("Automation scheduler started")
+        except Exception as _sc_exc:
+            logger.warning("Automation scheduler could not start (non-fatal): %s", _sc_exc)
     except Exception as ns_exc:
         logger.warning("Could not start nightshift daemon: %s", ns_exc)
 
