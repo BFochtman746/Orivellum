@@ -154,13 +154,17 @@ def claim_operation(db: OrivellumDB, op_id: str) -> str | None:
     return token if cur.rowcount == 1 else None
 
 
-def release_claim(db: OrivellumDB, op_id: str, error: str | None = None) -> None:
-    """running → pending (used when the executor rejects the job)."""
+def release_claim(db: OrivellumDB, op_id: str, run_token: str, error: str | None = None) -> None:
+    """running → pending (used when the executor rejects the job).
+
+    Fenced on the caller's own token: a slow-failing submit must never
+    release a NEWER claim obtained by a pause/resume in the meantime.
+    """
     with db._lock:
         db._conn.execute(
             "UPDATE operations SET state='pending', error=?, updated_at=? "
-            "WHERE id=? AND state='running'",
-            (error, _now(), op_id),
+            "WHERE id=? AND state='running' AND run_token=?",
+            (error, _now(), op_id, run_token),
         )
         db._conn.commit()
 
@@ -223,8 +227,17 @@ def mark_operation_failed(db: OrivellumDB, op_id: str, error: str, run_token: st
 # ── Step transitions (all fenced by the claiming run's token) ─────────────────
 
 # A stale runner — one that lost its claim to a newer resume — must never
-# mutate step state. Every transition therefore requires the operation to
-# still carry the caller's run_token.
+# mutate step state. Forward transitions additionally require the operation
+# to still be 'running': a pause that lands between the runner's boundary
+# check and the transition must win (the pause endpoint already reported
+# 'paused' to the user). Interrupted work is redone from scratch on resume,
+# so refusing the late transition is always safe.
+_ACTIVE_FENCE = (
+    "EXISTS (SELECT 1 FROM operations o "
+    "WHERE o.id = operation_steps.operation_id AND o.run_token = ? AND o.state = 'running')"
+)
+# revert (running step → pending) must still work when the op just became
+# paused — that IS the normal interrupted path — so it fences on token only.
 _TOKEN_FENCE = (
     "EXISTS (SELECT 1 FROM operations o "
     "WHERE o.id = operation_steps.operation_id AND o.run_token = ?)"
@@ -235,7 +248,7 @@ def mark_step_running(db: OrivellumDB, step_id: str, run_token: str) -> bool:
     with db._lock:
         cur = db._conn.execute(
             "UPDATE operation_steps SET state='running', started_at=?, error=NULL "
-            f"WHERE id=? AND state='pending' AND {_TOKEN_FENCE}",
+            f"WHERE id=? AND state='pending' AND {_ACTIVE_FENCE}",
             (_now(), step_id, run_token),
         )
         db._conn.commit()
@@ -246,7 +259,7 @@ def mark_step_done(db: OrivellumDB, step_id: str, result: dict | None, run_token
     with db._lock:
         cur = db._conn.execute(
             "UPDATE operation_steps SET state='done', result=?, finished_at=? "
-            f"WHERE id=? AND state='running' AND {_TOKEN_FENCE}",
+            f"WHERE id=? AND state='running' AND {_ACTIVE_FENCE}",
             (json.dumps(result or {}, default=str)[:20000], _now(), step_id, run_token),
         )
         db._conn.commit()
@@ -257,7 +270,7 @@ def mark_step_failed(db: OrivellumDB, step_id: str, error: str, run_token: str) 
     with db._lock:
         cur = db._conn.execute(
             "UPDATE operation_steps SET state='failed', error=?, finished_at=? "
-            f"WHERE id=? AND state='running' AND {_TOKEN_FENCE}",
+            f"WHERE id=? AND state='running' AND {_ACTIVE_FENCE}",
             (error[:500], _now(), step_id, run_token),
         )
         db._conn.commit()

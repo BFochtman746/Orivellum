@@ -180,5 +180,5 @@ def start_operation_run(db: OrivellumDB, cfg: OrivellumConfig | None, op_id: str
         label=str(op.get("title") or op_id)[:80],
     )
     if not ok:
-        store.release_claim(db, op_id, error="The server was too busy — try again.")
+        store.release_claim(db, op_id, token, error="The server was too busy — try again.")
     return ok

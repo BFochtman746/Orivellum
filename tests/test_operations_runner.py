@@ -303,6 +303,47 @@ def test_resume_before_paused_worker_reaches_checkpoint(db, fake_actions):
     assert [s["state"] for s in store.list_steps(db, op_id)] == ["done", "done"]
 
 
+def test_failed_submit_cannot_release_newer_claim(db, fake_actions):
+    """A slow-failing executor submit must not knock a newer claim back to pending."""
+    op_id, old_token = _start(db, [{"action_id": "fake_a", "label": "A"}])
+    # Pause + resume happen while the old submission is still resolving…
+    store.request_pause(db, op_id)
+    new_token = store.claim_operation(db, op_id)
+    assert new_token and new_token != old_token
+
+    # …then the OLD submit fails and tries to release: it must no-op.
+    store.release_claim(db, op_id, old_token, error="executor rejected")
+    op = store.get_operation(db, op_id)
+    assert op["state"] == "running"
+    assert op["error"] is None
+
+    # The holder of the current token can still release its own claim.
+    store.release_claim(db, op_id, new_token, error="busy")
+    assert store.get_operation(db, op_id)["state"] == "pending"
+
+
+def test_pause_between_boundary_check_and_step_claim(db, fake_actions):
+    """Pause landing after the runner's boundary check must win.
+
+    The runner checks (state, token) between steps, but a pause can land right
+    after that check and before mark_step_running. The transition itself must
+    then refuse — otherwise a one-shot step (which never polls should_stop)
+    would run to completion after the pause endpoint already said 'paused'.
+    """
+    op_id, token = _start(db, [{"action_id": "fake_a", "label": "A"}])
+    store.request_pause(db, op_id)  # lands in the window
+
+    steps = store.list_steps(db, op_id)
+    assert not store.mark_step_running(db, steps[0]["id"], token)
+    assert steps[0]["state"] == "pending"
+
+    # And the paused run resumes normally afterwards.
+    token2 = store.claim_operation(db, op_id)
+    run_operation(db, None, op_id, token2)
+    assert store.get_operation(db, op_id)["state"] == "done"
+    assert len(fake_actions["a"]) == 1
+
+
 def test_stale_runner_cannot_mutate_after_reclaim(db, fake_actions):
     op_id, stale_token = _start(
         db,
