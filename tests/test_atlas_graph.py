@@ -407,6 +407,94 @@ class VerbatimSpanTests(AtlasBase):
         )
 
 
+class GatewayFailureTests(AtlasBase):
+    """A gateway outage must never erase previously good graph data."""
+
+    _GOOD = {
+        "atlas.events": [],
+        "atlas.entities": [
+            {
+                "name": "Job of Uz",
+                "node_type": "Character",
+                "description": "…",
+                "evidence_quote": "Job of Uz rose before dawn",
+            }
+        ],
+        "atlas.relations": [],
+        "atlas.attributes": {},
+        "atlas.propose": [],
+    }
+
+    def test_failed_rebuild_preserves_prior_graph(self):
+        from orivellum.capabilities.atlas import AtlasLLMError
+
+        _seed_chapter(self.db, self.work_id, 0, "One", _CH_TEXT)
+        with patch("orivellum.capabilities.llm.llm_call", _StubLLM(dict(self._GOOD))):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        self.assertEqual(len(self.db.list_graph_nodes(work_ids=[self.work_id])), 1)
+
+        # Gateway goes down: the first extraction call fails.  The rebuild
+        # must raise — and the previously stored graph must survive intact.
+        down = _StubLLM({})  # every purpose -> ok=False
+        with (
+            patch("orivellum.capabilities.llm.llm_call", down),
+            self.assertRaises(AtlasLLMError),
+        ):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        nodes = self.db.list_graph_nodes(work_ids=[self.work_id])
+        self.assertEqual([n["name"] for n in nodes], ["Job of Uz"])
+
+    def test_failed_verify_preserves_prior_inconsistencies(self):
+        from orivellum.capabilities.atlas import AtlasLLMError
+
+        t0 = _FILLER + " The gate of Uz was made of cedar."
+        t1 = _FILLER + " The gate of Uz was made of iron."
+        _seed_chapter(self.db, self.work_id, 0, "One", t0)
+        ch1 = _seed_chapter(self.db, self.work_id, 1, "Two", t1)
+
+        def propose(prompt):
+            if "seq 1)" in prompt:
+                return [
+                    {
+                        "description": "Gate material",
+                        "current_quote": "The gate of Uz was made of iron.",
+                        "prior_chapter_seq": 0,
+                        "prior_quote": "The gate of Uz was made of cedar.",
+                        "reasoning": "conflict",
+                    }
+                ]
+            return []
+
+        good = {
+            **{k: v for k, v in self._GOOD.items() if k != "atlas.propose"},
+            "atlas.propose": propose,
+            "atlas.verify": {"verdict": "confirmed"},
+        }
+        with patch("orivellum.capabilities.llm.llm_call", _StubLLM(good)):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        self.assertEqual(
+            [r["chapter_id"] for r in self.db.list_graph_inconsistencies(work_id=self.work_id)],
+            [ch1],
+        )
+
+        # Verifier call fails mid-rebuild: extraction succeeds but verify
+        # can't complete — nothing may be committed for chapter 2, so the
+        # stored inconsistency survives.
+        half_down = _StubLLM(
+            {**{k: v for k, v in self._GOOD.items() if k != "atlas.propose"},
+             "atlas.propose": propose}  # no atlas.verify handler -> ok=False
+        )
+        with (
+            patch("orivellum.capabilities.llm.llm_call", half_down),
+            self.assertRaises(AtlasLLMError),
+        ):
+            build_work_graph(self.db, _cfg(), work_id=self.work_id)
+        self.assertEqual(
+            [r["chapter_id"] for r in self.db.list_graph_inconsistencies(work_id=self.work_id)],
+            [ch1],
+        )
+
+
 class EmptiedChapterPurgeTests(AtlasBase):
     def test_blanked_chapter_graph_rows_are_purged_on_rebuild(self):
         raw_text = _CH_TEXT
@@ -778,17 +866,22 @@ class VerificationFixtureTests(AtlasBase):
 
 
 class UnverifiableProposalTests(AtlasBase):
-    def test_llm_failure_yields_no_rows(self):
+    def test_llm_failure_raises_and_writes_nothing(self):
+        """A gateway failure must RAISE — never be mistaken for 'no findings'."""
+        from orivellum.capabilities.atlas import AtlasLLMError
+
         ch0 = _seed_chapter(self.db, self.work_id, 0, "One", _FILLER)
         ch1 = _seed_chapter(self.db, self.work_id, 1, "Two", _FILLER)
         stub = _StubLLM({})  # every call fails
-        with patch("orivellum.capabilities.llm.llm_call", stub):
-            counts = verify_chapter(
+        with (
+            patch("orivellum.capabilities.llm.llm_call", stub),
+            self.assertRaises(AtlasLLMError),
+        ):
+            verify_chapter(
                 self.db, _cfg(), work_id=self.work_id,
                 chapter={"id": ch1, "seq": 1, "title": "Two", "text": _FILLER},
                 prior_chapters=[{"id": ch0, "seq": 0, "title": "One", "text": _FILLER}],
             )
-        self.assertEqual(counts, {"proposed": 0, "kept": 0, "discarded": 0})
         self.assertEqual(self.db.list_graph_inconsistencies(work_id=self.work_id), [])
 
 

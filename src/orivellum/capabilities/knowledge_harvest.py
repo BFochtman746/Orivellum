@@ -950,6 +950,13 @@ def _llm_harvest_by_chapters_inner(
 
             build_work_graph(db, cfg, work_id=work_id, doc_id=doc_id)
         except Exception as exc:
-            logger.warning("llm_harvest_by_chapters: atlas graph build failed: %s", exc)
+            # Staging in build_work_graph guarantees prior graph data is
+            # preserved on failure — surface loudly, never silently succeed.
+            logger.error(
+                "llm_harvest_by_chapters: atlas graph build failed for work %s "
+                "(prior graph data preserved): %s",
+                work_id,
+                exc,
+            )
 
     return total_created

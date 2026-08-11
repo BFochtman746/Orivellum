@@ -34,6 +34,7 @@ import json
 import logging
 import re
 import threading
+import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -124,8 +125,21 @@ def ground_quote(quote: str, text: str) -> int | None:
 # ---------------------------------------------------------------------------
 
 
+class AtlasLLMError(RuntimeError):
+    """An extraction/verification call failed — the build must NOT proceed.
+
+    Raised instead of returning empty results so a gateway outage can never
+    be mistaken for "the chapter contains nothing" and silently replace
+    previously good graph data.
+    """
+
+
 def _call(prompt: str, *, purpose: str, cfg: Any, db: OrivellumDB) -> Any:
-    """One deterministic gateway call.  Returns parsed JSON or None."""
+    """One deterministic gateway call.  Returns parsed JSON.
+
+    Raises :class:`AtlasLLMError` on gateway failure or unparseable output —
+    callers stage results and only commit after every call succeeded.
+    """
     from orivellum.capabilities.llm import llm_call  # noqa: PLC0415
 
     result = llm_call(
@@ -137,9 +151,11 @@ def _call(prompt: str, *, purpose: str, cfg: Any, db: OrivellumDB) -> Any:
         temperature=0.0,
     )
     if not result.ok or not result.text:
-        logger.warning("atlas: %s call failed: %s", purpose, result.error or "no response")
-        return None
-    return _parse_json(result.text)
+        raise AtlasLLMError(f"{purpose} call failed: {result.error or 'no response'}")
+    parsed = _parse_json(result.text)
+    if parsed is None:
+        raise AtlasLLMError(f"{purpose} returned unparseable output")
+    return parsed
 
 
 def _parse_json(raw: str) -> Any:
@@ -304,37 +320,101 @@ def extract_chapter_graph(
 ) -> dict:
     """Run the three extraction passes + attribute pass over one chapter.
 
-    *chapter* must carry ``id``, ``seq``, ``title``, ``text``.  Existing
-    graph rows for the chapter are dropped first, so re-extraction is
-    idempotent.  Returns counts: nodes, edges, discarded.
+    *chapter* must carry ``id``, ``seq``, ``title``, ``text``.  All passes
+    are STAGED first; the chapter's existing graph rows are replaced only
+    after every pass completed, so a gateway failure raises
+    :class:`AtlasLLMError` and leaves prior data untouched.
+    Returns counts: nodes, edges, discarded.
     """
-    chapter_id = chapter["id"]
+    staged_nodes, staged_edges, counts = _stage_chapter(db, cfg, work_id=work_id, chapter=chapter)
+    if not (chapter.get("text") or "").strip():
+        return counts
+    _commit_chapter(
+        db, work_id=work_id, chapter_id=chapter["id"],
+        staged_nodes=staged_nodes, staged_edges=staged_edges, staged_incs=[],
+    )
+    return counts
+
+
+def _stage_chapter(
+    db: OrivellumDB,
+    cfg: Any,
+    *,
+    work_id: str,
+    chapter: dict,
+) -> tuple[list[dict], list[dict], dict]:
+    """Stage all extraction passes without touching stored graph rows."""
     title = chapter.get("title") or f"Chapter {chapter.get('seq', 0) + 1}"
     # NEVER strip: offsets must index into the text exactly as stored.
     text = chapter.get("text") or ""
     counts = {"nodes": 0, "edges": 0, "discarded": 0}
+    staged_nodes: list[dict] = []
+    staged_edges: list[dict] = []
     if not text.strip():
-        return counts
-
-    db.delete_graph_for_chapter(chapter_id)
+        return staged_nodes, staged_edges, counts
 
     # Canon facts for linkage — fetched once per chapter.
     canon_facts = _active_canon(db, work_id)
 
     node_ids: dict[str, str] = {}
     node_list: list[dict] = []
+    by_sid: dict[str, dict] = {}
+    edge_keys: set[tuple] = set()
     for window in _windows(text):
         fenced = _fence(window, title)
         _pass_nodes(
-            db, cfg, work_id, chapter_id, title, text, fenced, canon_facts, counts,
-            node_ids, node_list,
+            db, cfg, title, text, fenced, canon_facts, counts,
+            node_ids, node_list, staged_nodes, by_sid,
         )
         _pass_relations(
-            db, cfg, work_id, chapter_id, title, text, fenced, node_ids, node_list, counts
+            db, cfg, title, text, fenced, node_ids, node_list, counts,
+            staged_edges, edge_keys,
         )
         if node_ids:
-            _pass_attributes(db, cfg, title, fenced, node_ids, node_list)
-    return counts
+            _pass_attributes(db, cfg, title, fenced, node_ids, by_sid)
+    return staged_nodes, staged_edges, counts
+
+
+def _commit_chapter(
+    db: OrivellumDB,
+    *,
+    work_id: str,
+    chapter_id: str,
+    staged_nodes: list[dict],
+    staged_edges: list[dict],
+    staged_incs: list[dict],
+) -> None:
+    """Atomically replace one chapter's graph rows with staged results.
+
+    Runs ONLY after every extraction/verification call succeeded — the
+    delete happens here, never before the LLM work is done.
+    """
+    db.delete_graph_for_chapter(chapter_id)
+    idmap: dict[str, str] = {}
+    for n in staged_nodes:
+        idmap[n["sid"]] = db.create_graph_node(
+            work_id=work_id,
+            chapter_id=chapter_id,
+            node_type=n["node_type"],
+            name=n["name"],
+            description=n["description"],
+            evidence_quote=n["quote"],
+            evidence_offset=n["offset"],
+            attributes=n["attributes"] or None,
+            canon_fact_id=n["canon_fact_id"],
+        )
+    for e in staged_edges:
+        db.create_graph_edge(
+            work_id=work_id,
+            chapter_id=chapter_id,
+            src=idmap[e["src"]],
+            dst=idmap[e["dst"]],
+            edge_type=e["edge_type"],
+            evidence_quote=e["quote"],
+            evidence_offset=e["offset"],
+        )
+    for inc in staged_incs:
+        db.create_graph_inconsistency(**inc)
 
 
 def _windows(text: str) -> list[str]:
@@ -353,8 +433,6 @@ def _windows(text: str) -> list[str]:
 def _pass_nodes(
     db: OrivellumDB,
     cfg: Any,
-    work_id: str,
-    chapter_id: str,
     title: str,
     text: str,
     fenced: str,
@@ -362,6 +440,8 @@ def _pass_nodes(
     counts: dict,
     node_ids: dict[str, str],
     node_list: list[dict],
+    staged_nodes: list[dict],
+    by_sid: dict[str, dict],
 ) -> None:
     """Passes 1+2: events, then entities.  Mutates node_ids/node_list in place.
 
@@ -391,14 +471,14 @@ def _pass_nodes(
     )
     entities = _valid_items(raw_entities, _MAX_ENTITIES)
 
-    # Ground and store nodes.  name -> node_id for the relation pass.
+    # Ground and stage nodes.  name -> staged id for the relation pass.
     for ev in events:
         key = _norm_name(ev.get("name", ""))
         if key in node_ids:
-            continue  # already stored (overlapping window) — first wins
-        nid = _store_node(db, work_id, chapter_id, ev, "Event", text, canon_facts, counts)
-        if nid:
-            node_ids[key] = nid
+            continue  # already staged (overlapping window) — first wins
+        sid = _stage_node(ev, "Event", text, canon_facts, counts, staged_nodes, by_sid)
+        if sid:
+            node_ids[key] = sid
             node_list.append({"name": (ev.get("name") or "").strip(), "type": "Event"})
     for ent in entities:
         ntype = (ent.get("node_type") or "").strip()
@@ -409,26 +489,26 @@ def _pass_nodes(
             continue
         key = _norm_name(ent.get("name", ""))
         if key in node_ids:
-            continue  # already stored — first observation wins
-        nid = _store_node(db, work_id, chapter_id, ent, ntype, text, canon_facts, counts)
-        if nid:
-            node_ids[key] = nid
+            continue  # already staged — first observation wins
+        sid = _stage_node(ent, ntype, text, canon_facts, counts, staged_nodes, by_sid)
+        if sid:
+            node_ids[key] = sid
             node_list.append({"name": (ent.get("name") or "").strip(), "type": ntype})
 
 
 def _pass_relations(
     db: OrivellumDB,
     cfg: Any,
-    work_id: str,
-    chapter_id: str,
     title: str,
     text: str,
     fenced: str,
     node_ids: dict[str, str],
     node_list: list[dict],
     counts: dict,
+    staged_edges: list[dict],
+    edge_keys: set[tuple],
 ) -> None:
-    """Pass 3: typed edges between stored nodes; discard out-of-schema."""
+    """Pass 3: typed edges between staged nodes; discard out-of-schema."""
     raw_relations = _call(
         _RELATIONS_PROMPT.format(
             max_relations=_MAX_RELATIONS,
@@ -448,20 +528,18 @@ def _pass_relations(
         if not src or not dst or src == dst or found is None:
             counts["discarded"] += 1
             continue
-        offset, span = found
-        try:
-            db.create_graph_edge(
-                work_id=work_id,
-                chapter_id=chapter_id,
-                src=src,
-                dst=dst,
-                edge_type=etype,
-                evidence_quote=span,
-                evidence_offset=offset,
-            )
-            counts["edges"] += 1
-        except ValueError:
+        if etype not in db.GRAPH_EDGE_TYPES:
             counts["discarded"] += 1  # out-of-schema edge type — discarded, not coerced
+            continue
+        key = (src, dst, etype)
+        if key in edge_keys:
+            continue  # re-proposed across overlapping windows
+        edge_keys.add(key)
+        offset, span = found
+        staged_edges.append(
+            {"src": src, "dst": dst, "edge_type": etype, "quote": span, "offset": offset}
+        )
+        counts["edges"] += 1
 
 
 def _pass_attributes(
@@ -470,12 +548,12 @@ def _pass_attributes(
     title: str,
     fenced: str,
     node_ids: dict[str, str],
-    node_list: list[dict],
+    by_sid: dict[str, dict],
 ) -> None:
-    """Attribute pass: revisit each stored node's evidence for attributes."""
+    """Attribute pass: revisit each staged node's evidence for attributes."""
     raw_attrs = _call(
         _ATTRIBUTES_PROMPT.format(
-            nodes=json.dumps([n["name"] for n in node_list], ensure_ascii=False),
+            nodes=json.dumps([n["name"] for n in by_sid.values()], ensure_ascii=False),
             title=title,
             text=fenced,
         ),
@@ -486,8 +564,9 @@ def _pass_attributes(
     if not isinstance(raw_attrs, dict):
         return
     for name, attrs in raw_attrs.items():
-        nid = node_ids.get(_norm_name(name))
-        if not nid or not isinstance(attrs, dict) or not attrs:
+        sid = node_ids.get(_norm_name(name))
+        node = by_sid.get(sid) if sid else None
+        if node is None or not isinstance(attrs, dict) or not attrs:
             continue
         clean = {
             str(k)[:64]: str(v)[:400]
@@ -495,7 +574,7 @@ def _pass_attributes(
             if isinstance(v, (str, int, float, bool))
         }
         if clean:
-            db.update_graph_node_attributes(nid, clean)
+            node["attributes"] = {**node["attributes"], **clean}
 
 
 def _norm_name(name: str) -> str:
@@ -508,40 +587,37 @@ def _valid_items(raw: Any, cap: int) -> list[dict]:
     return [x for x in raw[:cap] if isinstance(x, dict)]
 
 
-def _store_node(
-    db: OrivellumDB,
-    work_id: str,
-    chapter_id: str,
+def _stage_node(
     item: dict,
     node_type: str,
     chapter_text: str,
     canon_facts: list[dict],
     counts: dict,
+    staged_nodes: list[dict],
+    by_sid: dict[str, dict],
 ) -> str | None:
-    """Ground one proposed node and store it; discard if ungroundable."""
+    """Ground one proposed node and stage it; discard if ungroundable."""
     name = (item.get("name") or "").strip()
     found = ground_quote_span((item.get("evidence_quote") or "").strip(), chapter_text)
-    if not name or found is None:
+    if not name or found is None or node_type not in NODE_TYPES:
         counts["discarded"] += 1
         return None
     offset, span = found
-    canon_id = _match_canon(name, canon_facts)
-    try:
-        nid = db.create_graph_node(
-            work_id=work_id,
-            chapter_id=chapter_id,
-            node_type=node_type,
-            name=name,
-            description=(item.get("description") or "").strip()[:1000],
-            evidence_quote=span,
-            evidence_offset=offset,
-            canon_fact_id=canon_id,
-        )
-    except ValueError:
-        counts["discarded"] += 1
-        return None
+    sid = uuid.uuid4().hex
+    staged = {
+        "sid": sid,
+        "node_type": node_type,
+        "name": name,
+        "description": (item.get("description") or "").strip()[:1000],
+        "quote": span,
+        "offset": offset,
+        "canon_fact_id": _match_canon(name, canon_facts),
+        "attributes": {},
+    }
+    staged_nodes.append(staged)
+    by_sid[sid] = staged
     counts["nodes"] += 1
-    return nid
+    return sid
 
 
 # ---------------------------------------------------------------------------
@@ -594,12 +670,33 @@ def verify_chapter(
          their respective chapters' text (offsets recorded from grounding).
       2. A temperature-0.0 verifier call must return ``confirmed``.
     Anything else is discarded.  Returns counts: proposed, kept, discarded.
+
+    All survivors are STAGED first — a gateway failure raises
+    :class:`AtlasLLMError` before anything is written.
     """
+    staged, counts = _stage_verify(
+        db, cfg, work_id=work_id, chapter=chapter, prior_chapters=prior_chapters
+    )
+    for inc in staged:
+        db.create_graph_inconsistency(**inc)
+    return counts
+
+
+def _stage_verify(
+    db: OrivellumDB,
+    cfg: Any,
+    *,
+    work_id: str,
+    chapter: dict,
+    prior_chapters: list[dict],
+) -> tuple[list[dict], dict]:
+    """Stage verified inconsistencies without writing them."""
+    staged: list[dict] = []
     counts = {"proposed": 0, "kept": 0, "discarded": 0}
     # NEVER strip: offsets must index into the text exactly as stored.
     text = chapter.get("text") or ""
     if not text.strip() or not prior_chapters:
-        return counts
+        return staged, counts
 
     by_seq = {c["seq"]: c for c in prior_chapters}
     title = chapter.get("title") or f"Chapter {chapter.get('seq', 0) + 1}"
@@ -665,19 +762,21 @@ def verify_chapter(
         if not isinstance(verdict, dict) or verdict.get("verdict") != "confirmed":
             counts["discarded"] += 1
             continue
-        db.create_graph_inconsistency(
-            work_id=work_id,
-            chapter_id=chapter["id"],
-            description=description,
-            current_quote=cur_quote,
-            current_offset=cur_offset,
-            prior_chapter_id=prior["id"],
-            prior_quote=prior_quote,
-            prior_offset=prior_offset,
-            reasoning=(prop.get("reasoning") or "").strip()[:2000],
+        staged.append(
+            {
+                "work_id": work_id,
+                "chapter_id": chapter["id"],
+                "description": description,
+                "current_quote": cur_quote,
+                "current_offset": cur_offset,
+                "prior_chapter_id": prior["id"],
+                "prior_quote": prior_quote,
+                "prior_offset": prior_offset,
+                "reasoning": (prop.get("reasoning") or "").strip()[:2000],
+            }
         )
         counts["kept"] += 1
-    return counts
+    return staged, counts
 
 
 def _render_world_state(db: OrivellumDB, work_id: str, prior_chapters: list[dict]) -> str:
@@ -759,8 +858,13 @@ def _reverify_downstream(
     for i, ch in enumerate(chapters):
         if i <= first_rebuilt_idx or ch["id"] in rebuilt:
             continue
+        # Stage first — only replace stored rows once verification succeeded.
+        staged, v = _stage_verify(
+            db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i]
+        )
         db.delete_graph_inconsistencies_for_chapter(ch["id"])
-        v = verify_chapter(db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i])
+        for inc in staged:
+            db.create_graph_inconsistency(**inc)
         totals["inconsistencies"] += v["kept"]
         totals["discarded"] += v["discarded"]
 
@@ -798,19 +902,27 @@ def _build_work_graph_locked(
             if first_rebuilt_idx is None:
                 first_rebuilt_idx = i
             continue
-        c = extract_chapter_graph(db, cfg, work_id=work_id, chapter=ch)
+        # Stage ALL LLM work for this chapter first; commit (delete+replace)
+        # only after every call succeeded — a gateway failure raises
+        # AtlasLLMError and leaves the chapter's prior graph rows intact.
+        staged_nodes, staged_edges, c = _stage_chapter(db, cfg, work_id=work_id, chapter=ch)
+        staged_incs: list[dict] = []
+        v = {"kept": 0, "discarded": 0}
+        if i > 0:
+            staged_incs, v = _stage_verify(
+                db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i]
+            )
+        _commit_chapter(
+            db, work_id=work_id, chapter_id=ch["id"],
+            staged_nodes=staged_nodes, staged_edges=staged_edges, staged_incs=staged_incs,
+        )
         totals["nodes"] += c["nodes"]
         totals["edges"] += c["edges"]
-        totals["discarded"] += c["discarded"]
+        totals["discarded"] += c["discarded"] + v["discarded"]
+        totals["inconsistencies"] += v["kept"]
         rebuilt.add(ch["id"])
         if first_rebuilt_idx is None:
             first_rebuilt_idx = i
-        if i > 0:
-            v = verify_chapter(
-                db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i]
-            )
-            totals["inconsistencies"] += v["kept"]
-            totals["discarded"] += v["discarded"]
 
     # Partial rebuild: chapters AFTER the rebuilt ones were verified against
     # a prior world state that just changed, so their stored inconsistencies
