@@ -470,6 +470,15 @@ for _p in [
 for _extra in (os.environ.get("ORIVELLUM_SANDBOX_ALLOW") or "").split(os.pathsep):
     if _extra:
         _ALLOWED.append(os.path.realpath(_extra))
+# System mime.types tables — harmless read-only data, but stdlib mimetypes
+# (instantiated by e.g. openpyxl) opens them at import/instantiation time.
+try:
+    import mimetypes as _mt
+
+    for _f in _mt.knownfiles:
+        _ALLOWED.append(os.path.realpath(_f))
+except Exception:
+    pass
 _ALLOWED = tuple(dict.fromkeys(_ALLOWED))
 _DEVNULL = os.path.realpath(os.devnull)
 
