@@ -1589,8 +1589,16 @@ function AudiobookTab({
   }
 
   // Point the progress UI at a work render job (freshly started or
-  // rediscovered) and begin polling it.
+  // rediscovered) and begin polling it. Exactly one poller may exist:
+  // re-attaching to the job we're already polling is a no-op, and any older
+  // interval is cleared first so a discovery/Generate(409) race can never
+  // leave two timers polling the same job.
   function attachWorkJob(job_id: string, snap?: any) {
+    if (vsWorkJobIdRef.current === job_id && vsWorkPollRef.current) return;
+    if (vsWorkPollRef.current) {
+      clearInterval(vsWorkPollRef.current);
+      vsWorkPollRef.current = null;
+    }
     vsWorkJobIdRef.current = job_id;
     setVsWorkJobId(job_id);
     setVsWorkChapterIdx(snap?.chapter_idx ?? 0);
