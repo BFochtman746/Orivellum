@@ -1244,8 +1244,13 @@ function AudiobookTab({
   const [vsAbJobId, setVsAbJobId] = useState<string | null>(null);
   const [vsAbSegsDone, setVsAbSegsDone] = useState(0);
   const [vsAbSegsTotal, setVsAbSegsTotal] = useState(0);
+  const [vsAbCachedSegs, setVsAbCachedSegs] = useState(0);
   const vsAbJobIdRef = useRef<string | null>(null);
   const vsAbPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // What the segment cache already holds for the selected document + settings —
+  // drives the document-mode "Resume" affordance (mirrors resumeInfo for Works).
+  type DocResumeInfo = { total_segments: number; cached_segments: number; resumable: boolean };
+  const [docResumeInfo, setDocResumeInfo] = useState<DocResumeInfo | null>(null);
 
   // Async work-audiobook job state (pausable/resumable long renders)
   const [vsWorkJobId, setVsWorkJobId] = useState<string | null>(null);
@@ -1532,6 +1537,27 @@ function AudiobookTab({
     return () => { cancelled = true; };
   }, [mode, workId, voiceId, speed, credits, vsWorkJobId]);
 
+  // What's already rendered for this document + settings? (drives "Resume")
+  useEffect(() => {
+    if (mode !== "document" || !docId || vsAbJobId) {
+      if (mode !== "document" || !docId) setDocResumeInfo(null);
+      return;
+    }
+    let cancelled = false;
+    apiFetch(`${BASE}/studio/tts/document/resume-info`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doc_id: docId, voice: voiceId, speed }),
+    })
+      .then(async r => {
+        if (cancelled || !r.ok) return;
+        const data = await r.json();
+        if (!cancelled) setDocResumeInfo(data);
+      })
+      .catch(() => {/* resume hint is optional — generation still works */});
+    return () => { cancelled = true; };
+  }, [mode, docId, voiceId, speed, vsAbJobId]);
+
   // Shared polling loop for a work render — used both when this tab starts a
   // job and when it re-attaches to one that was already running on the server.
   function startWorkJobPolling(job_id: string) {
@@ -1708,6 +1734,7 @@ function AudiobookTab({
       setVsAbJobId(job_id);
       setVsAbSegsTotal(total_segments);
       setVsAbSegsDone(0);
+      setVsAbCachedSegs(0);
       // loading stays true while polling
       vsAbPollRef.current = setInterval(async () => {
         try {
@@ -1722,6 +1749,7 @@ function AudiobookTab({
           }
           const status = await sr.json();
           setVsAbSegsDone(status.segments_done ?? 0);
+          setVsAbCachedSegs(status.cached_segments ?? 0);
           const terminal = ["done", "failed", "cancelled"].includes(status.state);
           if (terminal) {
             clearInterval(vsAbPollRef.current!); vsAbPollRef.current = null;
@@ -1734,7 +1762,7 @@ function AudiobookTab({
             } else if (status.state === "failed") {
               toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
             } else {
-              toast("Audiobook generation cancelled.");
+              toast("Generation stopped — finished parts are saved. Generate again to resume.");
             }
           }
         } catch { /* transient poll errors */ }
@@ -2163,6 +2191,11 @@ function AudiobookTab({
                     style={{ width: vsAbSegsTotal > 0 ? `${Math.round((vsAbSegsDone / vsAbSegsTotal) * 100)}%` : "0%" }}
                   />
                 </div>
+                {vsAbCachedSegs > 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {vsAbCachedSegs} segment{vsAbCachedSegs === 1 ? "" : "s"} reused from the previous run
+                  </p>
+                )}
               </div>
               <Button
                 variant="outline"
@@ -2173,6 +2206,9 @@ function AudiobookTab({
                 <X className="w-3.5 h-3.5 mr-1" /> Cancel
               </Button>
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              Cancelling keeps every finished part — generating again picks up where it left off.
+            </p>
           </div>
         ) : (
           <Button
@@ -2183,12 +2219,22 @@ function AudiobookTab({
           >
             {loading ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Generating audiobook… (may take several minutes)</>
-            ) : mode === "work" && resumeInfo?.resumable ? (
+            ) : (mode === "work" && resumeInfo?.resumable) ||
+              (mode === "document" && docResumeInfo?.resumable) ? (
               <><BookHeadphones className="w-5 h-5" /> Resume Audiobook</>
             ) : (
               <><BookHeadphones className="w-5 h-5" /> Generate Audiobook</>
             )}
           </Button>
+        )}
+
+        {mode === "document" && !vsAbJobId && docResumeInfo?.resumable && (
+          <div className="rounded-xl border border-border/50 bg-muted/10 p-3 -mt-2">
+            <p className="text-xs font-medium">
+              {`${docResumeInfo.cached_segments} of ${docResumeInfo.total_segments} parts already rendered`}
+              {" — generating will pick up where it left off, not start over."}
+            </p>
+          </div>
         )}
 
         {mode === "work" && !vsWorkJobId && resumeInfo?.resumable && (

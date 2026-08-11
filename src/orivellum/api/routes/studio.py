@@ -4088,6 +4088,63 @@ def _finish_doc_tts_job(job_id: str, state: str, **updates) -> None:
         _prune_doc_tts_jobs()
 
 
+def _doc_probe_ai_ok(cfg) -> bool:
+    """Is the AI server's TTS endpoint reachable? Shared by the render worker
+    and the resume-info endpoint so both agree on which engine a document
+    render would actually use (AI-server output is never cached)."""
+    try:
+        import httpx
+
+        return httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0).status_code == 200
+    except Exception:
+        return False
+
+
+def _doc_engine_cache_choices(
+    voice: str, premium_ok: bool, ai_ok: bool, kokoro_ready: bool
+) -> list[tuple[str, str]]:
+    """(engine, suffix) pairs whose cache entries a real document render
+    would reuse — must mirror the lookup order in _run_doc_tts_job exactly,
+    or the resume affordance lies about saved progress."""
+    if premium_ok:
+        return [("premium", ".mp3")]
+    if _is_clone_voice(voice):
+        return []  # clone voice without premium fails pre-flight — nothing reusable
+    if ai_ok:
+        return []  # AI-server output varies with model config and is never cached
+    return [("kokoro", ".wav")] if kokoro_ready else []
+
+
+def _collect_doc_text(db, doc_id: str) -> tuple[dict, str]:
+    """Resolve a processed document and its full extracted text.
+
+    Shared by the render start route and the resume-info endpoint so both
+    always compute the same segment plan. Raises HTTPException on missing,
+    unprocessed, or empty documents.
+    """
+    doc = db.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    if doc.get("readiness") not in ("ready", "error"):
+        raise HTTPException(
+            422,
+            "Document has not been fully processed yet. "
+            "Wait until it shows as 'ready' in the Library.",
+        )
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
+            (doc_id,),
+        ).fetchall()
+    if not rows:
+        raise HTTPException(
+            422,
+            "No extracted text found for this document. "
+            "The document may not have been processed yet.",
+        )
+    return doc, "\n\n".join(r["text"] for r in rows)
+
+
 def _run_doc_tts_job(
     job_id: str,
     body: DocumentTTSRequest,
@@ -4126,15 +4183,7 @@ def _run_doc_tts_job(
         )
         return
 
-    ai_ok = False
-    if not premium_ok:
-        try:
-            import httpx
-
-            probe = httpx.get(f"{cfg.serving.base_url}/models", timeout=2.0)
-            ai_ok = probe.status_code == 200
-        except Exception:
-            ai_ok = False
+    ai_ok = False if premium_ok else _doc_probe_ai_ok(cfg)
 
     kokoro_engine = None if (premium_ok or ai_ok) else _get_kokoro()
 
@@ -4179,7 +4228,10 @@ def _run_doc_tts_job(
             if cached_out is not None:
                 wav_paths.append(cached_out)
                 with _doc_tts_jobs_lock:
-                    _doc_tts_jobs[job_id]["segments_done"] = idx + 1
+                    j = _doc_tts_jobs.get(job_id)
+                    if j is not None:
+                        j["segments_done"] = idx + 1
+                        j["cached_segments"] = j.get("cached_segments", 0) + 1
                 continue
 
             def _attempt(idx=idx, seg=seg, wav_path=wav_path) -> tuple[Path | None, str | None]:
@@ -4354,6 +4406,59 @@ class DocumentTTSRequest(BaseModel):
     acx_mastering: bool = True  # two-pass loudnorm to -23 LUFS on the final MP3
 
 
+class DocumentResumeInfoRequest(BaseModel):
+    doc_id: str
+    voice: str = "af_heart"
+    speed: float = 1.0
+    max_segments: int = 60
+
+
+@router.post("/studio/tts/document/resume-info")
+def document_tts_resume_info(body: DocumentResumeInfoRequest):
+    """Report how much of a single-document render is already in the segment
+    cache.
+
+    An interrupted document render keeps every finished segment in the
+    persistent cache, so a re-run with the same voice/speed fast-forwards
+    through them instead of starting over. This lets the UI show what is
+    already done and offer "Resume" instead of "start over".
+
+    Existence-only check by design — the render worker still QA-gates every
+    cache hit before it can reach the final audio.
+    """
+    db = get_db()
+    cfg = get_config()
+
+    doc, full_text = _collect_doc_text(db, body.doc_id)
+    segments = _split_text_into_segments(full_text)[: body.max_segments]
+    if not segments:
+        raise HTTPException(422, "Could not extract readable text from this document.")
+
+    premium_ok = _is_premium_tts_enabled(cfg)
+    ai_ok = False if premium_ok else _doc_probe_ai_ok(cfg)
+    kokoro_ready = _kokoro_probably_available()
+    choices = _doc_engine_cache_choices(body.voice, premium_ok, ai_ok, kokoro_ready)
+
+    cached = 0
+    for seg in segments:
+        for engine, suffix in choices:
+            p = _seg_cache_path(cfg, seg, engine, body.voice, body.speed, suffix)
+            try:
+                if p.exists() and p.stat().st_size > 0:
+                    cached += 1
+                    break
+            except OSError:
+                pass
+
+    return {
+        "doc_id": body.doc_id,
+        "doc_title": doc.get("title"),
+        "total_segments": len(segments),
+        "cached_segments": cached,
+        "resumable": cached > 0,
+    }
+
+
 @router.post("/studio/tts/document")
 def synthesize_document(body: DocumentTTSRequest):
     """Kick off async audiobook generation; returns {job_id, total_segments} immediately.
@@ -4366,32 +4471,7 @@ def synthesize_document(body: DocumentTTSRequest):
     db = get_db()
     cfg = get_config()
 
-    # ── Validate document ──────────────────────────────────────────────────────
-    doc = db.get_document(body.doc_id)
-    if not doc:
-        raise HTTPException(404, f"Document {body.doc_id!r} not found")
-    if doc.get("readiness") not in ("ready", "error"):
-        raise HTTPException(
-            422,
-            "Document has not been fully processed yet. "
-            "Wait until it shows as 'ready' in the Library.",
-        )
-
-    # ── Fetch full text from chunks ───────────────────────────────────────────
-    with db._lock:
-        rows = db._conn.execute(
-            "SELECT text FROM chunks WHERE doc_id=? ORDER BY page, rowid",
-            (body.doc_id,),
-        ).fetchall()
-
-    if not rows:
-        raise HTTPException(
-            422,
-            "No extracted text found for this document. "
-            "The document may not have been processed yet.",
-        )
-
-    full_text = "\n\n".join(r["text"] for r in rows)
+    doc, full_text = _collect_doc_text(db, body.doc_id)
     segments = _split_text_into_segments(full_text)[: body.max_segments]
 
     if not segments:
@@ -4405,6 +4485,7 @@ def synthesize_document(body: DocumentTTSRequest):
         _doc_tts_jobs[job_id] = {
             "state": "running",
             "segments_done": 0,
+            "cached_segments": 0,
             "total_segments": len(segments),
             "cancel": cancel_event,
             "mp3_path": None,
