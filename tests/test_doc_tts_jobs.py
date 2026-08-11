@@ -175,6 +175,34 @@ class TestDocTTSJobRegistry(_DocTTSTestBase):
             self.assertNotIn("no-ts", self.studio._doc_tts_jobs)
             self.assertEqual(len(self.studio._doc_tts_jobs), cap)
 
+    def test_burst_of_jobs_bounded_without_new_submission(self):
+        """More jobs than the cap all running at once, then ALL finishing with
+        no later submission: the registry must still shrink to the cap. This is
+        why terminal transitions go through _finish_doc_tts_job (which prunes)
+        rather than relying on registration-time pruning alone."""
+        cap = self.studio._MAX_DOC_TTS_JOBS
+        n = cap + 15
+        for i in range(n):
+            self._seed_job(f"burst-{i}", "running", None)
+        # Finish every job through the terminal helper — mixed outcomes.
+        states = ["done", "failed", "cancelled", "error"]
+        for i in range(n):
+            self.studio._finish_doc_tts_job(f"burst-{i}", states[i % 4])
+        with self.studio._doc_tts_jobs_lock:
+            self.assertEqual(len(self.studio._doc_tts_jobs), cap)
+            # Oldest finishers evicted; newest survive with finished_at set.
+            for i in range(n - cap, n):
+                job = self.studio._doc_tts_jobs[f"burst-{i}"]
+                self.assertIn(job["state"], self.studio._DOC_TTS_TERMINAL)
+                self.assertIsNotNone(job.get("finished_at"))
+            for i in range(n - cap):
+                self.assertNotIn(f"burst-{i}", self.studio._doc_tts_jobs)
+
+    def test_finish_helper_rejects_non_terminal_state(self):
+        self._seed_job("j1", "running", None)
+        with self.assertRaises(AssertionError):
+            self.studio._finish_doc_tts_job("j1", "running")
+
     def test_cancel_cannot_overwrite_terminal_state(self):
         """Cancel racing job completion: once the worker has written a terminal
         state, DELETE must NOT overwrite it with 'cancelling' (the worker has

@@ -4033,6 +4033,21 @@ def _prune_doc_tts_jobs() -> None:
             _doc_tts_jobs.pop(jid, None)
 
 
+def _finish_doc_tts_job(job_id: str, state: str, **updates) -> None:
+    """Atomically write a terminal state (+finished_at) and prune the registry.
+
+    Every terminal transition MUST go through here: pruning only on new-job
+    registration is not enough — a burst of >cap concurrent jobs that all
+    finish with no later submission would otherwise stay in memory forever.
+    """
+    assert state in _DOC_TTS_TERMINAL, f"non-terminal state {state!r}"
+    with _doc_tts_jobs_lock:
+        job = _doc_tts_jobs.get(job_id)
+        if job is not None:
+            job.update({"state": state, "finished_at": time.time(), **updates})
+        _prune_doc_tts_jobs()
+
+
 def _run_doc_tts_job(
     job_id: str,
     body: DocumentTTSRequest,
@@ -4061,13 +4076,14 @@ def _run_doc_tts_job(
     # Cloned voices exist only on the premium sidecar — fail the job clearly
     # instead of rendering the whole book in an unrelated local narrator.
     if _is_clone_voice(body.voice) and not premium_ok:
-        with _doc_tts_jobs_lock:
-            _doc_tts_jobs[job_id]["state"] = "error"
-            _doc_tts_jobs[job_id]["error"] = (
+        _finish_doc_tts_job(
+            job_id,
+            "error",
+            error=(
                 "This cloned voice needs the premium voice engine "
                 "(tts_premium_url), which is not enabled."
-            )
-            _doc_tts_jobs[job_id]["finished_at"] = time.time()
+            ),
+        )
         return
 
     ai_ok = False
@@ -4094,9 +4110,7 @@ def _run_doc_tts_job(
         for idx, seg in enumerate(segments):
             # Honour cancellation between segments.
             if cancel_event.is_set():
-                with _doc_tts_jobs_lock:
-                    _doc_tts_jobs[job_id]["state"] = "cancelled"
-                    _doc_tts_jobs[job_id]["finished_at"] = time.time()
+                _finish_doc_tts_job(job_id, "cancelled")
                 return
 
             wav_path = tmp_dir / f"seg_{idx:04d}.wav"
@@ -4200,9 +4214,7 @@ def _run_doc_tts_job(
 
         # Check cancellation before the expensive ffmpeg step.
         if cancel_event.is_set():
-            with _doc_tts_jobs_lock:
-                _doc_tts_jobs[job_id]["state"] = "cancelled"
-                _doc_tts_jobs[job_id]["finished_at"] = time.time()
+            _finish_doc_tts_job(job_id, "cancelled")
             return
 
         # ── Concatenate all WAVs → single high-quality MP3 ───────────────────
@@ -4266,15 +4278,7 @@ def _run_doc_tts_job(
 
         # ── Mark job done ─────────────────────────────────────────────────────
         rel_path = str(mp3_path.relative_to(out_dir))
-        with _doc_tts_jobs_lock:
-            _doc_tts_jobs[job_id].update(
-                {
-                    "state": "done",
-                    "mp3_path": rel_path,
-                    "filename": mp3_name,
-                    "finished_at": time.time(),
-                }
-            )
+        _finish_doc_tts_job(job_id, "done", mp3_path=rel_path, filename=mp3_name)
         # Notify only AFTER the durable done transition — a failure between
         # render and state update must never produce a false "ready" alert.
         from orivellum.api import notifications as _notif_dt
@@ -4288,14 +4292,7 @@ def _run_doc_tts_job(
 
     except Exception as exc:
         logger.exception("Document TTS job %s failed", job_id)
-        with _doc_tts_jobs_lock:
-            _doc_tts_jobs[job_id].update(
-                {
-                    "state": "failed",
-                    "error": str(exc)[:300],
-                    "finished_at": time.time(),
-                }
-            )
+        _finish_doc_tts_job(job_id, "failed", error=str(exc)[:300])
 
     finally:
         # Clean up temp WAVs regardless of outcome.
