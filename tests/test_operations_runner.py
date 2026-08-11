@@ -267,6 +267,42 @@ def test_concurrent_resume_only_one_winner(db, fake_actions):
     assert second is None
 
 
+def test_resume_before_paused_worker_reaches_checkpoint(db, fake_actions):
+    """Resume can land while the old worker is still inside a step.
+
+    request_pause exposes 'paused' immediately, but the worker only notices at
+    its next should_stop() poll. If the user resumes in that window, the claim
+    must reset the still-'running' step so the new runner can redo it — and the
+    stale worker's late revert/complete must no-op against the new token.
+    """
+    op_id, stale_token = _start(
+        db,
+        [
+            {"action_id": "fake_a", "label": "A"},
+            {"action_id": "fake_b", "label": "B"},
+        ],
+    )
+    steps = store.list_steps(db, op_id)
+    # Old worker is mid-step A…
+    assert store.mark_step_running(db, steps[0]["id"], stale_token)
+    # …user pauses, then resumes before the worker reaches its checkpoint.
+    store.request_pause(db, op_id)
+    fresh_token = store.claim_operation(db, op_id)
+    assert fresh_token and fresh_token != stale_token
+
+    # The claim reset the stranded step so the new runner owns it again.
+    assert store.list_steps(db, op_id)[0]["state"] == "pending"
+
+    # The new runner completes the whole operation…
+    run_operation(db, None, op_id, fresh_token)
+    assert store.get_operation(db, op_id)["state"] == "done"
+
+    # …and the old worker's late reactions are harmless no-ops.
+    store.revert_step(db, steps[0]["id"], stale_token)
+    assert not store.mark_step_done(db, steps[0]["id"], {"late": True}, stale_token)
+    assert [s["state"] for s in store.list_steps(db, op_id)] == ["done", "done"]
+
+
 def test_stale_runner_cannot_mutate_after_reclaim(db, fake_actions):
     op_id, stale_token = _start(
         db,

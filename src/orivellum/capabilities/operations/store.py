@@ -133,13 +133,16 @@ def claim_operation(db: OrivellumDB, op_id: str) -> str | None:
         row = db._conn.execute("SELECT state FROM operations WHERE id=?", (op_id,)).fetchone()
         if not row or row["state"] not in ("pending", "paused", "failed"):
             return None
-        if row["state"] == "failed":
-            db._conn.execute(
-                """UPDATE operation_steps
-                   SET state='pending', error=NULL, started_at=NULL, finished_at=NULL
-                   WHERE operation_id=? AND state IN ('failed','cancelled','running')""",
-                (op_id,),
-            )
+        # Reset non-done steps so the new claim can redo them. This also covers
+        # resuming BEFORE a paused worker reached its checkpoint: its step is
+        # still 'running', and once the token rotates that worker can neither
+        # revert nor finish it — without this reset the run would strand.
+        db._conn.execute(
+            """UPDATE operation_steps
+               SET state='pending', error=NULL, started_at=NULL, finished_at=NULL
+               WHERE operation_id=? AND state IN ('failed','cancelled','running')""",
+            (op_id,),
+        )
         cur = db._conn.execute(
             """UPDATE operations
                SET state='running', run_token=?, error=NULL,
