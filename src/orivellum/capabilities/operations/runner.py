@@ -15,7 +15,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from orivellum.capabilities.operations import store
+from orivellum.capabilities.operations import hooks, store
 from orivellum.capabilities.operations.registry import (
     OpContext,
     OperationInterrupted,
@@ -31,9 +31,8 @@ logger = logging.getLogger("orivellum.operations.runner")
 
 def _emit(kind: str, title: str, body: str = "") -> None:
     try:
-        from orivellum.api import notifications
-
-        notifications.emit(kind, title, body=body, url="/operations")
+        if hooks.HOOKS.notify is not None:
+            hooks.HOOKS.notify(kind, title, body=body, url="/operations")
     except Exception:  # notifications are best-effort
         logger.debug("notification emit failed", exc_info=True)
 
@@ -162,10 +161,13 @@ def start_operation_run(db: OrivellumDB, cfg: OrivellumConfig | None, op_id: str
 
     Returns False (and releases the claim) if it could not be scheduled.
     """
+    submit_bg = hooks.HOOKS.submit_bg
+    if submit_bg is None:
+        logger.error("Operations executor hook not configured — cannot start %s", op_id)
+        return False
     token = store.claim_operation(db, op_id)
     if not token:
         return False
-    from orivellum.api.executor import submit_bg
 
     op = store.get_operation(db, op_id) or {}
     ok = submit_bg(

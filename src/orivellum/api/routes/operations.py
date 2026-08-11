@@ -22,12 +22,21 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from orivellum.api import notifications
 from orivellum.api._deps import get_config, get_db, require_auth
+from orivellum.api.executor import submit_bg
+from orivellum.api.routes import studio
+from orivellum.capabilities.operations import hooks as _op_hooks
 
 logger = logging.getLogger("orivellum.api.operations")
 router = APIRouter(
     prefix="/api/operations", tags=["operations"], dependencies=[Depends(require_auth)]
 )
+
+# Inject the api-layer services the operations capability needs. The layering
+# contract forbids capabilities importing orivellum.api, so the dependency is
+# inverted here (routes → capabilities is the allowed direction).
+_op_hooks.configure(notify=notifications.emit, submit_bg=submit_bg, studio=studio)
 
 
 class StepIn(BaseModel):

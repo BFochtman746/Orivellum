@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 
+from orivellum.capabilities.operations import hooks
 from orivellum.capabilities.operations.registry import (
     OpAction,
     OpContext,
@@ -69,7 +70,9 @@ def _render_audiobook(ctx: OpContext, params: dict) -> dict:
     """
     from fastapi import HTTPException
 
-    from orivellum.api.routes import studio
+    studio = hooks.HOOKS.studio
+    if studio is None:
+        raise RuntimeError("render_audiobook is not available — studio hook not configured")
 
     work_id = params.get("work_id") or ctx.work_id
     if not work_id:
@@ -115,11 +118,11 @@ def _render_audiobook(ctx: OpContext, params: dict) -> dict:
 
 
 def _notify(ctx: OpContext, params: dict) -> dict:
-    from orivellum.api import notifications
-
+    if hooks.HOOKS.notify is None:
+        raise RuntimeError("notify is not available — notifier hook not configured")
     title = str(params.get("title") or "Operation finished")
     body = str(params.get("body") or "")
-    notifications.emit("operation", title, body=body, url="/operations")
+    hooks.HOOKS.notify("operation", title, body=body, url="/operations")
     return {"summary": f"Notified: {title}"}
 
 
