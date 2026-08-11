@@ -24,7 +24,7 @@ import {
   BookHeadphones,
 } from "lucide-react";
 import {
-  fetchServerListeningPositions,
+  createServerPositionsFetcher,
   listSavedListeningProgress,
   mergeListeningProgress,
   RA_POS_CHANGED_EVENT,
@@ -984,32 +984,37 @@ export default function Library() {
   const [listenProgress, setListenProgress] = useState<Record<string, ListeningProgress>>(() => listSavedListeningProgress());
   const serverPosRef = useRef<ServerListeningPositions | null>(null);
   useEffect(() => {
-    let disposed = false;
-    let fetching = false;
-    const refresh = (refetchServer = true) => {
+    let fetchTimer: ReturnType<typeof setTimeout> | null = null;
+    // Single-flight + queued-refetch fetcher: an event arriving mid-fetch
+    // always triggers one more fetch after the current one resolves, so a
+    // fire-and-forget PUT/DELETE that lands during the flight is re-read.
+    const fetcher = createServerPositionsFetcher((server) => {
+      serverPosRef.current = server;
+      setListenProgress(mergeListeningProgress(server));
+    });
+    const refresh = (delayMs = 0) => {
       // Instant re-merge from the last known server copy + current local state.
       setListenProgress(mergeListeningProgress(serverPosRef.current));
-      if (!refetchServer || fetching) return;
-      fetching = true;
-      void fetchServerListeningPositions().then((server) => {
-        fetching = false;
-        if (disposed || !server) return; // unreachable — keep previous copy
-        serverPosRef.current = server;
-        setListenProgress(mergeListeningProgress(server));
-      });
+      // Re-fetch the server batch; position-change events delay it slightly so
+      // the player's fire-and-forget PUT/DELETE has landed before we read.
+      if (fetchTimer) clearTimeout(fetchTimer);
+      if (delayMs > 0) fetchTimer = setTimeout(fetcher.request, delayMs);
+      else fetcher.request();
     };
-    const onEvent = () => refresh();
+    const onFocusEvent = () => refresh();
+    const onPosEvent = () => refresh(1200);
     refresh();
-    window.addEventListener(RA_POS_CHANGED_EVENT, onEvent);
-    window.addEventListener("storage", onEvent);
-    window.addEventListener("focus", onEvent);
-    document.addEventListener("visibilitychange", onEvent);
+    window.addEventListener(RA_POS_CHANGED_EVENT, onPosEvent);
+    window.addEventListener("storage", onPosEvent);
+    window.addEventListener("focus", onFocusEvent);
+    document.addEventListener("visibilitychange", onFocusEvent);
     return () => {
-      disposed = true;
-      window.removeEventListener(RA_POS_CHANGED_EVENT, onEvent);
-      window.removeEventListener("storage", onEvent);
-      window.removeEventListener("focus", onEvent);
-      document.removeEventListener("visibilitychange", onEvent);
+      fetcher.dispose();
+      if (fetchTimer) clearTimeout(fetchTimer);
+      window.removeEventListener(RA_POS_CHANGED_EVENT, onPosEvent);
+      window.removeEventListener("storage", onPosEvent);
+      window.removeEventListener("focus", onFocusEvent);
+      document.removeEventListener("visibilitychange", onFocusEvent);
     };
   }, []);
   const searchStr = useSearch();

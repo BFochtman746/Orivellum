@@ -586,10 +586,17 @@ def library_set_read_position(doc_id: str, body: ReadPositionUpdate):
     Called debounced by the client (~every 30s or on part change) so listening
     resumes at the same spot on any device.
     """
-    if body.part < 0 or body.time < 0 or body.part_count <= 0:
-        raise HTTPException(400, "part/time must be >= 0 and part_count > 0")
+    if body.part < 0 or body.time < 0 or body.part_count <= 0 or body.saved_at < 0:
+        raise HTTPException(400, "part/time/saved_at must be >= 0 and part_count > 0")
+    # saved_at is a client wall-clock (ms) used for freshest-wins conflict
+    # resolution across devices. Clamp far-future values (broken clock) to
+    # server time so one skewed device can't permanently win every conflict.
+    import time as _time
+
+    now_ms = int(_time.time() * 1000)
+    saved_at = body.saved_at if body.saved_at <= now_ms + 3_600_000 else now_ms
     db = get_db()
-    db.set_read_position(doc_id, body.part, body.time, body.part_count, body.saved_at)
+    db.set_read_position(doc_id, body.part, body.time, body.part_count, saved_at)
     return {"ok": True}
 
 

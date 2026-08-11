@@ -102,7 +102,8 @@ function isValidPos(p: any): p is SavedPos {
     Number.isInteger(p.part) && p.part >= 0 &&
     Number.isFinite(p.time) && p.time >= 0 &&
     Number.isInteger(p.partCount) && p.partCount > 0 &&
-    p.part < p.partCount; // a position at/past the end is finished, not resumable
+    p.part < p.partCount && // a position at/past the end is finished, not resumable
+    Number.isFinite(p.savedAt) && p.savedAt >= 0; // required for freshest-wins compares
 }
 
 /** Fired on window whenever a saved position is written or cleared, so
@@ -193,18 +194,45 @@ export async function fetchServerListeningPositions(): Promise<ServerListeningPo
   } catch { return null; }
 }
 
+/** How long a local-only position is trusted when a successful server batch
+ *  doesn't contain it. Positions are pushed to the server debounced (~30 s)
+ *  during playback, so a local copy the server doesn't know about after this
+ *  window almost certainly means the position was DELETED on another device
+ *  (finished / declined there) — not that the sync is still in flight. */
+const RA_SYNC_GRACE_MS = 5 * 60 * 1000;
+
 /** Merge local (localStorage) and server positions into badge shape.
  *  Per key the freshest `savedAt` wins — the same rule the resume offer
  *  uses — and the trivial-progress gate applies to the winner, so a listen
- *  finished/reset on either side clears the badge everywhere. */
+ *  finished/reset on either side clears the badge everywhere.
+ *
+ *  Deletion semantics: when the batch fetch SUCCEEDED and a local position is
+ *  absent from it, the server is authoritative once the local copy is older
+ *  than the sync grace window — the stale local copy is dropped (storage
+ *  included) instead of showing a badge forever for a listen finished on
+ *  another device. Fresh local saves are kept (their PUT may still be in
+ *  flight, or the device may be offline). */
 export function mergeListeningProgress(
   server: ServerListeningPositions | null,
 ): Record<string, ListeningProgress> {
   const out = listSavedListeningProgress();
-  if (!server) return out;
+  if (!server) return out; // fetch failed — local-only view, delete nothing
+  const now = Date.now();
+  // Clock-skew guard: a savedAt more than the grace window in the FUTURE is a
+  // broken clock, not a fresh save — treat it as the oldest possible value so
+  // it can never win a freshest-wins compare or dodge absence cleanup forever.
+  const trustedSavedAt = (p: SavedPos) => (p.savedAt > now + RA_SYNC_GRACE_MS ? 0 : p.savedAt);
+  for (const key of Object.keys(out)) {
+    if (server[key]) continue;
+    const local = loadSavedPos(key);
+    if (local && Math.abs(now - local.savedAt) > RA_SYNC_GRACE_MS) {
+      clearSavedPos(key); // deleted on another device — server is authoritative
+      delete out[key];
+    }
+  }
   for (const [key, sp] of Object.entries(server)) {
     const local = loadSavedPos(key);
-    const pos = local && local.savedAt >= sp.savedAt ? local : sp;
+    const pos = local && trustedSavedAt(local) >= trustedSavedAt(sp) ? local : sp;
     if (pos.part === 0 && pos.time < RA_MIN_RESUME_SECS) {
       delete out[key]; // freshest copy says "barely started" — not resumable
       continue;
@@ -212,6 +240,30 @@ export function mergeListeningProgress(
     out[key] = { part: pos.part, partCount: pos.partCount };
   }
   return out;
+}
+
+/** Single-flight batch fetcher that always converges: a request made while a
+ *  fetch is in flight queues exactly one follow-up fetch, so state written by
+ *  a fire-and-forget PUT/DELETE during the flight is always re-read (an
+ *  in-flight response can be stale the moment it arrives). */
+export function createServerPositionsFetcher(
+  onUpdate: (server: ServerListeningPositions) => void,
+): { request: () => void; dispose: () => void } {
+  let fetching = false;
+  let pending = false;
+  let disposed = false;
+  const run = () => {
+    if (disposed) return;
+    if (fetching) { pending = true; return; }
+    fetching = true;
+    void fetchServerListeningPositions().then((server) => {
+      fetching = false;
+      if (disposed) return;
+      if (server) onUpdate(server); // null = unreachable — keep previous copy
+      if (pending) { pending = false; run(); }
+    });
+  };
+  return { request: run, dispose: () => { disposed = true; } };
 }
 
 async function fetchServerPos(key: string): Promise<SavedPos | null> {

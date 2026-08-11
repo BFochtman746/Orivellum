@@ -23,6 +23,7 @@ import {
   listSavedListeningProgress,
   fetchServerListeningPositions,
   mergeListeningProgress,
+  createServerPositionsFetcher,
   splitTextForTts,
 } from "@/lib/read-aloud";
 
@@ -550,9 +551,88 @@ describe("cross-device listening progress merge", () => {
     expect(merged.doc1).toBeUndefined();
   });
 
-  it("keeps local-only badges when the server has no copy", () => {
-    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: 100 });
+  it("keeps a FRESH local-only badge when the server has no copy (sync in flight)", () => {
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: Date.now() });
     expect(mergeListeningProgress({})).toEqual({ doc1: { part: 1, partCount: 3 } });
     expect(mergeListeningProgress(null)).toEqual({ doc1: { part: 1, partCount: 3 } });
+  });
+
+  it("clears a STALE local badge absent from a successful server batch (deleted remotely)", () => {
+    // Old local copy, server batch succeeded and has no row for it — the
+    // listen was finished/declined on another device; server is authoritative.
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: Date.now() - 10 * 60 * 1000 });
+    expect(mergeListeningProgress({})).toEqual({});
+    expect(localStorage.getItem(RA_KEY("doc1"))).toBeNull(); // local copy dropped too
+  });
+
+  it("never deletes local copies when the server fetch failed", () => {
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: Date.now() - 10 * 60 * 1000 });
+    expect(mergeListeningProgress(null)).toEqual({ doc1: { part: 1, partCount: 3 } });
+    expect(localStorage.getItem(RA_KEY("doc1"))).not.toBeNull();
+  });
+
+  it("rejects server rows with a missing or malformed saved_at", async () => {
+    apiFetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith("/library/read-positions")) {
+        return serverResp([
+          { doc_id: "a", part: 1, time: 0, part_count: 3 }, // no saved_at
+          { doc_id: "b", part: 1, time: 0, part_count: 3, saved_at: "yesterday" },
+          { doc_id: "c", part: 1, time: 0, part_count: 3, saved_at: -5 },
+        ]);
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+    });
+    expect(await fetchServerListeningPositions()).toEqual({});
+  });
+});
+
+// ── Clock-skew + fetch-convergence guards ─────────────────────────────────────
+
+describe("clock-skew and fetch convergence", () => {
+  const serverResp = (positions: unknown[]) =>
+    ({ ok: true, status: 200, json: async () => ({ positions }) }) as unknown as Response;
+
+  it("drops a far-future local copy absent from a successful batch", () => {
+    // A broken fast clock must not let a stale badge dodge absence cleanup.
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 3, savedAt: Date.now() + 10 * 3600_000 });
+    expect(mergeListeningProgress({})).toEqual({});
+    expect(localStorage.getItem(RA_KEY("doc1"))).toBeNull();
+  });
+
+  it("lets a sane server copy beat a far-future local copy", () => {
+    seedSavedPos("doc1", { part: 1, time: 0, partCount: 4, savedAt: Date.now() + 10 * 3600_000 });
+    const merged = mergeListeningProgress({
+      doc1: { part: 3, time: 0, partCount: 4, savedAt: Date.now() },
+    });
+    expect(merged.doc1).toEqual({ part: 3, partCount: 4 }); // server wins — future local distrusted
+  });
+
+  it("re-fetches after an in-flight response when a request arrives mid-flight", async () => {
+    // First (stale) batch resolves only after a second request was made —
+    // e.g. a DELETE landed while the fetch was in flight. The fetcher must
+    // issue a follow-up fetch so the final state reflects the deletion.
+    let resolveFirst!: (r: Response) => void;
+    const first = new Promise<Response>((res) => { resolveFirst = res; });
+    let call = 0;
+    apiFetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith("/library/read-positions")) {
+        call += 1;
+        if (call === 1) return first;
+        return serverResp([]); // post-DELETE truth: empty
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+    });
+    const updates: object[] = [];
+    const fetcher = createServerPositionsFetcher((s) => updates.push(s));
+    fetcher.request();
+    fetcher.request(); // arrives mid-flight — must queue exactly one follow-up
+    resolveFirst(serverResp([
+      { doc_id: "gone", part: 2, time: 0, part_count: 5, saved_at: 100 },
+    ]));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(call).toBe(2); // stale response was not trusted as final
+    expect(updates[updates.length - 1]).toEqual({}); // converged to post-DELETE state
+    fetcher.dispose();
   });
 });

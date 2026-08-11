@@ -170,3 +170,26 @@ class BatchListTest(unittest.TestCase):
         self.client.delete("/api/library/doc-c/read-position", headers=AUTH_HEADERS)
         r = self.client.get("/api/library/read-positions", headers=AUTH_HEADERS)
         self.assertEqual(r.json()["count"], 0)
+
+    def test_batch_requires_auth(self):
+        r = self.client.get("/api/library/read-positions")  # no auth headers
+        self.assertEqual(r.status_code, 401)
+
+    def test_far_future_saved_at_is_clamped_to_server_time(self):
+        import time as _t
+
+        far_future = int(_t.time() * 1000) + 48 * 3600 * 1000  # +2 days
+        p = {"part": 1, "time": 5.0, "part_count": 4, "saved_at": far_future}
+        r = self.client.put("/api/library/doc-skew/read-position", json=p, headers=AUTH_HEADERS)
+        self.assertEqual(r.status_code, 200)
+        pos = self.client.get("/api/library/doc-skew/read-position", headers=AUTH_HEADERS).json()[
+            "position"
+        ]
+        now_ms = int(_t.time() * 1000)
+        self.assertLessEqual(pos["saved_at"], now_ms + 3_600_000)  # clamped, not stored raw
+        self.assertLess(pos["saved_at"], far_future)
+
+    def test_negative_saved_at_rejected(self):
+        p = {"part": 1, "time": 5.0, "part_count": 4, "saved_at": -1}
+        r = self.client.put("/api/library/doc-neg/read-position", json=p, headers=AUTH_HEADERS)
+        self.assertEqual(r.status_code, 400)
