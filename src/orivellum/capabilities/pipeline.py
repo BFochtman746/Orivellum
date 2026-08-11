@@ -587,6 +587,22 @@ def _process_document_reserved(
             except Exception as meta_exc:
                 logger.debug("Could not persist extraction meta for %s: %s", doc_id, meta_exc)
 
+        # Step 1.4: re-extraction hygiene — drop knowledge auto-derived from
+        # the PREVIOUS text before anything is re-harvested.  create_knowledge_item
+        # dedups by text hash, so stale rows from the old text would otherwise
+        # silently survive and keep feeding search/chat alongside the fresh
+        # content.  Runs AFTER extraction succeeds so a failed re-extraction
+        # never destroys knowledge that still matches the stored text.
+        # Human-approved items are preserved deliberately.  First-time
+        # extraction is a cheap no-op (no prior knowledge).
+        _stale_removed = db.delete_document_knowledge(doc_id)
+        if _stale_removed:
+            logger.info(
+                "Doc %s — removed %d stale auto-knowledge item(s) from previous text",
+                doc_id,
+                _stale_removed,
+            )
+
         # Step 1.5: ingestion shield — screen extracted text for known
         # injection shapes BEFORE the document touches search, harvest, or
         # any model.  A flagged document is stored and inspectable (extracted
@@ -660,6 +676,12 @@ def _process_document_reserved(
 
         # Step 3: harvest knowledge (rule-based, always runs)
         harvest(result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db)
+
+        # The Work's knowledge just changed (stale items pruned + fresh
+        # harvest), so any cached gap/coverage result was computed against a
+        # knowledge set that no longer exists.
+        if work_id:
+            db.invalidate_gap_cache(work_id)
 
         # Step 4: mark document ready — happens BEFORE the optional LLM step so
         # the document is usable even if the AI service is slow or unavailable.

@@ -194,24 +194,19 @@ class LibraryRetranscribeTest(unittest.TestCase):
         )
         self.db.store_vector(old_auto, "knowledge", b"\x00" * 16, 4)
 
-        def fake_pipeline(doc_id, file_path, kind, work_id, title, db, **kwargs):
-            db.create_knowledge_item(
-                wid, "fact", "the sky is blue", source_doc_id=doc_id, review_status="ai_auto"
-            )
-            db.update_document_extracted(doc_id, "the sky is blue", 4, readiness="ready")
-            with db._lock:
-                import json
+        # Run the REAL pipeline (stale-knowledge hygiene now lives there) with
+        # only the extraction engine mocked out.
+        from orivellum.capabilities.extraction import ExtractionResult
 
-                db._conn.execute(
-                    "UPDATE documents SET meta=? WHERE id=?",
-                    (json.dumps({"transcription": "faster-whisper (base)"}), doc_id),
-                )
-                db._conn.commit()
+        fake_result = ExtractionResult(
+            kind="audio",
+            full_text="The sky is blue today. " * 10,
+            word_count=50,
+            meta={"transcription": "faster-whisper (base)"},
+        )
 
         with (
-            mock.patch(
-                "orivellum.capabilities.pipeline.process_document", side_effect=fake_pipeline
-            ),
+            mock.patch("orivellum.capabilities.pipeline.extract", return_value=fake_result),
             _client(self.app, self.db, self.cfg) as client,
         ):
             r = client.post(f"/api/studio/transcribe/library/{doc_id}")
@@ -232,7 +227,10 @@ class LibraryRetranscribeTest(unittest.TestCase):
             ).fetchall()
         self.assertNotIn("the sky is green", texts)  # stale auto removed
         self.assertIn("water is wet", texts)  # approved preserved
-        self.assertIn("the sky is blue", texts)  # fresh harvest present
+        # Fresh harvest from the NEW transcript exists (rule harvest emits a
+        # summary/entity rows; exact texts depend on the harvester).
+        fresh = texts - {"water is wet"}
+        self.assertTrue(fresh)  # fresh harvest present
         self.assertEqual(fts, [])  # FTS row gone
         self.assertEqual(vecs, [])  # vector gone
         self.assertIn(kept_approved, {r["id"] for r in rows})

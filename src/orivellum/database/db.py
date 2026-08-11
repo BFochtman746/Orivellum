@@ -5560,6 +5560,20 @@ class OrivellumDB:
                 ),
             )
 
+    def invalidate_gap_cache(self, work_id: str) -> None:
+        """Drop the cached gap result for *work_id* so the next read recomputes.
+
+        Called after a document's knowledge is rebuilt (re-extraction) — the
+        cached coverage/gaps were computed against knowledge that no longer
+        exists. Best-effort: never raises.
+        """
+        try:
+            with self._lock:
+                self._conn.execute("DELETE FROM work_gap_cache WHERE work_id=?", (work_id,))
+                self._conn.commit()
+        except Exception:
+            logger.warning("Gap cache invalidation failed for work %s", work_id, exc_info=True)
+
     def get_cached_gaps(self, work_id: str, max_age_seconds: int = 3600) -> dict | None:
         """Return the cached gap result for *work_id* if it is not stale.
 

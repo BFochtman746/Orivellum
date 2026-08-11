@@ -4699,19 +4699,14 @@ def _run_retranscribe_job(
         except Exception as _mk_exc:  # marker is best-effort; never abort on it
             logger.warning("Could not set reset marker for %s: %s", doc_id, _mk_exc)
 
-        # Destructive retry starts here: clear warnings, drop knowledge
-        # derived from the OLD transcript (human-approved items are kept),
-        # and flip readiness so the Library UI shows the doc as processing.
-        # Removing old auto-knowledge before harvest is required — harvest
-        # dedups by text hash, so stale rows would otherwise survive and
-        # keep feeding search/chat alongside facts from the new transcript.
-        # If the pipeline fails after this point the document lands in
-        # "error" with no transcript and no auto-knowledge — a consistent
-        # state that a re-run fully rebuilds.
+        # Destructive retry starts here: clear warnings and flip readiness so
+        # the Library UI shows the doc as processing.  Stale-knowledge cleanup
+        # (dropping auto-derived items from the OLD transcript) now happens
+        # inside the pipeline itself — after the new extraction succeeds,
+        # before re-harvest — so a failed re-transcription never destroys
+        # knowledge that still matches the stored text, and EVERY entry point
+        # gets the same hygiene.
         db.delete_extraction_warnings(doc_id)
-        removed = db.delete_document_knowledge(doc_id)
-        if removed:
-            logger.info("Re-transcribe %s: removed %d stale knowledge items", doc_id, removed)
         db.update_document_extracted(doc_id, "", 0, readiness="imported", error_message=None)
 
         from orivellum.capabilities.pipeline import process_document
