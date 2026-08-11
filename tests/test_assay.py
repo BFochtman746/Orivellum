@@ -559,6 +559,27 @@ class TestRunsAndBattery(AssayBase):
                 instrument_id=inst["id"], work_id=self.work_id, chapter_id=foreign_ch
             )
 
+    def test_retired_instrument_never_leaks_a_running_claim(self):
+        """A pre-claimed run row for a retired instrument must finish as
+        'error' — never a permanent 'running' row locking the work."""
+        self._seed_book()
+        inst = self.db.get_assay_instrument("drift.catalog")
+        with self.db._lock:
+            self.db._conn.execute(
+                "UPDATE assay_instrument SET certification='retired' WHERE key='drift.catalog'"
+            )
+            self.db._conn.commit()
+        run_id = self.db.create_assay_run(instrument_id=inst["id"], work_id=self.work_id)
+        with self.assertRaises(assay.AssayError):
+            assay.run_instrument(
+                self.db, _cfg(), key="drift.catalog", work_id=self.work_id, run_id=run_id
+            )
+        run = self.db.get_assay_run(run_id)
+        self.assertEqual(run["status"], "error")
+        # no lingering claim: a fresh run row can be created immediately
+        run_id2 = self.db.create_assay_run(instrument_id=inst["id"], work_id=self.work_id)
+        self.db.finish_assay_run(run_id2, status="done")
+
     def test_unregistered_instrument_refused(self):
         with self.assertRaises(assay.AssayError):
             assay.run_instrument(self.db, _cfg(), key="nope", work_id=self.work_id)

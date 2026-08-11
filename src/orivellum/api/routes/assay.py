@@ -50,14 +50,24 @@ class RunRequest(BaseModel):
     chapter_id: str | None = None
 
 
+def _preflight_instrument(db, key: str) -> dict:
+    """Validate the instrument BEFORE the run-row claim is created."""
+    instrument = db.get_assay_instrument(key)
+    if instrument is None:
+        raise HTTPException(status_code=404, detail="instrument not registered")
+    if instrument["certification"] == "retired":
+        # Preflight BEFORE the claim: a retired instrument must never leave
+        # a 'running' run row behind.
+        raise HTTPException(status_code=422, detail=f"instrument {key!r} is retired")
+    return instrument
+
+
 @router.post("/assay/instruments/{key}/run")
 def run_instrument(key: str, req: RunRequest):
     db = get_db()
     cfg = get_config()
     assay.seed_instruments(db)
-    instrument = db.get_assay_instrument(key)
-    if instrument is None:
-        raise HTTPException(status_code=404, detail="instrument not registered")
+    instrument = _preflight_instrument(db, key)
     _require_work(db, req.work_id)
     try:
         run_id = db.create_assay_run(
@@ -125,7 +135,6 @@ def get_run(run_id: str):
 
 
 class SignatureRequest(BaseModel):
-    author: str = Field(min_length=1)
     decision: str = Field(default="open", pattern="^(open|go|no_go)$")
     note: str = ""
 
@@ -137,9 +146,11 @@ def sign_gate(work_id: str, gate_key: str, req: SignatureRequest):
     db = get_db()
     _require_work(db, work_id)
     try:
+        # The signer is the authenticated principal (single-author system) —
+        # NEVER a caller-supplied name, so signatures cannot be impersonated.
         sig_id = db.create_assay_signature(
             work_id=work_id, gate_key=gate_key,
-            author=req.author, decision=req.decision, note=req.note,
+            author="user", decision=req.decision, note=req.note,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

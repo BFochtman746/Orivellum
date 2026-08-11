@@ -370,11 +370,18 @@ def run_instrument(
     Returns the finished run dict.  Raises AssayError on failure (the run
     row is marked 'error' first — failures are recorded, never swallowed).
     """
-    instrument = db.get_assay_instrument(key)
-    if instrument is None:
-        raise AssayError(f"instrument {key!r} is not registered")
-    if instrument["certification"] == "retired":
-        raise AssayError(f"instrument {key!r} is retired")
+    try:
+        instrument = db.get_assay_instrument(key)
+        if instrument is None:
+            raise AssayError(f"instrument {key!r} is not registered")
+        if instrument["certification"] == "retired":
+            raise AssayError(f"instrument {key!r} is retired")
+    except Exception as exc:
+        # A pre-claimed run row (route created it before dispatch) must never
+        # leak as 'running' — every post-claim failure finishes the claim.
+        if run_id is not None:
+            db.finish_assay_run(run_id, status="error", error=str(exc)[:500])
+        raise
     if run_id is None:
         run_id = db.create_assay_run(
             instrument_id=instrument["id"], work_id=work_id, chapter_id=chapter_id

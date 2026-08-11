@@ -5,17 +5,17 @@ description: Governed instrument registry — engine contracts, three-tier autho
 
 # ASSAY quality-instrument registry
 
-Package `capabilities/assay/` (metrics, drift, gates, judge); routes at `/api/assay/*`; tables in schema v126.
-
 ## Durable rules
-- **The run row IS the claim.** `db.create_assay_run` refuses (RuntimeError → 409) while a run for the same instrument+work is `running`. Background instruments (gate.d14–d17, judge.hierarchical) create the run row BEFORE `submit_bg` dispatch; a rejected dispatch finishes the run as error + 503.
+- **The run row IS the claim.** run creation refuses (RuntimeError → 409) while a run for the same instrument+work is `running`. Background instruments (gate.d14–d17, judge.hierarchical) create the run row BEFORE `submit_bg` dispatch; a rejected dispatch finishes the run as error + 503.
   **Why:** claim-before-dispatch prevents duplicate gateway-heavy runs; no separate claim table to leak.
 - **Blocking is computed, never stored.** `is_blocking(inst)` = tier ≤ 2 AND certification == 'certified'. Every run stamps `evidence.authority {tier, certification, blocking}` at execution time. Reseeding contracts preserves certification. Tier 3 never blocks, even if marked certified.
 - **The machine never renders a gate go/no-go.** D15–D17 stay `locked` (zero model calls) until the latest author signature is open/go. D17 structural checks run unsigned but the verdict is `structural_violations` (a measurement), never `fail`. D14 verdicts are `confirmed_drift`/`clean`. Judge verdict is ALWAYS `advisory`.
 - **Judge is never the drafter.** `judge_model()` raises JudgeModelError when it resolves to the workhorse/drafting model (checks DB overrides too).
 - **Untrusted model output is validated before storage.** D14 confirmation requires a strict JSON boolean (`"false"` string → unconfirmed, never confirmed); gate/judge annotations must be list/dict shapes or the run fails loud; pairwise scores must be numeric 0–100 maps. Gateway-down on D14 confirm → unconfirmed advisory (never fails a chapter); gateway-down on judge → run marked error and raises.
-- **Pairwise regression is score-based**: preference "A" OR any rubric category below its predecessor surfaces a `pairwise_regression` finding; snapshot then advances (stored per chapter in assay_baseline `judge_snapshot:{chapter_id}`, full text by design).
+- **Pairwise regression is score-based**: preference "A" OR any rubric category below its predecessor surfaces a `pairwise_regression` finding; snapshot then advances (previous-revision snapshot stored per chapter, full text by design).
 - **No invented baselines.** voice.envelope without a stored baseline → verdict `no_baseline`, zero findings. `build_voice_baseline` raises on empty text.
-- Chapter ownership enforced at the claim boundary: `create_assay_run` rejects a chapter_id not belonging to the work (ValueError → 422).
+- **Post-claim failures always finish the claim.** Any failure after a run row is claimed (including retired-instrument validation on a pre-claimed row) marks the run `error` — a leaked `running` row would 409 the instrument+work forever.
+- **The signer is the authenticated principal, never request JSON.** Gate signatures stamp the authenticated single-user identity; caller-supplied author names are not accepted (impersonation).
+- Chapter ownership enforced at the claim boundary: run creation rejects a chapter_id not belonging to the work (ValueError → 422).
 
-**How to apply:** any new instrument goes into `CONTRACTS` in `capabilities/assay/__init__.py` with an honest tier + advisory certification; its runner returns verdict-or-score with evidence and must obey the rules above. Certification/promotion workflow is a separate milestone (PROMOTION) — don't add blocking wiring here.
+**How to apply:** any new instrument is added to the assay contract registry with an honest tier + advisory certification; its runner returns verdict-or-score with evidence and must obey the rules above. Certification/promotion workflow is a separate milestone (PROMOTION) — don't add blocking wiring here.
