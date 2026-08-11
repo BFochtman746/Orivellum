@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import {
   Workflow, Play, Pause, RotateCcw, XCircle, CheckCircle2, Loader2,
   CircleDashed, ChevronDown, ChevronRight, History, AlertTriangle,
-  Sparkles, HelpCircle, BookmarkPlus, Trash2,
+  Sparkles, HelpCircle, BookmarkPlus, Trash2, ListPlus, Plus, ArrowUp, ArrowDown,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
@@ -405,6 +405,389 @@ function JobPlanner({ onStarted }: { onStarted: () => void }) {
   );
 }
 
+// ── Custom operation builder (pick steps by hand) ─────────────────────────────
+
+interface ParamSpec {
+  type?: string;
+  description?: string;
+}
+
+interface OpActionInfo {
+  id: string;
+  label: string;
+  description: string;
+  params_schema?: {
+    properties?: Record<string, ParamSpec>;
+    required?: string[];
+  };
+}
+
+interface BuilderStep {
+  key: number; // stable React key across reorders
+  action_id: string;
+  params: Record<string, string>; // raw form values; converted on start
+}
+
+// work_id is forbidden in step params (the server rejects it) — the Work is
+// chosen once at the operation level and flows into every step at run time.
+function editableParams(action: OpActionInfo | undefined): [string, ParamSpec][] {
+  return Object.entries(action?.params_schema?.properties ?? {}).filter(([k]) => k !== "work_id");
+}
+
+function requiredParams(action: OpActionInfo | undefined): string[] {
+  return (action?.params_schema?.required ?? []).filter((k) => k !== "work_id");
+}
+
+// Mirrors the server's _MAX_STEPS cap — Run must never enable for a payload
+// /start would 422.
+const MAX_STEPS = 12;
+
+/** One param's problem (or null): mirrors the server's _param_problems type
+ * checks so Start stays disabled for anything /start would reject. */
+function paramProblem(name: string, spec: ParamSpec, raw: string): string | null {
+  if (!raw) return null; // unset → action default applies
+  if (spec.type === "number" && !Number.isFinite(Number(raw))) {
+    return `"${name}" must be a number.`;
+  }
+  if (spec.type === "integer" && !/^-?\d+$/.test(raw)) {
+    return `"${name}" must be a whole number.`;
+  }
+  if (spec.type === "object" || spec.type === "array") {
+    try {
+      const parsed = JSON.parse(raw);
+      const isArray = Array.isArray(parsed);
+      if (spec.type === "array" && !isArray) return `"${name}" must be a JSON list, e.g. ["a", "b"].`;
+      if (spec.type === "object" && (isArray || typeof parsed !== "object" || parsed === null)) {
+        return `"${name}" must be a JSON object, e.g. {"key": "value"}.`;
+      }
+    } catch {
+      return `"${name}" must be valid JSON.`;
+    }
+  }
+  return null;
+}
+
+/** Client-side mirror of the server's step validation: every problem that
+ * would 422 on start is caught here first so Start stays disabled. */
+function builderProblems(steps: BuilderStep[], actionsById: Map<string, OpActionInfo>): string[] {
+  const problems: string[] = [];
+  if (steps.length === 0) problems.push("Add at least one step.");
+  if (steps.length > MAX_STEPS) {
+    problems.push(`Too many steps (${steps.length}); the maximum is ${MAX_STEPS}.`);
+  }
+  steps.forEach((s, i) => {
+    const n = i + 1;
+    if (!s.action_id) {
+      problems.push(`Step ${n}: pick an action.`);
+      return;
+    }
+    const action = actionsById.get(s.action_id);
+    if (!action) {
+      problems.push(`Step ${n}: unknown action "${s.action_id}".`);
+      return;
+    }
+    for (const req of requiredParams(action)) {
+      if (!(s.params[req] ?? "").trim()) {
+        problems.push(`Step ${n} (${action.label}): "${req}" is required.`);
+      }
+    }
+    for (const [name, spec] of editableParams(action)) {
+      const p = paramProblem(name, spec, (s.params[name] ?? "").trim());
+      if (p) problems.push(`Step ${n} (${action.label}): ${p}`);
+    }
+  });
+  return problems;
+}
+
+function convertParams(step: BuilderStep, action: OpActionInfo): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, spec] of editableParams(action)) {
+    const raw = (step.params[name] ?? "").trim();
+    if (!raw) continue; // unset → let the action use its default
+    if (spec.type === "number") out[name] = Number(raw);
+    else if (spec.type === "integer") out[name] = parseInt(raw, 10);
+    else if (spec.type === "boolean") out[name] = raw === "true";
+    else if (spec.type === "object" || spec.type === "array") out[name] = JSON.parse(raw);
+    else out[name] = raw;
+  }
+  return out;
+}
+
+function BuilderParamField({
+  name, spec, required, value, onChange, testId,
+}: {
+  name: string;
+  spec: ParamSpec;
+  required: boolean;
+  value: string;
+  onChange: (v: string) => void;
+  testId: string;
+}) {
+  const label = (
+    <span className="text-[10px] text-muted-foreground font-mono shrink-0 w-32 truncate" title={spec.description || name}>
+      {name}{required && <span className="text-destructive">*</span>}
+    </span>
+  );
+  if (spec.type === "boolean") {
+    return (
+      <div className="flex items-center gap-2">
+        {label}
+        <Select value={value || "unset"} onValueChange={(v) => onChange(v === "unset" ? "" : v)}>
+          <SelectTrigger className="h-6 text-[11px] flex-1" data-testid={testId}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="unset" className="text-xs">Default</SelectItem>
+            <SelectItem value="true" className="text-xs">Yes</SelectItem>
+            <SelectItem value="false" className="text-xs">No</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2">
+      {label}
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={
+          spec.type === "object" ? 'JSON object, e.g. {"key": "value"}'
+          : spec.type === "array" ? 'JSON list, e.g. ["a", "b"]'
+          : spec.description || (spec.type === "number" || spec.type === "integer" ? "number" : "text")
+        }
+        inputMode={spec.type === "number" || spec.type === "integer" ? "decimal" : undefined}
+        className="h-6 text-[11px] flex-1 font-mono"
+        data-testid={testId}
+      />
+    </div>
+  );
+}
+
+function CustomOperationBuilder({ onStarted }: { onStarted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [workId, setWorkId] = useState("");
+  const [steps, setSteps] = useState<BuilderStep[]>([]);
+  const nextKey = useRef(1);
+
+  const { data: actionsData } = useQuery<{ actions: OpActionInfo[] }>({
+    queryKey: ["operations", "actions"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/operations/actions`);
+      if (!r.ok) throw new Error("failed");
+      return r.json();
+    },
+    staleTime: 60_000,
+    enabled: open,
+  });
+  const actions = actionsData?.actions ?? [];
+  const actionsById = new Map(actions.map((a) => [a.id, a]));
+
+  const addStep = () =>
+    setSteps((s) => [...s, { key: nextKey.current++, action_id: "", params: {} }]);
+  const removeStep = (key: number) => setSteps((s) => s.filter((st) => st.key !== key));
+  const moveStep = (key: number, dir: -1 | 1) =>
+    setSteps((s) => {
+      const i = s.findIndex((st) => st.key === key);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= s.length) return s;
+      const next = [...s];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  const updateStep = (key: number, patch: Partial<BuilderStep>) =>
+    setSteps((s) => s.map((st) => (st.key === key ? { ...st, ...patch } : st)));
+
+  const problems = builderProblems(steps, actionsById);
+
+  const startMutation = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        title: title.trim() || "Custom operation",
+        work_id: workId || undefined,
+        steps: steps.map((s) => {
+          const action = actionsById.get(s.action_id)!;
+          return { action_id: s.action_id, label: action.label, params: convertParams(s, action) };
+        }),
+      };
+      const r = await apiFetch(`${API_BASE}/api/operations/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: "Could not start the operation" }));
+        throw new Error(typeof err.detail === "string" ? err.detail : "Could not start the operation");
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      toast.success("Operation started — follow its progress below.");
+      setSteps([]);
+      setTitle("");
+      setWorkId("");
+      setOpen(false);
+      onStarted();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Card className="border border-border/50">
+      <CardContent className="pt-5 pb-4 space-y-3">
+        <button
+          className="flex items-start gap-3 w-full text-left"
+          onClick={() => setOpen((o) => !o)}
+          data-testid="button-toggle-custom-builder"
+        >
+          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <ListPlus className="w-4 h-4 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <span className="font-medium text-sm">Custom operation</span>
+            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+              Build your own pipeline — pick steps, order them, and run.
+            </p>
+          </div>
+          {open ? (
+            <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0 mt-2" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-2" />
+          )}
+        </button>
+
+        {open && (
+          <div className="pl-12 space-y-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Operation name (optional)"
+                className="h-7 text-xs w-56"
+                data-testid="input-custom-title"
+              />
+              <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                <span className="text-[10px] text-muted-foreground shrink-0">Work</span>
+                <WorkSelector value={workId} onChange={setWorkId} />
+                {workId && (
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px] text-muted-foreground"
+                    onClick={() => setWorkId("")}>
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {steps.length === 0 && (
+              <p className="text-[11px] text-muted-foreground/70">
+                No steps yet — add the first one below.
+              </p>
+            )}
+
+            <ol className="space-y-2">
+              {steps.map((s, i) => {
+                const action = actionsById.get(s.action_id);
+                return (
+                  <li key={s.key} className="border border-border/50 rounded-lg p-2.5 space-y-2"
+                    data-testid={`builder-step-${i}`}>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] text-muted-foreground/60 w-4 shrink-0">
+                        {i + 1}.
+                      </span>
+                      <Select
+                        value={s.action_id || undefined}
+                        onValueChange={(v) => updateStep(s.key, { action_id: v, params: {} })}
+                      >
+                        <SelectTrigger className="h-7 text-xs flex-1" data-testid={`select-step-action-${i}`}>
+                          <SelectValue placeholder="Pick an action…" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          {actions.map((a) => (
+                            <SelectItem key={a.id} value={a.id} className="text-xs">
+                              {a.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground"
+                        disabled={i === 0} onClick={() => moveStep(s.key, -1)}
+                        data-testid={`button-step-up-${i}`}>
+                        <ArrowUp className="w-3 h-3" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground"
+                        disabled={i === steps.length - 1} onClick={() => moveStep(s.key, 1)}
+                        data-testid={`button-step-down-${i}`}>
+                        <ArrowDown className="w-3 h-3" />
+                      </Button>
+                      <Button size="sm" variant="ghost"
+                        className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-destructive"
+                        onClick={() => removeStep(s.key)} data-testid={`button-step-remove-${i}`}>
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                    {action?.description && (
+                      <p className="text-[10px] text-muted-foreground/70 pl-5 leading-relaxed">
+                        {action.description}
+                      </p>
+                    )}
+                    {action && editableParams(action).length > 0 && (
+                      <div className="pl-5 space-y-1.5">
+                        {editableParams(action).map(([name, spec]) => (
+                          <BuilderParamField
+                            key={name}
+                            name={name}
+                            spec={spec}
+                            required={requiredParams(action).includes(name)}
+                            value={s.params[name] ?? ""}
+                            onChange={(v) => updateStep(s.key, { params: { ...s.params, [name]: v } })}
+                            testId={`input-step-${i}-param-${name}`}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                onClick={addStep} disabled={steps.length >= MAX_STEPS}
+                data-testid="button-add-step">
+                <Plus className="w-3 h-3" /> Add step
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                disabled={problems.length > 0 || startMutation.isPending}
+                onClick={() => startMutation.mutate()}
+                data-testid="button-start-custom"
+              >
+                {startMutation.isPending ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Play className="w-3 h-3" />
+                )}
+                Run
+              </Button>
+            </div>
+
+            {steps.length > 0 && problems.length > 0 && (
+              <div className="space-y-0.5 text-[11px] text-amber-600 bg-amber-500/10 rounded-md px-3 py-2"
+                data-testid="text-builder-problems">
+                {problems.slice(0, 5).map((p, i) => (
+                  <div key={i}>{p}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Operation row (expandable) ─────────────────────────────────────────────────
 
 function OperationRow({ op }: { op: Operation }) {
@@ -600,6 +983,8 @@ export default function OperationsPage() {
       </div>
 
       <JobPlanner onStarted={() => qc.invalidateQueries({ queryKey: ["operations"] })} />
+
+      <CustomOperationBuilder onStarted={() => qc.invalidateQueries({ queryKey: ["operations"] })} />
 
       {playbooksLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
