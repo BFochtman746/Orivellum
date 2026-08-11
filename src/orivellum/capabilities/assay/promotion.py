@@ -54,31 +54,35 @@ def promotion_bar(instrument: dict) -> dict:
 
 
 def precision_report(db: Any, instrument: dict) -> dict:
-    """Rolling precision against author dispositions, oldest→newest.
+    """Rolling precision against author dispositions.
 
-    precision = true_positive / (true_positive + false_positive).
-    The series records cumulative precision after every disposition so the
-    dashboard can show the trend over time.  No dispositions → precision is
-    None (never invented).
+    precision = true_positive / (true_positive + false_positive), aggregated
+    over the COMPLETE disposition record (count_assay_dispositions — the
+    same data definition the DB certification write path enforces against).
+    The series is a rendering window over the most recent dispositions,
+    cumulative within the window, so the dashboard can show the trend.
+    No dispositions → precision is None (never invented).
     """
-    dispositions = db.list_assay_dispositions(instrument["id"])
-    tp = fp = 0
+    counts = db.count_assay_dispositions(instrument["id"])
+    tp, fp = counts["true_positives"], counts["false_positives"]
+    total = tp + fp
+    precision = round(tp / total, 4) if total else None
+    window = db.list_assay_dispositions(instrument["id"])
+    w_tp = w_fp = 0
     series: list[dict] = []
-    for d in dispositions:
+    for d in window:
         if d["disposition"] == "true_positive":
-            tp += 1
+            w_tp += 1
         else:
-            fp += 1
+            w_fp += 1
         series.append(
             {
                 "at": d["dispositioned_at"],
-                "precision": round(tp / (tp + fp), 4),
-                "true_positives": tp,
-                "false_positives": fp,
+                "precision": round(w_tp / (w_tp + w_fp), 4),
+                "true_positives": w_tp,
+                "false_positives": w_fp,
             }
         )
-    total = tp + fp
-    precision = round(tp / total, 4) if total else None
     bar = promotion_bar(instrument)
     return {
         "true_positives": tp,

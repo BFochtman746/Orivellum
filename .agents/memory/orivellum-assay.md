@@ -19,7 +19,7 @@ description: Governed instrument registry — engine contracts, three-tier autho
 - Chapter ownership enforced at the claim boundary: run creation rejects a chapter_id not belonging to the work (ValueError → 422).
 
 ## PROMOTION (E10) — shadow-mode certification
-- **The DB transition path is the authority, never the caller.** Certification changes go through one write path with a validated transition map; the shadow→certified transition computes the precision evidence from author dispositions itself (caller-supplied numbers are ignored) and refuses below the declared bar — so no code path can certify an untested detector. The transition UPDATE is a CAS on the from-status (lost race → RuntimeError → 409).
+- **The DB transition path is the authority, never the caller.** Certification changes go through one write path with a validated transition map; the shadow→certified transition aggregates the COMPLETE disposition record (uncapped SQL, inside the same transaction as the status CAS — caller-supplied numbers ignored) and refuses below the declared bar, so no code path can certify an untested detector. Lost CAS race → RuntimeError → 409.
 - **A changed contract must re-earn its authority.** Re-seeding a certified instrument with different tier/thresholds/scope/shadow_of auto-demotes it to shadow via a governed write + ledger row.
 - **Shadow is observation only.** Shadow runs/findings are visibly labeled; blocking stays computed so they never gate. Companions co-run inline after their non-shadow baseline, exception-isolated, linked to the primary run id for parity pairing; demotion has no threshold (author sovereign); never invent precision when there are zero dispositions.
 

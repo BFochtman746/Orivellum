@@ -7792,37 +7792,10 @@ class OrivellumDB:
         allowed = self._ASSAY_CERT_TRANSITIONS.get(frm, frozenset())
         if to_status not in allowed:
             raise ValueError(f"illegal certification transition {frm!r} -> {to_status!r}")
-        if to_status == "certified":
-            if int(instrument["tier"]) == 3:
-                raise ValueError(
-                    "Tier 3 instruments are advisory forever and cannot be certified"
-                )
-            # Certification must be EARNED: the precision evidence is computed
-            # here from the author's dispositions, never trusted from the
-            # caller — this write path is authoritative, so no code path can
-            # certify below the instrument's declared bar.
-            bar = (instrument.get("thresholds") or {}).get("promotion") or {}
-            min_precision = float(
-                bar.get("min_precision", ASSAY_DEFAULT_MIN_PRECISION)
+        if to_status == "certified" and int(instrument["tier"]) == 3:
+            raise ValueError(
+                "Tier 3 instruments are advisory forever and cannot be certified"
             )
-            min_dispositions = int(
-                bar.get("min_dispositions", ASSAY_DEFAULT_MIN_DISPOSITIONS)
-            )
-            disps = self.list_assay_dispositions(instrument["id"], limit=1000)
-            tp = sum(1 for d in disps if d["disposition"] == "true_positive")
-            total = len(disps)
-            if total < min_dispositions:
-                raise ValueError(
-                    f"insufficient dispositions to certify: {total} < "
-                    f"{min_dispositions} required"
-                )
-            computed = round(tp / total, 4)
-            if computed < min_precision:
-                raise ValueError(
-                    f"precision {computed} below declared bar {min_precision}"
-                )
-            precision = computed
-            sample_size = total
         now = _now()
         with self.governed_write(
             operation="assay.certification_changed",
@@ -7832,6 +7805,33 @@ class OrivellumDB:
             actor=actor,
             detail=f"{key}: {frm} -> {to_status}",
         ):
+            if to_status == "certified":
+                # Certification must be EARNED: the precision evidence is
+                # aggregated over the COMPLETE disposition record inside this
+                # same transaction as the status CAS, never trusted from the
+                # caller and never read from a stale snapshot — no code path
+                # can certify below the instrument's declared bar.
+                bar = (instrument.get("thresholds") or {}).get("promotion") or {}
+                min_precision = float(
+                    bar.get("min_precision", ASSAY_DEFAULT_MIN_PRECISION)
+                )
+                min_dispositions = int(
+                    bar.get("min_dispositions", ASSAY_DEFAULT_MIN_DISPOSITIONS)
+                )
+                tp, fp = self._assay_disposition_counts(instrument["id"])
+                total = tp + fp
+                if total < min_dispositions:
+                    raise ValueError(
+                        f"insufficient dispositions to certify: {total} < "
+                        f"{min_dispositions} required"
+                    )
+                computed = round(tp / total, 4)
+                if computed < min_precision:
+                    raise ValueError(
+                        f"precision {computed} below declared bar {min_precision}"
+                    )
+                precision = computed
+                sample_size = total
             cur = self._conn.execute(
                 """UPDATE assay_instrument SET certification=?, updated_at=?
                    WHERE key=? AND certification=?""",
@@ -8072,19 +8072,44 @@ class OrivellumDB:
             )
         return self.get_assay_finding(finding_id)  # type: ignore[return-value]
 
+    def _assay_disposition_counts(self, instrument_id: str) -> tuple[int, int]:
+        """(true_positives, false_positives) aggregated over the COMPLETE
+        disposition record — no result cap.  Caller must hold the DB lock
+        (or be inside governed_write)."""
+        row = self._conn.execute(
+            """SELECT
+                 SUM(CASE WHEN disposition='true_positive' THEN 1 ELSE 0 END) AS tp,
+                 COUNT(*) AS total
+               FROM assay_finding
+               WHERE instrument_id=? AND disposition != 'open'
+                 AND dispositioned_at IS NOT NULL""",
+            (instrument_id,),
+        ).fetchone()
+        total = int(row["total"] or 0)
+        tp = int(row["tp"] or 0)
+        return tp, total - tp
+
+    def count_assay_dispositions(self, instrument_id: str) -> dict:
+        """Complete, uncapped TP/FP counts for one instrument — the same
+        data definition the certification write path enforces against."""
+        with self._lock:
+            tp, fp = self._assay_disposition_counts(instrument_id)
+        return {"true_positives": tp, "false_positives": fp}
+
     def list_assay_dispositions(self, instrument_id: str, limit: int = 200) -> list[dict]:
-        """Dispositioned findings for one instrument, oldest first (for the
-        rolling-precision series)."""
+        """The most recent dispositioned findings for one instrument,
+        returned oldest-first — a rendering window for the rolling-precision
+        series only.  Eligibility math must use count_assay_dispositions."""
         with self._lock:
             rows = self._conn.execute(
                 """SELECT id, disposition, dispositioned_at, severity, unit, issue_type
                    FROM assay_finding
                    WHERE instrument_id=? AND disposition != 'open'
                      AND dispositioned_at IS NOT NULL
-                   ORDER BY dispositioned_at ASC, rowid ASC LIMIT ?""",
+                   ORDER BY dispositioned_at DESC, rowid DESC LIMIT ?""",
                 (instrument_id, max(1, min(int(limit), 1000))),
             ).fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in reversed(rows)]
 
     def create_assay_signature(
         self,

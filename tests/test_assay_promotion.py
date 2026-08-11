@@ -198,6 +198,26 @@ class TestLifecycle(PromotionBase):
             self.db.get_assay_instrument(inst["key"])["certification"], "shadow"
         )
 
+    def test_certification_evidence_uses_complete_record_not_window(self):
+        # Even if the rendering window (list_assay_dispositions) were to
+        # show only favorable early verdicts, the certification write path
+        # aggregates the COMPLETE record and must refuse.
+        from unittest.mock import patch
+
+        inst = self._register_candidate()
+        self._disposition_n(inst, tp=3, fp=3)  # full record: 0.5 < 0.75 bar
+        favorable_window = [
+            d for d in self.db.list_assay_dispositions(inst["id"])
+            if d["disposition"] == "true_positive"
+        ]
+        with patch.object(
+            self.db, "list_assay_dispositions", return_value=favorable_window
+        ), self.assertRaises(ValueError):
+            self.db.set_assay_certification(inst["key"], "certified", actor="user")
+        self.assertEqual(
+            self.db.get_assay_instrument(inst["key"])["certification"], "shadow"
+        )
+
     def test_caller_supplied_precision_is_ignored_on_certify(self):
         # The ledger records the COMPUTED evidence, never caller claims.
         inst = self._register_candidate()
