@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import {
   BookOpen, Package, Layers, Lock, Check, ChevronRight,
   Plus, FileText, Stamp, Sparkles, RefreshCw, AlertTriangle,
-  Image, Shield, BookMarked, Palette,
+  Image, Shield, BookMarked, Palette, Printer, Download, Barcode, Scale,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,22 @@ function SectionHeader({ title, icon: Icon }: { title: string; icon: React.Eleme
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
     </div>
   );
+}
+
+/** Download an output through the authenticated fetch path (never bare window.open). */
+async function downloadOutput(slug: string, kind: string) {
+  const r = await apiFetch(`${BASE}/press/books/${slug}/outputs/${kind}`);
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.detail ?? "Download failed");
+  }
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${slug}.${kind}`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── PRESS ────────────────────────────────────────────────────────────────────
@@ -123,6 +139,135 @@ function PressVerifyCard({ slug }: { slug: string }) {
         {data.word_count != null && (
           <div className="pt-2 text-muted-foreground">
             {data.word_count.toLocaleString()} words · ~{data.estimated_pages} pages
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PressRenderCard({ slug, styleLocked }: { slug: string; styleLocked: boolean }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["press-outputs", slug],
+    queryFn: () => api(`/press/books/${slug}/outputs`),
+    enabled: !!slug,
+  });
+  const render = useMutation({
+    mutationFn: () => api(`/press/books/${slug}/render`, { method: "POST" }),
+    onSuccess: (d) => {
+      toast.success(`Rendered — ${d.manifest?.actual_pages} print pages`);
+      qc.invalidateQueries({ queryKey: ["press-outputs", slug] });
+      qc.invalidateQueries({ queryKey: ["press-verify", slug] });
+      qc.invalidateQueries({ queryKey: ["press-book", slug] });
+      qc.invalidateQueries({ queryKey: ["release-gate"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const manifest = data?.manifest;
+  const validation = data?.validation;
+  const vBadge = (v?: string) =>
+    v === "clean"
+      ? <Badge className="border text-[10px] py-0" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>clean</Badge>
+      : <Badge variant="outline" className="text-[10px] py-0" style={{ color: "var(--rust)" }}>{v ?? "missing"}</Badge>;
+  return (
+    <Card className="vellum-card">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Printer className="h-3.5 w-3.5" /> Real Outputs
+          </CardTitle>
+          {manifest?.actual_pages ? (
+            <Badge variant="secondary" className="text-xs">{manifest.actual_pages} print pages</Badge>
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2 text-xs">
+        {!styleLocked && (
+          <p className="text-muted-foreground">Lock the style first — the lock drives all rendering.</p>
+        )}
+        <Button size="sm" className="w-full h-7 text-xs" onClick={() => render.mutate()}
+          disabled={!styleLocked || render.isPending}>
+          <Printer className="h-3 w-3 mr-1" />
+          {render.isPending ? "Rendering…" : manifest ? "Re-render outputs" : "Render outputs (PDF · DOCX · EPUB)"}
+        </Button>
+        {manifest && (
+          <>
+            <div className="flex gap-2 pt-1">
+              {["pdf", "docx", "epub"].map(kind => (
+                <Button key={kind} size="sm" variant="outline" className="h-7 text-xs flex-1"
+                  onClick={() => downloadOutput(slug, kind).catch((e) => toast.error(e.message))}>
+                  <Download className="h-3 w-3 mr-1" /> {kind.toUpperCase()}
+                </Button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-muted-foreground">EPUBCheck</span>
+              {vBadge(validation?.epubcheck)}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Ace (accessibility)</span>
+              {vBadge(validation?.ace)}
+            </div>
+            {!validation?.clean && (
+              <p className="text-muted-foreground pt-1">
+                A production seal requires BOTH validations clean for the current EPUB build — no override.
+              </p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReleaseGateCard({ workId, pressSlug }: { workId: string; pressSlug: string }) {
+  const [atelierSlug, setAtelierSlug] = useState("");
+  const { data: atelierBooks } = useApi<any>(["atelier-books"], "/atelier/books");
+  const { data, refetch, isFetching } = useQuery({
+    queryKey: ["release-gate", workId, pressSlug, atelierSlug],
+    queryFn: () => api(
+      `/works/${workId}/gate?press_slug=${encodeURIComponent(pressSlug)}` +
+      `&atelier_slug=${encodeURIComponent(atelierSlug)}`
+    ),
+    enabled: !!workId,
+  });
+  if (!data) return null;
+  const checks: Record<string, boolean> = data.checks ?? {};
+  return (
+    <Card className="vellum-card">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Scale className="h-3.5 w-3.5" /> Release Gate (B16)
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <StatusBadge passed={!!data.passed} />
+            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => refetch()} disabled={isFetching}>
+              <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-1 text-xs">
+        <select className="w-full h-7 text-xs border border-border rounded px-2 bg-background mb-1"
+          value={atelierSlug} onChange={e => setAtelierSlug(e.target.value)}>
+          <option value="">Cover design (ATELIER book)…</option>
+          {(atelierBooks?.books ?? []).map((b: any) => (
+            <option key={b.slug} value={b.slug}>{b.title}</option>
+          ))}
+        </select>
+        {Object.entries(checks).map(([k, v]) => (
+          <div key={k} className="flex items-center gap-2">
+            {v ? <Check className="h-3 w-3" style={{ color: "var(--green-2)" }} /> : <AlertTriangle className="h-3 w-3" style={{ color: "var(--rust)" }} />}
+            <span className={v ? "text-foreground" : ""} style={v ? undefined : { color: "var(--rust)" }}>{k.replace(/_/g, " ").replace("gate.", "")}</span>
+          </div>
+        ))}
+        {data.disclosure && (
+          <div className="pt-2 text-muted-foreground">
+            KDP AI disclosure: <span className="font-medium text-foreground">
+              {data.disclosure.used_ai_tools ? `yes — ${data.disclosure.text}` : "no AI-generated content"}
+            </span>
           </div>
         )}
       </CardContent>
@@ -337,6 +482,12 @@ function PressDetail({ slug }: { slug: string }) {
       {/* Pre-flight */}
       <PressVerifyCard slug={slug} />
 
+      {/* Real outputs (B14/B15) */}
+      <PressRenderCard slug={slug} styleLocked={!!b.style_locked} />
+
+      {/* Release gate (B16) */}
+      {b.work_id && <ReleaseGateCard workId={b.work_id} pressSlug={slug} />}
+
       {/* Seal package */}
       <Card className="vellum-card">
         <CardHeader className="pb-2">
@@ -508,6 +659,79 @@ function SpineCard({ spec }: { spec: any }) {
   );
 }
 
+function AtelierPrintCard({ book }: { book: any }) {
+  const qc = useQueryClient();
+  const [isbn, setIsbn] = useState(book.isbn ?? "");
+  const [binding, setBinding] = useState(book.binding ?? "paperback");
+  const [pressSlug, setPressSlug] = useState("");
+  const { data: pressBooks } = useApi<any>(["press-books"], "/press/books");
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["atelier-series-books"] });
+
+  const saveMeta = useMutation({
+    mutationFn: () => api(`/atelier/books/${book.slug}/print`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isbn: isbn || null, binding }),
+    }),
+    onSuccess: () => { toast.success("Print metadata saved"); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const syncPages = useMutation({
+    mutationFn: () => api(`/atelier/books/${book.slug}/sync-pages?press_slug=${encodeURIComponent(pressSlug)}`, { method: "POST" }),
+    onSuccess: (d) => { toast.success(`Geometry re-based on ${d.actual_pages} rendered pages`); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  return (
+    <Card className="vellum-card">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2"><Barcode className="h-3.5 w-3.5" /> Print model</CardTitle>
+          {book.actual_pages
+            ? <Badge variant="secondary" className="text-xs">{book.actual_pages} actual pages</Badge>
+            : <Badge variant="outline" className="text-xs" style={{ color: "var(--rust)" }}>estimated pages</Badge>}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2 text-xs">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label className="text-xs">ISBN (EAN-13)</Label>
+            <Input className="h-7 text-xs" value={isbn} onChange={e => setIsbn(e.target.value)} placeholder="978…" />
+          </div>
+          <div>
+            <Label className="text-xs">Binding</Label>
+            <select className="w-full h-7 text-xs border border-border rounded px-2 bg-background"
+              value={binding} onChange={e => setBinding(e.target.value)}>
+              <option value="paperback">Paperback</option>
+              <option value="hardcover">Hardcover (case laminate)</option>
+            </select>
+          </div>
+        </div>
+        <Button size="sm" variant="outline" className="w-full h-7 text-xs" onClick={() => saveMeta.mutate()} disabled={saveMeta.isPending}>
+          Save print metadata
+        </Button>
+        <div className="flex gap-2 pt-1">
+          <select className="flex-1 h-7 text-xs border border-border rounded px-2 bg-background"
+            value={pressSlug} onChange={e => setPressSlug(e.target.value)}>
+            <option value="">Sync pages from press book…</option>
+            {(pressBooks?.books ?? []).map((p: any) => (
+              <option key={p.slug} value={p.slug}>{p.title}</option>
+            ))}
+          </select>
+          <Button size="sm" className="h-7 text-xs" disabled={!pressSlug || syncPages.isPending}
+            onClick={() => syncPages.mutate()}>
+            <RefreshCw className={`h-3 w-3 mr-1 ${syncPages.isPending ? "animate-spin" : ""}`} /> Sync
+          </Button>
+        </div>
+        {book.pages_source && (
+          <p className="text-muted-foreground">Pages source: {book.pages_source}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function AtelierBookDetail({ book }: { book: any }) {
   const qc = useQueryClient();
   const [coverForm, setCoverForm] = useState({ versions: 3, mood: "" });
@@ -536,6 +760,9 @@ function AtelierBookDetail({ book }: { book: any }) {
   return (
     <div className="space-y-4">
       <SpineCard spec={book.spec} />
+
+      {/* Print model (B15) — actual pages, ISBN/EAN-13, binding */}
+      <AtelierPrintCard book={book} />
 
       {/* Cover generation */}
       <Card className="vellum-card">

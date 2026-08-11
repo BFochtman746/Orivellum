@@ -129,7 +129,7 @@ def press_list_books(work_id: str | None = None):
     try:
         return {"books": _press().list_books(work_id=work_id)}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/press/books", status_code=201)
@@ -144,7 +144,7 @@ def press_create_book(body: PressBookCreate):
             )
         }
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/press/books/{slug}")
@@ -157,7 +157,7 @@ def press_get_book(slug: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.patch("/press/books/{slug}/style")
@@ -166,7 +166,7 @@ def press_update_style(slug: str, body: StyleUpdate):
         style = _press().update_style(slug, body.model_dump(exclude_none=True))
         return {"style": style}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/press/books/{slug}/style/lock")
@@ -175,7 +175,7 @@ def press_lock_style(slug: str, body: StyleLock):
         _press().lock_style(slug, body.author)
         return {"ok": True}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/press/books/{slug}/link-work")
@@ -209,7 +209,7 @@ def press_draft_epigraph(slug: str, number: int, body: EpigraphDraft):
         )
         return result
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/press/books/{slug}/chapters/{number}/epigraph/approve")
@@ -218,7 +218,7 @@ def press_approve_epigraph(slug: str, number: int, body: EpigraphApprove):
         _press().approve_epigraph(slug, number, body.author)
         return {"ok": True}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/press/books/{slug}/matter")
@@ -227,7 +227,7 @@ def press_set_matter(slug: str, body: MatterSet):
         _press().set_matter(slug, body.front, body.back)
         return {"ok": True}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/press/books/{slug}/verify")
@@ -235,7 +235,7 @@ def press_verify(slug: str):
     try:
         return _press().verify(slug)
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/press/books/{slug}/package")
@@ -243,7 +243,7 @@ def press_package(slug: str, body: PackageRequest):
     try:
         return _press().build_package(slug, body.pkg_type, body.target)
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/press/books/{slug}/seal")
@@ -258,7 +258,7 @@ def press_seal(slug: str, body: SealRequest):
         )
         return {"manifest": manifest}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/press/books/{slug}/distribution")
@@ -266,7 +266,7 @@ def press_distribution(slug: str):
     try:
         return {"distribution": _press().list_distribution(slug)}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/press/books/{slug}/ledger")
@@ -274,7 +274,81 @@ def press_ledger(slug: str):
     try:
         return {"ledger": _press().get_ledger(slug)}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
+
+
+# ── real outputs: render, download, validation (B14/B15) ─────────────────────
+
+
+class ValidationRecord(BaseModel):
+    tool: str
+    epub_sha256: str
+    clean: bool
+    report: str = ""
+
+
+@router.post("/press/books/{slug}/render")
+def press_render(slug: str):
+    """Render print PDF + DOCX + accessible EPUB from the locked style.
+
+    The PDF page count is authoritative: it lands on the press book row AND
+    on the linked Work's meta (POSITION T9 reads it there), and re-bases any
+    ATELIER book that tracks this press book.
+    """
+    press = _press()
+    try:
+        manifest = press.render_outputs(slug)
+    except Exception as e:
+        raise _http(e) from e
+    # Propagate actual_pages to the Work meta so the pipeline sees reality.
+    book = press.get_book(slug)
+    work_id = (book or {}).get("work_id") or ""
+    if work_id:
+        from orivellum.api._deps import get_db  # noqa: PLC0415
+
+        db = get_db()
+        work = db.get_work(work_id)
+        if work:
+            meta = dict(work.get("meta") or {})
+            meta["actual_pages"] = manifest["actual_pages"]
+            db.update_work(work_id, meta=meta)
+    return {"manifest": manifest}
+
+
+@router.get("/press/books/{slug}/outputs")
+def press_outputs(slug: str):
+    try:
+        manifest = _press().get_render_manifest(slug)
+        validation = _press().validation_status(slug)
+    except Exception as e:
+        raise _http(e) from e
+    return {"manifest": manifest, "validation": validation}
+
+
+@router.get("/press/books/{slug}/outputs/{kind}")
+def press_download_output(slug: str, kind: str):
+    from fastapi.responses import FileResponse  # noqa: PLC0415
+
+    try:
+        path = _press().output_path(slug, kind)
+    except Exception as e:
+        raise _http(e) from e
+    media = {
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "epub": "application/epub+zip",
+    }[kind]
+    return FileResponse(path, media_type=media, filename=path.name)
+
+
+@router.post("/press/books/{slug}/validation")
+def press_record_validation(slug: str, body: ValidationRecord):
+    try:
+        return _press().record_validation(
+            slug, body.tool, body.epub_sha256, body.clean, body.report
+        )
+    except Exception as e:
+        raise _http(e) from e
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -333,7 +407,7 @@ def atelier_list_series():
     try:
         return {"series": _atelier().list_series()}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/atelier/series", status_code=201)
@@ -341,7 +415,7 @@ def atelier_create_series(body: SeriesCreate):
     try:
         return {"series": _atelier().create_series(body.name, body.books)}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/atelier/series/{slug}")
@@ -354,7 +428,7 @@ def atelier_get_series(slug: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.patch("/atelier/series/{slug}/brand")
@@ -363,7 +437,7 @@ def atelier_update_brand(slug: str, body: BrandUpdate):
         brand = _atelier().update_series_brand(slug, body.model_dump(exclude_none=True))
         return {"brand": brand}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/atelier/series/{slug}/lock")
@@ -372,7 +446,7 @@ def atelier_lock_series(slug: str, body: SeriesLock):
         _atelier().lock_series(slug, body.author)
         return {"ok": True}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/atelier/series/{slug}/books")
@@ -380,7 +454,7 @@ def atelier_series_books(slug: str):
     try:
         return {"books": _atelier().list_books(series_slug=slug)}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/atelier/books")
@@ -388,7 +462,7 @@ def atelier_list_books():
     try:
         return {"books": _atelier().list_books()}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/atelier/series/{series_slug}/books", status_code=201)
@@ -405,7 +479,7 @@ def atelier_create_book(series_slug: str, body: AtelierBookCreate):
             )
         }
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/atelier/books/{slug}")
@@ -418,7 +492,7 @@ def atelier_get_book(slug: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/atelier/books/{slug}/spec")
@@ -426,7 +500,7 @@ def atelier_spec(slug: str):
     try:
         return _atelier().get_spec(slug)
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/atelier/books/{slug}/cover")
@@ -435,7 +509,7 @@ def atelier_generate_covers(slug: str, body: CoverGenerate):
         versions = _atelier().generate_covers(slug, body.versions, body.mood, body.gateway)
         return {"versions": versions}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.get("/atelier/books/{slug}/verify")
@@ -443,7 +517,7 @@ def atelier_verify(slug: str):
     try:
         return _atelier().verify_design(slug)
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
 
 
 @router.post("/atelier/books/{slug}/seal")
@@ -451,4 +525,72 @@ def atelier_seal(slug: str, body: SealDesign):
     try:
         return {"manifest": _atelier().seal_design(slug, body.author, body.choose_version)}
     except Exception as e:
-        raise _http(e)
+        raise _http(e) from e
+
+
+# ── print-model completion + compliance (B15/B16) ─────────────────────────────
+
+
+class PrintMetadata(BaseModel):
+    isbn: str | None = None
+    binding: str | None = None
+
+
+@router.patch("/atelier/books/{slug}/print")
+def atelier_print_metadata(slug: str, body: PrintMetadata):
+    try:
+        return _atelier().set_print_metadata(slug, isbn=body.isbn, binding=body.binding)
+    except Exception as e:
+        raise _http(e) from e
+
+
+@router.post("/atelier/books/{slug}/sync-pages")
+def atelier_sync_pages(slug: str, press_slug: str):
+    """Re-base cover geometry on the RENDERED page count of a press book."""
+    try:
+        pv = _press().verify(press_slug)
+        pages = pv.get("actual_pages") or 0
+        if pages <= 0:
+            raise ValueError(f"Press book '{press_slug}' has no rendered outputs — render first.")
+        return _atelier().record_actual_pages(slug, pages, f"press:{press_slug}")
+    except Exception as e:
+        raise _http(e) from e
+
+
+@router.get("/atelier/books/{slug}/hardcover")
+def atelier_hardcover(slug: str):
+    try:
+        a = _atelier()
+        b = a.get_book(slug)
+        if not b:
+            raise KeyError(f"Book '{slug}' not found.")
+        return a.hardcover_dimensions(b["trim"], b["pages"], b["paper"])
+    except Exception as e:
+        raise _http(e) from e
+
+
+@router.get("/works/{work_id}/disclosure")
+def work_disclosure(work_id: str):
+    from orivellum.api._deps import get_db  # noqa: PLC0415
+    from orivellum.capabilities.finishing import compliance  # noqa: PLC0415
+
+    _ensure_init()
+    try:
+        return compliance.disclosure_sheet(get_db(), work_id)
+    except Exception as e:
+        raise _http(e) from e
+
+
+@router.get("/works/{work_id}/gate")
+def work_assembly_gate(work_id: str, press_slug: str = "", atelier_slug: str = ""):
+    """B16 — the single deterministic release decision. No override exists."""
+    from orivellum.api._deps import get_db  # noqa: PLC0415
+    from orivellum.capabilities.finishing import compliance  # noqa: PLC0415
+
+    _ensure_init()
+    try:
+        return compliance.assembly_gate(
+            get_db(), work_id, press_slug=press_slug, atelier_slug=atelier_slug
+        )
+    except Exception as e:
+        raise _http(e) from e

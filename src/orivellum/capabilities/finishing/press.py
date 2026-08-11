@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS press_book (
     style TEXT NOT NULL DEFAULT '{}',
     style_locked INTEGER NOT NULL DEFAULT 0,
     has_front INTEGER NOT NULL DEFAULT 0, has_back INTEGER NOT NULL DEFAULT 0,
+    actual_pages INTEGER NOT NULL DEFAULT 0,
+    rendered_at TEXT NOT NULL DEFAULT '',
+    render_manifest TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS press_epigraph (
@@ -83,7 +86,15 @@ CREATE TABLE IF NOT EXISTS press_ledger (
     kind TEXT NOT NULL, payload TEXT NOT NULL, prev_hash TEXT NOT NULL,
     hash TEXT NOT NULL, at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS press_validation (
+    book TEXT NOT NULL, tool TEXT NOT NULL CHECK (tool IN ('epubcheck','ace')),
+    epub_sha256 TEXT NOT NULL, clean INTEGER NOT NULL,
+    report TEXT NOT NULL DEFAULT '', at TEXT NOT NULL,
+    PRIMARY KEY (book, tool, epub_sha256)
+);
 """
+
+OUTPUT_KINDS = ("pdf", "docx", "epub")
 
 
 def configure(data_dir: str) -> None:
@@ -322,6 +333,13 @@ def _migrate_legacy_chapters(conn: sqlite3.Connection) -> None:
     table is renamed to ``press_chapter_legacy`` so nothing is silently lost.
     Idempotent: does nothing once the rename has happened.
     """
+    # Older press_book tables predate the render pipeline — add the columns
+    # that record the AUTHORITATIVE page count and render provenance.
+    bcols = {r["name"] for r in conn.execute("PRAGMA table_info(press_book)").fetchall()}
+    if bcols and "actual_pages" not in bcols:
+        conn.execute("ALTER TABLE press_book ADD COLUMN actual_pages INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE press_book ADD COLUMN rendered_at TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE press_book ADD COLUMN render_manifest TEXT NOT NULL DEFAULT '{}'")
     # Older press_epigraph tables predate slot provenance — add the column.
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(press_epigraph)").fetchall()}
     if cols and "work_id" not in cols:
@@ -598,6 +616,229 @@ def _page_estimate(chapters: list[dict], has_front: bool, has_back: bool) -> tup
     return total, pages
 
 
+# ── real output: render + validation records (B14/B15) ───────────────────────
+
+
+def _real_chapters_with_text(work_id: str) -> list[dict]:
+    """Chapters WITH full prose — the render path's read of the one source."""
+    if not work_id:
+        return []
+    mc = _main_conn()
+    try:
+        rows = mc.execute(
+            "SELECT seq, title, text FROM book_chapters WHERE work_id=? ORDER BY seq",
+            (work_id,),
+        ).fetchall()
+    finally:
+        mc.close()
+    if not rows:
+        return []
+    base = min(r["seq"] for r in rows)
+    return [
+        {
+            "seq": r["seq"],
+            "number": r["seq"] - base + 1,
+            "title": (r["title"] or "").strip(),
+            "text": r["text"] or "",
+        }
+        for r in rows
+    ]
+
+
+def output_dir(slug: str) -> Path:
+    return Path(_db_path()).parent / "press-output" / slug
+
+
+def render_outputs(slug: str) -> dict:
+    """Render print PDF + DOCX + accessible EPUB from the locked style.
+
+    The style lock is the license to render: an unlocked style refuses.
+    The PDF render is the authority on ``actual_pages``; its page map feeds
+    the EPUB page-list so ebook page numbers reference the REAL print pages.
+    Files land in ``data_dir/press-output/<slug>/``; the manifest (hashes,
+    counts) is stored on the book row and ledgered.
+    """
+    from . import epub_a11y, typeset  # noqa: PLC0415 (heavy, render-time only)
+
+    conn = _connect()
+    row = conn.execute("SELECT * FROM press_book WHERE slug=?", (slug,)).fetchone()
+    if not row:
+        raise KeyError(f"Book '{slug}' not found.")
+    b = dict(row)
+    if not b["style_locked"]:
+        raise PermissionError("Style must be LOCKED before rendering (B14).")
+    style = json.loads(b["style"])
+    work_id = b["work_id"] or ""
+    if not work_id:
+        raise ValueError("Book is not linked to a Work — there is nothing to render.")
+    chapters = _real_chapters_with_text(work_id)
+    if not chapters:
+        raise ValueError("The linked Work has no chapters.")
+
+    # Merge approved epigraphs (the only chapter-adjacent state PRESS owns).
+    slots = {
+        r["number"]: r
+        for r in conn.execute(
+            "SELECT * FROM press_epigraph WHERE book=? AND work_id=? "
+            "AND has_epigraph=1 AND epigraph_status='APPROVED'",
+            (slug, work_id),
+        ).fetchall()
+    }
+    for ch in chapters:
+        s = slots.get(ch["number"])
+        ch["epigraph_text"] = s["epigraph_text"] if s else ""
+    headers = {
+        ch["number"]: chapter_header(style.get("chapter_style", "arabic"), ch["number"])
+        for ch in chapters
+    }
+    book_info = {
+        "title": b["title"],
+        "author_name": b["author_name"],
+        "has_front": bool(b["has_front"]),
+        "has_back": bool(b["has_back"]),
+    }
+
+    pdf_result = typeset.render_print_pdf(book_info, style, chapters, headers)
+    docx_bytes = typeset.render_docx(book_info, style, chapters, headers)
+    epub_bytes = epub_a11y.build_accessible_epub(
+        title=b["title"],
+        author=b["author_name"],
+        book_id=slug,
+        chapters=chapters,
+        chapter_headers=headers,
+        page_map=pdf_result["page_map"],
+        chapter_pages=pdf_result["chapter_pages"],
+        has_front=bool(b["has_front"]),
+        has_back=bool(b["has_back"]),
+    )
+
+    out = output_dir(slug)
+    out.mkdir(parents=True, exist_ok=True)
+    outputs = {"pdf": pdf_result["pdf"], "docx": docx_bytes, "epub": epub_bytes}
+    manifest: dict = {
+        "actual_pages": pdf_result["actual_pages"],
+        "gutter_in": pdf_result["gutter_in"],
+        "chapters": len(chapters),
+        "files": {},
+        "rendered_at": _now(),
+    }
+    for kind, data in outputs.items():
+        path = out / f"{slug}.{kind}"
+        path.write_bytes(data)
+        manifest["files"][kind] = {
+            "name": path.name,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    conn.execute(
+        "UPDATE press_book SET actual_pages=?, rendered_at=?, render_manifest=? WHERE slug=?",
+        (pdf_result["actual_pages"], manifest["rendered_at"], _canon(manifest), slug),
+    )
+    _ledger_append(
+        conn,
+        f"book:{slug}",
+        "outputs.rendered",
+        {
+            "actual_pages": pdf_result["actual_pages"],
+            "sha256": {k: v["sha256"] for k, v in manifest["files"].items()},
+        },
+    )
+    conn.commit()
+    return manifest
+
+
+def get_render_manifest(slug: str) -> dict | None:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT actual_pages, rendered_at, render_manifest FROM press_book WHERE slug=?",
+        (slug,),
+    ).fetchone()
+    if not row:
+        raise KeyError(f"Book '{slug}' not found.")
+    if not row["rendered_at"]:
+        return None
+    m = json.loads(row["render_manifest"])
+    m["actual_pages"] = row["actual_pages"]
+    return m
+
+
+def output_path(slug: str, kind: str) -> Path:
+    if kind not in OUTPUT_KINDS:
+        raise ValueError(f"Unknown output kind '{kind}'. Valid: {', '.join(OUTPUT_KINDS)}")
+    path = output_dir(slug) / f"{slug}.{kind}"
+    if not path.exists():
+        raise KeyError(f"No rendered {kind} for '{slug}' — render outputs first.")
+    return path
+
+
+def record_validation(
+    slug: str, tool: str, epub_sha256: str, clean: bool, report: str = ""
+) -> dict:
+    """Record an EPUBCheck or Ace result against a specific EPUB build.
+
+    Results are keyed to the EPUB's hash: re-rendering invalidates prior
+    validations automatically because the hash changes.
+    """
+    if tool not in ("epubcheck", "ace"):
+        raise ValueError("tool must be 'epubcheck' or 'ace'")
+    conn = _connect()
+    if not conn.execute("SELECT 1 FROM press_book WHERE slug=?", (slug,)).fetchone():
+        raise KeyError(f"Book '{slug}' not found.")
+    conn.execute(
+        "INSERT INTO press_validation (book,tool,epub_sha256,clean,report,at) "
+        "VALUES (?,?,?,?,?,?) ON CONFLICT(book,tool,epub_sha256) DO UPDATE SET "
+        "clean=excluded.clean, report=excluded.report, at=excluded.at",
+        (slug, tool, epub_sha256, 1 if clean else 0, report[:20000], _now()),
+    )
+    _ledger_append(
+        conn,
+        f"book:{slug}",
+        "validation.recorded",
+        {"tool": tool, "epub_sha256": epub_sha256, "clean": bool(clean)},
+    )
+    conn.commit()
+    return {"tool": tool, "epub_sha256": epub_sha256, "clean": bool(clean)}
+
+
+def validation_status(slug: str) -> dict:
+    """EPUBCheck/Ace status for the CURRENT epub build — fail-closed.
+
+    A tool with no recorded result for the current hash is 'missing', never
+    assumed clean. No render → nothing can be valid.
+    """
+    conn = _connect()
+    manifest = get_render_manifest(slug)
+    if not manifest:
+        return {"epub_sha256": None, "epubcheck": "missing", "ace": "missing", "clean": False}
+    sha = manifest["files"]["epub"]["sha256"]
+    out: dict = {"epub_sha256": sha}
+    for tool in ("epubcheck", "ace"):
+        row = conn.execute(
+            "SELECT clean FROM press_validation WHERE book=? AND tool=? AND epub_sha256=?",
+            (slug, tool, sha),
+        ).fetchone()
+        out[tool] = "missing" if row is None else ("clean" if row["clean"] else "failed")
+    out["clean"] = out["epubcheck"] == "clean" and out["ace"] == "clean"
+    return out
+
+
+def verify_ledger(slug: str) -> tuple[bool, str]:
+    """Walk the book's hash chain; any break is corruption, loudly."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT * FROM press_ledger WHERE scope=? ORDER BY seq", (f"book:{slug}",)
+    ).fetchall()
+    prev = GENESIS_HASH
+    for r in rows:
+        if r["prev_hash"] != prev:
+            return False, f"seq {r['seq']}: prev_hash mismatch"
+        body = _canon({"seq": r["seq"], "kind": r["kind"], "payload": json.loads(r["payload"])})
+        if _sha(prev + body) != r["hash"]:
+            return False, f"seq {r['seq']}: hash mismatch"
+        prev = r["hash"]
+    return True, f"{len(rows)} entries verified"
+
+
 def verify(slug: str) -> dict:
     conn = _connect()
     row = conn.execute("SELECT * FROM press_book WHERE slug=?", (slug,)).fetchone()
@@ -629,7 +870,13 @@ def verify(slug: str) -> dict:
                 checks["epigraph_policy"] = False
     total, pages = _page_estimate(chs, bool(b["has_front"]), bool(b["has_back"]))
     passed = all(checks.values())
-    return {"passed": passed, "checks": checks, "word_count": total, "estimated_pages": pages}
+    return {
+        "passed": passed,
+        "checks": checks,
+        "word_count": total,
+        "estimated_pages": pages,
+        "actual_pages": b.get("actual_pages") or 0,
+    }
 
 
 def build_package(slug: str, pkg_type: str = "publisher", target: str = "production") -> dict:
@@ -673,6 +920,23 @@ def build_package(slug: str, pkg_type: str = "publisher", target: str = "product
     return {"package_type": pkg_type, "target": target, "spec": spec, "preflight": vr}
 
 
+def _require_production_ready(slug: str, b: dict) -> None:
+    """B15 fail-closed rule: a production seal requires real rendered
+    outputs AND a clean EPUBCheck + Ace record for the CURRENT epub build.
+    Missing is not clean; there is no override."""
+    if not b.get("actual_pages"):
+        raise ValueError(
+            "No rendered outputs — render the book (actual pages) before a production seal."
+        )
+    vs = validation_status(slug)
+    if not vs["clean"]:
+        raise ValueError(
+            "Accessibility validation incomplete for the current EPUB build "
+            f"(epubcheck={vs['epubcheck']}, ace={vs['ace']}) — "
+            "a package failing either does not seal."
+        )
+
+
 def seal_package(slug: str, pkg_type: str, target: str, author: str, recipient: str = "") -> dict:
     conn = _connect()
     row = conn.execute("SELECT * FROM press_book WHERE slug=?", (slug,)).fetchone()
@@ -686,6 +950,11 @@ def seal_package(slug: str, pkg_type: str, target: str, author: str, recipient: 
         raise ValueError("Stale epigraph slots — clear or recreate them before sealing.")
     if not vr["passed"] and not (pkg_type == "publisher" and target == "submission"):
         raise ValueError("Pre-flight failed — cannot seal.")
+    if (pkg_type == "publisher" and target == "production") or pkg_type == "test-reader":
+        # Both carry the rendered book (production EPUB / ARC "PDF/EPUB"):
+        # neither may seal without real outputs + clean validation. Only the
+        # submission manuscript format (a typeset-free .docx) is exempt.
+        _require_production_ready(slug, b)
     chs = _chapters_for_book(conn, slug, b["work_id"] or "")
     total, pages = _page_estimate(chs, bool(b["has_front"]), bool(b["has_back"]))
     if pkg_type == "publisher" and target == "submission":

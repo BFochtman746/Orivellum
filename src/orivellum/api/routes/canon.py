@@ -24,6 +24,9 @@ from orivellum.database.canon_store import CanonFactError, CanonStore
 
 router = APIRouter(prefix="/api/canon", tags=["canon"], dependencies=[Depends(require_auth)])
 
+# Module-level singleton so route defaults don't call Depends() per definition (B008).
+_DB = Depends(get_db)
+
 
 class FactCreate(BaseModel):
     statement: str
@@ -53,7 +56,7 @@ def list_facts(
     classification: str | None = Query(default=None),
     status: str | None = Query(default=None),
     limit: int = Query(default=1000),
-    db=Depends(get_db),
+    db=_DB,
 ):
     facts = CanonStore(db).list_facts(
         work_id=work_id,
@@ -68,12 +71,12 @@ def list_facts(
 
 
 @router.get("/counts")
-def counts(db=Depends(get_db)):
+def counts(db=_DB):
     return {"counts": CanonStore(db).counts()}
 
 
 @router.get("/facts/{fact_id}")
-def get_fact(fact_id: str, db=Depends(get_db)):
+def get_fact(fact_id: str, db=_DB):
     fact = CanonStore(db).get_fact(fact_id)
     if not fact:
         raise HTTPException(404, f"Canon fact {fact_id!r} not found")
@@ -85,7 +88,7 @@ def fact_ripple(
     fact_id: str,
     work_id: str | None = Query(default=None),
     depth: int | None = Query(default=None, ge=1, le=6),
-    db=Depends(get_db),
+    db=_DB,
 ):
     """RIPPLE preview (E12): what changing/retracting this fact would cost.
 
@@ -113,7 +116,7 @@ def fact_ripple(
 
 
 @router.post("/facts")
-def create_fact(req: FactCreate, db=Depends(get_db)):
+def create_fact(req: FactCreate, db=_DB):
     try:
         fact = CanonStore(db).create_fact(
             statement=req.statement,
@@ -134,7 +137,7 @@ def create_fact(req: FactCreate, db=Depends(get_db)):
 
 
 @router.post("/facts/{fact_id}/retract")
-def retract_fact(fact_id: str, req: RetractBody, db=Depends(get_db)):
+def retract_fact(fact_id: str, req: RetractBody, db=_DB):
     try:
         result = CanonStore(db).retract_fact(fact_id, signed_by=req.signed_by, reason=req.reason)
     except CanonFactError as e:

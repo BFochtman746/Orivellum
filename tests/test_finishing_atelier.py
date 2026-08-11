@@ -90,6 +90,15 @@ class AtelierTests(unittest.TestCase):
             self.assertEqual(v["status"], "DRAFT")
             self.assertTrue(v["prompt"])
 
+        # Print-model completion is fail-closed: verify refuses until the
+        # geometry rests on RENDERED pages and the barcode has a real EAN-13.
+        vr = atelier.verify_design("the-ash-court")
+        self.assertFalse(vr["passed"])
+        self.assertFalse(vr["checks"]["pages_are_actual"])
+        self.assertFalse(vr["checks"]["isbn_ean13_valid"])
+
+        atelier.record_actual_pages("the-ash-court", 320, "press:test")
+        atelier.set_print_metadata("the-ash-court", isbn="9780306406157")
         vr = atelier.verify_design("the-ash-court")
         self.assertTrue(vr["passed"], vr["checks"])
 

@@ -53,9 +53,12 @@ def _default_archive() -> Path | None:
 # 500 MB bounds the damage of a runaway upload without blocking growth.
 _MAX_ARCHIVE_BYTES = 500 * 1024 * 1024
 
+# Module-level singleton so the route default doesn't call File() per definition (B008).
+_UPLOAD_FILE = File(...)
+
 
 @router.post("/upload")
-async def upload_archive(file: UploadFile = File(...)):
+async def upload_archive(file: UploadFile = _UPLOAD_FILE):
     """Streaming upload of a Writing Architect archive (.zip).
 
     Saves into ``attached_assets/`` (the only root ``/decompose`` accepts)

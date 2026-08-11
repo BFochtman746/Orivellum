@@ -2742,7 +2742,8 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             created_at            TEXT NOT NULL
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_nf_dedupe  ON narrative_finding(work_id, dedupe_key);
-        CREATE INDEX IF NOT EXISTS idx_nf_work           ON narrative_finding(work_id, disposition, severity);
+        CREATE INDEX IF NOT EXISTS idx_nf_work
+            ON narrative_finding(work_id, disposition, severity);
         CREATE INDEX IF NOT EXISTS idx_nf_chapter        ON narrative_finding(chapter_id);
     """,
     ),
@@ -2803,7 +2804,8 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             started_at     TEXT NOT NULL,
             finished_at    TEXT
         );
-        CREATE INDEX IF NOT EXISTS idx_assay_run_work ON assay_run(work_id, instrument_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_assay_run_work
+            ON assay_run(work_id, instrument_id, started_at);
         CREATE TABLE IF NOT EXISTS assay_finding (
             id             TEXT PRIMARY KEY,
             run_id         TEXT NOT NULL REFERENCES assay_run(id) ON DELETE CASCADE,

@@ -2973,8 +2973,7 @@ class OrivellumDB:
         atlas_nodes = [
             n
             for n in self.list_graph_nodes(work_ids=work_ids, limit=max(1, limit))
-            if n["id"] not in seen
-            and (allowed is None or n["node_type"].lower() in allowed)
+            if n["id"] not in seen and (allowed is None or n["node_type"].lower() in allowed)
         ]
         if atlas_nodes:
             # Reserve up to half the budget (min 10 slots) for ATLAS nodes so
@@ -3134,9 +3133,7 @@ class OrivellumDB:
 
             # ATLAS-O typed graph rows (fiction harvest writes here, not to
             # the legacy entities store) — merge before bounding.
-            self._merge_atlas_into(
-                nodes, candidate_edges, seen, limit, entity_kinds=entity_kinds
-            )
+            self._merge_atlas_into(nodes, candidate_edges, seen, limit, entity_kinds=entity_kinds)
 
             # Truncate nodes first, then build the edge set so no dangling edges
             bounded_nodes = nodes[:limit]
@@ -7306,9 +7303,7 @@ class OrivellumDB:
         whose extraction is not being redone.
         """
         with self._lock:
-            self._conn.execute(
-                "DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,)
-            )
+            self._conn.execute("DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,))
             self._conn.execute("DELETE FROM graph_edge WHERE chapter_id=?", (chapter_id,))
             self._conn.execute("DELETE FROM graph_node WHERE chapter_id=?", (chapter_id,))
             self._maybe_commit()
@@ -7316,9 +7311,7 @@ class OrivellumDB:
     def delete_graph_inconsistencies_for_chapter(self, chapter_id: str) -> None:
         """Drop the inconsistencies RAISED BY one chapter (before re-verify)."""
         with self._lock:
-            self._conn.execute(
-                "DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,)
-            )
+            self._conn.execute("DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,))
             self._maybe_commit()
 
     def create_graph_inconsistency(
@@ -7397,6 +7390,42 @@ class OrivellumDB:
 
     NF_DISPOSITIONS = ("open", "fixed", "intentional", "wontfix")
 
+    @staticmethod
+    def _validate_narrative_finding_inputs(
+        category: str,
+        subtype: str,
+        fact_quote: str,
+        contradiction_quote: str,
+        fact_offset: int,
+        contradiction_offset: int,
+        dedupe_key: str,
+        canon_class: str | None,
+    ) -> str:
+        """Validate the closed-schema inputs; returns the COMPUTED severity."""
+        from orivellum.capabilities.constory import (  # noqa: PLC0415
+            SUBTYPE_CATEGORY,
+            compute_severity,
+        )
+
+        if SUBTYPE_CATEGORY.get(subtype) != category or not category:
+            raise ValueError(
+                f"narrative finding subtype {subtype!r} is not in category {category!r} "
+                "(closed 19-subtype schema)"
+            )
+        severity = compute_severity(subtype, canon_class)  # raises on unknowns
+        for label, quote in (("fact", fact_quote), ("contradiction", contradiction_quote)):
+            if not quote or not quote.strip():
+                raise ValueError(f"narrative finding requires a {label} quote (LAW 3)")
+        for label, off in (
+            ("fact_offset", fact_offset),
+            ("contradiction_offset", contradiction_offset),
+        ):
+            if not isinstance(off, int) or off < 0:
+                raise ValueError(f"narrative finding requires a non-negative {label}")
+        if not dedupe_key:
+            raise ValueError("narrative finding requires a dedupe_key")
+        return severity
+
     def create_narrative_finding(
         self,
         *,
@@ -7429,28 +7458,16 @@ class OrivellumDB:
         already exists for this work (re-runs never resurrect dispositioned
         findings as fresh 'open' rows).
         """
-        from orivellum.capabilities.constory import (  # noqa: PLC0415
-            SUBTYPE_CATEGORY,
-            compute_severity,
+        severity = self._validate_narrative_finding_inputs(
+            category,
+            subtype,
+            fact_quote,
+            contradiction_quote,
+            fact_offset,
+            contradiction_offset,
+            dedupe_key,
+            canon_class,
         )
-
-        if SUBTYPE_CATEGORY.get(subtype) != category or not category:
-            raise ValueError(
-                f"narrative finding subtype {subtype!r} is not in category {category!r} "
-                "(closed 19-subtype schema)"
-            )
-        severity = compute_severity(subtype, canon_class)  # raises on unknowns
-        for label, quote in (("fact", fact_quote), ("contradiction", contradiction_quote)):
-            if not quote or not quote.strip():
-                raise ValueError(f"narrative finding requires a {label} quote (LAW 3)")
-        for label, off in (
-            ("fact_offset", fact_offset),
-            ("contradiction_offset", contradiction_offset),
-        ):
-            if not isinstance(off, int) or off < 0:
-                raise ValueError(f"narrative finding requires a non-negative {label}")
-        if not dedupe_key:
-            raise ValueError("narrative finding requires a dedupe_key")
         fid = _uuid()
         with self._lock:
             # LAW 3 at the storage boundary — verify both offsets against the
@@ -7474,8 +7491,7 @@ class OrivellumDB:
                 )
             if fact_chapter > 0:
                 grounded = any(
-                    ((r["text"] or "")[fact_offset : fact_offset + len(fact_quote)])
-                    == fact_quote
+                    ((r["text"] or "")[fact_offset : fact_offset + len(fact_quote)]) == fact_quote
                     for r in self._conn.execute(
                         "SELECT text FROM book_chapters WHERE work_id=? AND seq=?",
                         (work_id, fact_chapter),
@@ -7524,9 +7540,11 @@ class OrivellumDB:
             return fid if cur.rowcount else None
 
     def get_narrative_finding(self, finding_id: str) -> dict | None:
-        row = self.read_conn().execute(
-            "SELECT * FROM narrative_finding WHERE id=?", (finding_id,)
-        ).fetchone()
+        row = (
+            self.read_conn()
+            .execute("SELECT * FROM narrative_finding WHERE id=?", (finding_id,))
+            .fetchone()
+        )
         return dict(row) if row else None
 
     def list_narrative_findings(
@@ -7596,9 +7614,7 @@ class OrivellumDB:
                 return None
         return self.get_narrative_finding(finding_id)
 
-    def delete_open_narrative_findings(
-        self, work_id: str, *, detector: str = "constory"
-    ) -> int:
+    def delete_open_narrative_findings(self, work_id: str, *, detector: str = "constory") -> int:
         """Remove still-open findings before a re-run replaces them.
 
         Dispositioned findings (fixed/intentional/wontfix) are preserved —
@@ -7656,23 +7672,26 @@ class OrivellumDB:
         re-earn blocking authority, never keep it.
         """
         if "certification" in contract:
-            raise ValueError(
-                "registration cannot set certification — use set_assay_certification"
-            )
+            raise ValueError("registration cannot set certification — use set_assay_certification")
         shadow_of = contract.get("shadow_of")
         if shadow_of is not None and shadow_of == contract["key"]:
             raise ValueError("shadow_of cannot point at the instrument itself")
         now = _now()
         update_params = (
-            contract["name"], contract.get("purpose", ""),
-            int(contract["tier"]), contract["variance"],
+            contract["name"],
+            contract.get("purpose", ""),
+            int(contract["tier"]),
+            contract["variance"],
             json.dumps(contract.get("allowed_ops", [])),
             json.dumps(contract.get("forbidden_ops", [])),
             contract.get("authority_relationship", ""),
             json.dumps(contract.get("output_schema", {})),
             json.dumps(contract.get("scope", {})),
             json.dumps(contract.get("thresholds", {})),
-            contract.get("origin", ""), shadow_of, now, contract["key"],
+            contract.get("origin", ""),
+            shadow_of,
+            now,
+            contract["key"],
         )
         _UPDATE_SQL = """UPDATE assay_instrument SET name=?, purpose=?, tier=?,
             variance=?, allowed_ops=?, forbidden_ops=?, authority_relationship=?,
@@ -7707,8 +7726,7 @@ class OrivellumDB:
                 object_id=row["id"],
                 object_type="assay_instrument",
                 actor="system",
-                detail=f"{contract['key']}: certified -> shadow "
-                       "(contract changed on re-seed)",
+                detail=f"{contract['key']}: certified -> shadow (contract changed on re-seed)",
             ):
                 self._conn.execute(_UPDATE_SQL, update_params)
                 cur = self._conn.execute(
@@ -7723,8 +7741,13 @@ class OrivellumDB:
                            from_status, to_status, actor, precision_val, sample_size,
                            note, created_at) VALUES(?,?,?,?,?,?,?,?,?)""",
                         (
-                            str(uuid.uuid4()), row["id"], "certified", "shadow",
-                            "system", None, None,
+                            str(uuid.uuid4()),
+                            row["id"],
+                            "certified",
+                            "shadow",
+                            "system",
+                            None,
+                            None,
                             "authority-affecting contract change on re-seed — "
                             "must re-earn certification",
                             now,
@@ -7740,8 +7763,11 @@ class OrivellumDB:
                    created_at, updated_at)
                    VALUES(?,?,?,?,?,?,'advisory',?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    instrument_id, contract["key"], contract["name"],
-                    contract.get("purpose", ""), int(contract["tier"]),
+                    instrument_id,
+                    contract["key"],
+                    contract["name"],
+                    contract.get("purpose", ""),
+                    int(contract["tier"]),
                     contract["variance"],
                     json.dumps(contract.get("allowed_ops", [])),
                     json.dumps(contract.get("forbidden_ops", [])),
@@ -7749,7 +7775,10 @@ class OrivellumDB:
                     json.dumps(contract.get("output_schema", {})),
                     json.dumps(contract.get("scope", {})),
                     json.dumps(contract.get("thresholds", {})),
-                    contract.get("origin", ""), shadow_of, now, now,
+                    contract.get("origin", ""),
+                    shadow_of,
+                    now,
+                    now,
                 ),
             )
             self._conn.commit()
@@ -7764,6 +7793,38 @@ class OrivellumDB:
         "certified": frozenset({"shadow", "retired"}),
         "retired": frozenset({"shadow"}),
     }
+
+    def _assay_certification_evidence(self, fresh: dict) -> tuple[float, int]:
+        """Compute the EARNED precision evidence required to certify.
+
+        Aggregated over the complete disposition record inside the caller's
+        transaction, against the CURRENT contract's declared bar — never
+        trusted from the caller, never read from a stale snapshot.  Evidence
+        is scoped to the current shadow epoch: only findings produced
+        at/after this shadow entry count, so advisory-era or prior-contract
+        dispositions can never promote.  Returns (precision, sample_size).
+        """
+        if int(fresh["tier"]) == 3:
+            raise ValueError("Tier 3 instruments are advisory forever and cannot be certified")
+        epoch = fresh.get("shadow_epoch")
+        if not epoch:
+            raise ValueError(
+                "instrument has no shadow epoch — it must enter "
+                "shadow and be tested before certification"
+            )
+        bar = (fresh.get("thresholds") or {}).get("promotion") or {}
+        min_precision = float(bar.get("min_precision", ASSAY_DEFAULT_MIN_PRECISION))
+        min_dispositions = int(bar.get("min_dispositions", ASSAY_DEFAULT_MIN_DISPOSITIONS))
+        tp, fp = self._assay_disposition_counts(fresh["id"], since=epoch)
+        total = tp + fp
+        if total < min_dispositions:
+            raise ValueError(
+                f"insufficient dispositions to certify: {total} < {min_dispositions} required"
+            )
+        computed = round(tp / total, 4)
+        if computed < min_precision:
+            raise ValueError(f"precision {computed} below declared bar {min_precision}")
+        return computed, total
 
     def set_assay_certification(
         self,
@@ -7794,9 +7855,7 @@ class OrivellumDB:
         if to_status not in allowed:
             raise ValueError(f"illegal certification transition {frm!r} -> {to_status!r}")
         if to_status == "certified" and int(instrument["tier"]) == 3:
-            raise ValueError(
-                "Tier 3 instruments are advisory forever and cannot be certified"
-            )
+            raise ValueError("Tier 3 instruments are advisory forever and cannot be certified")
         now = _now()
         with self.governed_write(
             operation="assay.certification_changed",
@@ -7820,57 +7879,15 @@ class OrivellumDB:
                 raise ValueError(f"instrument {key!r} is not registered")
             fresh = self._assay_instrument_row(fresh_row)
             if fresh["certification"] != frm:
-                raise RuntimeError(
-                    f"certification of {key!r} changed concurrently — retry"
-                )
+                raise RuntimeError(f"certification of {key!r} changed concurrently — retry")
             if to_status not in self._ASSAY_CERT_TRANSITIONS.get(
                 fresh["certification"], frozenset()
             ):
                 raise ValueError(
-                    f"illegal certification transition "
-                    f"{fresh['certification']!r} -> {to_status!r}"
+                    f"illegal certification transition {fresh['certification']!r} -> {to_status!r}"
                 )
             if to_status == "certified":
-                if int(fresh["tier"]) == 3:
-                    raise ValueError(
-                        "Tier 3 instruments are advisory forever and "
-                        "cannot be certified"
-                    )
-                # Certification must be EARNED: the precision evidence is
-                # aggregated over the COMPLETE disposition record inside this
-                # same transaction as the status CAS, against the CURRENT
-                # contract's declared bar — never trusted from the caller,
-                # never read from a stale snapshot.  Evidence is scoped to
-                # the current shadow epoch: only findings produced at/after
-                # this shadow entry count, so advisory-era or prior-contract
-                # dispositions can never promote.
-                epoch = fresh.get("shadow_epoch")
-                if not epoch:
-                    raise ValueError(
-                        "instrument has no shadow epoch — it must enter "
-                        "shadow and be tested before certification"
-                    )
-                bar = (fresh.get("thresholds") or {}).get("promotion") or {}
-                min_precision = float(
-                    bar.get("min_precision", ASSAY_DEFAULT_MIN_PRECISION)
-                )
-                min_dispositions = int(
-                    bar.get("min_dispositions", ASSAY_DEFAULT_MIN_DISPOSITIONS)
-                )
-                tp, fp = self._assay_disposition_counts(fresh["id"], since=epoch)
-                total = tp + fp
-                if total < min_dispositions:
-                    raise ValueError(
-                        f"insufficient dispositions to certify: {total} < "
-                        f"{min_dispositions} required"
-                    )
-                computed = round(tp / total, 4)
-                if computed < min_precision:
-                    raise ValueError(
-                        f"precision {computed} below declared bar {min_precision}"
-                    )
-                precision = computed
-                sample_size = total
+                precision, sample_size = self._assay_certification_evidence(fresh)
             cur = self._conn.execute(
                 """UPDATE assay_instrument SET certification=?, updated_at=?,
                    shadow_epoch=CASE WHEN ?='shadow' THEN ? ELSE shadow_epoch END
@@ -7878,16 +7895,21 @@ class OrivellumDB:
                 (to_status, now, to_status, now, key, frm, fresh["updated_at"]),
             )
             if cur.rowcount != 1:
-                raise RuntimeError(
-                    f"certification of {key!r} changed concurrently — retry"
-                )
+                raise RuntimeError(f"certification of {key!r} changed concurrently — retry")
             self._conn.execute(
                 """INSERT INTO assay_certification_event(id, instrument_id, from_status,
                    to_status, actor, precision_val, sample_size, note, created_at)
                    VALUES(?,?,?,?,?,?,?,?,?)""",
                 (
-                    _uuid(), instrument["id"], frm, to_status, actor,
-                    precision, sample_size, note, now,
+                    _uuid(),
+                    instrument["id"],
+                    frm,
+                    to_status,
+                    actor,
+                    precision,
+                    sample_size,
+                    note,
+                    now,
                 ),
             )
         return self.get_assay_instrument(key)  # type: ignore[return-value]
@@ -7953,9 +7975,7 @@ class OrivellumDB:
                     (chapter_id, work_id),
                 ).fetchone()
                 if owned is None:
-                    raise ValueError(
-                        f"chapter {chapter_id!r} does not belong to work {work_id!r}"
-                    )
+                    raise ValueError(f"chapter {chapter_id!r} does not belong to work {work_id!r}")
             busy = self._conn.execute(
                 """SELECT id FROM assay_run
                    WHERE instrument_id=? AND work_id=? AND status='running'""",
@@ -7987,17 +8007,21 @@ class OrivellumDB:
                 """UPDATE assay_run SET status=?, verdict=?, score=?, evidence=?,
                    findings_count=?, error=?, finished_at=? WHERE id=?""",
                 (
-                    status, verdict, score, json.dumps(evidence or {}),
-                    findings_count, error, _now(), run_id,
+                    status,
+                    verdict,
+                    score,
+                    json.dumps(evidence or {}),
+                    findings_count,
+                    error,
+                    _now(),
+                    run_id,
                 ),
             )
             self._conn.commit()
 
     def get_assay_run(self, run_id: str) -> dict | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM assay_run WHERE id=?", (run_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM assay_run WHERE id=?", (run_id,)).fetchone()
         if row is None:
             return None
         d = dict(row)
@@ -8050,9 +8074,19 @@ class OrivellumDB:
                    classification, action, evidence, created_at)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    finding_id, run_id, instrument_id, work_id, chapter_id,
-                    unit, force_check, issue_type, severity, classification,
-                    action, json.dumps(evidence or {}), _now(),
+                    finding_id,
+                    run_id,
+                    instrument_id,
+                    work_id,
+                    chapter_id,
+                    unit,
+                    force_check,
+                    issue_type,
+                    severity,
+                    classification,
+                    action,
+                    json.dumps(evidence or {}),
+                    _now(),
                 ),
             )
             self._conn.commit()
@@ -8135,9 +8169,7 @@ class OrivellumDB:
         tp = int(row["tp"] or 0)
         return tp, total - tp
 
-    def count_assay_dispositions(
-        self, instrument_id: str, since: str | None = None
-    ) -> dict:
+    def count_assay_dispositions(self, instrument_id: str, since: str | None = None) -> dict:
         """Complete, uncapped TP/FP counts for one instrument — the same
         data definition the certification write path enforces against."""
         with self._lock:
@@ -8272,9 +8304,14 @@ class OrivellumDB:
                    claimed_stage=?, evidence=?, blocking=?, error=?,
                    finished_at=? WHERE id=?""",
                 (
-                    status, derived_stage, claimed_stage,
-                    json.dumps(evidence or {}), json.dumps(blocking or {}),
-                    error, _now(), audit_id,
+                    status,
+                    derived_stage,
+                    claimed_stage,
+                    json.dumps(evidence or {}),
+                    json.dumps(blocking or {}),
+                    error,
+                    _now(),
+                    audit_id,
                 ),
             )
             self._conn.commit()
@@ -8323,8 +8360,14 @@ class OrivellumDB:
                     status, created_at)
                    VALUES(?,?,?,?,?,?,?,'proposed',?)""",
                 (
-                    proposal_id, work_id, audit_id, kind, title,
-                    json.dumps(payload), json.dumps(evidence or {}), _now(),
+                    proposal_id,
+                    work_id,
+                    audit_id,
+                    kind,
+                    title,
+                    json.dumps(payload),
+                    json.dumps(evidence or {}),
+                    _now(),
                 ),
             )
             self._conn.commit()
@@ -8514,8 +8557,14 @@ class OrivellumDB:
             self._conn.commit()
 
     def create_chapter_revision(
-        self, chapter_id: str, work_id: str, text: str, meta: dict | None = None,
-        *, origin: str = "ai_generated", created_by: str = "loom",
+        self,
+        chapter_id: str,
+        work_id: str,
+        text: str,
+        meta: dict | None = None,
+        *,
+        origin: str = "ai_generated",
+        created_by: str = "loom",
         edit_scope: dict | None = None,
     ) -> dict:
         """Append a NEW revision row (rev = max+1, allocated under the lock).
@@ -8539,9 +8588,20 @@ class OrivellumDB:
                 """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
                    text, word_count, meta, created_at, parent_rev, origin,
                    created_by, edit_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (rid, chapter_id, work_id, rev, text, wc, json.dumps(meta or {}),
-                 _now(), head if head > 0 else None, origin, created_by,
-                 json.dumps(edit_scope) if edit_scope is not None else None),
+                (
+                    rid,
+                    chapter_id,
+                    work_id,
+                    rev,
+                    text,
+                    wc,
+                    json.dumps(meta or {}),
+                    _now(),
+                    head if head > 0 else None,
+                    origin,
+                    created_by,
+                    json.dumps(edit_scope) if edit_scope is not None else None,
+                ),
             )
             self._conn.commit()
         return {"id": rid, "rev": rev, "word_count": wc, "parent_rev": head or None}
@@ -8608,7 +8668,11 @@ class OrivellumDB:
         return run_id
 
     def finish_loom_run(
-        self, run_id: str, *, status: str, evidence: dict | None = None,
+        self,
+        run_id: str,
+        *,
+        status: str,
+        evidence: dict | None = None,
         error: str | None = None,
     ) -> None:
         if status not in ("done", "escalated", "error"):
@@ -8641,9 +8705,7 @@ class OrivellumDB:
 
     def get_loom_run(self, run_id: str) -> dict | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM loom_run WHERE id=?", (run_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM loom_run WHERE id=?", (run_id,)).fetchone()
         return self._loom_run_row(row) if row else None
 
     def list_loom_runs(self, work_id: str, limit: int = 50) -> list[dict]:
@@ -8655,8 +8717,13 @@ class OrivellumDB:
         return [self._loom_run_row(r) for r in rows]
 
     def record_provenance(
-        self, artifact_id: str, artifact_kind: str, *, origin: str,
-        llm_call_ids: list[int] | None = None, declared_by: str = "",
+        self,
+        artifact_id: str,
+        artifact_kind: str,
+        *,
+        origin: str,
+        llm_call_ids: list[int] | None = None,
+        declared_by: str = "",
     ) -> None:
         """Upsert a provenance row, MERGING llm_call_ids (the audit trail only
         ever grows).  Origin follows the KDP definition — tool-created content

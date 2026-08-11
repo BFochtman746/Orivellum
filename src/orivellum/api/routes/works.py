@@ -457,10 +457,12 @@ async def generate_quiz(work_id: str, count: int = 5):
     except HTTPException:
         raise
     except json.JSONDecodeError as exc:
-        raise HTTPException(502, f"AI returned invalid JSON: {exc}")
+        raise HTTPException(502, f"AI returned invalid JSON: {exc}") from exc
     except Exception as exc:
         logging.getLogger("orivellum").warning("Quiz generation failed: %s", exc)
-        raise HTTPException(503, "AI is unavailable. Start Lemonade or Ollama to generate quizzes.")
+        raise HTTPException(
+            503, "AI is unavailable. Start Lemonade or Ollama to generate quizzes."
+        ) from exc
 
 
 @router.get("/knowledge/ask")
@@ -659,7 +661,7 @@ def works_book_intelligence(work_id: str):
     try:
         return build_book_intelligence(work_id, db)
     except ValueError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
 
 
 # ── ConStory — story-contradiction findings ──────────────────────────────────
@@ -718,8 +720,7 @@ def narrative_finding_metrics(work_id: str):
         raise HTTPException(404, f"Work {work_id!r} not found")
     findings = db.list_narrative_findings(work_id, limit=2000)
     by = lambda key: {  # noqa: E731
-        v: sum(1 for f in findings if f[key] == v)
-        for v in sorted({f[key] for f in findings})
+        v: sum(1 for f in findings if f[key] == v) for v in sorted({f[key] for f in findings})
     }
     return {
         **compute_ced(db, work_id),
@@ -761,10 +762,14 @@ def list_narrative_findings(
 
         store = SeriesStore(db)
         marks = ",".join("?" for _ in fact_ids)
-        rows = db.read_conn().execute(
-            f"SELECT id, work_id, series_id FROM canon_fact WHERE id IN ({marks})",
-            list(fact_ids),
-        ).fetchall()
+        rows = (
+            db.read_conn()
+            .execute(
+                f"SELECT id, work_id, series_id FROM canon_fact WHERE id IN ({marks})",
+                list(fact_ids),
+            )
+            .fetchall()
+        )
         fact_scope = {r["id"]: dict(r) for r in rows}
         titles: dict[str, str] = {}
         own_membership = store.series_for_work(work_id)
@@ -804,9 +809,7 @@ class FindingDisposition(BaseModel):
 
 
 @router.patch("/works/{work_id}/findings/{finding_id}")
-def set_narrative_finding_disposition(
-    work_id: str, finding_id: str, body: FindingDisposition
-):
+def set_narrative_finding_disposition(work_id: str, finding_id: str, body: FindingDisposition):
     """Disposition a finding: open (reopen) / fixed / intentional / wontfix.
 
     'intentional' REQUIRES a note — delayed revelation and unreliable
@@ -822,7 +825,7 @@ def set_narrative_finding_disposition(
             finding_id, body.disposition, note=body.note, actor="user"
         )
     except ValueError as exc:
-        raise HTTPException(422, str(exc))
+        raise HTTPException(422, str(exc)) from exc
     if updated is None:
         raise HTTPException(404, f"Finding {finding_id!r} not found")
     return {"finding": updated}
@@ -1025,7 +1028,8 @@ def works_ripple(work_id: str, req: RippleRequest):
         raise HTTPException(404, f"Work {work_id!r} not found")
     try:
         return simulate_ripple(
-            db, work_id,
+            db,
+            work_id,
             node_id=req.node_id,
             canon_fact_id=req.canon_fact_id,
             name=req.name,
@@ -1614,7 +1618,7 @@ def advance_pipeline(work_id: str):
             detail=f"Manual advance: {current}→{next_state}",
         )
     except InvalidTransitionError as exc:
-        raise HTTPException(422, str(exc))
+        raise HTTPException(422, str(exc)) from exc
     except BlockedTransitionError as exc:
         # Flat JSON so frontend can read body.detail (string) + body.blockers (list)
         return JSONResponse(
@@ -1623,7 +1627,7 @@ def advance_pipeline(work_id: str):
         )
     except TransitionConflictError as exc:
         # Someone else advanced the pipeline between our read and write.
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
 
     return {"pipeline": db.get_book_pipeline_for_work(work_id)}
 
@@ -1783,7 +1787,7 @@ async def run_brainstorm(
         )
     except Exception as exc:
         db.update_brainstorm_session(session_id, status="failed", ideas=[])
-        raise HTTPException(502, f"Brainstorm failed: {exc}")
+        raise HTTPException(502, f"Brainstorm failed: {exc}") from exc
 
     return db.get_brainstorm_session(session_id)
 

@@ -875,6 +875,28 @@ def create_app() -> FastAPI:
 _MIN_SECRET_LEN = 32  # Hard minimum for a cryptographically acceptable key
 
 
+def _read_persisted_secret(secret_file: Path) -> str | None:
+    """Read a previously persisted session secret; None when absent/unusable."""
+    try:
+        existing = secret_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        logger.warning("Could not read session secret file %s: %s", secret_file, e)
+        return None
+    if len(existing) >= _MIN_SECRET_LEN:
+        logger.info("Session secret loaded from %s", secret_file)
+        return existing
+    if existing:
+        logger.warning(
+            "Session secret in %s is too short (%d chars; minimum %d) — generating a new one.",
+            secret_file,
+            len(existing),
+            _MIN_SECRET_LEN,
+        )
+    return None
+
+
 def _init_session_secret() -> str:
     """Return the session-signing secret for ``SessionMiddleware``.
 
@@ -919,23 +941,9 @@ def _init_session_secret() -> str:
         logger.warning("Could not load config to locate session secret file: %s", e)
 
     if secret_file is not None:
-        try:
-            existing = secret_file.read_text(encoding="utf-8").strip()
-            if len(existing) >= _MIN_SECRET_LEN:
-                logger.info("Session secret loaded from %s", secret_file)
-                return existing
-            if existing:
-                logger.warning(
-                    "Session secret in %s is too short (%d chars; minimum %d) — "
-                    "generating a new one.",
-                    secret_file,
-                    len(existing),
-                    _MIN_SECRET_LEN,
-                )
-        except FileNotFoundError:
-            pass
-        except OSError as e:
-            logger.warning("Could not read session secret file %s: %s", secret_file, e)
+        existing = _read_persisted_secret(secret_file)
+        if existing is not None:
+            return existing
 
     generated = secrets.token_hex(24)  # 48 hex chars — well above the 32-char minimum
 

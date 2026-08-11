@@ -70,7 +70,6 @@
   "C901": 1
  },
  "src/orivellum/api/routes/finishing.py": {
-  "B904": 26,
   "RET504": 1
  },
  "src/orivellum/api/routes/forge.py": {
@@ -140,7 +139,6 @@
  },
  "src/orivellum/api/routes/works.py": {
   "B008": 3,
-  "B904": 6,
   "C901": 3,
   "E501": 7,
   "RET504": 2,
@@ -422,9 +420,9 @@
  },
  "src/orivellum/database/db.py": {
   "C901": 3,
-  "E501": 23,
+  "E501": 22,
   "RET504": 3,
-  "SIM105": 7
+  "SIM105": 4
  },
  "src/orivellum/database/mail_store.py": {
   "E501": 2
