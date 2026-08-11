@@ -125,6 +125,97 @@ class TestProveWorkbook(unittest.TestCase):
             self.assertEqual(res2["verdict"], "proven")
             self.assertEqual(_sha(p), after_promotion)
 
+    def test_formula_ceiling_returns_unverified_not_stall(self):
+        """A workbook above the formula ceiling must be reported honestly as
+        'unverified' without ever entering the engine — the build claim is
+        held for milliseconds, not minutes."""
+        import os
+
+        from orivellum.capabilities.workbench_proof import prove_outputs, prove_workbook
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "big.xlsx"
+            _good_workbook(p)  # 2 formula cells
+            before = _sha(p)
+            with patch.dict(os.environ, {"ORIVELLUM_PROOF_FORMULA_CEILING": "1"}):
+                res = prove_workbook(p)
+                self.assertEqual(res["verdict"], "unverified")
+                self.assertIn("too large to prove", res["error"])
+                self.assertEqual(res["limits"]["formula_ceiling"], 1)
+                self.assertGreater(res["formula_cells"], 1)
+                self.assertIn("elapsed_seconds", res)
+                self.assertEqual(_sha(p), before)  # never touched
+
+                agg = prove_outputs(Path(tmp), [p], promote=True)
+                self.assertEqual(agg["verdict"], "unverified")
+                self.assertNotIn("manifest_sha256", agg)
+            # ceiling lifted → same file proves normally, limits recorded
+            res = prove_workbook(p)
+            self.assertEqual(res["verdict"], "proven")
+            self.assertGreaterEqual(res["limits"]["formula_ceiling"], 1000)
+
+    def test_sparse_huge_dimension_counts_fast(self):
+        """A formula at row one million must not make the preflight crawl a
+        million empty coordinates — the counter streams serialized cells
+        only. Regression for the reviewer-flagged stall vector."""
+        import time as _time
+
+        from openpyxl import Workbook as WB
+
+        from orivellum.capabilities.workbench_proof import _count_formula_cells
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "sparse.xlsx"
+            wb = WB()
+            ws = wb.active
+            ws["A1"] = 1
+            ws["A1000000"] = "=A1+1"  # dimension now spans a million rows
+            wb.save(p)
+            t0 = _time.monotonic()
+            self.assertEqual(_count_formula_cells(p, 100), 1)
+            self.assertLess(_time.monotonic() - t0, 5.0)
+
+    def test_scan_budget_fails_closed_as_unverified(self):
+        """Exhausting the XML scan budget must report 'too large' (over the
+        limit), never hang or silently pass."""
+        from orivellum.capabilities import workbench_proof
+        from orivellum.capabilities.workbench_proof import _count_formula_cells
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "book.xlsx"
+            _good_workbook(p)
+            with patch.object(workbench_proof, "_COUNT_XML_BUDGET", 10):
+                self.assertEqual(_count_formula_cells(p, 50), 51)
+                res = workbench_proof.prove_workbook(p)
+            self.assertEqual(res["verdict"], "unverified")
+            self.assertIn("too large to prove", res["error"])
+
+    def test_proof_duration_scales_sanely(self):
+        """Benchmark note (this container): ~400 formulas ≈ 1.2 s, ~2,000 ≈
+        5 s, ~6,000 ≈ 18 s — roughly linear, so the default 20,000-cell
+        ceiling caps a proof at about a minute or two. This test proves a
+        ~2,000-formula chained workbook end-to-end under a generous bound."""
+        from openpyxl import Workbook as WB
+
+        from orivellum.capabilities.workbench_proof import prove_workbook
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "big.xlsx"
+            wb = WB()
+            ws = wb.active
+            ws.title = "Data"
+            ws["A1"] = 1
+            for r in range(1, 1001):
+                ws.cell(row=r, column=2, value=f"=$A$1+{r}")
+                if r > 1:
+                    ws.cell(row=r, column=3, value=f"=B{r - 1}+{r}")
+            wb.save(p)
+
+            res = prove_workbook(p)
+            self.assertEqual(res["verdict"], "proven", res)
+            self.assertEqual(res["recalc"]["formulas_checked"], 1999)
+            self.assertLess(res["elapsed_seconds"], 90)
+
     def test_missing_harness_is_unverified_never_proven(self):
         from orivellum.capabilities import workbench_proof
 
@@ -627,6 +718,29 @@ class TestRegressionManifest(unittest.TestCase):
             code = db.create_wb_project("Tool", "code", "t")
             with self.assertRaises(ValueError):
                 verify_latest(db, cfg, code["id"])
+
+    def test_manifest_rerun_respects_formula_ceiling(self):
+        import os
+
+        from orivellum.capabilities.workbench_proof import prove_workbook, run_saved_manifest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            _good_workbook(out / "model.xlsx")
+            # promote so cached values are real — a saved manifest only ever
+            # certifies gated bytes
+            self.assertEqual(prove_workbook(out / "model.xlsx")["verdict"], "proven")
+            doc = {
+                "format": 1,
+                "workbooks": {
+                    "model.xlsx": {"cases": [{"sheet": "DATA", "cell": "A3", "expected": 42}]}
+                },
+            }
+            with patch.dict(os.environ, {"ORIVELLUM_PROOF_FORMULA_CEILING": "1"}):
+                res = run_saved_manifest(out, doc)
+            self.assertEqual(res["status"], "UNAVAILABLE")
+            self.assertIn("ceiling", res["workbooks"]["model.xlsx"]["error"])
+            self.assertEqual(run_saved_manifest(out, doc)["status"], "PASS")
 
     def test_verify_route(self):
         with tempfile.TemporaryDirectory() as tmp:

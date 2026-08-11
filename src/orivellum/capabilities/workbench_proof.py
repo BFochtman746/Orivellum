@@ -32,6 +32,7 @@ import os
 import pathlib
 import re
 import sys
+import time
 import zipfile
 from collections import defaultdict
 from typing import Any
@@ -39,6 +40,73 @@ from typing import Any
 logger = logging.getLogger("orivellum.workbench.proof")
 
 MANIFEST_FILENAME = "workbook_tests.json"
+
+# The proof recalculates every formula with the pure-Python `formulas` engine
+# — twice (repair plan + candidate gates). Measured on this hardware:
+# ~400 formulas ≈ 1.2 s, ~2,000 ≈ 5 s, ~6,000 ≈ 18 s (roughly linear), so the
+# default ceiling of 20,000 caps a proof run at about a minute or two.
+# Workbooks above it are honestly reported as `unverified` instead of holding
+# the build claim hostage for the duration.
+DEFAULT_FORMULA_CEILING = 20_000
+
+
+def _formula_ceiling() -> int:
+    try:
+        return max(1, int(os.environ.get("ORIVELLUM_PROOF_FORMULA_CEILING", "")))
+    except ValueError:
+        return DEFAULT_FORMULA_CEILING
+
+
+# Worksheet XML the preflight will stream before declaring a workbook too
+# large to prove — a 20,000-formula sheet is a few MB, so 64 MB is generous.
+_COUNT_XML_BUDGET = 64 * 1024 * 1024
+
+
+def _count_formula_tokens(buf: bytes) -> int:
+    # every formula cell serializes exactly one <f> element (plain, with
+    # attributes, or self-closed shared-formula follower); literal '<' inside
+    # cell text is always XML-escaped, so these tokens cannot occur in data
+    return buf.count(b"<f>") + buf.count(b"<f ") + buf.count(b"<f/")
+
+
+def _count_formula_cells(path: pathlib.Path, limit: int) -> int:
+    """Formula cells in the workbook, stopping at ``limit + 1``.
+
+    Streams the worksheet XML directly instead of iterating coordinates —
+    an inflated ``<dimension>`` or a sparse sheet with formulas at row one
+    million serializes only its real cells, so the scan is bounded by actual
+    file content, never by declared grid size. FAIL CLOSED: exhausting the
+    XML scan budget returns ``limit + 1`` (too large to prove safely), never
+    a stall. Returns 0 on unreadable files (the engine reports those
+    honestly itself)."""
+    n = 0
+    scanned = 0
+    try:
+        with zipfile.ZipFile(path) as z:
+            for name in z.namelist():
+                if not _SHEET_XML.match(name):
+                    continue
+                with z.open(name) as fh:
+                    carry = b""
+                    while True:
+                        chunk = fh.read(1 << 16)
+                        if not chunk:
+                            break
+                        scanned += len(chunk)
+                        if scanned > _COUNT_XML_BUDGET:
+                            return limit + 1
+                        # 2-byte carry so a token split across chunks is seen;
+                        # tokens are 3 bytes, so the carry alone never matches
+                        # and nothing is double-counted
+                        n += _count_formula_tokens(carry + chunk)
+                        if n > limit:
+                            return n
+                        carry = chunk[-2:]
+    except Exception:  # noqa: BLE001
+        logger.debug("Formula count failed for %s", path, exc_info=True)
+        return 0
+    return n
+
 
 GATE_NAMES = (
     "G1_recalc_covers_all",
@@ -127,10 +195,35 @@ def prove_workbook(path: pathlib.Path, promote: bool = True) -> dict[str, Any]:
     verdict is honest about WHICH bytes passed: ``proven`` only when no
     repairs were needed (candidate == original); ``provable`` when the gates
     pass only after repairs the file itself never received.
+
+    Every result carries ``limits`` (the formula ceiling in force) and
+    ``elapsed_seconds``. A workbook above the ceiling is never recalculated —
+    it returns ``unverified`` with a clear reason instead of stalling the
+    build pipeline for minutes.
     """
+    started = time.monotonic()
+    result = _prove_workbook_inner(path, promote)
+    result["limits"] = {"formula_ceiling": _formula_ceiling()}
+    result["elapsed_seconds"] = round(time.monotonic() - started, 2)
+    return result
+
+
+def _prove_workbook_inner(path: pathlib.Path, promote: bool) -> dict[str, Any]:
     engine, surgery = _load_runner_modules()
     if engine is None or surgery is None:
         return _unverified("proving harness unavailable (orivellum-runner not found)")
+
+    ceiling = _formula_ceiling()
+    n = _count_formula_cells(path, ceiling)
+    if n > ceiling:
+        res = _unverified(
+            f"workbook too large to prove safely: over {ceiling} formula cells "
+            "or worksheet XML beyond the scan budget (raise "
+            "ORIVELLUM_PROOF_FORMULA_CEILING to override); proving skipped so "
+            "the build pipeline is never stalled"
+        )
+        res["formula_cells"] = n
+        return res
 
     recalc = engine.recalculate(path)
     if not recalc["available"]:
@@ -426,6 +519,18 @@ def run_saved_manifest(files_dir: pathlib.Path, doc: dict) -> dict[str, Any]:
             results[rel] = {
                 "status": "FAIL",
                 "error": "workbook missing from this version",
+                "passed": 0,
+                "failed": [],
+                "total": len(manifest.get("cases") or []),
+            }
+            continue
+        ceiling = _formula_ceiling()
+        if _count_formula_cells(target, ceiling) > ceiling:
+            # same guard as proving — a re-run recalculates too, and honesty
+            # beats a stalled request: report UNAVAILABLE, never a pass
+            results[rel] = {
+                "status": "UNAVAILABLE",
+                "error": f"workbook exceeds the {ceiling}-formula proving ceiling",
                 "passed": 0,
                 "failed": [],
                 "total": len(manifest.get("cases") or []),
