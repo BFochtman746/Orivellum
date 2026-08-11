@@ -31,6 +31,27 @@ versions; execute generated tests for code versions.
   versions (history append-only).
 - UI badge says "Checks passed", not "Verified" — review flagged overstating.
 
+## Portfolio layer (Aug 2026)
+- Projects carry a `meta` JSON blob (needs assessment + close-out record); the
+  raw blob must never leak through the API — routes expose it structured via
+  a rundown endpoint and strip it from project payloads.
+- Status lifecycle: active | shelved (put away, read-only, reactivatable) |
+  archived (= completed, permanent). Reactivate is the only mutation allowed
+  on shelved (plus delete); completing runs archive FIRST, then close-out —
+  only a project that actually archived gets lessons written.
+- Health score is deterministic-only (verdicts, findings, last_error,
+  staleness) so it's safe to compute on every list request; no LLM.
+- Close-out lessons become knowledge items (kind 'lesson', review_status
+  'ai_auto', work_id=None); an offline model must NEVER block completion —
+  the close-out then records the deterministic stats summary only.
+- Any sync LLM route that writes project state must hold the build claim for
+  the whole model call (claim → llm → write → release in finally); checking
+  status up front is not enough — the 90 s call is a race window.
+- All untrusted project text going into prompts is JSON-encoded as one block;
+  hand-rolled delimiters (<<< >>>) are forgeable by content and were rejected
+  in review. Model JSON is validated per-field with isinstance (non-list
+  lists, non-string strings → clean 503, nothing stored).
+
 ## Where things live
 - capability: src/orivellum/capabilities/workbench.py; routes: /api/workbench
   (routes/workbench.py, registered in api/app.py `_route_modules`)
