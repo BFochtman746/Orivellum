@@ -188,6 +188,11 @@ def start_operation(body: StartOperationRequest):
         params=params,
     )
     if not start_operation_run(db, get_config(), op_id):
+        # Never leave the row pending — a lingering pending op would block
+        # automation-run admission (the scheduler treats pending as live).
+        store.fail_pending_operation(
+            db, op_id, "The operation could not start — the server was too busy."
+        )
         raise HTTPException(503, "The server is too busy to start the operation — try again.")
     return {"operation_id": op_id, "state": "running"}
 
@@ -278,6 +283,21 @@ def delete_automation_schedule(schedule_id: str):
     if not scheduler.delete_schedule(get_db(), schedule_id):
         raise HTTPException(404, "Schedule not found")
     return {"ok": True}
+
+
+@router.post("/schedules/{schedule_id}/run")
+def run_automation_now(schedule_id: str):
+    """Start one manual run of an automation right now.
+
+    Same durable runner and schedule link as a scheduled run (so it shows in
+    run history); respects the quiet-resource rule and never double-starts.
+    """
+    from orivellum.capabilities.operations import scheduler
+
+    result = scheduler.run_schedule_now(get_db(), get_config(), schedule_id)
+    if not result["ok"]:
+        raise HTTPException(result["code"], result["reason"])
+    return {"operation_id": result["operation_id"], "state": "running"}
 
 
 @router.get("/schedules/{schedule_id}/runs")

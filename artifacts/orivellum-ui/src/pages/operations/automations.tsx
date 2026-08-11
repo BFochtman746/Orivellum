@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import {
   AlarmClock, Plus, Trash2, ChevronDown, ChevronRight, Loader2, XCircle,
-  CheckCircle2, CircleDashed,
+  CheckCircle2, CircleDashed, Play,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
@@ -245,6 +245,28 @@ function ScheduleRow({ schedule }: { schedule: Schedule }) {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const runNow = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/operations/schedules/${schedule.id}/run`, {
+        method: "POST",
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => null);
+        throw new Error(
+          typeof err?.detail === "string" ? err.detail : "Could not start the run"
+        );
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      toast.success("Running now — check the run history below.");
+      qc.invalidateQueries({ queryKey: ["operations", "schedules"] });
+      qc.invalidateQueries({ queryKey: ["operations", "schedules", schedule.id, "runs"] });
+      qc.invalidateQueries({ queryKey: ["operations"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <Card className={schedule.enabled ? "" : "opacity-60"}>
       <CardContent className="p-3">
@@ -281,6 +303,22 @@ function ScheduleRow({ schedule }: { schedule: Schedule }) {
               {schedule.last_run_at ? ` · last: ${fmtLocal(schedule.last_run_at)}` : ""}
             </p>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px] gap-1 px-2 text-muted-foreground"
+            disabled={runNow.isPending || schedule.playbook_missing}
+            onClick={() => runNow.mutate()}
+            title="Start one run of this automation right now"
+            data-testid={`button-automation-run-now-${schedule.id}`}
+          >
+            {runNow.isPending ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Play className="w-3 h-3" />
+            )}
+            Run now
+          </Button>
           <Switch
             checked={schedule.enabled}
             onCheckedChange={(v) => toggle.mutate(v)}

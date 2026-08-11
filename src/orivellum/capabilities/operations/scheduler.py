@@ -398,6 +398,32 @@ def _claim_occurrence(db: OrivellumDB, sched: dict, now: datetime) -> bool:
     return cur.rowcount == 1
 
 
+def _unclaim_occurrence(db: OrivellumDB, sched: dict, now: datetime) -> None:
+    """Give a claimed occurrence back after a refused admission.
+
+    CAS-fenced on the exact next_run_at that _claim_occurrence wrote (it is a
+    pure function of the schedule and *now*), so a user edit or a later claim
+    in between is never overwritten. The restored due time makes the schedule
+    fire again on the next free tick — the occurrence is deferred, not lost.
+    """
+    claimed_next = compute_next_run(
+        sched["cadence"], sched["time_of_day"], sched["day_of_week"], now
+    ).isoformat()
+    with db._lock:
+        db._conn.execute(
+            "UPDATE playbook_schedules SET last_run_at=?, next_run_at=? "
+            "WHERE id=? AND next_run_at=? AND last_run_at=?",
+            (
+                sched["last_run_at"],
+                sched["next_run_at"],
+                sched["id"],
+                claimed_next,
+                now.isoformat(),
+            ),
+        )
+        db._conn.commit()
+
+
 def _fail_op(db: OrivellumDB, op_id: str, error: str) -> None:
     """CAS a pending op to failed so it lands in run history and alerts."""
     with db._lock:
@@ -426,19 +452,32 @@ def _dispatch(
     params: dict = {}
     if sched["work_id"]:
         params["work_id"] = sched["work_id"]
-    op_id = store.create_operation(
-        db,
-        title=sched["title"] or (pb["title"] if pb else sched["playbook_id"]),
-        steps=pb["steps"] if pb and not problems else [],
-        work_id=sched["work_id"],
-        playbook_id=sched["playbook_id"],
-        params=params,
-        schedule_id=sched["id"],
-    )
     if problems:
+        # Broken automations still leave a failed history row and alert once —
+        # they never run, so they bypass admission.
+        op_id = store.create_operation(
+            db,
+            title=sched["title"] or (pb["title"] if pb else sched["playbook_id"]),
+            steps=[],
+            work_id=sched["work_id"],
+            playbook_id=sched["playbook_id"],
+            params=params,
+            schedule_id=sched["id"],
+        )
         _fail_op(db, op_id, f"Automation can't run: {problems[0][:300]}")
         result["failed_dispatch"].append(sched["id"])
         result["alerted"] += 1 if _claim_and_alert(db, store.get_operation(db, op_id)) else 0
+        return
+
+    op_id, refused = _admit_and_create(
+        db, sched, pb["steps"], sched["title"] or pb["title"], params
+    )
+    if op_id is None:
+        # A manual "Run now" (or another run) won admission after our busy
+        # check — give the occurrence back so it fires next free tick.
+        _unclaim_occurrence(db, sched, now)
+        result["skipped_busy"].append(sched["id"])
+        logger.info("Scheduler: automation %s deferred — %s", sched["id"], refused)
         return
 
     from orivellum.capabilities.operations.runner import start_operation_run
@@ -452,6 +491,120 @@ def _dispatch(
         _fail_op(db, op_id, "The scheduled run could not start — the server was too busy.")
         result["failed_dispatch"].append(sched["id"])
         result["alerted"] += 1 if _claim_and_alert(db, store.get_operation(db, op_id)) else 0
+
+
+# ── Atomic admission ─────────────────────────────────────────────────────────
+
+
+def _admit_and_create(
+    db: OrivellumDB,
+    sched: dict,
+    steps: list[dict],
+    title: str,
+    params: dict,
+) -> tuple[str | None, str | None]:
+    """Atomically admit ONE schedule-linked run and create its operation row.
+
+    The admission check and the INSERT happen under the single DB lock, so a
+    manual "Run now" and a scheduler tick can never both create a live run —
+    whichever gets the lock first wins, the other is refused. The gate:
+
+    - any RUNNING operation blocks (quiet resource rule), and
+    - any PENDING operation blocks too — schedule-linked or ordinary — because
+      pending means "created, about to be claimed by the runner"; treating it
+      as live closes the create→start gap for every start path. Rejected
+      submissions CAS their pending row to failed (store.fail_pending_operation
+      / _fail_op), so a pending row can never linger and wedge admission.
+
+    Returns (op_id, None) on admission or (None, reason) on refusal.
+    """
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT schedule_id FROM operations WHERE state IN ('running','pending') LIMIT 1"
+        ).fetchone()
+        if row is not None:
+            reason = (
+                "This automation is already running."
+                if row["schedule_id"] == sched["id"]
+                else "an operation is already running"
+            )
+            return None, reason
+        op_id = store.create_operation(
+            db,
+            title=title,
+            steps=steps,
+            work_id=sched["work_id"],
+            playbook_id=sched["playbook_id"],
+            params=params,
+            schedule_id=sched["id"],
+        )
+    return op_id, None
+
+
+# ── Run now ──────────────────────────────────────────────────────────────────
+
+
+def run_schedule_now(db: OrivellumDB, cfg: OrivellumConfig | None, schedule_id: str) -> dict:
+    """Start one manual run of a schedule immediately.
+
+    Same durable runner, same schedule_id link (so it lands in the automation's
+    run history), same quiet-resource rule as the tick. Does NOT touch
+    next_run_at — the regular occurrence still fires on time. Works on paused
+    schedules too (that's exactly when you want to test one).
+
+    Returns {"ok": True, "operation_id": ...} or
+    {"ok": False, "code": 404|409|422|503, "reason": "<user-facing message>"}.
+    """
+    sched = get_schedule(db, schedule_id)
+    if sched is None:
+        return {"ok": False, "code": 404, "reason": "Automation not found."}
+
+    # The studio render probe can't join the admission transaction (it's a
+    # hook call) — it guards a long-lived condition, so a plain check is fine.
+    busy = system_busy(db)
+    if busy:
+        return {
+            "ok": False,
+            "code": 409,
+            "reason": f"Can't start right now — {busy}. Try again when it finishes.",
+        }
+
+    pb = get_playbook(sched["playbook_id"], db)
+    problems = (
+        ["This automation's playbook no longer exists."]
+        if pb is None
+        else validate_steps(pb["steps"], get_op_registry())
+    )
+    if problems:
+        return {"ok": False, "code": 422, "reason": f"Automation can't run: {problems[0][:300]}"}
+
+    params: dict = {}
+    if sched["work_id"]:
+        params["work_id"] = sched["work_id"]
+    op_id, refused = _admit_and_create(
+        db, sched, pb["steps"], sched["title"] or pb["title"], params
+    )
+    if op_id is None:
+        reason = refused or "an operation is already running"
+        if reason.endswith("."):
+            return {"ok": False, "code": 409, "reason": reason}
+        return {
+            "ok": False,
+            "code": 409,
+            "reason": f"Can't start right now — {reason}. Try again when it finishes.",
+        }
+
+    from orivellum.capabilities.operations.runner import start_operation_run
+
+    if not start_operation_run(db, cfg, op_id):
+        _fail_op(db, op_id, "The manual run could not start — the server was too busy.")
+        return {
+            "ok": False,
+            "code": 503,
+            "reason": "The server is too busy to start the run — try again.",
+        }
+    logger.info("Manual run of automation %s → operation %s", schedule_id, op_id)
+    return {"ok": True, "operation_id": op_id}
 
 
 # ── Daemon ───────────────────────────────────────────────────────────────────

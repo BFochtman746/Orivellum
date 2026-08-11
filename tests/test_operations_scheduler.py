@@ -289,6 +289,157 @@ def test_disable_between_read_and_claim_blocks_dispatch(db, quiet):
     assert scheduler._claim_occurrence(db, fresh, datetime(2026, 8, 13, 2, 0, 30)) is False
 
 
+def test_run_now_starts_through_runner_with_schedule_link(db, quiet):
+    sched = _make_schedule(db)
+    result = scheduler.run_schedule_now(db, None, sched["id"])
+    assert result["ok"] is True
+    assert quiet["started"] == [result["operation_id"]]
+    op = store.get_operation(db, result["operation_id"])
+    assert op["schedule_id"] == sched["id"]
+    # Manual runs never touch the regular occurrence.
+    after = scheduler.get_schedule(db, sched["id"])
+    assert after["next_run_at"] == sched["next_run_at"]
+    # It lands in the automation's run history.
+    runs = scheduler.list_schedule_runs(db, sched["id"])
+    assert [r["id"] for r in runs] == [result["operation_id"]]
+
+
+def test_run_now_works_on_a_paused_schedule(db, quiet):
+    sched = _make_schedule(db)
+    scheduler.update_schedule(db, sched["id"], enabled=False)
+    result = scheduler.run_schedule_now(db, None, sched["id"])
+    assert result["ok"] is True
+
+
+def test_run_now_refuses_when_busy(db, quiet):
+    sched = _make_schedule(db)
+    store.create_operation(db, title="Busy", steps=[])
+    with db._lock:
+        db._conn.execute("UPDATE operations SET state='running'")
+        db._conn.commit()
+    result = scheduler.run_schedule_now(db, None, sched["id"])
+    assert result["ok"] is False
+    assert result["code"] == 409
+    assert "already running" in result["reason"]
+    assert quiet["started"] == []
+
+
+def test_run_now_refuses_a_pending_run_of_the_same_schedule(db, quiet):
+    sched = _make_schedule(db)
+    store.create_operation(db, title="Pending", steps=[], schedule_id=sched["id"])
+    result = scheduler.run_schedule_now(db, None, sched["id"])
+    assert result["ok"] is False
+    assert result["code"] == 409
+    assert "already running" in result["reason"]
+    assert quiet["started"] == []
+
+
+def test_run_now_refuses_an_ordinary_pending_operation(db, quiet):
+    """The create→start gap of the manual /start endpoint: its op sits in
+    'pending' for a moment before the runner claims it. Admission treats any
+    pending op as live, so Run now refuses instead of double-starting."""
+    sched = _make_schedule(db)
+    store.create_operation(db, title="Manual builder op", steps=[])  # no schedule_id
+    result = scheduler.run_schedule_now(db, None, sched["id"])
+    assert result["ok"] is False
+    assert result["code"] == 409
+    assert quiet["started"] == []
+    # And the failed-submission path releases the block (never wedged forever).
+    ops = store.list_operations(db)
+    assert store.fail_pending_operation(db, ops[0]["id"], "server busy") is True
+    assert scheduler.run_schedule_now(db, None, sched["id"])["ok"] is True
+
+
+def test_run_now_refuses_a_pending_run_of_another_schedule(db, quiet):
+    """Quiet rule is global: a schedule-linked run that's about to start
+    blocks other manual runs too."""
+    sched_a = _make_schedule(db)
+    sched_b = _make_schedule(db, time_of_day="03:00")
+    store.create_operation(db, title="Pending", steps=[], schedule_id=sched_a["id"])
+    result = scheduler.run_schedule_now(db, None, sched_b["id"])
+    assert result["ok"] is False
+    assert result["code"] == 409
+    assert quiet["started"] == []
+
+
+def test_run_now_unknown_schedule_and_deleted_playbook(db, quiet):
+    assert scheduler.run_schedule_now(db, None, "sched_nope")["code"] == 404
+
+    sched = _make_schedule(db)
+    with db._lock:
+        db._conn.execute("DELETE FROM custom_playbooks")
+        db._conn.commit()
+    result = scheduler.run_schedule_now(db, None, sched["id"])
+    assert result["ok"] is False
+    assert result["code"] == 422
+    assert quiet["started"] == []
+
+
+def test_run_now_rejected_executor_fails_the_op(db, quiet, monkeypatch):
+    sched = _make_schedule(db)
+    monkeypatch.setattr(
+        "orivellum.capabilities.operations.runner.start_operation_run",
+        lambda db, cfg, op_id: False,
+    )
+    result = scheduler.run_schedule_now(db, None, sched["id"])
+    assert result["ok"] is False
+    assert result["code"] == 503
+    # The created op is failed, not left pending forever.
+    runs = scheduler.list_schedule_runs(db, sched["id"])
+    assert runs and runs[0]["state"] == "failed"
+
+
+def test_run_now_concurrent_requests_have_a_single_winner(db, quiet):
+    """Truly concurrent Run-now clicks: admission+create share one DB lock,
+    so exactly one request wins no matter the interleaving."""
+    import threading
+
+    sched = _make_schedule(db)
+    barrier = threading.Barrier(2)
+    results: list[dict] = []
+
+    def _go() -> None:
+        barrier.wait()
+        results.append(scheduler.run_schedule_now(db, None, sched["id"]))
+
+    threads = [threading.Thread(target=_go) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert sorted(r["ok"] for r in results) == [False, True]
+    assert len(quiet["started"]) == 1  # exactly one run reached the runner
+    loser = next(r for r in results if not r["ok"])
+    assert loser["code"] == 409
+
+
+def test_tick_defers_when_a_manual_run_won_admission(db, quiet):
+    """A manual run admitted between the tick's busy check and its dispatch
+    must not double-start — and the occurrence is deferred, not lost."""
+    sched = _make_schedule(db)
+    due = scheduler.get_schedule(db, sched["id"])
+
+    # Manual run wins admission first (its op is pending — runner mocked).
+    manual = scheduler.run_schedule_now(db, None, sched["id"])
+    assert manual["ok"] is True
+    with db._lock:  # keep it live-but-not-running: admission must still block
+        db._conn.execute(
+            "UPDATE operations SET state='pending' WHERE id=?", (manual["operation_id"],)
+        )
+        db._conn.commit()
+
+    result = scheduler.tick(db, None, now=datetime.fromisoformat(due["next_run_at"]))
+    assert result["started"] == []
+    assert sched["id"] in result["skipped_busy"]
+    # Occurrence given back: still due at the original time.
+    after = scheduler.get_schedule(db, sched["id"])
+    assert after["next_run_at"] == due["next_run_at"]
+    # Exactly one operation exists for this schedule — the manual one.
+    runs = scheduler.list_schedule_runs(db, sched["id"])
+    assert [r["id"] for r in runs] == [manual["operation_id"]]
+
+
 def test_alert_claim_and_inbox_row_are_transactional(db, quiet):
     """The alert flag and the review-inbox row commit together."""
     sched = _make_schedule(db)

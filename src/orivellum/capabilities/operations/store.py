@@ -86,6 +86,23 @@ def create_operation(
 # ── Read ───────────────────────────────────────────────────────────────────────
 
 
+def fail_pending_operation(db: OrivellumDB, op_id: str, error: str) -> bool:
+    """CAS a pending operation to failed after a rejected submission.
+
+    Every path that creates a pending op and then fails to hand it to the
+    runner MUST call this — a lingering pending row would block schedule-run
+    admission (the scheduler treats pending as live) forever.
+    """
+    with db._lock:
+        cur = db._conn.execute(
+            "UPDATE operations SET state='failed', error=?, updated_at=? "
+            "WHERE id=? AND state='pending'",
+            (error, _now(), op_id),
+        )
+        db._conn.commit()
+    return cur.rowcount == 1
+
+
 def get_operation(db: OrivellumDB, op_id: str) -> dict | None:
     with db._lock:
         row = db._conn.execute("SELECT * FROM operations WHERE id=?", (op_id,)).fetchone()
