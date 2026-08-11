@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -455,8 +456,11 @@ JSON only: {{"selected": [indices of the actions you used], "prose": "the full c
 
 
 def _propose_actions(db, cfg, ctx, *, drafter, critic, llm_ids) -> tuple[list[dict], list[str]]:
-    """One agent per cast member; the critic gates every proposal (never
-    skipped).  Returns (accepted proposals, stalled character names)."""
+    """One agent per cast member; the critic gates every syntactically valid
+    proposal (never skipped for a real action).  Malformed agent output is
+    not an action — it consumes one of the bounded attempts and is sent back
+    for retry without reaching the critic.  Returns (accepted proposals,
+    stalled character names)."""
     accepted, stalled = [], []
     for name in ctx["cast"]:
         feedback = ""
@@ -624,20 +628,40 @@ def _escalate(db, work_id, chapter, description) -> str:
 
 
 def _store_draft(db, work_id, chapter, prose, meta) -> dict:
-    """New revision always; book_chapters.text only while NOT approved —
-    re-checked atomically at write time, not just at entry."""
+    """ONE transaction: re-check the approval claim, insert the revision,
+    update the chapter text.  If the chapter was approved since entry,
+    NOTHING is persisted — approved chapters are never overwritten, not even
+    with a side revision."""
     from orivellum.database.db import _now
 
-    revision = db.create_chapter_revision(chapter["id"], work_id, prose, meta)
+    rid = str(uuid.uuid4())
+    wc = len(prose.split())
+    now = _now()
     with db._lock:
-        cur = db._conn.execute(
-            """UPDATE book_chapters SET text=?, updated_at=?
-               WHERE id=? AND status!='approved'""",
-            (prose, _now(), chapter["id"]),
+        row = db._conn.execute(
+            "SELECT status FROM book_chapters WHERE id=?", (chapter["id"],)
+        ).fetchone()
+        if row is None or str(row["status"]) == "approved":
+            db._conn.rollback()
+            raise LoomError(
+                f"chapter seq {chapter.get('seq')} was approved mid-run — "
+                "approved chapters are never overwritten; draft discarded"
+            )
+        rev = int(db._conn.execute(
+            "SELECT COALESCE(MAX(rev), 0) AS m FROM loom_chapter_revision WHERE chapter_id=?",
+            (chapter["id"],),
+        ).fetchone()["m"]) + 1
+        db._conn.execute(
+            """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
+               text, word_count, meta, created_at) VALUES(?,?,?,?,?,?,?,?)""",
+            (rid, chapter["id"], work_id, rev, prose, wc, json.dumps(meta), now),
+        )
+        db._conn.execute(
+            "UPDATE book_chapters SET text=?, updated_at=? WHERE id=?",
+            (prose, now, chapter["id"]),
         )
         db._conn.commit()
-    revision["chapter_text_updated"] = cur.rowcount > 0
-    return revision
+    return {"id": rid, "rev": rev, "word_count": wc, "chapter_text_updated": True}
 
 
 def _run(db: OrivellumDB, cfg: OrivellumConfig, *, work_id: str, chapter_id: str) -> dict:
@@ -650,9 +674,13 @@ def _run(db: OrivellumDB, cfg: OrivellumConfig, *, work_id: str, chapter_id: str
         )
     seq = int(chapter["seq"])
     # Resume mid-book: condition on the TRUE state of 1..N, replayed from the
-    # graph, whenever the state table has nothing for this work.
+    # graph, whenever the state table has nothing for this work OR carries
+    # entries from this chapter's seq or later (re-drafting an earlier
+    # chapter must never see its own — or the future's — state).
     replay = None
-    if seq > 1 and not db.get_world_state(work_id):
+    state = db.get_world_state(work_id)
+    polluted = any(v["source_chapter_seq"] >= seq for v in state.values())
+    if (seq > 1 and not state) or polluted:
         replay = replay_world_state(db, work_id, upto_seq=seq)
     ctx = assemble_context(db, cfg, work_id=work_id, chapter=chapter)
 
@@ -692,18 +720,21 @@ def _run(db: OrivellumDB, cfg: OrivellumConfig, *, work_id: str, chapter_id: str
         db, cfg, ctx, logprobs, work_id=work_id, chapter=chapter,
         critic=critic, llm_ids=llm_ids)
 
+    # Store first (atomic approval re-check inside — raises without writing
+    # anything if the chapter was approved mid-run), THEN commit world state:
+    # a refused draft must leave the world untouched.
+    evidence["revision"] = _store_draft(db, work_id, chapter, prose, {
+        "beat": ctx["contract"].get("beat"),
+        "selected_actions": evidence["selected_actions"],
+        "word_count": wc, "entropy": evidence["entropy"], "beat_check": beat,
+    })
+
     # Commit: ONLY the selected actions' world updates (overwrite semantics).
     updates: dict[str, str] = {}
     for a in selected:
         updates.update({str(k): str(v) for k, v in a["world_updates"].items()})
     db.commit_world_state(work_id, updates, source_chapter_seq=seq)
     evidence["world_updates"] = updates
-
-    evidence["revision"] = _store_draft(db, work_id, chapter, prose, {
-        "beat": ctx["contract"].get("beat"),
-        "selected_actions": evidence["selected_actions"],
-        "word_count": wc, "entropy": evidence["entropy"], "beat_check": beat,
-    })
     call_ids = [i for i in llm_ids if i is not None]
     evidence["llm_call_ids"] = call_ids
     for artifact_id, kind in (
@@ -736,10 +767,18 @@ def _narrate(db, cfg, ctx, accepted, *, drafter, llm_ids) -> tuple[str, list[dic
     if not prose:
         raise LoomError("narrator returned no prose (malformed response)")
     sel = (out or {}).get("selected")
+    if not isinstance(sel, list):
+        raise LoomError(
+            "narrator selection missing or malformed — refusing to default "
+            "to all actions (only SELECTED actions may commit world updates)"
+        )
     selected_idx = sorted({
-        int(i) for i in (sel if isinstance(sel, list) else [])
-        if isinstance(i, (int, float)) and 0 <= int(i) < len(accepted)
-    }) or list(range(len(accepted)))
+        int(i) for i in sel
+        if isinstance(i, (int, float)) and not isinstance(i, bool)
+        and 0 <= int(i) < len(accepted)
+    })
+    if not selected_idx:
+        raise LoomError("narrator selected no valid actions — nothing to commit")
     return prose, [accepted[i] for i in selected_idx], n.logprobs
 
 

@@ -293,6 +293,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # never block startup on recovery
         logger.warning("Stale-trailer recovery failed: %s", e)
 
+    # Step 5a.1b: Release LOOM run claims orphaned by the restart — a row
+    # stuck 'running' would block every future draft for that work.
+    try:
+        stale_loom = db.recover_orphaned_loom_runs()
+        if stale_loom:
+            logger.info("Released %d orphaned LOOM run claim(s) as error", stale_loom)
+    except Exception as e:  # never block startup on recovery
+        logger.warning("LOOM run recovery failed: %s", e)
+
     # Step 5a.2: Recover operations orphaned by the restart. Any run still
     # 'running' lost its thread — flip it to 'paused' (in-flight step back to
     # 'pending') so the UI offers Resume instead of an eternal spinner.

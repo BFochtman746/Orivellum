@@ -8267,6 +8267,19 @@ class OrivellumDB:
         d["evidence"] = json.loads(d["evidence"] or "{}")
         return d
 
+    def recover_orphaned_loom_runs(self) -> int:
+        """Flip 'running' rows lost to a restart to 'error' so the claim is
+        released — never an eternal running row blocking new drafts."""
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE loom_run SET status='error',
+                   error='interrupted by restart', finished_at=?
+                   WHERE status='running'""",
+                (_now(),),
+            )
+            self._conn.commit()
+        return cur.rowcount
+
     def get_loom_run(self, run_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(

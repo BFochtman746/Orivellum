@@ -99,7 +99,10 @@ class StubLLM:
             prose = (f"PROSE-{self.narr} "
                      + "the caravan rolled east through the wet grey fields "
                      * max(1, self.prose_words // 8)).strip()
-            return ok({"selected": self.narrator_selected, "prose": prose},
+            selected = self.narrator_selected
+            if selected is None:  # default: select every offered action
+                selected = [int(i) for i in re.findall(r"^\[(\d+)\]", user, re.M)]
+            return ok({"selected": selected, "prose": prose},
                       logprobs=self.narrator_logprobs)
         if purpose == "loom.critic.beat":
             return ok({"accomplishes_beat": self.beat_ok, "premature_reveal": False,
@@ -341,6 +344,37 @@ class TestRefusals(LoomBase):
         self.assertIsInstance(result, loom.LoomError)
         self.assertIn("Ghost", str(result))
 
+    def test_malformed_narrator_selection_never_defaults_to_all(self):
+        cid = self._seed_chapter(1)
+        run_id, result, _ = self._draft(cid, StubLLM(narrator_selected="bogus"))
+        self.assertIsInstance(result, loom.LoomError)
+        self.assertIn("selection missing or malformed", str(result))
+        self.assertEqual(self.db.get_loom_run(run_id)["status"], "error")
+        self.assertEqual(self.db.list_chapter_revisions(cid), [])
+        self.assertEqual(self.db.get_world_state(self.work_id), {})
+
+    def test_empty_narrator_selection_refused(self):
+        cid = self._seed_chapter(1)
+        _run_id, result, _ = self._draft(cid, StubLLM(narrator_selected=[]))
+        self.assertIsInstance(result, loom.LoomError)
+        self.assertIn("no valid actions", str(result))
+        self.assertEqual(self.db.get_world_state(self.work_id), {})
+
+    def test_approval_mid_run_discards_everything(self):
+        cid = self._seed_chapter(1, text="the sacred text")
+        chapter = loom._get_chapter(self.db, self.work_id, cid)
+        with self.db._lock:  # approve AFTER the entry check would have passed
+            self.db._conn.execute(
+                "UPDATE book_chapters SET status='approved' WHERE id=?", (cid,))
+            self.db._conn.commit()
+        with self.assertRaises(loom.LoomError):
+            loom._store_draft(self.db, self.work_id, chapter, "new prose", {})
+        self.assertEqual(self.db.list_chapter_revisions(cid), [])
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT text FROM book_chapters WHERE id=?", (cid,)).fetchone()
+        self.assertEqual(row["text"], "the sacred text")
+
     def test_gateway_failure_finishes_run_as_error(self):
         cid = self._seed_chapter(1)
         run_id, result, _ = self._draft(
@@ -463,6 +497,17 @@ class TestWorldState(LoomBase):
         self.assertEqual(result["evidence"]["replay"]["folded_nodes"], 1)
         self.assertIn("wounded at the gate", stub.prompts("loom.agent.action")[0])
 
+    def test_polluted_future_state_forces_replay(self):
+        # Re-drafting chapter 1 after later chapters committed state: the
+        # draft must never see its own or the future's state.
+        cid = self._seed_chapter(1)
+        self.db.commit_world_state(self.work_id, {"Character:Mara": "FUTURE"},
+                                   source_chapter_seq=5)
+        _run_id, result, stub = self._draft(cid)
+        self.assertNotIsInstance(result, Exception)
+        self.assertIsNotNone(result["evidence"]["replay"])
+        self.assertNotIn("FUTURE", stub.prompts("loom.agent.action")[0])
+
 
 # ── Run claim + persona gate ──────────────────────────────────────────────────
 
@@ -475,6 +520,15 @@ class TestRunClaimAndPersonaGate(LoomBase):
             self.db.create_loom_run(self.work_id, cid)
         self.db.finish_loom_run(run_id, status="error", error="test")
         self.db.create_loom_run(self.work_id, cid)  # claim released
+
+    def test_restart_recovery_releases_orphaned_claims(self):
+        cid = self._seed_chapter(1)
+        run_id = self.db.create_loom_run(self.work_id, cid)
+        self.assertEqual(self.db.recover_orphaned_loom_runs(), 1)
+        run = self.db.get_loom_run(run_id)
+        self.assertEqual(run["status"], "error")
+        self.assertIn("interrupted by restart", run["error"])
+        self.db.create_loom_run(self.work_id, cid)  # claim usable again
 
     def test_persona_resolution_is_an_atomic_claim_with_signature(self):
         pid = self.db.create_loom_persona(self.work_id, "Vex", {})
