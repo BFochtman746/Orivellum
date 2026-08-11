@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -424,10 +424,13 @@ def assess_needs(project_id: str):
 
 
 @router.post("/projects/{project_id}/complete")
-def complete_project(project_id: str):
+def complete_project(project_id: str, force: bool = Body(False, embed=True)):
     """Complete a project: close-out analysis (summary + lessons fed into
     the knowledge base), then archive every version. The close-out never
-    blocks completion — with the model offline it records stats only."""
+    blocks completion — with the model offline it records stats only.
+
+    xlsx projects whose latest version is not fully proven (six gates) are
+    refused with 409/code=unproven; pass ``force=true`` to archive anyway."""
     db, cfg = get_db(), get_config()
     proj = _get_or_404(db, project_id)
     _require_active(proj)
@@ -436,13 +439,16 @@ def complete_project(project_id: str):
     if not db.claim_wb_build(project_id):
         raise HTTPException(409, "wait for the running build to finish first")
     try:
-        from orivellum.capabilities.workbench import archive_project
+        from orivellum.capabilities.workbench import UnprovenError, archive_project
         from orivellum.capabilities.workbench_portfolio import run_closeout
 
-        # Archive first (it can refuse on a hash mismatch); only a project
-        # that actually archived gets a close-out and knowledge lessons.
-        path = archive_project(db, cfg, project_id)
+        # Archive first (it can refuse on a hash mismatch or an unproven
+        # latest version); only a project that actually archived gets a
+        # close-out and knowledge lessons.
+        path = archive_project(db, cfg, project_id, allow_unproven=force)
         closeout = run_closeout(db, cfg, project_id)
+    except UnprovenError as exc:
+        raise HTTPException(409, {"code": "unproven", "message": str(exc)}) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

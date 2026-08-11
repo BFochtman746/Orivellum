@@ -263,7 +263,16 @@ def _run_build_script(script: str, workdir: pathlib.Path, cfg, db, request: str)
 # ── Verification ──────────────────────────────────────────────────────────────
 
 
-def _verify_output(kind: str, out_dir: pathlib.Path) -> tuple[bool, dict]:
+def _verify_output(kind: str, out_dir: pathlib.Path, prove: bool = False) -> tuple[bool, dict]:
+    """Structural verification, plus (for xlsx) the six-gate proof harness.
+
+    ``prove=True`` runs every workbook through the Orivellum Runner gate
+    suite (recalculation, value match, error scan, OOXML order, containment,
+    clean load) and — when all gates pass — atomically promotes the repaired
+    file, so cached values are real numbers, not blanks. Builds prove;
+    imports don't (an imported v1 stays verbatim), but they may be proven
+    without promotion by the caller.
+    """
     files = [p for p in out_dir.rglob("*") if p.is_file()]
     checks: dict[str, Any] = {"file_count": len(files)}
     if not files:
@@ -296,6 +305,16 @@ def _verify_output(kind: str, out_dir: pathlib.Path) -> tuple[bool, dict]:
                         f"{rel} fails to load ({'values' if data_only else 'formulas'}): {exc}"
                     )
                     break
+        if prove and workbooks and not problems:
+            from orivellum.capabilities.workbench_proof import prove_outputs
+
+            proof = prove_outputs(out_dir, workbooks)
+            checks["proof"] = proof
+            if proof["verdict"] == "failed":
+                for rel, r in proof["workbooks"].items():
+                    if r["verdict"] == "failed":
+                        why = "; ".join(r.get("problems") or ["gates failed"])[:300]
+                        problems.append(f"{rel} failed proof: {why}")
     else:
         for p in files:
             rel = str(p.relative_to(out_dir))
@@ -311,6 +330,43 @@ def _verify_output(kind: str, out_dir: pathlib.Path) -> tuple[bool, dict]:
                     problems.append(f"{rel}: invalid JSON: {exc}")
     checks["problems"] = problems
     return not problems, checks
+
+
+def _proof_verdict(checks: dict | None) -> str:
+    """Version verdict from a checks dict: 'proven' / 'unverified' when the
+    six-gate harness ran, plain 'verified' otherwise (non-xlsx kinds)."""
+    proof = (checks or {}).get("proof")
+    if not proof:
+        return "verified"
+    return {"proven": "proven", "unverified": "unverified"}.get(proof["verdict"], "verified")
+
+
+class UnprovenError(ValueError):
+    """Raised when archiving is refused because the latest version is not
+    fully proven. Callers may retry with allow_unproven=True after an
+    explicit user confirmation."""
+
+
+def latest_proof_status(proj: dict, versions: list[dict]) -> tuple[str, str]:
+    """(status, detail) for the LATEST version of an xlsx project.
+
+    status: 'proven' | 'failed' | 'unverified' | 'unproven' | 'n/a'
+    """
+    if proj["kind"] != "xlsx" or not versions:
+        return "n/a", ""
+    latest = versions[-1]
+    checks = json.loads(latest["checks_json"] or "{}")
+    proof = checks.get("proof")
+    if not proof:
+        return "unproven", (f"v{latest['version_no']} was never run through the proof gates")
+    if proof["verdict"] == "proven":
+        return "proven", ""
+    detail = "; ".join(
+        f"{name}: {'; '.join((r.get('problems') or ['gates failed'])[:2])}"
+        for name, r in proof.get("workbooks", {}).items()
+        if r["verdict"] != "proven"
+    )[:400]
+    return proof["verdict"], detail or proof.get("error", "")
 
 
 # ── Main entry points ─────────────────────────────────────────────────────────
@@ -368,7 +424,7 @@ def run_build(db, cfg, project_id: str, instruction: str) -> None:
             if not run["ok"]:
                 raise RuntimeError(run["error"])
 
-            ok, checks = _verify_output(proj["kind"], out)
+            ok, checks = _verify_output(proj["kind"], out, prove=True)
             if not ok:
                 raise RuntimeError(
                     "verification failed: "
@@ -378,9 +434,21 @@ def run_build(db, cfg, project_id: str, instruction: str) -> None:
             # Accept: publish files FIRST (staging dir + atomic rename), and
             # only then commit the version row — a crash can leave an unused
             # staging dir behind, but never a version row without files.
+            # Snapshot AFTER proving: promoted (cache-repaired) workbooks
+            # must be the ones whose hashes the version records.
             files = _snapshot(out)
             note = (run.get("stdout") or "").strip()[:500]
-            row = _publish_version(db, cfg, project_id, out, instruction, files, checks, note)
+            row = _publish_version(
+                db,
+                cfg,
+                project_id,
+                out,
+                instruction,
+                files,
+                checks,
+                note,
+                verdict=_proof_verdict(checks),
+            )
         logger.info("Workbench %s built v%d", project_id, row["version_no"])
     except Exception as exc:  # noqa: BLE001
         # Surfaced to the user on the project row — never swallowed.
@@ -558,14 +626,22 @@ def import_upload(
             if err:
                 raise ValueError(f"{staged.name}: {err}")
         resolved_kind = kind if kind in KINDS else _detect_kind(names)
-        _ok, checks = _verify_output(resolved_kind, stage)
+        _ok, raw_checks = _verify_output(resolved_kind, stage)
         checks = {
             "imported": True,
             "source_filename": filename,
             "source_sha256": _sha256(upload_path),
-            "import_warnings": checks.get("problems") or [],
-            **({"error": checks["error"]} if checks.get("error") else {}),
+            "import_warnings": raw_checks.get("problems") or [],
+            **({"error": raw_checks["error"]} if raw_checks.get("error") else {}),
         }
+        if resolved_kind == "xlsx" and not raw_checks.get("error"):
+            # Record the six-gate proof result WITHOUT promotion: an imported
+            # v1 stays byte-for-byte verbatim, but its proof status is known.
+            from orivellum.capabilities.workbench_proof import prove_outputs
+
+            workbooks = [p for p in sorted(stage.rglob("*.xlsx")) if p.is_file()]
+            if workbooks:
+                checks["proof"] = prove_outputs(stage, workbooks, promote=False)
         if checks.get("error"):
             # Structural limits (count/bytes) are enforced even for imports.
             raise ValueError(checks["error"])
@@ -635,14 +711,32 @@ def revert_to(db, cfg, project_id: str, version_no: int) -> dict:
     )
 
 
-def archive_project(db, cfg, project_id: str) -> str:
-    """Zip every version + a hash manifest; mark the project archived."""
+def archive_project(db, cfg, project_id: str, allow_unproven: bool = False) -> str:
+    """Zip every version + a hash manifest; mark the project archived.
+
+    For xlsx projects the latest version must be fully proven (all six
+    gates) unless the caller explicitly passes ``allow_unproven=True`` —
+    an archive should mean "recalculated and certified", not "loaded once".
+    """
     proj = db.get_wb_project(project_id)
     if not proj:
         raise FileNotFoundError("project not found")
     versions = db.list_wb_versions(project_id)
     if not versions:
         raise ValueError("nothing to archive — the project has no versions")
+
+    status, detail = latest_proof_status(proj, versions)
+    if status not in ("proven", "n/a") and not allow_unproven:
+        why = {
+            "failed": "the latest version FAILED the proof gates",
+            "unverified": "the latest version could not be recalculated",
+            "unproven": "the latest version was never proven",
+        }[status]
+        raise UnprovenError(
+            f"refusing to archive: {why}"
+            + (f" ({detail})" if detail else "")
+            + ". Complete anyway to archive unproven."
+        )
 
     archives_dir(cfg).mkdir(parents=True, exist_ok=True)
     safe_title = (

@@ -26,6 +26,14 @@ import { HealthBadge, type WbHealth, type WbProject } from "./index";
 const API = `${import.meta.env.BASE_URL}api/workbench`.replace(/\/+/g, "/").replace(/\/$/, "");
 
 type WbFile = { name: string; size: number; sha256: string };
+type WbProofFile = {
+  verdict: "proven" | "failed" | "unverified";
+  gates: Record<string, boolean>;
+  problems?: string[];
+  error?: string;
+  recalc?: { formulas_checked: number; agreed: number };
+};
+type WbProof = { verdict: "proven" | "failed" | "unverified"; workbooks: Record<string, WbProofFile> };
 type WbVersion = {
   id: string;
   version_no: number;
@@ -57,6 +65,53 @@ const PRIORITY_STYLE: Record<WbNeed["priority"], string> = {
   later: "text-muted-foreground border-border",
 };
 
+const GATE_LABELS: [string, string][] = [
+  ["G1_recalc_covers_all", "Recalc"],
+  ["G2_values_match", "Values"],
+  ["G3_no_error_cells", "No errors"],
+  ["G4_ooxml_order", "Structure"],
+  ["G5_surgery_contained", "Contained"],
+  ["G6_loads_clean", "Loads"],
+];
+
+function ProofGates({ proof }: { proof: WbProof }) {
+  return (
+    <div className="mt-2 space-y-1.5" data-testid="wb-proof-gates">
+      {Object.entries(proof.workbooks).map(([name, r]) => (
+        <div key={name} className="flex items-center gap-1.5 flex-wrap text-[10px]">
+          {Object.keys(proof.workbooks).length > 1 && (
+            <span className="font-mono text-muted-foreground truncate max-w-[10rem]">{name}</span>
+          )}
+          {r.verdict === "unverified" ? (
+            <span className="text-amber-700">
+              Could not be recalculated{r.error ? ` — ${r.error}` : ""}
+            </span>
+          ) : (
+            GATE_LABELS.map(([key, label]) => (
+              <span
+                key={key}
+                title={key}
+                className={`px-1.5 py-0.5 rounded border font-medium ${
+                  r.gates[key]
+                    ? "text-emerald-700 border-emerald-300"
+                    : "text-red-700 border-red-300"
+                }`}
+              >
+                {r.gates[key] ? "✓" : "✕"} {label}
+              </span>
+            ))
+          )}
+          {r.recalc && r.verdict === "proven" && (
+            <span className="text-muted-foreground">
+              {r.recalc.formulas_checked} formula{r.recalc.formulas_checked === 1 ? "" : "s"} recalculated
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function fmtBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -86,6 +141,7 @@ export default function WorkbenchDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmShelve, setConfirmShelve] = useState(false);
   const [reportVersion, setReportVersion] = useState<number | null>(null);
+  const [confirmForce, setConfirmForce] = useState<string | null>(null);
 
   const { data: proj, isLoading } = useQuery<WbDetail>({
     queryKey: ["wb-project", projectId],
@@ -183,17 +239,33 @@ export default function WorkbenchDetail() {
   });
 
   const complete = useMutation({
-    mutationFn: () =>
-      apiFetch(`${API}/projects/${projectId}/complete`, { method: "POST" })
-        .then(async r => { if (!r.ok) throw new Error((await r.json()).detail ?? "failed"); return r.json(); }),
+    mutationFn: (force: boolean) =>
+      apiFetch(`${API}/projects/${projectId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      }).then(async r => {
+        if (!r.ok) {
+          const detail = (await r.json()).detail;
+          if (r.status === 409 && detail?.code === "unproven") {
+            throw Object.assign(new Error(String(detail.message ?? "not proven")), { unproven: true });
+          }
+          throw new Error(typeof detail === "string" ? detail : "failed");
+        }
+        return r.json();
+      }),
     onSuccess: (res: { closeout?: { lessons?: unknown[] } }) => {
+      setConfirmForce(null);
       const n = res.closeout?.lessons?.length ?? 0;
       toast.success(n > 0
         ? `Project completed — close-out written, ${n} lesson${n === 1 ? "" : "s"} added to your knowledge`
         : "Project completed — close-out written and all versions archived");
       invalidate();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => {
+      if ((e as Error & { unproven?: boolean }).unproven) setConfirmForce(e.message);
+      else toast.error(e.message);
+    },
   });
 
   const remove = useMutation({
@@ -479,9 +551,19 @@ export default function WorkbenchDetail() {
               <Badge variant={v.version_no === latest?.version_no ? "default" : "outline"}>
                 v{v.version_no}
               </Badge>
+              {v.verdict === "proven" && (
+                <Badge variant="outline" className="gap-1 text-emerald-700 border-emerald-300">
+                  <CheckCircle2 className="h-3 w-3" /> Proven
+                </Badge>
+              )}
               {v.verdict === "verified" && (
                 <Badge variant="outline" className="gap-1 text-emerald-700 border-emerald-300">
                   <CheckCircle2 className="h-3 w-3" /> Checks passed
+                </Badge>
+              )}
+              {v.verdict === "unverified" && (
+                <Badge variant="outline" className="gap-1 text-amber-700 border-amber-300">
+                  <AlertCircle className="h-3 w-3" /> Unverified
                 </Badge>
               )}
               {v.verdict === "imported" && (
@@ -500,6 +582,9 @@ export default function WorkbenchDetail() {
             </div>
             <p className="text-sm mt-2">{v.instruction}</p>
             {v.note && <p className="text-xs text-muted-foreground mt-1">{v.note}</p>}
+            {!!(v.checks as { proof?: WbProof })?.proof && (
+              <ProofGates proof={(v.checks as { proof: WbProof }).proof} />
+            )}
             <div className="mt-3 space-y-1">
               {v.files.map(f => (
                 <div key={f.name} className="text-xs text-muted-foreground flex items-center gap-2">
@@ -576,8 +661,26 @@ export default function WorkbenchDetail() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => complete.mutate()} data-testid="button-wb-confirm-complete">
+            <AlertDialogAction onClick={() => complete.mutate(false)} data-testid="button-wb-confirm-complete">
               Complete project
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmForce !== null} onOpenChange={(o) => { if (!o) setConfirmForce(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive without full proof?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmForce} The archive will record the workbook as-is instead of a fully
+              recalculated, certified one.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => complete.mutate(true)} data-testid="button-wb-confirm-force-complete">
+              Archive anyway
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

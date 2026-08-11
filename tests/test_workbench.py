@@ -178,7 +178,10 @@ class TestRunBuild(unittest.TestCase):
             versions = db.list_wb_versions(p["id"])
             self.assertEqual(len(versions), 1)
             v = versions[0]
-            self.assertEqual(v["verdict"], "verified")
+            # xlsx builds now run the six-gate proof harness and promote
+            self.assertEqual(v["verdict"], "proven")
+            checks = json.loads(v["checks_json"])
+            self.assertEqual(checks["proof"]["verdict"], "proven")
             files = json.loads(v["files_json"])
             self.assertEqual(files[0]["name"], "budget.xlsx")
             self.assertEqual(len(files[0]["sha256"]), 64)
@@ -362,7 +365,16 @@ class TestWorkbenchRoutes(unittest.TestCase):
             self.assertEqual(r.status_code, 200)
             self.assertEqual(r.headers["content-type"], "application/zip")
 
+            # xlsx project whose latest version was never proven → refused
             r = client.post(f"/api/workbench/projects/{pid}/complete", headers=AUTH_HEADERS)
+            self.assertEqual(r.status_code, 409, r.text)
+            self.assertEqual(r.json()["detail"]["code"], "unproven")
+
+            r = client.post(
+                f"/api/workbench/projects/{pid}/complete",
+                headers=AUTH_HEADERS,
+                json={"force": True},
+            )
             self.assertEqual(r.status_code, 200, r.text)
 
             # archived project is read-only
