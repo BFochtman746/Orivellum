@@ -102,3 +102,4 @@
 - [WA decomposition M0](orivellum-wa-decompose.md) — proposal-only canon, exhaustive file dispositions, deterministic proposal ids so re-runs never clobber ratifications.
 - [PRESS one-manuscript](orivellum-press-law1.md) — chapters read-only from book_chapters via work_id, words from real text; press_epigraph is the only press-side state; orphan slots must fail verify.
 - [Canon authority](orivellum-canon-authority.md) — CanonStore guards are the only write path; batch seed + ratify claim/insert each ONE governed_write (rollback releases claims); series scope→NULL work, never guess.
+- [Pipeline context compiler](orivellum-context-compiler.md) — budgets apply to exact rendered blocks; B0/B1/B3 acceptance gates are deterministic code, never a model.
