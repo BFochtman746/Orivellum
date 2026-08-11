@@ -5,6 +5,8 @@ Covers the async transcription backend (POST /api/studio/transcribe):
 - wrong magic-bytes returns 415 with the spooled file cleaned up
 - cancel-then-prune keeps the job entry until the worker writes a terminal state
 - pruning evicts the oldest finished jobs by finished_at
+- mid-run cancel (during extract, and racing in just before the second cancel
+  check) always ends 'cancelled', never saves to the library, cleans the spool
 
 No transcription engine is ever invoked: the size/MIME failures happen before a
 job is created, and registry tests manipulate the module-level job dict directly.
@@ -269,6 +271,97 @@ class TestTranscribeJobRegistry(_TranscribeTestBase):
     def test_cancel_unknown_job_404(self):
         resp = self.client.delete("/api/studio/transcribe/nope")
         self.assertEqual(resp.status_code, 404)
+
+    def _spool(self, name: str) -> tuple[Path, Path]:
+        tmp_dir = Path(self._tmp.name) / name
+        tmp_dir.mkdir()
+        tmp_path = tmp_dir / "upload.mp3"
+        tmp_path.write_bytes(b"ID3" + b"\x00" * 64)
+        return tmp_dir, tmp_path
+
+    @staticmethod
+    def _fake_result():
+        from types import SimpleNamespace
+
+        page = SimpleNamespace(text="hello transcribed world")
+        return SimpleNamespace(
+            meta={"transcription": "fake-engine"},
+            pages=[page],
+            full_text="hello transcribed world",
+            word_count=3,
+        )
+
+    def test_cancel_while_extract_running_ends_cancelled_and_never_saves(self):
+        """DELETE arriving while the worker is inside extract(): the finished
+        transcript must be discarded — terminal 'cancelled', no library
+        document even with save_to_library=True, spool removed."""
+        tmp_dir, tmp_path = self._spool("midrun-spool")
+        self._seed_job("midrun", "running", None)
+        extract_entered = threading.Event()
+        release = threading.Event()
+
+        def fake_extract(path, kind, db=None):
+            extract_entered.set()
+            if not release.wait(timeout=10):
+                raise AssertionError("test never released extract()")
+            return self._fake_result()
+
+        from orivellum.api._deps import get_config
+
+        with (
+            patch("orivellum.capabilities.extraction.extract", side_effect=fake_extract),
+            patch("orivellum.capabilities.persist.register_and_index") as register,
+        ):
+            worker = threading.Thread(
+                target=self.studio._run_transcribe_job,
+                args=("midrun", tmp_path, "upload.mp3", True, self.db, get_config()),
+            )
+            worker.start()
+            try:
+                self.assertTrue(extract_entered.wait(timeout=10), "worker never reached extract")
+                resp = self.client.delete("/api/studio/transcribe/midrun")
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.json()["state"], "cancelling")
+            finally:
+                release.set()
+                worker.join(timeout=10)
+        self.assertFalse(worker.is_alive(), "worker thread did not finish")
+        job = self.studio._transcribe_jobs["midrun"]
+        self.assertEqual(job["state"], "cancelled")
+        self.assertIsNotNone(job.get("finished_at"))
+        register.assert_not_called()
+        self.assertFalse(tmp_path.exists(), "worker must delete the spooled file")
+        self.assertFalse(tmp_dir.exists(), "worker must remove the empty spool dir")
+
+    def test_cancel_landing_after_transcript_before_save_discards_it(self):
+        """Cancel racing in AFTER extract() returns but BEFORE the worker
+        re-acquires the lock (the second cancel check): the transcript is
+        never stored on the job and never saved to the library."""
+        tmp_dir, tmp_path = self._spool("race-spool")
+        self._seed_job("race", "running", None)
+
+        def fake_extract(path, kind, db=None):
+            # the user's cancel lands exactly as the transcript completes
+            resp = self.client.delete("/api/studio/transcribe/race")
+            assert resp.status_code == 200
+            return self._fake_result()
+
+        from orivellum.api._deps import get_config
+
+        with (
+            patch("orivellum.capabilities.extraction.extract", side_effect=fake_extract),
+            patch("orivellum.capabilities.persist.register_and_index") as register,
+        ):
+            self.studio._run_transcribe_job(
+                "race", tmp_path, "upload.mp3", True, self.db, get_config()
+            )
+        job = self.studio._transcribe_jobs["race"]
+        self.assertEqual(job["state"], "cancelled")
+        self.assertIsNotNone(job.get("finished_at"))
+        self.assertIsNone(job["text"], "cancelled job must not keep the transcript")
+        register.assert_not_called()
+        self.assertFalse(tmp_path.exists())
+        self.assertFalse(tmp_dir.exists())
 
     def test_worker_honors_preset_cancel_and_cleans_tmp(self):
         """If cancel is set before the worker starts, it writes the terminal
