@@ -156,6 +156,7 @@ class DomainPatch(BaseModel):
 class DomainMemberBody(BaseModel):
     member_kind: str
     member_id: str
+    confirm_canon_binding: bool = False
 
 
 @router.get("/canon-domains")
@@ -212,7 +213,10 @@ def delete_domain(domain_id: str):
 def add_domain_member(domain_id: str, req: DomainMemberBody):
     try:
         return DomainStore(get_db()).add_member(
-            domain_id, member_kind=req.member_kind, member_id=req.member_id
+            domain_id,
+            member_kind=req.member_kind,
+            member_id=req.member_id,
+            confirm_canon_binding=req.confirm_canon_binding,
         )
     except StructureError as e:
         raise HTTPException(422, str(e)) from e

@@ -167,6 +167,115 @@ class SeriesCanonGuardTests(_Base):
         self.assertEqual(len(entries), 1)  # no double entry from add_member
 
 
+class DomainMemberGuardTests(_Base):
+    """Domain membership edits are themselves canon events once the domain
+    carries active facts — binding and unbinding are never silent."""
+
+    def _domain_with_fact(self):
+        d = self.domains.create(title="Universe")
+        anchor = self._work("Anchor")
+        self.domains.add_member(d["id"], member_kind="work", member_id=anchor["id"])
+        self._fact(statement="Universe law.", domain_id=d["id"])
+        return d, anchor
+
+    def test_add_work_to_fact_bearing_domain_requires_confirmation(self):
+        d, _ = self._domain_with_fact()
+        w = self._work("New book")
+        with self.assertRaises(StructureError) as ctx:
+            self.domains.add_member(d["id"], member_kind="work", member_id=w["id"])
+        self.assertIn("newly bind", str(ctx.exception))
+        self.assertNotIn(
+            "Universe law.",
+            [x["statement"] for x in self.canon.list_facts(work_id=w["id"])],
+        )
+        self.domains.add_member(
+            d["id"], member_kind="work", member_id=w["id"], confirm_canon_binding=True
+        )
+        self.assertIn(
+            "Universe law.",
+            [x["statement"] for x in self.canon.list_facts(work_id=w["id"])],
+        )
+
+    def test_add_series_to_fact_bearing_domain_requires_confirmation(self):
+        d, _ = self._domain_with_fact()
+        w = self._work("Vol 1")
+        s = self._series_with("Saga", w)
+        with self.assertRaises(StructureError):
+            self.domains.add_member(d["id"], member_kind="series", member_id=s["id"])
+        self.domains.add_member(
+            d["id"], member_kind="series", member_id=s["id"], confirm_canon_binding=True
+        )
+
+    def test_add_collection_to_fact_bearing_domain_requires_confirmation(self):
+        d, _ = self._domain_with_fact()
+        w = self._work("Contained")
+        c = self.collections.create(title="Family")
+        self.collections.add_member(c["id"], member_kind="work", member_id=w["id"])
+        with self.assertRaises(StructureError):
+            self.domains.add_member(d["id"], member_kind="collection", member_id=c["id"])
+        self.domains.add_member(
+            d["id"],
+            member_kind="collection",
+            member_id=c["id"],
+            confirm_canon_binding=True,
+        )
+        self.assertIn(
+            "Universe law.",
+            [x["statement"] for x in self.canon.list_facts(work_id=w["id"])],
+        )
+
+    def test_add_already_served_member_needs_no_confirmation(self):
+        d, anchor = self._domain_with_fact()
+        s = self._series_with("Solo saga", anchor)
+        # every book the series reaches is already served — nothing new binds
+        self.domains.add_member(d["id"], member_kind="series", member_id=s["id"])
+
+    def test_remove_member_allowed_when_all_books_keep_a_path(self):
+        d, anchor = self._domain_with_fact()
+        s = self._series_with("Saga", anchor)
+        self.domains.add_member(
+            d["id"], member_kind="series", member_id=s["id"], confirm_canon_binding=True
+        )
+        # anchor stays served directly — dropping the series unbinds nothing
+        self.assertTrue(
+            self.domains.remove_member(d["id"], member_kind="series", member_id=s["id"])
+        )
+        self.assertIn(
+            "Universe law.",
+            [x["statement"] for x in self.canon.list_facts(work_id=anchor["id"])],
+        )
+
+    def test_remove_member_refused_when_a_book_loses_its_only_path(self):
+        d, _ = self._domain_with_fact()
+        w = self._work("Only via collection")
+        c = self.collections.create(title="Family")
+        self.collections.add_member(c["id"], member_kind="work", member_id=w["id"])
+        self.domains.add_member(
+            d["id"],
+            member_kind="collection",
+            member_id=c["id"],
+            confirm_canon_binding=True,
+        )
+        with self.assertRaises(StructureError) as ctx:
+            self.domains.remove_member(
+                d["id"], member_kind="collection", member_id=c["id"]
+            )
+        self.assertIn("ONLY through this collection", str(ctx.exception))
+        # direct membership gives an independent path — removal then succeeds
+        self.domains.add_member(
+            d["id"], member_kind="work", member_id=w["id"], confirm_canon_binding=True
+        )
+        self.assertTrue(
+            self.domains.remove_member(
+                d["id"], member_kind="collection", member_id=c["id"]
+            )
+        )
+        self.assertIn(
+            "Universe law.",
+            [x["statement"] for x in self.canon.list_facts(work_id=w["id"])],
+        )
+
+
 class MigrationTests(_Base):
     def test_new_tables_and_columns_exist(self):
         conn = self.db.read_conn()

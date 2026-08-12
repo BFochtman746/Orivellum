@@ -31,7 +31,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from orivellum.database.canon_store import CanonFactError, CanonStore
+from orivellum.database.canon_store import CanonFactError, CanonStore, domain_serves_work
 from orivellum.database.series_store import SeriesStore
 
 logger = logging.getLogger("orivellum.structure.store")
@@ -589,8 +589,80 @@ class DomainStore:
             out.append(m)
         return out
 
+    @staticmethod
+    def _works_via_member(conn: Any, member_kind: str, member_id: str) -> list[str]:
+        """Every Work id a domain-membership row of this shape reaches:
+        the work itself, a series' member works, or (for a collection) the
+        collection's works plus the works of its member series."""
+        if member_kind == "work":
+            return [member_id]
+        if member_kind == "series":
+            return [
+                r["work_id"]
+                for r in conn.execute(
+                    "SELECT work_id FROM series_member WHERE series_id=?", (member_id,)
+                ).fetchall()
+            ]
+        rows = conn.execute(
+            """SELECT bcm.member_id AS wid FROM book_collection_member bcm
+               WHERE bcm.collection_id=? AND bcm.member_kind='work'
+               UNION
+               SELECT sm.work_id AS wid FROM book_collection_member bcm
+               JOIN series_member sm ON sm.series_id = bcm.member_id
+               WHERE bcm.collection_id=? AND bcm.member_kind='series'""",
+            (member_id, member_id),
+        ).fetchall()
+        return [r["wid"] for r in rows]
+
+    @staticmethod
+    def _work_served_excluding(
+        conn: Any,
+        domain_id: str,
+        work_id: str,
+        excl_kind: str,
+        excl_id: str,
+    ) -> bool:
+        """Is the Work still served by this domain if the given membership
+        row were gone?  Checks every remaining path: direct work membership,
+        the work's series, and any collection (containing the work or its
+        series) — each skipped when it IS the row being removed."""
+        row = conn.execute(
+            """SELECT 1 FROM canon_domain_member dm
+               WHERE dm.domain_id = ?
+                 AND NOT (dm.member_kind = ? AND dm.member_id = ?)
+                 AND (
+                   (dm.member_kind='work' AND dm.member_id = ?)
+                   OR (dm.member_kind='series' AND dm.member_id IN (
+                         SELECT series_id FROM series_member WHERE work_id = ?))
+                   OR (dm.member_kind='collection' AND EXISTS (
+                         SELECT 1 FROM book_collection_member bcm
+                          WHERE bcm.collection_id = dm.member_id
+                            AND ((bcm.member_kind='work' AND bcm.member_id = ?)
+                              OR (bcm.member_kind='series' AND bcm.member_id IN (
+                                    SELECT series_id FROM series_member
+                                     WHERE work_id = ?)))))
+                 )
+               LIMIT 1""",
+            (domain_id, excl_kind, excl_id, work_id, work_id, work_id, work_id),
+        ).fetchone()
+        return row is not None
+
+    def _active_fact_count(self, conn: Any, domain_id: str) -> int:
+        return int(
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM canon_fact WHERE domain_id=? AND status='active'",
+                (domain_id,),
+            ).fetchone()["n"]
+        )
+
     def add_member(
-        self, domain_id: str, *, member_kind: str, member_id: str, actor: str = "author"
+        self,
+        domain_id: str,
+        *,
+        member_kind: str,
+        member_id: str,
+        actor: str = "author",
+        confirm_canon_binding: bool = False,
     ) -> dict:
         db = self._db
         if not self._exists(domain_id):
@@ -612,6 +684,24 @@ class DomainStore:
         ).fetchone()
         if dup:
             raise StructureError("Already served by this domain.")
+        # Attaching a member to a domain that already carries active facts is
+        # a canon event: every newly reached book immediately sees those
+        # facts.  Never do that silently — require explicit confirmation.
+        n_facts = self._active_fact_count(conn, domain_id)
+        if n_facts and not confirm_canon_binding:
+            newly = [
+                w
+                for w in self._works_via_member(conn, member_kind, member_id)
+                if not domain_serves_work(conn, domain_id, w)
+            ]
+            if newly:
+                raise StructureError(
+                    f"Refused: this domain has {n_facts} active fact(s) and "
+                    f"adding this {member_kind} would newly bind them to "
+                    f"{len(newly)} book(s). Confirm the canon binding "
+                    "explicitly (confirm_canon_binding) after previewing the "
+                    "impact."
+                )
         with db.governed_write(
             operation="canon_domain.member_added",
             event_type="canon_domain.member_added",
@@ -631,24 +721,31 @@ class DomainStore:
     def remove_member(
         self, domain_id: str, *, member_kind: str, member_id: str, actor: str = "author"
     ) -> bool:
-        """Refused while the domain has active facts — dropping a member
-        would silently unbind canon those books were verified against."""
+        """Refused while the domain has active facts AND any book would lose
+        its only path into the domain — canon those books were verified
+        against never unbinds silently.  Removal is allowed when every
+        affected book keeps an independent path (direct membership, its
+        series, or another collection)."""
         db = self._db
-        n = (
-            db.read_conn()
-            .execute(
-                "SELECT COUNT(*) AS n FROM canon_fact "
-                "WHERE domain_id=? AND status='active'",
-                (domain_id,),
-            )
-            .fetchone()["n"]
-        )
-        if int(n):
-            raise StructureError(
-                f"Refused: this domain has {n} active fact(s) that currently "
-                "bind the member's books — retract them first, or keep the "
-                "membership."
-            )
+        conn = db.read_conn()
+        n = self._active_fact_count(conn, domain_id)
+        if n:
+            affected = self._works_via_member(conn, member_kind, member_id)
+            losing = [
+                w
+                for w in affected
+                if not self._work_served_excluding(
+                    conn, domain_id, w, member_kind, member_id
+                )
+            ]
+            if losing:
+                raise StructureError(
+                    f"Refused: this domain has {n} active fact(s) and "
+                    f"{len(losing)} book(s) are served ONLY through this "
+                    f"{member_kind} — removing it would silently unbind that "
+                    "canon. Add those books to the domain directly first, or "
+                    "retract the domain's facts."
+                )
         with db.governed_write(
             operation="canon_domain.member_removed",
             event_type="canon_domain.member_removed",
