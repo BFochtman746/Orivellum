@@ -1496,6 +1496,11 @@ function ScopeStrip({ workId }: { workId: string }) {
                   volumes binds this book. Chronology and publication order are
                   descriptive and freely editable on the series page.
                 </p>
+                <Link href={`/works/${workId}/continuity`}>
+                  <Button variant="outline" size="sm" data-testid="button-continuity-review">
+                    Continuity review
+                  </Button>
+                </Link>
               </>
             ) : (
               <p className="text-muted-foreground">

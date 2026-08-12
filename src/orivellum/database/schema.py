@@ -3950,4 +3950,109 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON conversion_ledger(subject_kind, subject_id)
     """,
     ),
+    # ── Migration 154: whole-series continuity reviews with coverage truth ──
+    # review_run — one durable review at a declared scope/mode.  The run row
+    #   stores the CoverageManifest (JSON) and an explicit `partial` flag the
+    #   UI/API must surface whenever anything requested was excluded/stale.
+    # book_ledger / ledger_item — the per-book evidence map (Stage B): every
+    #   item cites an exact source span (chapter + offset + verbatim quote)
+    #   and the content fingerprint of the manuscript it came from; items are
+    #   'candidate' until the author approves them.  Rebuilds carry approved/
+    #   rejected statuses forward by item_key.
+    # review_finding — cross-book reconciliation results with evidence spans
+    #   on ALL affected passages, code-computed severity, and the closed
+    #   resolution-choice list.  dedupe_key gives stable identity across
+    #   re-runs so dispositions are inherited, never resurrected as 'open'.
+    (
+        154,
+        "Series continuity review runs, book ledgers, findings, coverage manifests",
+        """
+        CREATE TABLE IF NOT EXISTS review_run (
+            id TEXT PRIMARY KEY,
+            mode TEXT NOT NULL CHECK (mode IN (
+                'chapter_vs_book','book_vs_series','full_series',
+                'terminology_audit','canon_audit','change_impact',
+                'release_gate')),
+            work_id TEXT REFERENCES works(id) ON DELETE CASCADE,
+            series_id TEXT,
+            chapter_id TEXT,
+            operation_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
+                'pending','running','done','failed','cancelled')),
+            partial INTEGER NOT NULL DEFAULT 0,
+            coverage TEXT NOT NULL DEFAULT '{}',
+            params TEXT NOT NULL DEFAULT '{}',
+            gate TEXT,
+            error TEXT,
+            tool_version TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_run_work
+            ON review_run(work_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_review_run_series
+            ON review_run(series_id, created_at);
+        CREATE TABLE IF NOT EXISTS book_ledger (
+            id TEXT PRIMARY KEY,
+            work_id TEXT NOT NULL UNIQUE REFERENCES works(id) ON DELETE CASCADE,
+            fingerprint TEXT NOT NULL,
+            tool_version TEXT NOT NULL,
+            chapters TEXT NOT NULL DEFAULT '[]',
+            item_count INTEGER NOT NULL DEFAULT 0,
+            built_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ledger_item (
+            id TEXT PRIMARY KEY,
+            ledger_id TEXT NOT NULL
+                REFERENCES book_ledger(id) ON DELETE CASCADE,
+            work_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN (
+                'fact','event','character_state','thread','location',
+                'knowledge','terminology')),
+            item_key TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            statement TEXT NOT NULL,
+            chapter_id TEXT,
+            chapter_seq INTEGER,
+            quote TEXT NOT NULL DEFAULT '',
+            span_offset INTEGER,
+            review_status TEXT NOT NULL DEFAULT 'candidate'
+                CHECK (review_status IN ('candidate','approved','rejected')),
+            meta TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ledger_item_ledger
+            ON ledger_item(ledger_id, kind);
+        CREATE INDEX IF NOT EXISTS idx_ledger_item_work
+            ON ledger_item(work_id, kind);
+        CREATE INDEX IF NOT EXISTS idx_ledger_item_key
+            ON ledger_item(work_id, item_key);
+        CREATE TABLE IF NOT EXISTS review_finding (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL
+                REFERENCES review_run(id) ON DELETE CASCADE,
+            finding_type TEXT NOT NULL,
+            severity TEXT NOT NULL CHECK (severity IN (
+                'low','medium','high','critical')),
+            subject TEXT NOT NULL DEFAULT '',
+            explanation TEXT NOT NULL,
+            evidence TEXT NOT NULL DEFAULT '[]',
+            canon_fact_id TEXT,
+            canon_class TEXT,
+            dedupe_key TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open' CHECK (status IN (
+                'open','resolved','intentional','deferred','dismissed')),
+            resolution TEXT,
+            resolution_note TEXT NOT NULL DEFAULT '',
+            resolved_at TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_finding_run
+            ON review_finding(run_id, severity);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_review_finding_dedupe
+            ON review_finding(run_id, dedupe_key);
+        CREATE INDEX IF NOT EXISTS idx_review_finding_key
+            ON review_finding(dedupe_key, created_at)
+    """,
+    ),
 ]

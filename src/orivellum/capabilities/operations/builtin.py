@@ -167,6 +167,11 @@ def _notify(ctx: OpContext, params: dict) -> dict:
 
 
 def register_builtin_actions() -> None:
+    # Series continuity review steps (ledger build + reconcile) live with the
+    # capability itself; registered here so all op actions appear together.
+    from orivellum.capabilities.series_review import register_op_actions
+
+    register_op_actions()
     register(
         OpAction(
             id="wait_for_extraction",

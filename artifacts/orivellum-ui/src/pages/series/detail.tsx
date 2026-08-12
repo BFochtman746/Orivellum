@@ -223,6 +223,13 @@ export default function SeriesDetail() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <HealthBadge state={data.continuity} />
+          {data.volumes.length > 0 && (
+            <Link href={`/works/${data.volumes[0].work_id}/continuity`}>
+              <Button variant="outline" data-testid="button-series-continuity">
+                Continuity review
+              </Button>
+            </Link>
+          )}
           <Button onClick={() => setAddOpen(true)} data-testid="button-add-volume-open">
             <Plus className="w-4 h-4" /> Add volume
           </Button>
