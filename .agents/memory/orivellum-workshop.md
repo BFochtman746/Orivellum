@@ -35,6 +35,13 @@ description: Self-prompting AI document generator — clarify → code-gen → s
 - Sandbox is subprocess with 60s timeout; output file found by checking OUTPUT_PATH then scanning dir
 - Critique prompt falls back to `_CRITIQUE_SYSTEM` if no active write.critic in MCOS
 
+## Download URLs from generate routes (Aug 2026)
+Backend returns `download_url` already prefixed with `/api/...`, while the UI's `BASE` constant also ends in `/api`. Any `<a href={BASE + download_url}>` yields `/api/api/...` → 404 (the Scriptorium link shipped broken this way for months).
+**How to apply:** always `download_url.replace(/^\/api/, "")` before prefixing with BASE; do the same for any future route that returns absolute `/api/...` paths.
+
+## Manual OCR tool vs Library OCR
+`POST /studio/ocr` runs Tesseract ONLY, but `/studio/status` reports `ocr.available=true` when the VLM vision path is up. UI tools that call the manual endpoint must gate on `ocr.tesseract_available`, not `ocr.available` — otherwise the button is enabled and the request 503s. The VLM path only runs inside Library extraction.
+
 ## Packages available (already in pyproject.toml)
 openpyxl, python-pptx, python-docx, reportlab, matplotlib — all usable in generated scripts
 
