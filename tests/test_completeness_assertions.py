@@ -359,9 +359,7 @@ def test_api_round_trip(tmp_path):
     assert body["status"] == "active"
     assert body["closed_gap_ids"] == [g["id"]]
 
-    r = client.get(
-        f"/api/works/{w['id']}/completeness-assertions", params={"status": "active"}
-    )
+    r = client.get(f"/api/works/{w['id']}/completeness-assertions", params={"status": "active"})
     assert r.status_code == 200
     assert r.json()["total"] == 1
 

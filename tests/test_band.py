@@ -58,9 +58,17 @@ class StubLLM:
     """Dispatch llm_call by purpose.  band.delta findings are driven by a
     marker: any passage containing 'GOAT' contradicts fact F0."""
 
-    def __init__(self, *, new_band='Mara counted the wagons three times before dawn. ',
-                 winner="new", edit_raw=None, delta_raw=None, pairwise_raw=None,
-                 delta_quote=None, down_purposes=()):
+    def __init__(
+        self,
+        *,
+        new_band="Mara counted the wagons three times before dawn. ",
+        winner="new",
+        edit_raw=None,
+        delta_raw=None,
+        pairwise_raw=None,
+        delta_quote=None,
+        down_purposes=(),
+    ):
         self.calls: list[dict] = []
         self.new_band = new_band
         self.winner = winner
@@ -76,16 +84,17 @@ class StubLLM:
     def __call__(self, messages, **kwargs):
         purpose = kwargs.get("purpose", "")
         user = messages[-1]["content"]
-        self.calls.append({"purpose": purpose, "user": user,
-                           "model": kwargs.get("model")})
+        self.calls.append({"purpose": purpose, "user": user, "model": kwargs.get("model")})
 
         def ok(text):
-            return SimpleNamespace(ok=True, text=text, error=None,
-                                   call_id=len(self.calls), logprobs=None)
+            return SimpleNamespace(
+                ok=True, text=text, error=None, call_id=len(self.calls), logprobs=None
+            )
 
         if purpose in self.down_purposes:
-            return SimpleNamespace(ok=False, text=None, error="gateway down",
-                                   call_id=None, logprobs=None)
+            return SimpleNamespace(
+                ok=False, text=None, error="gateway down", call_id=None, logprobs=None
+            )
         if purpose == "band.edit":
             if self.edit_raw is not None:
                 return ok(self.edit_raw)
@@ -95,17 +104,28 @@ class StubLLM:
                 return ok(self.delta_raw)
             passage = user.split('PASSAGE:\n"""')[1].split('"""')[0]
             if "GOAT" in passage:
-                quote = self.delta_quote if self.delta_quote is not None else \
-                    next(w for w in passage.split(". ") if "GOAT" in w)
-                return ok(json.dumps({"contradictions": [
-                    {"ref": "F0", "quote": quote, "reasoning": "contradicts"}]}))
+                quote = (
+                    self.delta_quote
+                    if self.delta_quote is not None
+                    else next(w for w in passage.split(". ") if "GOAT" in w)
+                )
+                return ok(
+                    json.dumps(
+                        {
+                            "contradictions": [
+                                {"ref": "F0", "quote": quote, "reasoning": "contradicts"}
+                            ]
+                        }
+                    )
+                )
             return ok(json.dumps({"contradictions": []}))
         if purpose == "band.pairwise":
             if self.pairwise_raw is not None:
                 return ok(self.pairwise_raw)
             return ok(json.dumps({"winner": self.winner, "rationale": "cleaner"}))
-        return SimpleNamespace(ok=False, text=None, error=f"unknown {purpose}",
-                               call_id=None, logprobs=None)
+        return SimpleNamespace(
+            ok=False, text=None, error=f"unknown {purpose}", call_id=None, logprobs=None
+        )
 
 
 class BandBase(unittest.TestCase):
@@ -128,8 +148,7 @@ class BandBase(unittest.TestCase):
                 """INSERT INTO book_chapters(id, work_id, seq, level, title, text,
                    source_doc_id, status, meta, created_at, updated_at)
                    VALUES(?,?,?,1,?,?,NULL,?,'{}',?,?)""",
-                (oid, self.work_id, seq, f"Chapter {seq}", text, status,
-                 _now(), _now()),
+                (oid, self.work_id, seq, f"Chapter {seq}", text, status, _now(), _now()),
             )
             self.db._conn.commit()
         return oid
@@ -146,15 +165,15 @@ class BandBase(unittest.TestCase):
     def _set_status(self, status):
         with self.db._lock:
             self.db._conn.execute(
-                "UPDATE book_chapters SET status=? WHERE id=?",
-                (status, self.chapter_id))
+                "UPDATE book_chapters SET status=? WHERE id=?", (status, self.chapter_id)
+            )
             self.db._conn.commit()
 
     def _text(self):
         with self.db._lock:
             row = self.db._conn.execute(
-                "SELECT text, status FROM book_chapters WHERE id=?",
-                (self.chapter_id,)).fetchone()
+                "SELECT text, status FROM book_chapters WHERE id=?", (self.chapter_id,)
+            ).fetchone()
         return row["text"], row["status"]
 
     def _band_span(self):
@@ -166,7 +185,9 @@ class BandBase(unittest.TestCase):
         stub = stub or StubLLM()
         start, end = self._band_span()
         kwargs = dict(
-            chapter_id=self.chapter_id, start=start, end=end,
+            chapter_id=self.chapter_id,
+            start=start,
+            end=end,
             instruction="make the counting three times",
             base_fingerprint=band.fingerprint(CHAPTER),
         )
@@ -182,7 +203,7 @@ class TestSurgicalEdit(BandBase):
         start, end = self._band_span()
         text, _ = self._text()
         self.assertEqual(text[:start], CHAPTER[:start])
-        self.assertEqual(text[len(text) - (len(CHAPTER) - end):], CHAPTER[end:])
+        self.assertEqual(text[len(text) - (len(CHAPTER) - end) :], CHAPTER[end:])
         self.assertIn("three times", text)
         self.assertEqual(result["fingerprint"], band.fingerprint(text))
 
@@ -208,8 +229,7 @@ class TestSurgicalEdit(BandBase):
 
     def test_provenance_recorded_with_all_call_ids(self):
         result, stub = self._edit()
-        prov = self.db.get_provenance(result["revision"]["id"],
-                                      "loom_chapter_revision")
+        prov = self.db.get_provenance(result["revision"]["id"], "loom_chapter_revision")
         self.assertIsNotNone(prov)
         self.assertEqual(prov["origin"], "ai_assisted")
         self.assertEqual(len(prov["llm_call_ids"]), len(stub.calls))
@@ -227,11 +247,19 @@ class TestSurgicalEdit(BandBase):
     def test_band_size_cap(self):
         big = "x" * (band.BAND_MAX_CHARS + 10)
         cid = self._seed_chapter(2, text=big)
-        with patch("orivellum.capabilities.llm.llm_call", StubLLM()), \
-                self.assertRaisesRegex(BandError, "redraft"):
+        with (
+            patch("orivellum.capabilities.llm.llm_call", StubLLM()),
+            self.assertRaisesRegex(BandError, "redraft"),
+        ):
             band.surgical_edit(
-                    self.db, _cfg(), chapter_id=cid, start=0, end=len(big),
-                    instruction="shrink", base_fingerprint=band.fingerprint(big))
+                self.db,
+                _cfg(),
+                chapter_id=cid,
+                start=0,
+                end=len(big),
+                instruction="shrink",
+                base_fingerprint=band.fingerprint(big),
+            )
 
     def test_runaway_generation_refused(self):
         stub = StubLLM(new_band="y" * 50_000)
@@ -246,6 +274,7 @@ class TestSurgicalEdit(BandBase):
 
     def test_same_editor_and_judge_model_refused(self):
         from orivellum.capabilities.loom import LoomError
+
         with self.assertRaisesRegex(LoomError, "never judge its own output"):
             self._edit(cfg=_cfg(same_model=True))
 
@@ -261,8 +290,9 @@ class TestSurgicalEdit(BandBase):
 
 class TestRegressionGates(BandBase):
     def test_new_critical_finding_refuses(self):
-        result, _ = self._edit(stub=StubLLM(
-            new_band="Mara led the GOAT past the wagons before dawn. "))
+        result, _ = self._edit(
+            stub=StubLLM(new_band="Mara led the GOAT past the wagons before dawn. ")
+        )
         self.assertFalse(result["committed"])
         self.assertTrue(any("critical" in r for r in result["reasons"]))
         self.assertEqual(self._text()[0], CHAPTER)
@@ -280,8 +310,7 @@ class TestRegressionGates(BandBase):
             self._edit(stub=StubLLM(winner="old"), accept_regression=True)
 
     def test_accept_regression_with_author_commits_and_records(self):
-        result, _ = self._edit(stub=StubLLM(winner="old"),
-                               accept_regression=True, author="Brian")
+        result, _ = self._edit(stub=StubLLM(winner="old"), accept_regression=True, author="Brian")
         self.assertTrue(result["committed"])
         revs = self.db.list_chapter_revisions(self.chapter_id)
         edit = revs[-1]
@@ -299,9 +328,12 @@ class TestRegressionGates(BandBase):
 
     def test_ungrounded_delta_quote_discarded(self):
         # Quote not present in the passage → finding discarded → clean pass.
-        result, _ = self._edit(stub=StubLLM(
-            new_band="Mara led the GOAT past the wagons before dawn. ",
-            delta_quote="this sentence appears nowhere at all"))
+        result, _ = self._edit(
+            stub=StubLLM(
+                new_band="Mara led the GOAT past the wagons before dawn. ",
+                delta_quote="this sentence appears nowhere at all",
+            )
+        )
         self.assertTrue(result["committed"])
 
 
@@ -341,8 +373,7 @@ class TestRestore(BandBase):
         self._edit()
         head = self.db.list_chapter_revisions(self.chapter_id)[-1]
         with self.assertRaisesRegex(BandError, "already the current text"):
-            band.restore_revision(self.db, chapter_id=self.chapter_id,
-                                  rev=head["rev"])
+            band.restore_revision(self.db, chapter_id=self.chapter_id, rev=head["rev"])
 
     def test_restore_unknown_rev_refused(self):
         with self.assertRaisesRegex(BandError, "not found"):
@@ -364,15 +395,14 @@ class TestClaimAndLineage(BandBase):
     def test_create_chapter_revision_lineage_defaults(self):
         r1 = self.db.create_chapter_revision(self.chapter_id, self.work_id, "one")
         r2 = self.db.create_chapter_revision(
-            self.chapter_id, self.work_id, "two",
-            origin="human", created_by="Brian")
+            self.chapter_id, self.work_id, "two", origin="human", created_by="Brian"
+        )
         self.assertIsNone(r1["parent_rev"])
         self.assertEqual(r2["parent_rev"], r1["rev"])
         revs = self.db.list_chapter_revisions(self.chapter_id)
         self.assertEqual([r["origin"] for r in revs], ["ai_generated", "human"])
         with self.assertRaises(ValueError):
-            self.db.create_chapter_revision(
-                self.chapter_id, self.work_id, "x", origin="alien")
+            self.db.create_chapter_revision(self.chapter_id, self.work_id, "x", origin="alien")
 
     def test_band_text_echo_guards_offset_drift(self):
         # Astral chars: "𝕄ara…" — a UTF-16 client would report shifted
@@ -382,23 +412,37 @@ class TestClaimAndLineage(BandBase):
         cid = self._seed_chapter(4, text=text)
         start = text.index("Mara")
         end = text.index("Tobin")
-        with patch("orivellum.capabilities.llm.llm_call", StubLLM()), \
-                self.assertRaisesRegex(BandError, "band text mismatch"):
+        with (
+            patch("orivellum.capabilities.llm.llm_call", StubLLM()),
+            self.assertRaisesRegex(BandError, "band text mismatch"),
+        ):
             band.surgical_edit(
-                self.db, _cfg(), chapter_id=cid, start=start + 1, end=end + 1,
-                instruction="x", base_fingerprint=band.fingerprint(text),
-                band_text=text[start:end])
+                self.db,
+                _cfg(),
+                chapter_id=cid,
+                start=start + 1,
+                end=end + 1,
+                instruction="x",
+                base_fingerprint=band.fingerprint(text),
+                band_text=text[start:end],
+            )
         # Correct code-point offsets + matching echo commit cleanly.
         with patch("orivellum.capabilities.llm.llm_call", StubLLM()):
             result = band.surgical_edit(
-                self.db, _cfg(), chapter_id=cid, start=start, end=end,
+                self.db,
+                _cfg(),
+                chapter_id=cid,
+                start=start,
+                end=end,
                 instruction="make it three times",
                 base_fingerprint=band.fingerprint(text),
-                band_text=text[start:end])
+                band_text=text[start:end],
+            )
         self.assertTrue(result["committed"])
         with self.db._lock:
             row = self.db._conn.execute(
-                "SELECT text FROM book_chapters WHERE id=?", (cid,)).fetchone()
+                "SELECT text FROM book_chapters WHERE id=?", (cid,)
+            ).fetchone()
         self.assertTrue(row["text"].startswith("The 𝕄oon rose. "))
         self.assertTrue(row["text"].endswith("Tobin slept."))
 
@@ -410,21 +454,28 @@ class TestClaimAndLineage(BandBase):
         with self.db._lock:
             self.db._conn.execute(
                 "UPDATE book_chapters SET text=? WHERE id=?",
-                (CHAPTER + " New sentence from a concurrent draft.",
-                 self.chapter_id))
+                (CHAPTER + " New sentence from a concurrent draft.", self.chapter_id),
+            )
             self.db._conn.commit()
         with self.assertRaisesRegex(BandError, "before the checkpoint"):
-            band._checkpoint_current(
-                self.db, ch, expected_fp=band.fingerprint(CHAPTER))
+            band._checkpoint_current(self.db, ch, expected_fp=band.fingerprint(CHAPTER))
         self.assertEqual(self.db.list_chapter_revisions(self.chapter_id), [])
 
     def test_no_text_chapter_refused(self):
         cid = self._seed_chapter(3, text="")
-        with patch("orivellum.capabilities.llm.llm_call", StubLLM()), \
-                self.assertRaisesRegex(BandError, "no text"):
+        with (
+            patch("orivellum.capabilities.llm.llm_call", StubLLM()),
+            self.assertRaisesRegex(BandError, "no text"),
+        ):
             band.surgical_edit(
-                self.db, _cfg(), chapter_id=cid, start=0, end=1,
-                instruction="x", base_fingerprint=band.fingerprint(""))
+                self.db,
+                _cfg(),
+                chapter_id=cid,
+                start=0,
+                end=1,
+                instruction="x",
+                base_fingerprint=band.fingerprint(""),
+            )
 
 
 if __name__ == "__main__":

@@ -17,8 +17,10 @@ converted).
    **Why:** websearch/training_plan/rerank_candidates all shipped built but
    never wired.
 
-Both allowlists are dated AND ratcheted by a max-size constant — growing one
-requires raising the constant, a loud reviewable act. Only shrink them.
+Rules must be symbol-aware (a reference counts only when it resolves to the
+owning module — same-spelled names and string patch targets never count).
+Allowlists are dated AND tamper-evident: a hardcoded SHA-256 of the key set
+means any addition, removal, or swap forces a loud baseline edit. Only shrink.
 
 # Settings durability trap
 

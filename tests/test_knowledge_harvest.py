@@ -254,7 +254,9 @@ class TestLlmHarvestDBWrites(unittest.TestCase):
         and must be dropped so the next read recomputes (task: keep the book
         coverage report accurate after overnight AI extraction)."""
         work = self.db.create_work(title="Cache Work")
-        self.db.cache_work_gaps(work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.42}})
+        self.db.cache_work_gaps(
+            work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.42}}
+        )
 
         count = self._run_llm_harvest(_GOOD_LLM_RESPONSE, work_id=work["id"])
         self.assertGreater(count, 0)
@@ -269,7 +271,9 @@ class TestLlmHarvestDBWrites(unittest.TestCase):
         """An LLM harvest that produces no items must not throw away a
         perfectly valid cached coverage result."""
         work = self.db.create_work(title="Cache Work 2")
-        self.db.cache_work_gaps(work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.42}})
+        self.db.cache_work_gaps(
+            work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.42}}
+        )
 
         count = self._run_llm_harvest(json.dumps({}), work_id=work["id"])
         self.assertEqual(count, 0)
@@ -1031,7 +1035,9 @@ class TestLlmHarvestByChapters(unittest.TestCase):
         from orivellum.capabilities.knowledge_harvest import llm_harvest_by_chapters
 
         work = self.db.create_work(title="Chapter Cache Work")
-        self.db.cache_work_gaps(work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.42}})
+        self.db.cache_work_gaps(
+            work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.42}}
+        )
         self._insert_chapter(0, "Mara set sail at dawn. " * 40, "Chapter 1")
 
         with patch(
@@ -1054,7 +1060,9 @@ class TestLlmHarvestByChapters(unittest.TestCase):
         from orivellum.capabilities.knowledge_harvest import llm_harvest_by_chapters
 
         work = self.db.create_work(title="Chapter Cache Work 2")
-        self.db.cache_work_gaps(work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.42}})
+        self.db.cache_work_gaps(
+            work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.42}}
+        )
         self._insert_chapter(0, "Mara set sail at dawn. " * 40, "Chapter 1")
 
         with patch("orivellum.capabilities.knowledge_harvest._call_llm_sync", return_value=None):

@@ -250,9 +250,7 @@ def candidates_card_k(work_id: str, db: OrivellumDB) -> list[dict]:
     return out
 
 
-def _propose_closures(
-    work_id: str, db: OrivellumDB, candidates: list[dict], detector: str
-) -> dict:
+def _propose_closures(work_id: str, db: OrivellumDB, candidates: list[dict], detector: str) -> dict:
     proposed, skipped = [], 0
     for c in candidates[:_MAX_EMIT]:
         row = db.propose_completeness(
@@ -375,7 +373,7 @@ def candidates_mined_cardinality(work_id: str, db: OrivellumDB) -> list[dict]:
 # ── Mechanism 4: peer-group local closure → gaps ──────────────────────────────
 
 
-def candidates_peer_group(work_id: str, db: OrivellumDB) -> list[dict]:
+def candidates_peer_group(work_id: str, db: OrivellumDB) -> list[dict]:  # noqa: C901
     """Relations present for comparable entities but absent for the target.
 
     Peers are same-class nodes ranked by Jaccard similarity over their
@@ -467,9 +465,7 @@ def _emit_gaps(
             gap_class=GAP_CLASS_GRAPH_PAIR,
             scope=c["pair_key"],
             frame_node_id=f"graph:{c['node_id']}",
-            frame_source_ref=(
-                f"relation-meta:{c['node_type']}/{c['edge_type']} — {c['basis']}"
-            ),
+            frame_source_ref=(f"relation-meta:{c['node_type']}/{c['edge_type']} — {c['basis']}"),
             evidence_absent=(
                 f"{c['name']} ({c['node_type']}) lacks expected {c['edge_type']} "
                 f"value(s): {c['basis']}"
@@ -539,7 +535,5 @@ def run_pcwa_scan(work_id: str, db: OrivellumDB) -> dict:
         "relations_mined": len(relations),
         "results": results,
         "total_gaps": sum(len(r.get("gaps", [])) for r in results.values()),
-        "total_proposed_assertions": sum(
-            r.get("proposed", 0) for r in results.values()
-        ),
+        "total_proposed_assertions": sum(r.get("proposed", 0) for r in results.values()),
     }

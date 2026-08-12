@@ -181,9 +181,7 @@ ZERO_CALLER_ALLOWLIST: dict[tuple[str, str], str] = {
 _ZERO_CALLER_BASELINE_SHA256 = (
     "e870af3c7b2ef18b35071db02afe9a2e3b8cbb250abcc1ab6dbd014184101edb"  # 95 entries
 )
-_FLOOR_BASELINE_SHA256 = (
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # empty
-)
+_FLOOR_BASELINE_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # empty
 
 
 # ── AST helpers ───────────────────────────────────────────────────────────────
@@ -240,9 +238,7 @@ def _imports_of(path: Path) -> set[str]:
     return found
 
 
-def _resolve_import_from(
-    node: ast.ImportFrom, path: Path, self_dotted: str | None
-) -> str | None:
+def _resolve_import_from(node: ast.ImportFrom, path: Path, self_dotted: str | None) -> str | None:
     """Dotted orivellum module an ImportFrom targets, or None if external."""
     if node.level and self_dotted:
         # Resolve `from ..x import y` relative to this file's package.
@@ -530,9 +526,7 @@ def test_reference_resolution_rejects_same_spelled_impostors(tmp_path):
     # A local variable with the same name is NOT a reference.
     assert target not in _refs_from_source(tmp_path, "run_clustering = 1\nrun_clustering\n")
     # An attribute on an unrelated object is NOT a reference.
-    assert target not in _refs_from_source(
-        tmp_path, "class Other: pass\nOther().run_clustering\n"
-    )
+    assert target not in _refs_from_source(tmp_path, "class Other: pass\nOther().run_clustering\n")
     # The same attribute reached through a DIFFERENT orivellum module is not
     # a reference to cluster.
     assert target not in _refs_from_source(

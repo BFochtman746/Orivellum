@@ -486,9 +486,7 @@ class TestJudge(AssayBase):
         run, findings, _ = self._run("judge.hierarchical", chapter_id=ch_id)
         regressions = [f for f in findings if f["issue_type"] == "pairwise_regression"]
         self.assertEqual(len(regressions), 1)
-        self.assertEqual(
-            regressions[0]["evidence"]["decreased_categories"], ["hook_and_close"]
-        )
+        self.assertEqual(regressions[0]["evidence"]["decreased_categories"], ["hook_and_close"])
 
     def test_malformed_annotations_fail_loud(self):
         chapters = self._seed_book()

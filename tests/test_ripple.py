@@ -52,10 +52,7 @@ class RippleBase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.db = OrivellumDB(str(Path(self._tmp.name) / "test.db"))
         self.work_id = self.db.create_work("Ripple Book", work_type="writing")["id"]
-        self.ch = {
-            i: _seed_chapter(self.db, self.work_id, i, f"Chapter {i}")
-            for i in (1, 2, 3)
-        }
+        self.ch = {i: _seed_chapter(self.db, self.work_id, i, f"Chapter {i}") for i in (1, 2, 3)}
         self.fact_id = self._create_fact("The Iron Key opens the Gate.")
         n = self._node
         self.mara = n("Character", "Mara", self.ch[1])
@@ -85,14 +82,24 @@ class RippleBase(unittest.TestCase):
 
     def _node(self, node_type: str, name: str, chapter_id: str, **kw) -> str:
         return self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=chapter_id, node_type=node_type,
-            name=name, evidence_quote=f"{name} stood there.", evidence_offset=0, **kw
+            work_id=self.work_id,
+            chapter_id=chapter_id,
+            node_type=node_type,
+            name=name,
+            evidence_quote=f"{name} stood there.",
+            evidence_offset=0,
+            **kw,
         )
 
     def _edge(self, src: str, dst: str, edge_type: str, chapter_id: str, quote: str):
         self.db.create_graph_edge(
-            work_id=self.work_id, chapter_id=chapter_id, src=src, dst=dst,
-            edge_type=edge_type, evidence_quote=quote, evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=chapter_id,
+            src=src,
+            dst=dst,
+            edge_type=edge_type,
+            evidence_quote=quote,
+            evidence_offset=0,
         )
 
 
@@ -138,9 +145,7 @@ class TestSimulateRipple(RippleBase):
         for c in r["affected_chapters"]:
             self.assertTrue(c["path"])
             self.assertTrue(all(h["evidence_quote"] for h in c["path"]))
-        self.assertEqual(
-            {c["name"] for c in r["affected_characters"]}, {"Mara", "Tobin"}
-        )
+        self.assertEqual({c["name"] for c in r["affected_characters"]}, {"Mara", "Tobin"})
         # The seed's own fact is never its own blast radius.
         self.assertEqual(r["affected_facts"], [])
 
@@ -177,8 +182,7 @@ class TestSimulateRipple(RippleBase):
         a reversed loader feed yields the byte-identical report."""
         from unittest.mock import patch
 
-        baseline = simulate_ripple(self.db, self.work_id,
-                                   canon_fact_id=self.fact_id, depth=4)
+        baseline = simulate_ripple(self.db, self.work_id, canon_fact_id=self.fact_id, depth=4)
         real_edges = self.db.list_graph_edges
         real_nodes = self.db.list_graph_nodes
 
@@ -188,10 +192,11 @@ class TestSimulateRipple(RippleBase):
         def rev_nodes(**kw):
             return list(reversed(real_nodes(**kw)))
 
-        with patch.object(self.db, "list_graph_edges", rev_edges), \
-             patch.object(self.db, "list_graph_nodes", rev_nodes):
-            scrambled = simulate_ripple(self.db, self.work_id,
-                                        canon_fact_id=self.fact_id, depth=4)
+        with (
+            patch.object(self.db, "list_graph_edges", rev_edges),
+            patch.object(self.db, "list_graph_nodes", rev_nodes),
+        ):
+            scrambled = simulate_ripple(self.db, self.work_id, canon_fact_id=self.fact_id, depth=4)
         self.assertEqual(baseline, scrambled)
 
     def test_saturated_edge_load_is_reported_truncated(self):
@@ -199,9 +204,16 @@ class TestSimulateRipple(RippleBase):
         ceiling must NEVER be reported as a complete blast radius."""
         rows = [
             (
-                f"bulk-{i:06d}", self.work_id, self.ch[1],
-                self.mara, self.key, "references", "inter_event",
-                "bulk evidence.", 0, f"2026-01-01T00:00:{i % 60:02d}",
+                f"bulk-{i:06d}",
+                self.work_id,
+                self.ch[1],
+                self.mara,
+                self.key,
+                "references",
+                "inter_event",
+                "bulk evidence.",
+                0,
+                f"2026-01-01T00:00:{i % 60:02d}",
             )
             for i in range(20_001)
         ]
@@ -226,8 +238,7 @@ class TestSimulateRipple(RippleBase):
         self.assertEqual(runs[1], runs[2])
 
     def test_truncation_is_reported(self):
-        r = simulate_ripple(self.db, self.work_id, node_id=self.mara,
-                            depth=4, max_nodes=2)
+        r = simulate_ripple(self.db, self.work_id, node_id=self.mara, depth=4, max_nodes=2)
         self.assertTrue(r["truncated"])
         self.assertLessEqual(len(r["affected_nodes"]) + len(r["seeds"]), 2)
 
@@ -238,9 +249,7 @@ class TestRippleForChapter(RippleBase):
         self.assertEqual({s["name"] for s in r["seeds"]}, {"Mara", "Iron Key"})
         seqs = {c["seq"] for c in r["affected_chapters"]}
         self.assertEqual(seqs, {2, 3})
-        self.assertNotIn(
-            self.ch[1], {c["chapter_id"] for c in r["affected_chapters"]}
-        )
+        self.assertNotIn(self.ch[1], {c["chapter_id"] for c in r["affected_chapters"]})
         self.assertIn("Tobin", {c["name"] for c in r["affected_characters"]})
         # The Iron Key's fact belongs to a SEED node — not downstream.
         self.assertEqual(r["affected_facts"], [])

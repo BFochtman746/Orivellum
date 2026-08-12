@@ -330,8 +330,12 @@ def extract_chapter_graph(
     if not (chapter.get("text") or "").strip():
         return counts
     _commit_chapter(
-        db, work_id=work_id, chapter_id=chapter["id"],
-        staged_nodes=staged_nodes, staged_edges=staged_edges, staged_incs=[],
+        db,
+        work_id=work_id,
+        chapter_id=chapter["id"],
+        staged_nodes=staged_nodes,
+        staged_edges=staged_edges,
+        staged_incs=[],
     )
     return counts
 
@@ -363,12 +367,29 @@ def _stage_chapter(
     for window in _windows(text):
         fenced = _fence(window, title)
         _pass_nodes(
-            db, cfg, title, text, fenced, canon_facts, counts,
-            node_ids, node_list, staged_nodes, by_sid,
+            db,
+            cfg,
+            title,
+            text,
+            fenced,
+            canon_facts,
+            counts,
+            node_ids,
+            node_list,
+            staged_nodes,
+            by_sid,
         )
         _pass_relations(
-            db, cfg, title, text, fenced, node_ids, node_list, counts,
-            staged_edges, edge_keys,
+            db,
+            cfg,
+            title,
+            text,
+            fenced,
+            node_ids,
+            node_list,
+            counts,
+            staged_edges,
+            edge_keys,
         )
         if node_ids:
             _pass_attributes(db, cfg, title, fenced, node_ids, by_sid)
@@ -873,8 +894,11 @@ def _commit_plan(db: OrivellumDB, *, work_id: str, plan: list[tuple]) -> None:
             elif op[0] == "replace":
                 _, chapter_id, staged_nodes, staged_edges, staged_incs = op
                 _commit_chapter(
-                    db, work_id=work_id, chapter_id=chapter_id,
-                    staged_nodes=staged_nodes, staged_edges=staged_edges,
+                    db,
+                    work_id=work_id,
+                    chapter_id=chapter_id,
+                    staged_nodes=staged_nodes,
+                    staged_edges=staged_edges,
                     staged_incs=staged_incs,
                 )
             else:  # reverify
@@ -897,9 +921,7 @@ def _staged_view(
         }
         for n in staged_nodes
     ]
-    edges = [
-        {"src": e["src"], "dst": e["dst"], "edge_type": e["edge_type"]} for e in staged_edges
-    ]
+    edges = [{"src": e["src"], "dst": e["dst"], "edge_type": e["edge_type"]} for e in staged_edges]
     return nodes, edges
 
 
@@ -920,7 +942,11 @@ def _stage_reverify_downstream(
         if i <= first_rebuilt_idx or ch["id"] in rebuilt:
             continue
         staged, v = _stage_verify(
-            db, cfg, work_id=work_id, chapter=ch, prior_chapters=chapters[:i],
+            db,
+            cfg,
+            work_id=work_id,
+            chapter=ch,
+            prior_chapters=chapters[:i],
             staged_views=staged_views,
         )
         ops.append(("reverify", ch["id"], staged))
@@ -960,8 +986,12 @@ def _stage_extractions(
         staged_views[ch["id"]] = _staged_view(staged_nodes, staged_edges)
         records.append(
             {
-                "i": i, "ch": ch, "blank": False,
-                "nodes": staged_nodes, "edges": staged_edges, "incs": [],
+                "i": i,
+                "ch": ch,
+                "blank": False,
+                "nodes": staged_nodes,
+                "edges": staged_edges,
+                "incs": [],
             }
         )
         totals["nodes"] += c["nodes"]
@@ -998,8 +1028,13 @@ def _build_work_graph_locked(
     totals = {"chapters": 0, "nodes": 0, "edges": 0, "inconsistencies": 0, "discarded": 0}
     staged_views: dict[str, tuple[list[dict], list[dict]]] = {}
     records, rebuilt, first_rebuilt_idx = _stage_extractions(
-        db, cfg, work_id=work_id, doc_id=doc_id, chapters=chapters,
-        staged_views=staged_views, totals=totals,
+        db,
+        cfg,
+        work_id=work_id,
+        doc_id=doc_id,
+        chapters=chapters,
+        staged_views=staged_views,
+        totals=totals,
     )
 
     # ── Phase 1b: verify — only now, with EVERY extraction staged, so each
@@ -1009,8 +1044,12 @@ def _build_work_graph_locked(
         if rec["blank"] or rec["i"] == 0:
             continue
         rec["incs"], v = _stage_verify(
-            db, cfg, work_id=work_id, chapter=rec["ch"],
-            prior_chapters=chapters[: rec["i"]], staged_views=staged_views,
+            db,
+            cfg,
+            work_id=work_id,
+            chapter=rec["ch"],
+            prior_chapters=chapters[: rec["i"]],
+            staged_views=staged_views,
         )
         totals["discarded"] += v["discarded"]
         totals["inconsistencies"] += v["kept"]
@@ -1028,9 +1067,14 @@ def _build_work_graph_locked(
     if doc_id and first_rebuilt_idx is not None:
         plan.extend(
             _stage_reverify_downstream(
-                db, cfg, work_id=work_id, chapters=chapters,
-                rebuilt=rebuilt, first_rebuilt_idx=first_rebuilt_idx,
-                staged_views=staged_views, totals=totals,
+                db,
+                cfg,
+                work_id=work_id,
+                chapters=chapters,
+                rebuilt=rebuilt,
+                first_rebuilt_idx=first_rebuilt_idx,
+                staged_views=staged_views,
+                totals=totals,
             )
         )
 

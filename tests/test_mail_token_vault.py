@@ -140,10 +140,9 @@ def test_unaudited_write_inside_atomic_rolls_back_with_the_block(tmp_path):
     from orivellum.database.db import OrivellumDB
 
     db = OrivellumDB(str(tmp_path / "t.db"))
-    with pytest.raises(RuntimeError):
-        with db.atomic():
-            db.set_setting_unaudited("plumbing_key", "should-roll-back")
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), db.atomic():
+        db.set_setting_unaudited("plumbing_key", "should-roll-back")
+        raise RuntimeError("boom")
     assert db.get_setting("plumbing_key", "") == "", (
         "inside atomic(), set_setting_unaudited must defer to the outer "
         "transaction so a later exception rolls it back"

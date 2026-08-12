@@ -146,8 +146,7 @@ CONTRACTS: list[dict] = [
         "key": "drift.restoration",
         "name": "Drift: Restoration",
         "purpose": (
-            "Detect resolution/restoration language appearing before its "
-            "permitted chapter range."
+            "Detect resolution/restoration language appearing before its permitted chapter range."
         ),
         "scope": {"prohibited_before_chapter": 71},
         "thresholds": {"prohibited_before_chapter": 71},
@@ -273,8 +272,7 @@ CONTRACTS: list[dict] = [
             "skip the structural conditions when unsigned",
         ],
         "authority_relationship": (
-            "Tier 1 structural + Tier 3 judgment; go/no-go on the author's "
-            "signature."
+            "Tier 1 structural + Tier 3 judgment; go/no-go on the author's signature."
         ),
         "output_schema": _FINDING_SCHEMA,
         "scope": {"chapter_range": [71, 80]},
@@ -365,8 +363,7 @@ _FORCE_SPECS: list[tuple[str, str, str, dict]] = [
         "Force 13: Pressure Curve",
         "Trace the tension curve across the book; flag a flat curve and "
         "mid-book pressure sags against the rolling mean.",
-        {"min_chapters_for_curve": 5, "flat_curve_max_cv": 0.25,
-         "sag_below_rolling_pct": 60.0},
+        {"min_chapters_for_curve": 5, "flat_curve_max_cv": 0.25, "sag_below_rolling_pct": 60.0},
     ),
     (
         "force.conflict_escalation",
@@ -387,23 +384,31 @@ _FORCE_SPECS: list[tuple[str, str, str, dict]] = [
         "Force 16: Story Momentum",
         "Flag stalled chapters (long sentences, no dialogue, no tension) "
         "and consecutive-stall flatlines at story level.",
-        {"min_chapter_words": 600, "stall_mean_sentence_words": 22.0,
-         "stall_max_dialogue_ratio": 0.02, "stall_max_tension_per_1k": 1.0,
-         "flatline_consecutive": 3},
+        {
+            "min_chapter_words": 600,
+            "stall_mean_sentence_words": 22.0,
+            "stall_max_dialogue_ratio": 0.02,
+            "stall_max_tension_per_1k": 1.0,
+            "flatline_consecutive": 3,
+        },
     ),
     (
         "force.theme_integrity",
         "Force 17: Theme Integrity",
         "Derive recurring motifs from the opening third and flag later "
         "chapters where every motif has vanished.",
-        {"min_chapters_for_theme": 6, "min_chapter_words": 400,
-         "motif_min_word_length": 5, "motif_presence_ratio": 0.5, "max_motifs": 8},
+        {
+            "min_chapters_for_theme": 6,
+            "min_chapter_words": 400,
+            "motif_min_word_length": 5,
+            "motif_presence_ratio": 0.5,
+            "max_motifs": 8,
+        },
     ),
 ]
 
 CONTRACTS.extend(
-    {"key": key, "name": name, "purpose": purpose, "thresholds": thresholds,
-     **_FORCE_CONTRACT}
+    {"key": key, "name": name, "purpose": purpose, "thresholds": thresholds, **_FORCE_CONTRACT}
     for key, name, purpose, thresholds in _FORCE_SPECS
 )
 
@@ -440,7 +445,9 @@ def _enter_force_shadow(db: Any) -> None:
             continue
         try:
             db.set_assay_certification(
-                key, "shadow", actor="system",
+                key,
+                "shadow",
+                actor="system",
                 note="FORCE detectors shadow-test before certification (M16)",
             )
         except (ValueError, RuntimeError) as exc:
@@ -557,7 +564,10 @@ def run_instrument(
     )
     logger.info(
         "assay: instrument=%s work=%s verdict=%s findings=%d",
-        key, work_id, result.get("verdict"), len(findings),
+        key,
+        work_id,
+        result.get("verdict"),
+        len(findings),
     )
     # Co-run shadow companions alongside the (non-shadow) primary run so the
     # parity record accumulates.  A companion failure or claim conflict never
@@ -600,7 +610,8 @@ def _run_shadow_companions(
     for companion in db.list_assay_shadow_companions(key):
         try:
             run_instrument(
-                db, cfg,
+                db,
+                cfg,
                 key=companion["key"],
                 work_id=work_id,
                 chapter_id=chapter_id,
@@ -609,13 +620,13 @@ def _run_shadow_companions(
         except Exception as exc:
             logger.warning(
                 "assay: shadow companion %s failed alongside %s: %s",
-                companion["key"], key, exc,
+                companion["key"],
+                key,
+                exc,
             )
 
 
-def _dispatch(
-    db: Any, cfg: Any, instrument: dict, work_id: str, chapter_id: str | None
-) -> dict:
+def _dispatch(db: Any, cfg: Any, instrument: dict, work_id: str, chapter_id: str | None) -> dict:
     # A shadow candidate shares its baseline's runner family (shadow_of)
     # while using its OWN thresholds/scope — that is what makes a re-tuned
     # detector testable in shadow before it may block.
@@ -642,9 +653,7 @@ def _dispatch(
 # ── Instrument implementations ───────────────────────────────────────────────
 
 
-def _run_voice_envelope(
-    db: Any, work_id: str, chapter_id: str | None, thresholds: dict
-) -> dict:
+def _run_voice_envelope(db: Any, work_id: str, chapter_id: str | None, thresholds: dict) -> dict:
     # Series voice continuity: a later volume with no local envelope is
     # verified against the nearest EARLIER volume's approved envelope — a
     # local baseline always wins.  Provenance travels in the evidence.
@@ -703,9 +712,7 @@ def _run_voice_envelope(
     }
 
 
-def _run_drift(
-    db: Any, key: str, work_id: str, chapter_id: str | None, thresholds: dict
-) -> dict:
+def _run_drift(db: Any, key: str, work_id: str, chapter_id: str | None, thresholds: dict) -> dict:
     chapters = _load_chapters(db, work_id, chapter_id)
     findings: list[dict] = []
     flagged = 0
@@ -737,9 +744,7 @@ def _run_drift(
     }
 
 
-def _run_force(
-    db: Any, key: str, work_id: str, chapter_id: str | None, thresholds: dict
-) -> dict:
+def _run_force(db: Any, key: str, work_id: str, chapter_id: str | None, thresholds: dict) -> dict:
     # FORCE curves are book-level: always load the WHOLE book (a chapter-
     # scoped run still needs the full context, it just reports one chapter).
     if chapter_id is not None:
@@ -911,7 +916,9 @@ def _run_signature_gate(
     gathered = 0
     for ch in in_range:
         parsed = judge._call(
-            db, cfg, model,
+            db,
+            cfg,
+            model,
             f"assay.{key.split('.')[1]}.evidence",
             (
                 f"{rubric}\n\nRespond ONLY with JSON: "
@@ -958,9 +965,7 @@ def _validated_scores(raw: object, label: str, field: str) -> dict[str, float]:
     out: dict[str, float] = {}
     for cat, val in raw.items():
         if not isinstance(val, (int, float)) or isinstance(val, bool) or not 0 <= val <= 100:
-            raise AssayError(
-                f"judge: malformed pairwise score for {label} ({field}.{cat})"
-            )
+            raise AssayError(f"judge: malformed pairwise score for {label} ({field}.{cat})")
         out[str(cat)] = float(val)
     return out
 
@@ -1018,9 +1023,7 @@ def _judge_pairwise_step(
                     "evidence": pw_row,
                 }
             )
-    db.set_assay_baseline(
-        work_id, f"judge_snapshot:{ch['id']}", {"hash": cur_hash, "text": text}
-    )
+    db.set_assay_baseline(work_id, f"judge_snapshot:{ch['id']}", {"hash": cur_hash, "text": text})
 
 
 def _judge_annotations_to_findings(
@@ -1050,9 +1053,7 @@ def _judge_annotations_to_findings(
             )
 
 
-def _run_judge(
-    db: Any, cfg: Any, work_id: str, chapter_id: str | None, thresholds: dict
-) -> dict:
+def _run_judge(db: Any, cfg: Any, work_id: str, chapter_id: str | None, thresholds: dict) -> dict:
     model = judge.judge_model(db, cfg)
     chapters = _load_chapters(db, work_id, chapter_id)
     if not chapters:
@@ -1067,8 +1068,7 @@ def _run_judge(
     # Story level (whole-work runs only).
     if chapter_id is None:
         outline = "\n\n".join(
-            f"CH {c['seq']} — {c['title'] or ''}\n{(c['text'] or '')[:400]}"
-            for c in chapters
+            f"CH {c['seq']} — {c['title'] or ''}\n{(c['text'] or '')[:400]}" for c in chapters
         )
         parsed = judge.judge_story(db, cfg, model, outline)
         if parsed is None:
@@ -1093,9 +1093,7 @@ def _run_judge(
         _annotations_to_findings(ch, "sentence", parsed)
 
         # Pairwise: revision N vs the stored previous revision snapshot.
-        _judge_pairwise_step(
-            db, cfg, model, work_id, ch, text, pairwise_results, findings
-        )
+        _judge_pairwise_step(db, cfg, model, work_id, ch, text, pairwise_results, findings)
     evidence["levels"]["chapter"] = evidence["levels"]["sentence"] = "done"
     evidence["pairwise"] = pairwise_results
     # Tier 3: the verdict is ALWAYS advisory — never pass/fail.

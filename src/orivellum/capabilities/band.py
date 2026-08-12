@@ -74,8 +74,12 @@ _MAX_CANON_FACTS = 120
 _MAX_WORLD_STATE = 60
 
 # Severity of a grounded, confirmed delta contradiction, by fact source.
-_REF_SEVERITY = {"HISTORICAL": "critical", "INFERRED": "high",
-                 "INVENTED": "medium", "WORLD": "medium"}
+_REF_SEVERITY = {
+    "HISTORICAL": "critical",
+    "INFERRED": "high",
+    "INVENTED": "medium",
+    "WORLD": "medium",
+}
 _SEV_RANK = {"critical": 3, "high": 2, "medium": 1}
 
 
@@ -99,9 +103,7 @@ def fingerprint(text: str) -> str:
 
 def _load_chapter(db: OrivellumDB, chapter_id: str) -> dict:
     with db._lock:
-        row = db._conn.execute(
-            "SELECT * FROM book_chapters WHERE id=?", (chapter_id,)
-        ).fetchone()
+        row = db._conn.execute("SELECT * FROM book_chapters WHERE id=?", (chapter_id,)).fetchone()
     if row is None:
         raise BandError(f"chapter {chapter_id!r} not found")
     return dict(row)
@@ -144,9 +146,7 @@ def _checkpoint_current(db: OrivellumDB, ch: dict, *, expected_fp: str) -> None:
     from orivellum.database.db import _now  # noqa: PLC0415
 
     with db._lock:
-        row = db._conn.execute(
-            "SELECT text FROM book_chapters WHERE id=?", (ch["id"],)
-        ).fetchone()
+        row = db._conn.execute("SELECT text FROM book_chapters WHERE id=?", (ch["id"],)).fetchone()
         if row is None:
             raise BandError("chapter vanished before checkpoint")
         text = row["text"] or ""
@@ -168,11 +168,21 @@ def _checkpoint_current(db: OrivellumDB, ch: dict, *, expected_fp: str) -> None:
             """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
                text, word_count, meta, created_at, parent_rev, origin,
                created_by, edit_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)""",
-            (str(uuid.uuid4()), ch["id"], ch["work_id"], head + 1, text,
-             len(text.split()),
-             json.dumps({"checkpoint": True,
-                         "note": "pre-edit checkpoint of untracked chapter text"}),
-             _now(), head or None, origin, "checkpoint"),
+            (
+                str(uuid.uuid4()),
+                ch["id"],
+                ch["work_id"],
+                head + 1,
+                text,
+                len(text.split()),
+                json.dumps(
+                    {"checkpoint": True, "note": "pre-edit checkpoint of untracked chapter text"}
+                ),
+                _now(),
+                head or None,
+                origin,
+                "checkpoint",
+            ),
         )
         db._conn.commit()
 
@@ -189,8 +199,7 @@ def _fact_lines(db: OrivellumDB, work_id: str) -> list[dict]:
     from orivellum.database.canon_store import CanonStore  # noqa: PLC0415
 
     facts: list[dict] = []
-    for f in CanonStore(db).list_facts(work_id=work_id, status="active",
-                                       limit=_MAX_CANON_FACTS):
+    for f in CanonStore(db).list_facts(work_id=work_id, status="active", limit=_MAX_CANON_FACTS):
         cls = f.get("classification")
         cls = cls if cls in _REF_SEVERITY else "INFERRED"
         facts.append({"source": cls, "statement": str(f.get("statement") or "")})
@@ -216,8 +225,9 @@ from the PASSAGE that contradicts", "reasoning": "why"}}]}}
 Return {{"contradictions": []}} if there are none."""
 
 
-def _delta_check(db, cfg, *, critic: str, facts: list[dict], passage: str,
-                 llm_ids: list) -> list[dict]:
+def _delta_check(
+    db, cfg, *, critic: str, facts: list[dict], passage: str, llm_ids: list
+) -> list[dict]:
     """Grounded delta findings for one band text.  Strict: a malformed
     checker response raises (fail closed) — it never counts as a clean pass.
     Ungrounded proposals are discarded, never coerced."""
@@ -227,7 +237,10 @@ def _delta_check(db, cfg, *, critic: str, facts: list[dict], passage: str,
         f"F{i} [{f['source']}]: {f['statement'][:300]}" for i, f in enumerate(facts)
     )
     r = _gateway(
-        db, cfg, model=critic, purpose="band.delta",
+        db,
+        cfg,
+        model=critic,
+        purpose="band.delta",
         system="You are a meticulous continuity checker. JSON only.",
         user=_DELTA_PROMPT.format(facts=fact_block, passage=passage[:BAND_MAX_CHARS]),
         temperature=0.0,
@@ -237,8 +250,9 @@ def _delta_check(db, cfg, *, critic: str, facts: list[dict], passage: str,
         raise BandError(f"delta check gateway failure: {r.error}")
     parsed = _parse_json_obj(r.text)
     if parsed is None or not isinstance(parsed.get("contradictions"), list):
-        raise BandError("delta check returned malformed output — refusing to "
-                        "treat an unverified band as clean")
+        raise BandError(
+            "delta check returned malformed output — refusing to treat an unverified band as clean"
+        )
     findings = []
     for prop in parsed["contradictions"][:20]:
         if not isinstance(prop, dict):
@@ -255,14 +269,16 @@ def _delta_check(db, cfg, *, critic: str, facts: list[dict], passage: str,
         if found is None:
             continue  # ungrounded — discard, never coerce
         offset, grounded_quote = found
-        findings.append({
-            "severity": _REF_SEVERITY[fact["source"]],
-            "fact_source": fact["source"],
-            "fact_statement": fact["statement"][:400],
-            "quote": grounded_quote[:400],
-            "offset": offset,
-            "reasoning": str(prop.get("reasoning") or "")[:400],
-        })
+        findings.append(
+            {
+                "severity": _REF_SEVERITY[fact["source"]],
+                "fact_source": fact["source"],
+                "fact_statement": fact["statement"][:400],
+                "quote": grounded_quote[:400],
+                "offset": offset,
+                "reasoning": str(prop.get("reasoning") or "")[:400],
+            }
+        )
     return findings
 
 
@@ -299,14 +315,28 @@ VERSION NEW:
 JSON only: {{"winner": "new" | "old" | "tie", "rationale": "one or two sentences"}}"""
 
 
-def _pairwise_score(db, cfg, *, critic: str, instruction: str, before: str,
-                    old_band: str, new_band: str, llm_ids: list) -> dict:
+def _pairwise_score(
+    db,
+    cfg,
+    *,
+    critic: str,
+    instruction: str,
+    before: str,
+    old_band: str,
+    new_band: str,
+    llm_ids: list,
+) -> dict:
     r = _gateway(
-        db, cfg, model=critic, purpose="band.pairwise",
+        db,
+        cfg,
+        model=critic,
+        purpose="band.pairwise",
         system="You are a strict manuscript editor. JSON only.",
         user=_PAIRWISE_PROMPT.format(
-            instruction=instruction, before=before[-CONTEXT_MARGIN_CHARS:],
-            old=old_band[:BAND_MAX_CHARS], new=new_band[:BAND_MAX_CHARS],
+            instruction=instruction,
+            before=before[-CONTEXT_MARGIN_CHARS:],
+            old=old_band[:BAND_MAX_CHARS],
+            new=new_band[:BAND_MAX_CHARS],
         ),
         temperature=0.0,
     )
@@ -316,10 +346,10 @@ def _pairwise_score(db, cfg, *, critic: str, instruction: str, before: str,
     parsed = _parse_json_obj(r.text)
     winner = str((parsed or {}).get("winner") or "").strip().lower()
     if winner not in ("new", "old", "tie"):
-        raise BandError("pairwise re-score returned malformed output — "
-                        "refusing to score the edit by default")
-    return {"winner": winner,
-            "rationale": str((parsed or {}).get("rationale") or "")[:600]}
+        raise BandError(
+            "pairwise re-score returned malformed output — refusing to score the edit by default"
+        )
+    return {"winner": winner, "rationale": str((parsed or {}).get("rationale") or "")[:600]}
 
 
 # ── The edit itself ──────────────────────────────────────────────────────────
@@ -345,16 +375,23 @@ prose and making the result flow seamlessly into the read-only context.
 JSON only: {{"band": "the full replacement text for the band"}}"""
 
 
-def _apply_edit_llm(db, cfg, *, drafter: str, before: str, band: str,
-                    after: str, instruction: str, llm_ids: list) -> str:
+def _apply_edit_llm(
+    db, cfg, *, drafter: str, before: str, band: str, after: str, instruction: str, llm_ids: list
+) -> str:
     r = _gateway(
-        db, cfg, model=drafter, purpose="band.edit",
+        db,
+        cfg,
+        model=drafter,
+        purpose="band.edit",
         system="You are a precise line editor. JSON only.",
         user=_EDIT_PROMPT.format(
-            before=before[-CONTEXT_MARGIN_CHARS:], band=band,
-            after=after[:CONTEXT_MARGIN_CHARS], instruction=instruction,
+            before=before[-CONTEXT_MARGIN_CHARS:],
+            band=band,
+            after=after[:CONTEXT_MARGIN_CHARS],
+            instruction=instruction,
         ),
-        temperature=0.3, timeout=300,
+        temperature=0.3,
+        timeout=300,
     )
     llm_ids.append(r.call_id)
     if not r.ok:
@@ -379,13 +416,10 @@ def _regression_reasons(baseline: dict, candidate: dict, pairwise: dict) -> list
             f"vs {baseline['critical_count']} before"
         )
     if candidate["count"] > baseline["count"]:
-        reasons.append(
-            f"delta findings increased: {candidate['count']} vs {baseline['count']}"
-        )
+        reasons.append(f"delta findings increased: {candidate['count']} vs {baseline['count']}")
     if candidate["ced"] > baseline["ced"]:
         reasons.append(
-            f"band error density increased: {candidate['ced']} vs {baseline['ced']} "
-            "per 10k words"
+            f"band error density increased: {candidate['ced']} vs {baseline['ced']} per 10k words"
         )
     if pairwise["winner"] == "old":
         reasons.append(f"critic prefers the previous text: {pairwise['rationale']}")
@@ -393,9 +427,16 @@ def _regression_reasons(baseline: dict, candidate: dict, pairwise: dict) -> list
 
 
 def _commit_revision(
-    db: OrivellumDB, ch: dict, new_text: str, *,
-    expected_fp: str, origin: str, created_by: str,
-    edit_scope: dict | None, meta: dict, demote_approved: bool,
+    db: OrivellumDB,
+    ch: dict,
+    new_text: str,
+    *,
+    expected_fp: str,
+    origin: str,
+    created_by: str,
+    edit_scope: dict | None,
+    meta: dict,
+    demote_approved: bool,
 ) -> dict:
     """ONE transaction: fingerprint re-check, approval re-check, revision
     insert, chapter text update (+ demotion when editing an approved
@@ -425,23 +466,36 @@ def _commit_revision(
                 "chapter was approved mid-edit — an approved chapter needs "
                 "the author signature; edit refused"
             )
-        head = int(db._conn.execute(
-            "SELECT COALESCE(MAX(rev), 0) AS m FROM loom_chapter_revision "
-            "WHERE chapter_id=?", (ch["id"],),
-        ).fetchone()["m"])
+        head = int(
+            db._conn.execute(
+                "SELECT COALESCE(MAX(rev), 0) AS m FROM loom_chapter_revision WHERE chapter_id=?",
+                (ch["id"],),
+            ).fetchone()["m"]
+        )
         rev = head + 1
         db._conn.execute(
             """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
                text, word_count, meta, created_at, parent_rev, origin,
                created_by, edit_scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (rid, ch["id"], ch["work_id"], rev, new_text, wc,
-             json.dumps(meta), now, head or None, origin, created_by,
-             json.dumps(edit_scope) if edit_scope is not None else None),
+            (
+                rid,
+                ch["id"],
+                ch["work_id"],
+                rev,
+                new_text,
+                wc,
+                json.dumps(meta),
+                now,
+                head or None,
+                origin,
+                created_by,
+                json.dumps(edit_scope) if edit_scope is not None else None,
+            ),
         )
         if approved:
             db._conn.execute(
-                "UPDATE book_chapters SET text=?, status='drafted', updated_at=? "
-                "WHERE id=?", (new_text, now, ch["id"]),
+                "UPDATE book_chapters SET text=?, status='drafted', updated_at=? WHERE id=?",
+                (new_text, now, ch["id"]),
             )
         else:
             db._conn.execute(
@@ -449,14 +503,27 @@ def _commit_revision(
                 (new_text, now, ch["id"]),
             )
         db._conn.commit()
-    return {"id": rid, "rev": rev, "word_count": wc, "parent_rev": head or None,
-            "demoted_from_approved": approved}
+    return {
+        "id": rid,
+        "rev": rev,
+        "word_count": wc,
+        "parent_rev": head or None,
+        "demoted_from_approved": approved,
+    }
 
 
 def surgical_edit(
-    db: OrivellumDB, cfg: Any, *, chapter_id: str, start: int, end: int,
-    instruction: str, base_fingerprint: str, author: str = "",
-    accept_regression: bool = False, band_text: str | None = None,
+    db: OrivellumDB,
+    cfg: Any,
+    *,
+    chapter_id: str,
+    start: int,
+    end: int,
+    instruction: str,
+    base_fingerprint: str,
+    author: str = "",
+    accept_regression: bool = False,
+    band_text: str | None = None,
 ) -> dict:
     """The full BAND flow.  Returns ``{"committed": True, ...}`` on success or
     ``{"committed": False, "reasons": [...]}`` when regression gates refuse.
@@ -468,9 +535,15 @@ def surgical_edit(
         raise BandBusy("a band edit for this chapter is already in flight")
     try:
         return _surgical_edit_locked(
-            db, cfg, chapter_id=chapter_id, start=start, end=end,
-            instruction=instruction, base_fingerprint=base_fingerprint,
-            author=author, accept_regression=accept_regression,
+            db,
+            cfg,
+            chapter_id=chapter_id,
+            start=start,
+            end=end,
+            instruction=instruction,
+            base_fingerprint=base_fingerprint,
+            author=author,
+            accept_regression=accept_regression,
             band_text=band_text,
         )
     finally:
@@ -478,8 +551,15 @@ def surgical_edit(
 
 
 def _validate_edit_request(
-    ch: dict, text: str, *, start: int, end: int, instruction: str,
-    base_fingerprint: str, author: str, accept_regression: bool,
+    ch: dict,
+    text: str,
+    *,
+    start: int,
+    end: int,
+    instruction: str,
+    base_fingerprint: str,
+    author: str,
+    accept_regression: bool,
 ) -> None:
     if not instruction:
         raise BandError("an edit needs an instruction")
@@ -499,10 +579,8 @@ def _validate_edit_request(
             "chapter is approved — editing it requires the author signature "
             "and will demote it back to 'drafted'"
         )
-    if not (isinstance(start, int) and isinstance(end, int)
-            and 0 <= start < end <= len(text)):
-        raise BandError(f"invalid band boundaries [{start}, {end}) for a "
-                        f"{len(text)}-char chapter")
+    if not (isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= len(text)):
+        raise BandError(f"invalid band boundaries [{start}, {end}) for a {len(text)}-char chapter")
     if end - start > BAND_MAX_CHARS:
         raise BandError(
             f"band of {end - start} chars exceeds the surgical limit "
@@ -511,8 +589,17 @@ def _validate_edit_request(
 
 
 def _surgical_edit_locked(
-    db, cfg, *, chapter_id, start, end, instruction, base_fingerprint,
-    author, accept_regression, band_text=None,
+    db,
+    cfg,
+    *,
+    chapter_id,
+    start,
+    end,
+    instruction,
+    base_fingerprint,
+    author,
+    accept_regression,
+    band_text=None,
 ) -> dict:
     instruction = (instruction or "").strip()
     author = (author or "").strip()
@@ -520,8 +607,13 @@ def _surgical_edit_locked(
     ch = _load_chapter(db, chapter_id)
     text = ch.get("text") or ""
     _validate_edit_request(
-        ch, text, start=start, end=end, instruction=instruction,
-        base_fingerprint=base_fingerprint, author=author,
+        ch,
+        text,
+        start=start,
+        end=end,
+        instruction=instruction,
+        base_fingerprint=base_fingerprint,
+        author=author,
         accept_regression=accept_regression,
     )
     # Boundary echo check: the caller states the exact text it selected.  Any
@@ -540,8 +632,14 @@ def _surgical_edit_locked(
     before, band, after = text[:start], text[start:end], text[end:]
     llm_ids: list = []
     new_band = _apply_edit_llm(
-        db, cfg, drafter=drafter, before=before, band=band, after=after,
-        instruction=instruction, llm_ids=llm_ids,
+        db,
+        cfg,
+        drafter=drafter,
+        before=before,
+        band=band,
+        after=after,
+        instruction=instruction,
+        llm_ids=llm_ids,
     )
     # Reassembly by code — outside-band bytes are preserved by construction.
     candidate_text = before + new_band + after
@@ -549,62 +647,96 @@ def _surgical_edit_locked(
     # Post-merge validation on the DELTA only.
     facts = _fact_lines(db, ch["work_id"])
     baseline = _delta_summary(
-        _delta_check(db, cfg, critic=critic, facts=facts, passage=band,
-                     llm_ids=llm_ids), band)
+        _delta_check(db, cfg, critic=critic, facts=facts, passage=band, llm_ids=llm_ids), band
+    )
     candidate = _delta_summary(
-        _delta_check(db, cfg, critic=critic, facts=facts, passage=new_band,
-                     llm_ids=llm_ids), new_band)
+        _delta_check(db, cfg, critic=critic, facts=facts, passage=new_band, llm_ids=llm_ids),
+        new_band,
+    )
     pairwise = _pairwise_score(
-        db, cfg, critic=critic, instruction=instruction, before=before,
-        old_band=band, new_band=new_band, llm_ids=llm_ids,
+        db,
+        cfg,
+        critic=critic,
+        instruction=instruction,
+        before=before,
+        old_band=band,
+        new_band=new_band,
+        llm_ids=llm_ids,
     )
     reasons = _regression_reasons(baseline, candidate, pairwise)
     call_ids = [i for i in llm_ids if i is not None]
 
-    gates = {"pairwise": pairwise,
-             "delta": {"baseline": baseline, "candidate": candidate},
-             "regression_reasons": reasons}
+    gates = {
+        "pairwise": pairwise,
+        "delta": {"baseline": baseline, "candidate": candidate},
+        "regression_reasons": reasons,
+    }
     if reasons and not accept_regression:
-        logger.info("band: chapter=%s edit REFUSED (%d reasons)",
-                    chapter_id, len(reasons))
+        logger.info("band: chapter=%s edit REFUSED (%d reasons)", chapter_id, len(reasons))
         return {
-            "committed": False, "reasons": reasons, "gates": gates,
+            "committed": False,
+            "reasons": reasons,
+            "gates": gates,
             "proposed_band": new_band,
-            "note": "resubmit with accept_regression=true and an author "
-                    "signature to commit anyway",
+            "note": "resubmit with accept_regression=true and an author signature to commit anyway",
         }
 
     new_fp = fingerprint(candidate_text)
-    edit_scope = {"start": start, "end": end, "instruction": instruction,
-                  "fingerprint_before": base_fingerprint,
-                  "fingerprint_after": new_fp}
-    meta = {"band_edit": True, "gates": gates,
-            "accepted_regression": bool(reasons and accept_regression),
-            "llm_call_ids": call_ids}
+    edit_scope = {
+        "start": start,
+        "end": end,
+        "instruction": instruction,
+        "fingerprint_before": base_fingerprint,
+        "fingerprint_after": new_fp,
+    }
+    meta = {
+        "band_edit": True,
+        "gates": gates,
+        "accepted_regression": bool(reasons and accept_regression),
+        "llm_call_ids": call_ids,
+    }
     stored = _commit_revision(
-        db, ch, candidate_text, expected_fp=base_fingerprint,
-        origin="ai_assisted", created_by=author or "user",
-        edit_scope=edit_scope, meta=meta,
+        db,
+        ch,
+        candidate_text,
+        expected_fp=base_fingerprint,
+        origin="ai_assisted",
+        created_by=author or "user",
+        edit_scope=edit_scope,
+        meta=meta,
         demote_approved=bool(author),
     )
     try:
-        db.record_provenance(stored["id"], "loom_chapter_revision",
-                             origin="ai_assisted", llm_call_ids=call_ids,
-                             declared_by=author or "user")
+        db.record_provenance(
+            stored["id"],
+            "loom_chapter_revision",
+            origin="ai_assisted",
+            llm_call_ids=call_ids,
+            declared_by=author or "user",
+        )
     except Exception:
         logger.exception("band: provenance recording failed (edit committed)")
-    logger.info("band: chapter=%s committed rev=%s (%d→%d chars, %d reasons accepted)",
-                chapter_id, stored["rev"], end - start, len(new_band), len(reasons))
-    return {"committed": True, "revision": stored, "gates": gates,
-            "fingerprint": new_fp,
-            "demoted_from_approved": stored["demoted_from_approved"]}
+    logger.info(
+        "band: chapter=%s committed rev=%s (%d→%d chars, %d reasons accepted)",
+        chapter_id,
+        stored["rev"],
+        end - start,
+        len(new_band),
+        len(reasons),
+    )
+    return {
+        "committed": True,
+        "revision": stored,
+        "gates": gates,
+        "fingerprint": new_fp,
+        "demoted_from_approved": stored["demoted_from_approved"],
+    }
 
 
 # ── Restore (append-only history — restore is a NEW revision) ────────────────
 
 
-def restore_revision(db: OrivellumDB, *, chapter_id: str, rev: int,
-                     author: str = "") -> dict:
+def restore_revision(db: OrivellumDB, *, chapter_id: str, rev: int, author: str = "") -> dict:
     lock = _chapter_lock(chapter_id)
     if not lock.acquire(blocking=False):
         raise BandBusy("a band edit for this chapter is already in flight")
@@ -631,15 +763,22 @@ def restore_revision(db: OrivellumDB, *, chapter_id: str, rev: int,
         # Current state is preserved as a checkpoint before the restore lands.
         _checkpoint_current(db, ch, expected_fp=fingerprint(text))
         stored = _commit_revision(
-            db, ch, full["text"] or "", expected_fp=fingerprint(text),
+            db,
+            ch,
+            full["text"] or "",
+            expected_fp=fingerprint(text),
             origin=str(full.get("origin") or "human"),
-            created_by=author or "user", edit_scope=None,
+            created_by=author or "user",
+            edit_scope=None,
             meta={"restored_from_rev": rev, "restored_from_id": full["id"]},
             demote_approved=bool(author),
         )
-        return {"committed": True, "revision": stored,
-                "restored_from_rev": rev,
-                "fingerprint": fingerprint(full["text"] or ""),
-                "demoted_from_approved": stored["demoted_from_approved"]}
+        return {
+            "committed": True,
+            "revision": stored,
+            "restored_from_rev": rev,
+            "fingerprint": fingerprint(full["text"] or ""),
+            "demoted_from_approved": stored["demoted_from_approved"],
+        }
     finally:
         lock.release()

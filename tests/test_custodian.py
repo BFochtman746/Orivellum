@@ -27,9 +27,7 @@ def _make_db(tmp_path):
 
 def _nudge_rows(db, work_id):
     with db._lock:
-        rows = db._conn.execute(
-            "SELECT * FROM work_nudges WHERE work_id=?", (work_id,)
-        ).fetchall()
+        rows = db._conn.execute("SELECT * FROM work_nudges WHERE work_id=?", (work_id,)).fetchall()
     return [dict(r) for r in rows]
 
 

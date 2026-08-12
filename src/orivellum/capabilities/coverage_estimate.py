@@ -72,11 +72,20 @@ def chao1_estimate(frequencies: Iterable[int]) -> dict:
 
     if n == 0:
         return {
-            "n": 0, "s_obs": 0, "f1": 0, "f2": 0,
-            "s_est": None, "s_est_low": None, "s_est_high": None,
-            "unseen_est": None, "unseen_low": None, "unseen_high": None,
+            "n": 0,
+            "s_obs": 0,
+            "f1": 0,
+            "f2": 0,
+            "s_est": None,
+            "s_est_low": None,
+            "s_est_high": None,
+            "unseen_est": None,
+            "unseen_low": None,
+            "unseen_high": None,
             "good_turing": None,
-            "completeness": None, "completeness_low": None, "completeness_high": None,
+            "completeness": None,
+            "completeness_low": None,
+            "completeness_high": None,
             "bias_corrected": False,
         }
 
@@ -91,9 +100,9 @@ def chao1_estimate(frequencies: Iterable[int]) -> dict:
         s_est = s_obs + (f1 * (f1 - 1)) / (2.0 * (f2 + 1))
         if f1 > 0:
             variance = (
-                f1 * (f1 - 1) / 2.0
-                + f1 * (2 * f1 - 1) ** 2 / 4.0
-                - (f1**4) / (4.0 * s_est) if s_est > 0 else 0.0
+                f1 * (f1 - 1) / 2.0 + f1 * (2 * f1 - 1) ** 2 / 4.0 - (f1**4) / (4.0 * s_est)
+                if s_est > 0
+                else 0.0
             )
         else:
             variance = 0.0
@@ -117,9 +126,13 @@ def chao1_estimate(frequencies: Iterable[int]) -> dict:
     completeness_high = s_obs / s_low if s_low and s_low > 0 else None
 
     return {
-        "n": n, "s_obs": s_obs, "f1": f1, "f2": f2,
+        "n": n,
+        "s_obs": s_obs,
+        "f1": f1,
+        "f2": f2,
         "s_est": round(s_est, 2),
-        "s_est_low": round(s_low, 2), "s_est_high": round(s_high, 2),
+        "s_est_low": round(s_low, 2),
+        "s_est_high": round(s_high, 2),
         "unseen_est": round(max(0.0, unseen), 2),
         "unseen_low": round(max(0.0, s_low - s_obs), 2),
         "unseen_high": round(max(0.0, s_high - s_obs), 2),
@@ -153,10 +166,7 @@ def _summary_line(cls: str, est: dict) -> str:
     unseen = est["unseen_est"]
     lo, hi = est["unseen_low"], est["unseen_high"]
     ci = f" (95% CI {lo:.0f}–{hi:.0f})" if hi and hi > lo else ""
-    return (
-        f"At most {pct:.0f}% of {cls} items seen — "
-        f"an estimated {unseen:.0f} more unseen{ci}."
-    )
+    return f"At most {pct:.0f}% of {cls} items seen — an estimated {unseen:.0f} more unseen{ci}."
 
 
 def class_coverage(cls: str, frequencies: Iterable[int]) -> dict:
@@ -219,8 +229,6 @@ def estimate_coverage(db: OrivellumDB, work_id: str | None = None) -> dict:
         "under_sampled_classes": sorted(
             c["class"] for c in classes if c["band"] == "under_sampled"
         ),
-        "well_sampled_classes": sorted(
-            c["class"] for c in classes if c["band"] == "well_sampled"
-        ),
+        "well_sampled_classes": sorted(c["class"] for c in classes if c["band"] == "well_sampled"),
         "evaluated_at": datetime.datetime.now(datetime.UTC).isoformat(),
     }

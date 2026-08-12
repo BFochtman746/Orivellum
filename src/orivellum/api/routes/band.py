@@ -92,11 +92,17 @@ async def band_edit(chapter_id: str, body: EditBody):
     db, cfg = get_db(), get_config()
     try:
         return await run_in_threadpool(
-            surgical_edit, db, cfg,
-            chapter_id=chapter_id, start=body.start, end=body.end,
+            surgical_edit,
+            db,
+            cfg,
+            chapter_id=chapter_id,
+            start=body.start,
+            end=body.end,
             instruction=body.instruction,
-            base_fingerprint=body.base_fingerprint, band_text=body.band_text,
-            author=body.author, accept_regression=body.accept_regression,
+            base_fingerprint=body.base_fingerprint,
+            band_text=body.band_text,
+            author=body.author,
+            accept_regression=body.accept_regression,
         )
     except BandBusy as e:
         raise HTTPException(409, str(e)) from e
@@ -109,7 +115,10 @@ async def band_restore(chapter_id: str, body: RestoreBody):
     db = get_db()
     try:
         return await run_in_threadpool(
-            restore_revision, db, chapter_id=chapter_id, rev=body.rev,
+            restore_revision,
+            db,
+            chapter_id=chapter_id,
+            rev=body.rev,
             author=body.author,
         )
     except BandBusy as e:

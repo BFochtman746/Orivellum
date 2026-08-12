@@ -83,9 +83,7 @@ def test_move_requires_approval():
 def test_undo_requires_approval_and_original_folder():
     assert not _eval(ACTION_UNDO_MOVE, explicit_user_approval=True).allowed  # no folder
     assert not _eval(ACTION_UNDO_MOVE, destination_folder_id="f1").allowed  # no approval
-    assert _eval(
-        ACTION_UNDO_MOVE, explicit_user_approval=True, destination_folder_id="f1"
-    ).allowed
+    assert _eval(ACTION_UNDO_MOVE, explicit_user_approval=True, destination_folder_id="f1").allowed
 
 
 # ── Risk classifier & audit serialization ─────────────────────────────────────

@@ -82,9 +82,14 @@ def start_draft(work_id: str, body: DraftBody):
         from orivellum.capabilities.loom import run_loom_draft  # noqa: PLC0415
 
         dispatched = submit_bg(
-            run_loom_draft, db, cfg,
-            run_id=run_id, work_id=work_id, chapter_id=body.chapter_id,
-            kind="loom_draft", label=f"loom:{work_id}",
+            run_loom_draft,
+            db,
+            cfg,
+            run_id=run_id,
+            work_id=work_id,
+            chapter_id=body.chapter_id,
+            kind="loom_draft",
+            label=f"loom:{work_id}",
         )
     except Exception as exc:
         db.finish_loom_run(run_id, status="error", error=str(exc))

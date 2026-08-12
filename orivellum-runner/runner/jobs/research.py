@@ -173,8 +173,7 @@ def _closed_regions(c, notes):
     regions = set()
     try:
         for r in c.execute(
-            "SELECT work_id, gap_class, scope FROM completeness_assertion "
-            "WHERE status='active'"
+            "SELECT work_id, gap_class, scope FROM completeness_assertion WHERE status='active'"
         ):
             regions.add((r["work_id"], r["gap_class"], r["scope"]))
     except sqlite3.Error:
@@ -200,8 +199,7 @@ def _gaps_from_gap_table(c, topic, toks, gaps, notes):
                 "*",
             ) in closed:
                 notes.append(
-                    f"gap {r['id']} skipped: region already closed by a "
-                    "completeness assertion"
+                    f"gap {r['id']} skipped: region already closed by a completeness assertion"
                 )
                 continue
             blob = " ".join(filter(None, (r["unit"], r["scope"], r["evidence_absent"])))

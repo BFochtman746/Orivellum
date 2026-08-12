@@ -145,10 +145,14 @@ def _chapter_meta(db: Any, chapter_ids: set[str]) -> dict[str, dict]:
     if not chapter_ids:
         return {}
     marks = ",".join("?" for _ in chapter_ids)
-    rows = db.read_conn().execute(
-        f"SELECT id, seq, title FROM book_chapters WHERE id IN ({marks})",
-        tuple(chapter_ids),
-    ).fetchall()
+    rows = (
+        db.read_conn()
+        .execute(
+            f"SELECT id, seq, title FROM book_chapters WHERE id IN ({marks})",
+            tuple(chapter_ids),
+        )
+        .fetchall()
+    )
     return {r["id"]: {"seq": r["seq"], "title": r["title"] or ""} for r in rows}
 
 
@@ -156,11 +160,14 @@ def _fact_meta(db: Any, fact_ids: set[str]) -> dict[str, dict]:
     if not fact_ids:
         return {}
     marks = ",".join("?" for _ in fact_ids)
-    rows = db.read_conn().execute(
-        f"SELECT id, statement, classification, status FROM canon_fact "
-        f"WHERE id IN ({marks})",
-        tuple(fact_ids),
-    ).fetchall()
+    rows = (
+        db.read_conn()
+        .execute(
+            f"SELECT id, statement, classification, status FROM canon_fact WHERE id IN ({marks})",
+            tuple(fact_ids),
+        )
+        .fetchall()
+    )
     return {
         r["id"]: {
             "statement": r["statement"],
@@ -208,14 +215,10 @@ def _report(
     # node, so every reported impact traces back to the seed.
     chapter_hits: dict[str, dict] = {}
 
-    def _touch_chapter(
-        cid: str | None, *, node_name: str | None, quote: str, via_nid: str
-    ) -> None:
+    def _touch_chapter(cid: str | None, *, node_name: str | None, quote: str, via_nid: str) -> None:
         if not cid or cid == exclude_chapter_id:
             return
-        hit = chapter_hits.setdefault(
-            cid, {"nodes": set(), "evidence": [], "best_nid": via_nid}
-        )
+        hit = chapter_hits.setdefault(cid, {"nodes": set(), "evidence": [], "best_nid": via_nid})
         if node_name:
             hit["nodes"].add(node_name)
         if quote and len(hit["evidence"]) < 5 and quote not in hit["evidence"]:
@@ -225,11 +228,19 @@ def _report(
 
     for nid in sorted(affected, key=lambda i: (reached[i]["depth"], i)):
         n, r = nodes[nid], affected[nid]
-        _touch_chapter(n.get("chapter_id"), node_name=n["name"],
-                       quote=n.get("evidence_quote") or "", via_nid=nid)
+        _touch_chapter(
+            n.get("chapter_id"),
+            node_name=n["name"],
+            quote=n.get("evidence_quote") or "",
+            via_nid=nid,
+        )
         for hop in r["path"]:
-            _touch_chapter(hop["chapter_id"], node_name=hop["to_name"],
-                           quote=hop["evidence_quote"], via_nid=nid)
+            _touch_chapter(
+                hop["chapter_id"],
+                node_name=hop["to_name"],
+                quote=hop["evidence_quote"],
+                via_nid=nid,
+            )
 
     meta = _chapter_meta(db, set(chapter_hits))
     chapters = sorted(
@@ -252,13 +263,10 @@ def _report(
         key=lambda c: (c["depth"], c["name"], c["node_id"]),
     )
 
-    fact_ids = {
-        nodes[nid]["canon_fact_id"]
-        for nid in affected
-        if nodes[nid].get("canon_fact_id")
-    }
+    fact_ids = {nodes[nid]["canon_fact_id"] for nid in affected if nodes[nid].get("canon_fact_id")}
     seed_fact_ids = {
-        nodes[nid]["canon_fact_id"] for nid in seed_ids
+        nodes[nid]["canon_fact_id"]
+        for nid in seed_ids
         if nid in nodes and nodes[nid].get("canon_fact_id")
     }
     fact_ids -= seed_fact_ids
@@ -277,8 +285,7 @@ def _report(
             "path": reached[via[0]]["path"] if via else [],
         }
 
-    facts = sorted((_fact_view(fid) for fid in fact_ids),
-                   key=lambda f: f["canon_fact_id"])
+    facts = sorted((_fact_view(fid) for fid in fact_ids), key=lambda f: f["canon_fact_id"])
 
     return {
         # Deterministic output everywhere: unique id tie-breakers so
@@ -316,13 +323,10 @@ def simulate_ripple(
     max_depth = _clamp(depth, DEFAULT_DEPTH, MAX_DEPTH)
     nodes, edges, capped = _load_graph(db, work_id)
     if not nodes:
-        raise RippleError(
-            "this work has no ATLAS graph yet — build the world graph first"
-        )
+        raise RippleError("this work has no ATLAS graph yet — build the world graph first")
     seeds = _resolve_seeds(nodes, node_id=node_id, canon_fact_id=canon_fact_id, name=name)
     seed_ids = {s["id"] for s in seeds}
-    reached, truncated = _walk(nodes, edges, seed_ids, max_depth=max_depth,
-                               max_nodes=max_nodes)
+    reached, truncated = _walk(nodes, edges, seed_ids, max_depth=max_depth, max_nodes=max_nodes)
     report = _report(db, nodes, reached, seed_ids, truncated=truncated or capped)
     report["work_id"] = work_id
     report["depth"] = max_depth
@@ -364,10 +368,10 @@ def ripple_for_chapter(
             ),
         }
     seed_ids = {s["id"] for s in seeds}
-    reached, truncated = _walk(nodes, edges, seed_ids, max_depth=max_depth,
-                               max_nodes=max_nodes)
-    report = _report(db, nodes, reached, seed_ids, truncated=truncated or capped,
-                     exclude_chapter_id=chapter_id)
+    reached, truncated = _walk(nodes, edges, seed_ids, max_depth=max_depth, max_nodes=max_nodes)
+    report = _report(
+        db, nodes, reached, seed_ids, truncated=truncated or capped, exclude_chapter_id=chapter_id
+    )
     report["work_id"] = work_id
     report["chapter_id"] = chapter_id
     report["depth"] = max_depth

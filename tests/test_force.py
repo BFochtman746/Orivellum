@@ -29,7 +29,7 @@ from orivellum.database.db import OrivellumDB, _now
 
 # Balanced chapter: names, dialogue, tension, conflict, causation.
 LIVELY = (
-    'Mara crossed the yard before dawn, afraid of what the silence meant. '
+    "Mara crossed the yard before dawn, afraid of what the silence meant. "
     '"Did you sleep?" asked Tobin. "Not since the rains came," Mara said. '
     "Because the gate had been forced, they argued over the watch, and the "
     "quarrel led to a threat neither meant. Her heart pounded at the danger. "
@@ -147,8 +147,7 @@ class TestForceDetectorsUnit(unittest.TestCase):
         r = _run("force.conflict_escalation", chapters)
         issues = _issues(r)
         self.assertIn("no_conflict_escalation", issues)
-        story = next(f for f in r["findings"]
-                     if f["issue_type"] == "no_conflict_escalation")
+        story = next(f for f in r["findings"] if f["issue_type"] == "no_conflict_escalation")
         self.assertEqual(story["evidence"]["measures"]["first_third_mean"], 0.0)
         self.assertEqual(story["evidence"]["measures"]["final_third_mean"], 0.0)
         self.assertTrue(story["evidence"]["quote"])
@@ -182,8 +181,10 @@ class TestForceDetectorsUnit(unittest.TestCase):
         self.assertTrue(flat["evidence"]["quote"])
 
     def test_theme_dropout(self):
-        themed = LIVELY + (" The covenant held them; the covenant was water and "
-                           "the covenant was debt. ") * 6
+        themed = (
+            LIVELY
+            + (" The covenant held them; the covenant was water and the covenant was debt. ") * 6
+        )
         chapters = [_chapter(i, themed) for i in range(1, 4)]
         chapters += [_chapter(i, NO_CAUSE) for i in range(4, 8)]
         r = _run("force.theme_integrity", chapters)
@@ -202,8 +203,13 @@ class TestForceDetectorsUnit(unittest.TestCase):
             self.assertEqual(r["findings"], [])
 
     def test_chapter_scoped_run_reports_only_that_chapter(self):
-        chapters = [_chapter(1, LIVELY), _chapter(2, STALLED), _chapter(3, STALLED),
-                    _chapter(4, STALLED), _chapter(5, LIVELY)]
+        chapters = [
+            _chapter(1, LIVELY),
+            _chapter(2, STALLED),
+            _chapter(3, STALLED),
+            _chapter(4, STALLED),
+            _chapter(5, LIVELY),
+        ]
         book = _run("force.story_momentum", chapters)
         self.assertTrue(any(f["chapter_id"] is None for f in book["findings"]))
         scoped = _run("force.story_momentum", chapters, chapter_id="ch3")
@@ -259,8 +265,7 @@ class TestForceRegistry(ForceRegistryBase):
 
     def test_reseed_does_not_reenter_shadow_after_author_demotion(self):
         key = force.FORCE_KEYS[0]
-        self.db.set_assay_certification(key, "advisory", actor="author",
-                                        note="deliberate demotion")
+        self.db.set_assay_certification(key, "advisory", actor="author", note="deliberate demotion")
         assay.seed_instruments(self.db)
         inst = self.db.get_assay_instrument(key)
         self.assertEqual(inst["certification"], "advisory")
@@ -288,8 +293,11 @@ class TestForceRegistry(ForceRegistryBase):
             ids[i] = _seed_chapter(self.db, self.work_id, i, f"Ch {i}", LIVELY)
         ids[4] = _seed_chapter(self.db, self.work_id, 4, "Ch 4", NO_CAUSE)
         run = assay.run_instrument(
-            self.db, None, key="force.narrative_physics",
-            work_id=self.work_id, chapter_id=ids[4],
+            self.db,
+            None,
+            key="force.narrative_physics",
+            work_id=self.work_id,
+            chapter_id=ids[4],
         )
         findings = self.db.list_assay_findings(run["id"])
         self.assertTrue(findings)
@@ -298,8 +306,11 @@ class TestForceRegistry(ForceRegistryBase):
         # Scoping to a clean chapter reports nothing, even though the book
         # contains a flagged one.
         run2 = assay.run_instrument(
-            self.db, None, key="force.narrative_physics",
-            work_id=self.work_id, chapter_id=ids[1],
+            self.db,
+            None,
+            key="force.narrative_physics",
+            work_id=self.work_id,
+            chapter_id=ids[1],
         )
         self.assertEqual(self.db.list_assay_findings(run2["id"]), [])
 

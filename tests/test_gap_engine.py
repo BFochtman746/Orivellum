@@ -205,10 +205,7 @@ def test_compute_severity_is_deterministic():
         compute_severity("citation_closure", centrality=8, dependent_count=2, demand=6)
         == "critical"
     )
-    assert (
-        compute_severity("citation_closure", centrality=8, dependent_count=2, demand=5)
-        == "high"
-    )
+    assert compute_severity("citation_closure", centrality=8, dependent_count=2, demand=5) == "high"
 
 
 # ── citation-graph closure detector ───────────────────────────────────────────

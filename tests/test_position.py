@@ -81,21 +81,33 @@ class _StubLLM:
             return SimpleNamespace(ok=False, text=None, error="gateway down")
         if purpose == "position.canon_extract":
             payload = [
-                {"statement": "Mara leads the caravan east.",
-                 "classification": "INVENTED",
-                 "quote": "the road ran east through wet fields"},
-                {"statement": "The rainy season here lasts four months.",
-                 "classification": "HISTORICAL",
-                 "quote": "THIS QUOTE DOES NOT EXIST IN THE CHAPTER"},
+                {
+                    "statement": "Mara leads the caravan east.",
+                    "classification": "INVENTED",
+                    "quote": "the road ran east through wet fields",
+                },
+                {
+                    "statement": "The rainy season here lasts four months.",
+                    "classification": "HISTORICAL",
+                    "quote": "THIS QUOTE DOES NOT EXIST IN THE CHAPTER",
+                },
                 {"statement": "", "classification": "INVENTED", "quote": ""},  # invalid
                 {"statement": "Bad class", "classification": "MAYBE", "quote": ""},  # invalid
             ]
         elif purpose == "position.persona":
             payload = [
-                {"kind": "attribute", "statement": "Mara rises before dawn.",
-                 "chapter": 1, "quote": "Mara crossed the yard before dawn."},
-                {"kind": "relationship", "statement": "Mara travels with Tobin.",
-                 "chapter": 1, "quote": '"Did you sleep?" asked Tobin.'},
+                {
+                    "kind": "attribute",
+                    "statement": "Mara rises before dawn.",
+                    "chapter": 1,
+                    "quote": "Mara crossed the yard before dawn.",
+                },
+                {
+                    "kind": "relationship",
+                    "statement": "Mara travels with Tobin.",
+                    "chapter": 1,
+                    "quote": '"Did you sleep?" asked Tobin.',
+                },
             ]
         else:
             # ConStory / ASSAY purposes are out of scope here — the battery
@@ -142,10 +154,13 @@ class TestDeterministicTests(PositionBase):
         _seed_chapter(self.db, self.work_id, 9, "Empty", "   ")
         _seed_chapter(self.db, self.work_id, 10, "Tiny", "Too short.")
         chapters = position._load_chapters(self.db, self.work_id)
-        with patch("orivellum.capabilities.llm.llm_call",
-                   side_effect=AssertionError("deterministic tests must not call a model")):
-            tests = {t["id"]: t for t in position.deterministic_tests(
-                self.db, self.work_id, chapters)}
+        with patch(
+            "orivellum.capabilities.llm.llm_call",
+            side_effect=AssertionError("deterministic tests must not call a model"),
+        ):
+            tests = {
+                t["id"]: t for t in position.deterministic_tests(self.db, self.work_id, chapters)
+            }
         self.assertEqual(len(tests), 10)
         self.assertFalse(tests["T1"]["passed"])
         self.assertEqual(tests["T1"]["evidence"]["gaps"], [6, 7])
@@ -170,8 +185,10 @@ class TestDeterministicTests(PositionBase):
 
         CanonStore(self.db).create_fact(
             statement="The caravan trade predates the war.",
-            classification="INVENTED", work_id=self.work_id,
-            source_ref="ch1", signed_by="author",
+            classification="INVENTED",
+            work_id=self.work_id,
+            source_ref="ch1",
+            signed_by="author",
         )
         t5 = position._t5_canon(self.db, self.work_id)
         self.assertTrue(t5["passed"])
@@ -204,11 +221,16 @@ class TestStageDerivation(PositionBase):
     def test_gaps_below_always_win(self):
         """B-rung passes never lift the stage over a failing A-rung."""
         self._seed_book(3)
-        tests = {t["id"]: t for t in position.deterministic_tests(
-            self.db, self.work_id, position._load_chapters(self.db, self.work_id))}
+        tests = {
+            t["id"]: t
+            for t in position.deterministic_tests(
+                self.db, self.work_id, position._load_chapters(self.db, self.work_id)
+            )
+        }
         battery = {"constory": {"status": "done"}, "_open_findings": [], "instruments": []}
         stage = position.derive_stage(
-            tests, battery, position._load_chapters(self.db, self.work_id), {})
+            tests, battery, position._load_chapters(self.db, self.work_id), {}
+        )
         self.assertEqual(stage["derived_stage"], "A1")
         ladder = {s["stage"]: s for s in stage["ladder"]}
         self.assertTrue(ladder["B4"]["passed"])  # prose is fine …
@@ -219,9 +241,16 @@ class TestStageDerivation(PositionBase):
         the audit must not report a high stage on fabricated results."""
         done = [
             {"key": k, "status": "done", "verdict": "clean", "findings_count": 0}
-            for k in ("voice.envelope", "drift.theology_lecture", "drift.catalog",
-                      "drift.elihu", "drift.restoration", "gate.d13", "gate.d14",
-                      "judge.hierarchical")
+            for k in (
+                "voice.envelope",
+                "drift.theology_lecture",
+                "drift.catalog",
+                "drift.elihu",
+                "drift.restoration",
+                "gate.d13",
+                "gate.d14",
+                "judge.hierarchical",
+            )
         ]
         clean = {"constory": {"status": "done"}, "_open_findings": [], "instruments": done}
         self.assertTrue(position._drift_clean(clean))
@@ -233,25 +262,36 @@ class TestStageDerivation(PositionBase):
         self.assertFalse(position._judge_recorded(empty))
 
         # One errored run (gateway down) → that rung fails.
-        errored = {**clean, "instruments": [
-            i if i["key"] != "gate.d13" else {"key": "gate.d13", "status": "error",
-                                              "error": "boom"}
-            for i in done
-        ]}
+        errored = {
+            **clean,
+            "instruments": [
+                i
+                if i["key"] != "gate.d13"
+                else {"key": "gate.d13", "status": "error", "error": "boom"}
+                for i in done
+            ],
+        }
         self.assertFalse(position._drift_clean(errored))
         self.assertTrue(position._judge_recorded(errored))
 
         # A failing verdict → fails even when status is done.
-        drifted = {**clean, "instruments": [
-            i if i["key"] != "gate.d14" else {"key": "gate.d14", "status": "done",
-                                              "verdict": "confirmed_drift"}
-            for i in done
-        ]}
+        drifted = {
+            **clean,
+            "instruments": [
+                i
+                if i["key"] != "gate.d14"
+                else {"key": "gate.d14", "status": "done", "verdict": "confirmed_drift"}
+                for i in done
+            ],
+        }
         self.assertFalse(position._drift_clean(drifted))
 
         # An errored ConStory run is never continuity-clean.
-        broken = {"constory": {"status": "error", "error": "gateway"},
-                  "_open_findings": [], "instruments": done}
+        broken = {
+            "constory": {"status": "error", "error": "gateway"},
+            "_open_findings": [],
+            "instruments": done,
+        }
         self.assertFalse(position._battery_clean(broken, severities=("critical", "high")))
 
 
@@ -302,19 +342,26 @@ class TestReconstruction(PositionBase):
     def test_rerun_never_clobbers_a_resolved_proposal(self):
         self._seed_book(2)
         self._audit()
-        blueprint = next(p for p in self.db.list_position_proposals(work_id=self.work_id)
-                         if p["kind"] == "blueprint")
+        blueprint = next(
+            p
+            for p in self.db.list_position_proposals(work_id=self.work_id)
+            if p["kind"] == "blueprint"
+        )
         self.assertEqual(
             self.db.resolve_position_proposal(
-                blueprint["id"], decision="approved", author="author"),
+                blueprint["id"], decision="approved", author="author"
+            ),
             "ok",
         )
         self._audit()  # deterministic ids → INSERT OR IGNORE
         again = self.db.get_position_proposal(blueprint["id"])
         self.assertEqual(again["status"], "approved")
         self.assertEqual(again["resolved_by"], "author")
-        blueprints = [p for p in self.db.list_position_proposals(work_id=self.work_id)
-                      if p["kind"] == "blueprint"]
+        blueprints = [
+            p
+            for p in self.db.list_position_proposals(work_id=self.work_id)
+            if p["kind"] == "blueprint"
+        ]
         self.assertEqual(len(blueprints), 1)
 
     def test_llm_down_is_recorded_and_audit_still_completes(self):
@@ -335,17 +382,23 @@ class TestResolution(PositionBase):
     def _proposal(self, kind="voice_spec"):
         self._seed_book(2)
         self._audit()
-        return next(p for p in self.db.list_position_proposals(work_id=self.work_id)
-                    if p["kind"] == kind)
+        return next(
+            p for p in self.db.list_position_proposals(work_id=self.work_id) if p["kind"] == kind
+        )
 
     def test_resolution_is_an_atomic_claim(self):
         p = self._proposal("blueprint")
-        self.assertEqual(self.db.resolve_position_proposal(
-            p["id"], decision="approved", author="author"), "ok")
-        self.assertEqual(self.db.resolve_position_proposal(
-            p["id"], decision="rejected", author="author"), "conflict")
-        self.assertEqual(self.db.resolve_position_proposal(
-            "nope", decision="approved", author="author"), "not_found")
+        self.assertEqual(
+            self.db.resolve_position_proposal(p["id"], decision="approved", author="author"), "ok"
+        )
+        self.assertEqual(
+            self.db.resolve_position_proposal(p["id"], decision="rejected", author="author"),
+            "conflict",
+        )
+        self.assertEqual(
+            self.db.resolve_position_proposal("nope", decision="approved", author="author"),
+            "not_found",
+        )
 
     def test_signature_is_mandatory(self):
         p = self._proposal("blueprint")
@@ -357,8 +410,7 @@ class TestResolution(PositionBase):
 
         p = self._proposal("voice_spec")
         self.assertIsNone(self.db.get_assay_baseline(self.work_id, "voice_envelope"))
-        out = _resolve_position(
-            self.db, p["id"], ResolveBody(decision="approve", author="author"))
+        out = _resolve_position(self.db, p["id"], ResolveBody(decision="approve", author="author"))
         self.assertEqual(out["installed"], "voice_envelope baseline")
         baseline = self.db.get_assay_baseline(self.work_id, "voice_envelope")
         self.assertIsNotNone(baseline)
@@ -381,15 +433,15 @@ class TestResolution(PositionBase):
         from orivellum.api.routes.review import ResolveBody, _resolve_position
 
         p = self._proposal("voice_spec")
-        with patch.object(self.db, "set_assay_baseline", side_effect=RuntimeError("disk full")), \
-                self.assertRaises(HTTPException) as ctx:
-            _resolve_position(self.db, p["id"],
-                              ResolveBody(decision="approve", author="author"))
+        with (
+            patch.object(self.db, "set_assay_baseline", side_effect=RuntimeError("disk full")),
+            self.assertRaises(HTTPException) as ctx,
+        ):
+            _resolve_position(self.db, p["id"], ResolveBody(decision="approve", author="author"))
         self.assertEqual(ctx.exception.status_code, 500)
         # Returned to the queue — the author can simply retry.
         self.assertEqual(self.db.get_position_proposal(p["id"])["status"], "proposed")
-        out = _resolve_position(self.db, p["id"],
-                                ResolveBody(decision="approve", author="author"))
+        out = _resolve_position(self.db, p["id"], ResolveBody(decision="approve", author="author"))
         self.assertEqual(out["installed"], "voice_envelope baseline")
         self.assertIsNotNone(self.db.get_assay_baseline(self.work_id, "voice_envelope"))
 
@@ -397,8 +449,7 @@ class TestResolution(PositionBase):
         from orivellum.api.routes.review import ResolveBody, _resolve_position
 
         p = self._proposal("voice_spec")
-        _resolve_position(self.db, p["id"],
-                          ResolveBody(decision="reject", author="author"))
+        _resolve_position(self.db, p["id"], ResolveBody(decision="reject", author="author"))
         self.assertIsNone(self.db.get_assay_baseline(self.work_id, "voice_envelope"))
 
 
@@ -408,18 +459,34 @@ class TestResolution(PositionBase):
 class TestCompletionPlan(PositionBase):
     def test_repair_weights_the_early_band_over_raw_severity(self):
         findings = [
-            {"id": "late-critical", "severity": "critical", "chapter_seq": 35,
-             "category": "timeline_plot", "reasoning": "late clash"},
-            {"id": "early-medium", "severity": "medium", "chapter_seq": 8,
-             "category": "worldbuilding", "reasoning": "early fact drift"},
-            {"id": "early-high", "severity": "high", "chapter_seq": 7,
-             "category": "characterization", "reasoning": "early contradiction"},
+            {
+                "id": "late-critical",
+                "severity": "critical",
+                "chapter_seq": 35,
+                "category": "timeline_plot",
+                "reasoning": "late clash",
+            },
+            {
+                "id": "early-medium",
+                "severity": "medium",
+                "chapter_seq": 8,
+                "category": "worldbuilding",
+                "reasoning": "early fact drift",
+            },
+            {
+                "id": "early-high",
+                "severity": "high",
+                "chapter_seq": 7,
+                "category": "characterization",
+                "reasoning": "early contradiction",
+            },
         ]
         repair = position._repair_list(findings, total_chapters=40)
         # ch 7 and 8 sit in the 15–30% band (weight 3) → both outrank the
         # late critical; within the band severity orders them.
-        self.assertEqual([r["finding_id"] for r in repair],
-                         ["early-high", "early-medium", "late-critical"])
+        self.assertEqual(
+            [r["finding_id"] for r in repair], ["early-high", "early-medium", "late-critical"]
+        )
         self.assertEqual(repair[0]["weight"], position.EARLY_BAND_WEIGHT)
         self.assertEqual(repair[2]["weight"], 1.0)
 
@@ -436,8 +503,11 @@ class TestCompletionPlan(PositionBase):
     def test_complete_lists_remaining_chapters_once_blueprint_ratified(self):
         self._seed_book(3)
         self._audit()
-        blueprint = next(p for p in self.db.list_position_proposals(work_id=self.work_id)
-                         if p["kind"] == "blueprint")
+        blueprint = next(
+            p
+            for p in self.db.list_position_proposals(work_id=self.work_id)
+            if p["kind"] == "blueprint"
+        )
         # Author ratifies a blueprint that contracts 5 chapters.
         with self.db._lock:
             self.db._conn.execute(
@@ -462,10 +532,11 @@ class TestAuditClaim(PositionBase):
 
     def test_any_failure_finishes_the_row_as_error(self):
         audit_id = self.db.create_position_audit(self.work_id)
-        with patch.object(position, "_run", side_effect=RuntimeError("boom")), \
-                self.assertRaises(RuntimeError):
-            position.run_position_audit(
-                self.db, _cfg(), audit_id=audit_id, work_id=self.work_id)
+        with (
+            patch.object(position, "_run", side_effect=RuntimeError("boom")),
+            self.assertRaises(RuntimeError),
+        ):
+            position.run_position_audit(self.db, _cfg(), audit_id=audit_id, work_id=self.work_id)
         row = self.db.get_position_audit(audit_id)
         self.assertEqual(row["status"], "error")
         self.assertEqual(row["error"], "boom")

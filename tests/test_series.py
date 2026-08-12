@@ -81,8 +81,7 @@ class SeriesMembershipTests(_Base):
         self.store.add_member(self.sid, self.book2["id"], volume=2)
         self.store.add_member(self.sid, self.book1["id"], volume=1)
         s = self.store.get_series(self.sid)
-        self.assertEqual([m["work_id"] for m in s["members"]],
-                         [self.book1["id"], self.book2["id"]])
+        self.assertEqual([m["work_id"] for m in s["members"]], [self.book1["id"], self.book2["id"]])
         self.assertEqual(s["members"][0]["work_title"], "Book One")
 
     def test_work_cannot_join_two_series(self):
@@ -102,8 +101,9 @@ class SeriesMembershipTests(_Base):
 
     def test_prior_volume_work_ids_direction(self):
         self._add_all()
-        self.assertEqual(self.store.prior_volume_work_ids(self.book3["id"]),
-                         [self.book1["id"], self.book2["id"]])
+        self.assertEqual(
+            self.store.prior_volume_work_ids(self.book3["id"]), [self.book1["id"], self.book2["id"]]
+        )
         self.assertEqual(self.store.prior_volume_work_ids(self.book1["id"]), [])
         # A work outside any series inherits nothing.
         lone = self.db.create_work(title="Standalone")
@@ -120,8 +120,10 @@ class SeriesMembershipTests(_Base):
 
     def test_delete_refused_while_series_canon_exists(self):
         fact = self.canon.create_fact(
-            statement="The moon is shattered", classification="INVENTED",
-            signed_by="author", series_id=self.sid,
+            statement="The moon is shattered",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=self.sid,
         )
         self.assertEqual(self.store.delete_series(self.sid), "has_canon")
         self.assertIsNotNone(self.store.get_series(self.sid))
@@ -140,21 +142,28 @@ class SeriesMembershipTests(_Base):
 class SeriesCanonScopingTests(_Base):
     def _series_fact(self, statement="The capital is Vael"):
         return self.canon.create_fact(
-            statement=statement, classification="INVENTED",
-            signed_by="author", series_id=self.sid,
+            statement=statement,
+            classification="INVENTED",
+            signed_by="author",
+            series_id=self.sid,
         )
 
     def test_series_fact_requires_null_work_id(self):
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                work_id=self.book1["id"], series_id=self.sid,
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                work_id=self.book1["id"],
+                series_id=self.sid,
             )
 
     def test_series_fact_requires_existing_series(self):
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
                 series_id="nope",
             )
 
@@ -170,12 +179,16 @@ class SeriesCanonScopingTests(_Base):
     def test_earlier_volume_binds_later_never_reverse(self):
         self._add_all()
         f1 = self.canon.create_fact(
-            statement="The bridge burned in the war", classification="INVENTED",
-            signed_by="author", work_id=self.book1["id"],
+            statement="The bridge burned in the war",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=self.book1["id"],
         )
         f3 = self.canon.create_fact(
-            statement="The bridge was rebuilt", classification="INVENTED",
-            signed_by="author", work_id=self.book3["id"],
+            statement="The bridge was rebuilt",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=self.book3["id"],
         )
         book3_ids = {f["id"] for f in self.canon.list_facts(work_id=self.book3["id"])}
         book1_ids = {f["id"] for f in self.canon.list_facts(work_id=self.book1["id"])}
@@ -188,15 +201,19 @@ class SeriesCanonScopingTests(_Base):
         other_work = self.db.create_work(title="Other Book")
         self.store.add_member(other["id"], other_work["id"], volume=1)
         foreign = self.canon.create_fact(
-            statement="Foreign law", classification="INVENTED",
-            signed_by="author", series_id=other["id"],
+            statement="Foreign law",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=other["id"],
         )
         ids = {f["id"] for f in self.canon.list_facts(work_id=self.book2["id"])}
         self.assertNotIn(foreign["id"], ids)
 
     def test_legacy_global_facts_still_visible(self):
         fact = self.canon.create_fact(
-            statement="Global truth", classification="INVENTED", signed_by="author",
+            statement="Global truth",
+            classification="INVENTED",
+            signed_by="author",
         )
         ids = {f["id"] for f in self.canon.list_facts(work_id=self.book1["id"])}
         self.assertIn(fact["id"], ids)
@@ -207,20 +224,27 @@ class SeriesOverrideTests(_Base):
         super().setUp()
         self._add_all()
         self.base = self.canon.create_fact(
-            statement="Magic is forbidden", classification="INVENTED",
-            signed_by="author", series_id=self.sid,
+            statement="Magic is forbidden",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=self.sid,
         )
 
     def _override(self, work_id, statement="Magic is legalized this book"):
         return self.canon.create_fact(
-            statement=statement, classification="INVENTED", signed_by="author",
-            work_id=work_id, overrides=self.base["id"],
+            statement=statement,
+            classification="INVENTED",
+            signed_by="author",
+            work_id=work_id,
+            overrides=self.base["id"],
         )
 
     def test_override_requires_book_scope(self):
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
                 overrides=self.base["id"],
             )
 
@@ -231,13 +255,18 @@ class SeriesOverrideTests(_Base):
 
     def test_override_target_must_be_series_or_global(self):
         book_fact = self.canon.create_fact(
-            statement="Local fact", classification="INVENTED",
-            signed_by="author", work_id=self.book1["id"],
+            statement="Local fact",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=self.book1["id"],
         )
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                work_id=self.book2["id"], overrides=book_fact["id"],
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                work_id=self.book2["id"],
+                overrides=book_fact["id"],
             )
 
     def test_only_one_active_override_per_book(self):
@@ -256,41 +285,57 @@ class SeriesOverrideTests(_Base):
     def test_series_fact_cannot_be_an_override(self):
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                series_id=self.sid, overrides=self.base["id"],
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                series_id=self.sid,
+                overrides=self.base["id"],
             )
 
     def test_override_of_nonexistent_work_refused(self):
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                work_id="no-such-work", overrides=self.base["id"],
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                work_id="no-such-work",
+                overrides=self.base["id"],
             )
 
     def test_superseding_an_override_keeps_the_override(self):
         """Revising an override must NOT resurrect the series fact."""
         ov = self._override(self.book2["id"])
         revised = self.canon.create_fact(
-            statement="Magic is licensed this book", classification="INVENTED",
-            signed_by="author", work_id=self.book2["id"], supersedes=ov["id"],
+            statement="Magic is licensed this book",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=self.book2["id"],
+            supersedes=ov["id"],
         )
-        self.assertEqual(revised["overrides"], self.base["id"],
-                         "replacement must inherit the override target")
+        self.assertEqual(
+            revised["overrides"], self.base["id"], "replacement must inherit the override target"
+        )
         book2_ids = {f["id"] for f in self.canon.list_facts(work_id=self.book2["id"])}
-        self.assertNotIn(self.base["id"], book2_ids,
-                         "series fact must stay hidden after the revision")
+        self.assertNotIn(
+            self.base["id"], book2_ids, "series fact must stay hidden after the revision"
+        )
         self.assertIn(revised["id"], book2_ids)
 
     def test_superseding_an_override_cannot_retarget(self):
         other_base = self.canon.create_fact(
-            statement="Second series law", classification="INVENTED",
-            signed_by="author", series_id=self.sid,
+            statement="Second series law",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=self.sid,
         )
         ov = self._override(self.book2["id"])
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                work_id=self.book2["id"], supersedes=ov["id"],
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                work_id=self.book2["id"],
+                supersedes=ov["id"],
                 overrides=other_base["id"],
             )
 
@@ -298,8 +343,11 @@ class SeriesOverrideTests(_Base):
         ov = self._override(self.book2["id"])
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                work_id=self.book3["id"], supersedes=ov["id"],
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                work_id=self.book3["id"],
+                supersedes=ov["id"],
             )
 
     def test_retracting_an_override_restores_the_series_fact(self):
@@ -307,8 +355,9 @@ class SeriesOverrideTests(_Base):
         ov = self._override(self.book2["id"])
         self.canon.retract_fact(ov["id"], signed_by="author")
         book2_ids = {f["id"] for f in self.canon.list_facts(work_id=self.book2["id"])}
-        self.assertIn(self.base["id"], book2_ids,
-                      "retracting the override restores the series fact")
+        self.assertIn(
+            self.base["id"], book2_ids, "retracting the override restores the series fact"
+        )
 
 
 class SeriesContinuityGuardTests(_Base):
@@ -320,8 +369,10 @@ class SeriesContinuityGuardTests(_Base):
 
     def _book_fact(self, work_id, statement="A binding fact"):
         return self.canon.create_fact(
-            statement=statement, classification="INVENTED",
-            signed_by="author", work_id=work_id,
+            statement=statement,
+            classification="INVENTED",
+            signed_by="author",
+            work_id=work_id,
         )
 
     def test_remove_earlier_volume_with_canon_refused(self):
@@ -340,12 +391,17 @@ class SeriesContinuityGuardTests(_Base):
 
     def test_remove_member_with_dangling_override_refused(self):
         base = self.canon.create_fact(
-            statement="Series law", classification="INVENTED",
-            signed_by="author", series_id=self.sid,
+            statement="Series law",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=self.sid,
         )
         self.canon.create_fact(
-            statement="Departure", classification="INVENTED", signed_by="author",
-            work_id=self.book3["id"], overrides=base["id"],
+            statement="Departure",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=self.book3["id"],
+            overrides=base["id"],
         )
         with self.assertRaises(SeriesError):
             self.store.remove_member(self.sid, self.book3["id"])
@@ -365,8 +421,10 @@ class SeriesContinuityGuardTests(_Base):
         to canon they were never verified against."""
         newcomer = self.db.create_work(title="Prequel")
         self.canon.create_fact(
-            statement="Prequel law", classification="INVENTED",
-            signed_by="author", work_id=newcomer["id"],
+            statement="Prequel law",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=newcomer["id"],
         )
         self.store.remove_member(self.sid, self.book1["id"])  # free volume 1
         with self.assertRaises(SeriesError):
@@ -378,13 +436,17 @@ class SeriesContinuityGuardTests(_Base):
     def test_supersede_keeps_series_scope(self):
         """A revision changes what a fact SAYS, never where it applies."""
         base = self.canon.create_fact(
-            statement="Series law", classification="INVENTED",
-            signed_by="author", series_id=self.sid,
+            statement="Series law",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=self.sid,
         )
         # Bare supersede (no series_id passed) inherits the series scope.
         revised = self.canon.create_fact(
-            statement="Series law, clarified", classification="INVENTED",
-            signed_by="author", supersedes=base["id"],
+            statement="Series law, clarified",
+            classification="INVENTED",
+            signed_by="author",
+            supersedes=base["id"],
         )
         self.assertEqual(revised["series_id"], self.sid)
         # Rescoping to another series, to a book, or dropping to a different
@@ -392,38 +454,54 @@ class SeriesContinuityGuardTests(_Base):
         other = self.store.create_series(title="Other")
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                supersedes=revised["id"], series_id=other["id"],
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                supersedes=revised["id"],
+                series_id=other["id"],
             )
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                supersedes=revised["id"], work_id=self.book1["id"],
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                supersedes=revised["id"],
+                work_id=self.book1["id"],
             )
 
     def test_supersede_keeps_book_scope(self):
         fact = self._book_fact(self.book1["id"])
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
                 supersedes=fact["id"],  # work_id omitted → global: refused
             )
         revised = self.canon.create_fact(
-            statement="revised", classification="INVENTED", signed_by="author",
-            work_id=self.book1["id"], supersedes=fact["id"],
+            statement="revised",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=self.book1["id"],
+            supersedes=fact["id"],
         )
         self.assertEqual(revised["work_id"], self.book1["id"])
 
     def test_supersede_cannot_turn_fact_into_override(self):
         base = self.canon.create_fact(
-            statement="Series law", classification="INVENTED",
-            signed_by="author", series_id=self.sid,
+            statement="Series law",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=self.sid,
         )
         plain = self._book_fact(self.book2["id"])
         with self.assertRaises(CanonFactError):
             self.canon.create_fact(
-                statement="x", classification="INVENTED", signed_by="author",
-                work_id=self.book2["id"], supersedes=plain["id"],
+                statement="x",
+                classification="INVENTED",
+                signed_by="author",
+                work_id=self.book2["id"],
+                supersedes=plain["id"],
                 overrides=base["id"],
             )
 
@@ -435,14 +513,22 @@ class LoomInheritanceTests(_Base):
 
     def test_replay_folds_earlier_volumes_first(self):
         self.db.create_graph_node(
-            work_id=self.book1["id"], chapter_id=None, node_type="Location",
-            name="Vael", description="capital city, intact",
-            evidence_quote="the capital of Vael", evidence_offset=0,
+            work_id=self.book1["id"],
+            chapter_id=None,
+            node_type="Location",
+            name="Vael",
+            description="capital city, intact",
+            evidence_quote="the capital of Vael",
+            evidence_offset=0,
         )
         self.db.create_graph_node(
-            work_id=self.book2["id"], chapter_id=None, node_type="Location",
-            name="Vael", description="capital city, in ruins",
-            evidence_quote="Vael lay in ruins", evidence_offset=0,
+            work_id=self.book2["id"],
+            chapter_id=None,
+            node_type="Location",
+            name="Vael",
+            description="capital city, in ruins",
+            evidence_quote="Vael lay in ruins",
+            evidence_offset=0,
         )
         result = replay_world_state(self.db, self.book2["id"], upto_seq=99)
         self.assertEqual(result["prior_volumes"], 1)
@@ -473,6 +559,7 @@ class LoomInheritanceTests(_Base):
     def test_unapproved_prior_persona_never_inherited(self):
         self.db.create_loom_persona(self.book1["id"], "Ghost", {"voice": "?"})  # proposed
         from orivellum.capabilities.loom import LoomError
+
         with self.assertRaises(LoomError):
             _personas_for_cast(self.db, self.book2["id"], ["Ghost"])
 
@@ -514,22 +601,24 @@ class SeriesVoiceVerificationTests(_Base):
 
         with patch("orivellum.capabilities.llm.llm_call", _StubLLM()):
             return self.assay.run_instrument(
-                self.db, _cfg(), key="voice.envelope",
-                work_id=work_id, chapter_id=chapter_id,
+                self.db,
+                _cfg(),
+                key="voice.envelope",
+                work_id=work_id,
+                chapter_id=chapter_id,
             )
 
     def test_book2_verified_against_inherited_book1_envelope(self):
         from tests.test_assay import LECTURE, NORMAL
 
-        self.assay.build_voice_baseline(
-            self.db, self.book1["id"], reference_text=NORMAL
-        )
+        self.assay.build_voice_baseline(self.db, self.book1["id"], reference_text=NORMAL)
         on_voice = _seed_chapter(self.db, self.book2["id"], 1, "One", NORMAL)
         off_voice = _seed_chapter(self.db, self.book2["id"], 2, "Two", LECTURE)
 
         run = self._run_voice(self.book2["id"], chapter_id=off_voice)
-        self.assertEqual(run["verdict"], "deviations",
-                         "book 2 must be checked against book 1's envelope")
+        self.assertEqual(
+            run["verdict"], "deviations", "book 2 must be checked against book 1's envelope"
+        )
         src = run["evidence"]["baseline_source"]
         self.assertTrue(src["inherited"])
         self.assertEqual(src["source_work_id"], self.book1["id"])
@@ -540,16 +629,11 @@ class SeriesVoiceVerificationTests(_Base):
     def test_local_baseline_beats_inherited(self):
         from tests.test_assay import LECTURE, NORMAL
 
-        self.assay.build_voice_baseline(
-            self.db, self.book1["id"], reference_text=NORMAL
-        )
-        self.assay.build_voice_baseline(
-            self.db, self.book2["id"], reference_text=LECTURE
-        )
+        self.assay.build_voice_baseline(self.db, self.book1["id"], reference_text=NORMAL)
+        self.assay.build_voice_baseline(self.db, self.book2["id"], reference_text=LECTURE)
         ch = _seed_chapter(self.db, self.book2["id"], 1, "One", LECTURE)
         run = self._run_voice(self.book2["id"], chapter_id=ch)
-        self.assertEqual(run["verdict"], "pass",
-                         "book 2's own envelope must win over book 1's")
+        self.assertEqual(run["verdict"], "pass", "book 2's own envelope must win over book 1's")
         self.assertFalse(run["evidence"]["baseline_source"]["inherited"])
 
     def test_standalone_work_still_honestly_no_baseline(self):
@@ -583,9 +667,7 @@ class SeriesApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         sid = r.json()["id"]
         for wid, vol in ((self.book1["id"], 1), (self.book2["id"], 2)):
-            r = self.client.post(
-                f"/api/series/{sid}/members", json={"work_id": wid, "volume": vol}
-            )
+            r = self.client.post(f"/api/series/{sid}/members", json={"work_id": wid, "volume": vol})
             self.assertEqual(r.status_code, 200, r.text)
         return sid
 
@@ -593,8 +675,10 @@ class SeriesApiTests(unittest.TestCase):
         """Continuity-protected removals surface as an actionable refusal."""
         sid = self._make_series()
         CanonStore(self.db).create_fact(
-            statement="Book one law", classification="INVENTED",
-            signed_by="author", work_id=self.book1["id"],
+            statement="Book one law",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=self.book1["id"],
         )
         r = self.client.delete(f"/api/series/{sid}/members/{self.book1['id']}")
         self.assertEqual(r.status_code, 409, r.text)
@@ -609,9 +693,7 @@ class SeriesApiTests(unittest.TestCase):
         self.assertEqual([m["volume"] for m in r.json()["members"]], [1, 2])
         # Duplicate volume via API → 422 refusal, not a 500.
         w3 = self.db.create_work(title="Book Three")
-        r = self.client.post(
-            f"/api/series/{sid}/members", json={"work_id": w3["id"], "volume": 2}
-        )
+        r = self.client.post(f"/api/series/{sid}/members", json={"work_id": w3["id"], "volume": 2})
         self.assertEqual(r.status_code, 422)
         r = self.client.get("/api/series")
         self.assertEqual(r.json()["series"][0]["member_count"], 2)
@@ -620,24 +702,35 @@ class SeriesApiTests(unittest.TestCase):
         sid = self._make_series()
         canon = CanonStore(self.db)
         canon.create_fact(
-            statement="Series law", classification="INVENTED",
-            signed_by="author", series_id=sid,
+            statement="Series law",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=sid,
         )
         f1 = canon.create_fact(
-            statement="The tower fell", classification="INVENTED",
-            signed_by="author", work_id=self.book1["id"],
+            statement="The tower fell",
+            classification="INVENTED",
+            signed_by="author",
+            work_id=self.book1["id"],
         )
         # A book-2 finding that contradicts book 1's canon fact — grounded
         # in a real book-2 chapter (LAW 3 is enforced at the write path).
         text = "the tower stood tall over the valley that morning."
         ch_id = _seed_chapter(self.db, self.book2["id"], 1, "One", text)
         fid = self.db.create_narrative_finding(
-            work_id=self.book2["id"], chapter_id=ch_id,
-            category="worldbuilding", subtype="core_rules",
-            fact_quote="The tower fell", fact_chapter=0, fact_offset=0,
-            contradiction_quote="the tower stood", contradiction_chapter=1,
-            contradiction_offset=0, canon_class="INVENTED",
-            canon_fact_id=f1["id"], dedupe_key="xbook-tower",
+            work_id=self.book2["id"],
+            chapter_id=ch_id,
+            category="worldbuilding",
+            subtype="core_rules",
+            fact_quote="The tower fell",
+            fact_chapter=0,
+            fact_offset=0,
+            contradiction_quote="the tower stood",
+            contradiction_chapter=1,
+            contradiction_offset=0,
+            canon_class="INVENTED",
+            canon_fact_id=f1["id"],
+            dedupe_key="xbook-tower",
         )
         self.assertIsNotNone(fid)
         r = self.client.get(f"/api/series/{sid}/overview")
@@ -661,8 +754,10 @@ class SeriesApiTests(unittest.TestCase):
     def test_delete_with_series_canon_is_409(self):
         sid = self._make_series()
         CanonStore(self.db).create_fact(
-            statement="Series law", classification="INVENTED",
-            signed_by="author", series_id=sid,
+            statement="Series law",
+            classification="INVENTED",
+            signed_by="author",
+            series_id=sid,
         )
         r = self.client.delete(f"/api/series/{sid}")
         self.assertEqual(r.status_code, 409)

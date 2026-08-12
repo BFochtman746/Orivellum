@@ -47,9 +47,7 @@ def promotion_bar(instrument: dict) -> dict:
     declared = (instrument.get("thresholds") or {}).get("promotion") or {}
     return {
         "min_precision": float(declared.get("min_precision", DEFAULT_MIN_PRECISION)),
-        "min_dispositions": int(
-            declared.get("min_dispositions", DEFAULT_MIN_DISPOSITIONS)
-        ),
+        "min_dispositions": int(declared.get("min_dispositions", DEFAULT_MIN_DISPOSITIONS)),
     }
 
 
@@ -127,9 +125,7 @@ def parity_report(db: Any, instrument: dict) -> dict:
         shadow_units = _flagged_units(db, r["id"])
         primary_units = _flagged_units(db, primary_run_id)
         union = shadow_units | primary_units
-        agreement = (
-            round(len(shadow_units & primary_units) / len(union), 4) if union else 1.0
-        )
+        agreement = round(len(shadow_units & primary_units) / len(union), 4) if union else 1.0
         pairs.append(
             {
                 "shadow_run_id": r["id"],
@@ -144,10 +140,7 @@ def parity_report(db: Any, instrument: dict) -> dict:
 
 
 def _flagged_units(db: Any, run_id: str) -> set[str]:
-    return {
-        f"{f['unit']}|{f['issue_type']}"
-        for f in db.list_assay_findings(run_id)
-    }
+    return {f"{f['unit']}|{f['issue_type']}" for f in db.list_assay_findings(run_id)}
 
 
 def instrument_report(db: Any, instrument: dict) -> dict:
@@ -169,9 +162,7 @@ def instrument_report(db: Any, instrument: dict) -> dict:
         "shadow_of": instrument.get("shadow_of"),
         "precision": prec,
         "parity": parity,
-        "promotable": cert == "shadow"
-        and int(instrument["tier"]) in (1, 2)
-        and prec["meets_bar"],
+        "promotable": cert == "shadow" and int(instrument["tier"]) in (1, 2) and prec["meets_bar"],
         "degraded": degraded,
     }
 
@@ -179,9 +170,7 @@ def instrument_report(db: Any, instrument: dict) -> dict:
 def dashboard(db: Any) -> list[dict]:
     """Reports for every non-retired instrument, shadow candidates first."""
     order = {"shadow": 0, "certified": 1, "advisory": 2}
-    instruments = [
-        i for i in db.list_assay_instruments() if i["certification"] != "retired"
-    ]
+    instruments = [i for i in db.list_assay_instruments() if i["certification"] != "retired"]
     instruments.sort(key=lambda i: (order.get(i["certification"], 3), i["key"]))
     return [instrument_report(db, i) for i in instruments]
 
@@ -212,8 +201,7 @@ def promote(db: Any, key: str, *, author: str, note: str = "") -> dict:
         raise PromotionError(f"instrument {key!r} is not registered")
     if instrument["certification"] != "shadow":
         raise PromotionError(
-            f"only shadow instruments can be promoted (current: "
-            f"{instrument['certification']!r})"
+            f"only shadow instruments can be promoted (current: {instrument['certification']!r})"
         )
     if int(instrument["tier"]) == 3:
         raise PromotionError("Tier 3 instruments are advisory forever")
@@ -221,13 +209,11 @@ def promote(db: Any, key: str, *, author: str, note: str = "") -> dict:
     bar = prec["bar"]
     if prec["sample_size"] < bar["min_dispositions"]:
         raise PromotionError(
-            f"insufficient dispositions: {prec['sample_size']} < "
-            f"{bar['min_dispositions']} required"
+            f"insufficient dispositions: {prec['sample_size']} < {bar['min_dispositions']} required"
         )
     if not prec["meets_bar"]:
         raise PromotionError(
-            f"precision {prec['precision']} below declared bar "
-            f"{bar['min_precision']}"
+            f"precision {prec['precision']} below declared bar {bar['min_precision']}"
         )
     try:
         updated = db.set_assay_certification(
@@ -242,7 +228,10 @@ def promote(db: Any, key: str, *, author: str, note: str = "") -> dict:
         raise PromotionError(str(exc)) from exc
     logger.info(
         "promotion: %s certified by %s (precision=%s n=%d)",
-        key, author, prec["precision"], prec["sample_size"],
+        key,
+        author,
+        prec["precision"],
+        prec["sample_size"],
     )
     return updated
 
@@ -256,8 +245,7 @@ def demote(db: Any, key: str, *, author: str, note: str = "") -> dict:
         raise PromotionError(f"instrument {key!r} is not registered")
     if instrument["certification"] != "certified":
         raise PromotionError(
-            f"only certified instruments can be demoted (current: "
-            f"{instrument['certification']!r})"
+            f"only certified instruments can be demoted (current: {instrument['certification']!r})"
         )
     prec = precision_report(db, instrument)
     try:

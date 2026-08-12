@@ -6177,8 +6177,9 @@ class OrivellumDB:
     def _completeness_id(work_id: str | None, gap_class: str, scope: str) -> str:
         return (
             "comp-"
-            + hashlib.sha256(f"{work_id or ''}|{gap_class.strip()}|{scope.strip()}".encode())
-            .hexdigest()[:40]
+            + hashlib.sha256(
+                f"{work_id or ''}|{gap_class.strip()}|{scope.strip()}".encode()
+            ).hexdigest()[:40]
         )
 
     def find_completeness_assertion(
@@ -6339,9 +6340,7 @@ class OrivellumDB:
             # stay untouched: the assertion says "nothing more to find", not
             # "what was found never happened".
             scope_clause = "" if scope == "*" else "AND scope=? "
-            params: tuple = (
-                (work_id, gap_class) if scope == "*" else (work_id, gap_class, scope)
-            )
+            params: tuple = (work_id, gap_class) if scope == "*" else (work_id, gap_class, scope)
             open_gaps = self._conn.execute(
                 "SELECT id, status, meta FROM gap WHERE work_id IS ? AND gap_class=? "
                 + scope_clause
@@ -6495,9 +6494,7 @@ class OrivellumDB:
                 (reason, signed_by, now, assertion_id),
             )
             if cur.rowcount == 0:
-                raise ValueError(
-                    f"assertion {assertion_id!r} not found or already retracted"
-                )
+                raise ValueError(f"assertion {assertion_id!r} not found or already retracted")
             frm = prior["status"] if prior else "active"
             self._conn.execute(
                 "INSERT INTO completeness_transition (id, assertion_id, from_status, "
@@ -8566,8 +8563,7 @@ class OrivellumDB:
         """Mined relation metadata for a Work, histogram decoded."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM graph_relation_meta WHERE work_id=? "
-                "ORDER BY node_type, edge_type",
+                "SELECT * FROM graph_relation_meta WHERE work_id=? ORDER BY node_type, edge_type",
                 (work_id,),
             ).fetchall()
         out = []

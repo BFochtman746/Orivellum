@@ -219,13 +219,19 @@ def test_machine_never_overrides_human_decisions(tmp_path):
     wid = db.create_work("W")["id"]
 
     active = db.assert_completeness(
-        work_id=wid, gap_class="graph_pair", scope="character:x|located_at",
-        basis="checked by hand", signed_by="brian",
+        work_id=wid,
+        gap_class="graph_pair",
+        scope="character:x|located_at",
+        basis="checked by hand",
+        signed_by="brian",
     )
     assert (
         db.propose_completeness(
-            work_id=wid, gap_class="graph_pair", scope="character:x|located_at",
-            basis="machine stats", proposed_by="machine:functional_closure",
+            work_id=wid,
+            gap_class="graph_pair",
+            scope="character:x|located_at",
+            basis="machine stats",
+            proposed_by="machine:functional_closure",
         )
         is None
     )
@@ -233,8 +239,11 @@ def test_machine_never_overrides_human_decisions(tmp_path):
     # Retracted is ALSO a signed decision — the machine may not re-propose it.
     assert (
         db.propose_completeness(
-            work_id=wid, gap_class="graph_pair", scope="character:x|located_at",
-            basis="machine stats", proposed_by="machine:functional_closure",
+            work_id=wid,
+            gap_class="graph_pair",
+            scope="character:x|located_at",
+            basis="machine stats",
+            proposed_by="machine:functional_closure",
         )
         is None
     )
@@ -311,7 +320,7 @@ def test_mined_cardinality_gap_cites_statistics(tmp_path):
 
     # Standard lifecycle discipline: dismissal is terminal against re-detection.
     db.transition_gap(gap["id"], "dismissed", reason="fine as is", signed_by="brian")
-    report2 = detect_mined_cardinality(wid, db)
+    detect_mined_cardinality(wid, db)
     assert db.get_gap(gap["id"])["status"] == "dismissed"
 
 
@@ -364,13 +373,20 @@ def test_duplicate_names_get_distinct_regions(tmp_path):
 
     # Closing one twin's region leaves the other's gap emission untouched.
     db.assert_completeness(
-        work_id=wid, gap_class="graph_pair", scope=cands[0]["pair_key"],
-        basis="checked this one by hand", signed_by="brian",
+        work_id=wid,
+        gap_class="graph_pair",
+        scope=cands[0]["pair_key"],
+        basis="checked this one by hand",
+        signed_by="brian",
     )
     still_open = db.create_or_refresh_gap(
-        work_id=wid, gap_class="graph_pair", scope=cands[1]["pair_key"],
-        frame_node_id=f"graph:{cands[1]['node_id']}", frame_source_ref="test",
-        evidence_absent="twin still open", force_check="test",
+        work_id=wid,
+        gap_class="graph_pair",
+        scope=cands[1]["pair_key"],
+        frame_node_id=f"graph:{cands[1]['node_id']}",
+        frame_source_ref="test",
+        evidence_absent="twin still open",
+        force_check="test",
     )
     assert still_open is not None
 
@@ -578,15 +594,11 @@ def test_pcwa_api_roundtrip(tmp_path):
     proposed = db.list_completeness_assertions(wid, status="proposed")
     assert proposed
     aid = proposed[0]["id"]
-    r = client.post(
-        f"/api/completeness-assertions/{aid}/ratify", json={"signed_by": "brian"}
-    )
+    r = client.post(f"/api/completeness-assertions/{aid}/ratify", json={"signed_by": "brian"})
     assert r.status_code == 200
     assert r.json()["status"] == "active"
     # A second ratify is a state conflict, not a validation error.
-    r = client.post(
-        f"/api/completeness-assertions/{aid}/ratify", json={"signed_by": "brian"}
-    )
+    r = client.post(f"/api/completeness-assertions/{aid}/ratify", json={"signed_by": "brian"})
     assert r.status_code == 409
 
     r = client.post(f"/api/works/{'no-such'}/pcwa/scan")

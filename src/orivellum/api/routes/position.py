@@ -39,16 +39,19 @@ def start_position_audit(work_id: str):
         from orivellum.capabilities.position import run_position_audit  # noqa: PLC0415
 
         dispatched = submit_bg(
-            run_position_audit, db, cfg,
-            audit_id=audit_id, work_id=work_id,
-            kind="position_audit", label=f"position:{work_id}",
+            run_position_audit,
+            db,
+            cfg,
+            audit_id=audit_id,
+            work_id=work_id,
+            kind="position_audit",
+            label=f"position:{work_id}",
         )
     except Exception as exc:
         db.finish_position_audit(audit_id, status="error", error=str(exc))
         raise
     if not dispatched:
-        db.finish_position_audit(audit_id, status="error",
-                                 error="background dispatch refused")
+        db.finish_position_audit(audit_id, status="error", error="background dispatch refused")
         raise HTTPException(503, "audit could not be dispatched; try again")
     return {"audit_id": audit_id, "status": "running"}
 

@@ -147,8 +147,11 @@ def _make_db(tmp_path):
 
 def _add_mention(db, work_id, kind, subject, text=None, review_status="auto"):
     return db.create_knowledge_item(
-        work_id=work_id, kind=kind, text=text or f"{subject} mention",
-        subject=subject, review_status=review_status,
+        work_id=work_id,
+        kind=kind,
+        text=text or f"{subject} mention",
+        subject=subject,
+        review_status=review_status,
     )
 
 

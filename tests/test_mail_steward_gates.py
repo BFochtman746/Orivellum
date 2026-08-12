@@ -49,9 +49,7 @@ def test_no_token_means_no_client(tmp_path):
 
 def test_live_token_used_directly(tmp_path, _fake_graph):
     db = _make_db(tmp_path)
-    token_vault.store_token(
-        db, {"access_token": "live-at", "expires_at": time.time() + 3600}
-    )
+    token_vault.store_token(db, {"access_token": "live-at", "expires_at": time.time() + 3600})
     client = steward._get_fresh_client(db)
     assert client is not None
     assert client.access_token == "live-at"
@@ -177,8 +175,7 @@ def test_sync_mail_disconnect_is_durable_across_reopen(tmp_path):
 
     db2 = OrivellumDB(path)
     assert db2.get_setting("mail_steward.connected", "") == "false", (
-        "disconnect flag must survive a restart (committed, not left in an "
-        "open transaction)"
+        "disconnect flag must survive a restart (committed, not left in an open transaction)"
     )
     db2.close()
 

@@ -57,9 +57,7 @@ def test_lifecycle_priority_order():
 
 
 def test_recency_then_richness_then_tie():
-    assert (
-        auto_dedup._pick_canonical(_doc("new", created_at="2026-02-01"), _doc("old")) == "new"
-    )
+    assert auto_dedup._pick_canonical(_doc("new", created_at="2026-02-01"), _doc("old")) == "new"
     assert (
         auto_dedup._pick_canonical(_doc("rich", word_count=500), _doc("thin", word_count=5))
         == "rich"

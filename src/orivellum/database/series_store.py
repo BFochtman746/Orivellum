@@ -128,8 +128,7 @@ class SeriesStore:
             # never makes an obsolete series undeletable (the governed audit
             # trail retains the deletion event).
             db._conn.execute(
-                "UPDATE canon_fact SET series_id=NULL "
-                "WHERE series_id=? AND status != 'active'",
+                "UPDATE canon_fact SET series_id=NULL WHERE series_id=? AND status != 'active'",
                 (series_id,),
             )
             db._conn.execute("DELETE FROM series_member WHERE series_id=?", (series_id,))
@@ -140,9 +139,7 @@ class SeriesStore:
 
     def _exists(self, series_id: str) -> bool:
         return (
-            self._db.read_conn()
-            .execute("SELECT 1 FROM series WHERE id=?", (series_id,))
-            .fetchone()
+            self._db.read_conn().execute("SELECT 1 FROM series WHERE id=?", (series_id,)).fetchone()
             is not None
         )
 
@@ -263,9 +260,7 @@ class SeriesStore:
                 raise SeriesError(
                     f"Refused: volume {volume} is already taken in this series."
                 ) from exc
-            raise SeriesError(
-                "Refused: this Work is already a member of this series."
-            ) from exc
+            raise SeriesError("Refused: this Work is already a member of this series.") from exc
         return self.get_series(series_id)  # type: ignore[return-value]
 
     def _removal_blocker(self, series_id: str, work_id: str) -> str | None:
@@ -340,12 +335,16 @@ class SeriesStore:
         # Order IS authority: once any member book has active canon, the
         # forward-only visibility direction has been relied on — reordering
         # would silently rewrite which facts bind which book.
-        established = db.read_conn().execute(
-            """SELECT COUNT(*) AS n FROM canon_fact f
+        established = (
+            db.read_conn()
+            .execute(
+                """SELECT COUNT(*) AS n FROM canon_fact f
                JOIN series_member m ON m.work_id = f.work_id
                WHERE m.series_id=? AND f.status='active'""",
-            (series_id,),
-        ).fetchone()
+                (series_id,),
+            )
+            .fetchone()
+        )
         if int(established["n"]):
             raise SeriesError(
                 "Refused: this series already has established canon — "
@@ -368,9 +367,7 @@ class SeriesStore:
                 if not cur.rowcount:
                     raise SeriesError("Refused: that Work is not a member of this series.")
         except sqlite3.IntegrityError as exc:
-            raise SeriesError(
-                f"Refused: volume {volume} is already taken in this series."
-            ) from exc
+            raise SeriesError(f"Refused: volume {volume} is already taken in this series.") from exc
         return self.get_series(series_id)  # type: ignore[return-value]
 
 

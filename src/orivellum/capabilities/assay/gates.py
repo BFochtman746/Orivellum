@@ -52,7 +52,7 @@ GATE_RUBRICS = {
 _CONFIRM_SYSTEM = (
     "You are a strict evidence verifier for a prose quality check. You are "
     "given a suspected drift detection with quoted evidence from a chapter. "
-    "Answer ONLY with JSON: {\"confirmed\": true|false, \"reason\": \"...\"}. "
+    'Answer ONLY with JSON: {"confirmed": true|false, "reason": "..."}. '
     "Confirm ONLY if the quoted evidence genuinely exhibits the described "
     "failure mode in context. When in doubt, answer false."
 )
@@ -113,9 +113,7 @@ def run_d13(chapters: list[dict], scope: dict, thresholds: dict, baseline: dict 
     }
 
 
-def confirm_detection(
-    db: Any, cfg: Any, model: str, detection: dict, chapter_label: str
-) -> dict:
+def confirm_detection(db: Any, cfg: Any, model: str, detection: dict, chapter_label: str) -> dict:
     """Tier-2 confirmation of one Tier-1 signature match (temperature 0)."""
     from ..llm import llm_call  # noqa: PLC0415 — late-bound for the gateway rule
 

@@ -66,41 +66,78 @@ CANON_STATEMENT = "The Battle of Redford happened in 1214."
 
 # Facts the extraction stub emits for chapter 1 (F0..F3 for later pairing).
 CH1_FACTS = [
-    {"statement": "Mara has green eyes.",
-     "quote": "Mara's eyes were green as river glass"},
-    {"statement": "The siege of Kellhaven began in spring 1211.",
-     "quote": "The siege of Kellhaven began in the spring of 1211"},
-    {"statement": "Only the king may carry iron inside the temple.",
-     "quote": "Only the king may carry iron inside the temple"},
-    {"statement": "Mara personally watched the siege of Kellhaven.",
-     "quote": "Mara watched the siege of Kellhaven from the walls"},
+    {"statement": "Mara has green eyes.", "quote": "Mara's eyes were green as river glass"},
+    {
+        "statement": "The siege of Kellhaven began in spring 1211.",
+        "quote": "The siege of Kellhaven began in the spring of 1211",
+    },
+    {
+        "statement": "Only the king may carry iron inside the temple.",
+        "quote": "Only the king may carry iron inside the temple",
+    },
+    {
+        "statement": "Mara personally watched the siege of Kellhaven.",
+        "quote": "Mara watched the siege of Kellhaven from the walls",
+    },
 ]
 
 # Pairing stub output for chapter 2 — 2 real contradictions + 4 that the
 # evidence chain must discard (fabricated quote, out-of-schema subtype,
 # dangling ref, verifier-rejected pair).
 CH2_PROPOSALS = [
-    {"fact_ref": "F0", "quote": "Mara's brown eyes narrowed",
-     "subtype": "appearance_mismatch", "reasoning": "eye colour changed"},
-    {"fact_ref": "F1", "quote": "the siege of Kellhaven had begun in the autumn of 1212",
-     "subtype": "absolute_time", "reasoning": "season and year differ"},
-    {"fact_ref": "F0", "quote": "The dragon burned the city",
-     "subtype": "appearance_mismatch", "reasoning": "fabricated quote"},
-    {"fact_ref": "F1", "quote": "Rain fell for a week",
-     "subtype": "vibe_shift", "reasoning": "not a real subtype"},
-    {"fact_ref": "F99", "quote": "Rain fell for a week",
-     "subtype": "duration", "reasoning": "dangling fact ref"},
-    {"fact_ref": "F2", "quote": "A merchant carried a copper ring into the temple",
-     "subtype": "core_rules", "reasoning": "REJECTME copper is not iron"},
+    {
+        "fact_ref": "F0",
+        "quote": "Mara's brown eyes narrowed",
+        "subtype": "appearance_mismatch",
+        "reasoning": "eye colour changed",
+    },
+    {
+        "fact_ref": "F1",
+        "quote": "the siege of Kellhaven had begun in the autumn of 1212",
+        "subtype": "absolute_time",
+        "reasoning": "season and year differ",
+    },
+    {
+        "fact_ref": "F0",
+        "quote": "The dragon burned the city",
+        "subtype": "appearance_mismatch",
+        "reasoning": "fabricated quote",
+    },
+    {
+        "fact_ref": "F1",
+        "quote": "Rain fell for a week",
+        "subtype": "vibe_shift",
+        "reasoning": "not a real subtype",
+    },
+    {
+        "fact_ref": "F99",
+        "quote": "Rain fell for a week",
+        "subtype": "duration",
+        "reasoning": "dangling fact ref",
+    },
+    {
+        "fact_ref": "F2",
+        "quote": "A merchant carried a copper ring into the temple",
+        "subtype": "core_rules",
+        "reasoning": "REJECTME copper is not iron",
+    },
 ]
 
 # Chapter 3 — one canon contradiction (HISTORICAL → critical) and one
 # delayed-revelation contradiction the author will disposition 'intentional'.
 CH3_PROPOSALS = [
-    {"fact_ref": "C0", "quote": "the Battle of Redford was fought in 1220",
-     "subtype": "absolute_time", "reasoning": "year contradicts canon"},
-    {"fact_ref": "F3", "quote": "she had never been to Kellhaven at all",
-     "subtype": "memory", "reasoning": "she watched the siege in chapter 1"},
+    {
+        "fact_ref": "C0",
+        "quote": "the Battle of Redford was fought in 1220",
+        "subtype": "absolute_time",
+        "reasoning": "year contradicts canon",
+    },
+    {
+        "fact_ref": "F3",
+        "quote": "she had never been to Kellhaven at all",
+        "subtype": "memory",
+        "reasoning": "she watched the siege in chapter 1",
+    },
 ]
 
 
@@ -190,8 +227,13 @@ class TestRegistryAndSeverity(unittest.TestCase):
         self.assertEqual(len(SUBTYPE_CATEGORY), 19)
         self.assertEqual(
             set(SUBTYPES),
-            {"timeline_plot", "characterization", "worldbuilding",
-             "factual_detail", "narrative_style"},
+            {
+                "timeline_plot",
+                "characterization",
+                "worldbuilding",
+                "factual_detail",
+                "narrative_style",
+            },
         )
         self.assertEqual(len(SUBTYPES["timeline_plot"]), 6)
         self.assertEqual(len(SUBTYPES["characterization"]), 4)
@@ -266,9 +308,9 @@ class TestInjectedErrors(ConStoryBase):
         f = canon_findings[0]
         self.assertEqual(f["canon_class"], "HISTORICAL")
         self.assertEqual(f["canon_fact_id"], self.canon["id"])
-        self.assertEqual(f["severity"], "critical")       # computed, HISTORICAL
+        self.assertEqual(f["severity"], "critical")  # computed, HISTORICAL
         self.assertEqual(f["fact_quote"], CANON_STATEMENT)
-        self.assertEqual(f["fact_chapter"], 0)             # canon predates prose
+        self.assertEqual(f["fact_chapter"], 0)  # canon predates prose
 
     def test_all_calls_temperature_zero_via_gateway(self):
         _, stub = self._run()
@@ -315,15 +357,12 @@ class TestDispositions(ConStoryBase):
         fid = self.db.list_narrative_findings(self.work_id)[0]["id"]
         with self.assertRaises(ValueError):
             self.db.update_narrative_finding_disposition(fid, "shelved")
-        self.assertIsNone(
-            self.db.update_narrative_finding_disposition("no-such-id", "fixed")
-        )
+        self.assertIsNone(self.db.update_narrative_finding_disposition("no-such-id", "fixed"))
 
     def test_rerun_never_resurrects_dispositioned_findings(self):
         self._run()
         memory_finding = next(
-            f for f in self.db.list_narrative_findings(self.work_id)
-            if f["subtype"] == "memory"
+            f for f in self.db.list_narrative_findings(self.work_id) if f["subtype"] == "memory"
         )
         self.db.update_narrative_finding_disposition(
             memory_finding["id"], "intentional", note="She lied in chapter 1."
@@ -363,9 +402,7 @@ class TestCED(ConStoryBase):
         self.assertEqual(by_seq[1]["findings"], 0)
         self.assertEqual(by_seq[2]["findings"], 2)
         self.assertEqual(by_seq[3]["findings"], 2)
-        self.assertAlmostEqual(
-            by_seq[2]["ced"], round(2 * 10_000 / words[2], 2)
-        )
+        self.assertAlmostEqual(by_seq[2]["ced"], round(2 * 10_000 / words[2], 2))
         total_words = sum(words.values())
         self.assertEqual(ced["book"]["findings"], 4)
         self.assertAlmostEqual(ced["book"]["ced"], round(4 * 10_000 / total_words, 2))
@@ -382,8 +419,9 @@ class TestCED(ConStoryBase):
         ced = compute_ced(self.db, self.work_id)
         self.assertEqual(ced["book"]["findings"], 2)
         # 'fixed' still counts — it WAS an error.
-        remaining = next(f for f in self.db.list_narrative_findings(self.work_id)
-                         if f["disposition"] == "open")
+        remaining = next(
+            f for f in self.db.list_narrative_findings(self.work_id) if f["disposition"] == "open"
+        )
         self.db.update_narrative_finding_disposition(remaining["id"], "fixed")
         self.assertEqual(compute_ced(self.db, self.work_id)["book"]["findings"], 2)
 
@@ -441,9 +479,7 @@ class TestFindingRoutes(ConStoryBase):
         )
         self.assertEqual(resp.status_code, 404)
         other = self.db.create_work("Other", work_type="writing")["id"]
-        resp = client.patch(
-            f"/api/works/{other}/findings/{fid}", json={"disposition": "fixed"}
-        )
+        resp = client.patch(f"/api/works/{other}/findings/{fid}", json={"disposition": "fixed"})
         self.assertEqual(resp.status_code, 404)
 
     def test_metrics_endpoint(self):
@@ -500,9 +536,7 @@ class TestStorageBoundary(ConStoryBase):
 
     def test_refuses_ungrounded_fact_quote(self):
         with self.assertRaises(ValueError):
-            self.db.create_narrative_finding(
-                **self._base_kwargs(fact_quote="Mara owned a falcon")
-            )
+            self.db.create_narrative_finding(**self._base_kwargs(fact_quote="Mara owned a falcon"))
 
     def test_refuses_out_of_schema_subtype_and_category_mismatch(self):
         with self.assertRaises(ValueError):
@@ -513,17 +547,17 @@ class TestStorageBoundary(ConStoryBase):
     def test_refuses_severity_kwarg(self):
         with self.assertRaises(TypeError):
             self.db.create_narrative_finding(
-                **self._base_kwargs(), severity="low"  # noqa: B026
+                **self._base_kwargs(),
+                severity="low",  # noqa: B026
             )
 
     def test_chapter_zero_requires_canon(self):
         with self.assertRaises(ValueError):
-            self.db.create_narrative_finding(
-                **self._base_kwargs(fact_chapter=0, fact_offset=0)
-            )
+            self.db.create_narrative_finding(**self._base_kwargs(fact_chapter=0, fact_offset=0))
         fid = self.db.create_narrative_finding(
             **self._base_kwargs(
-                fact_chapter=0, fact_offset=0,
+                fact_chapter=0,
+                fact_offset=0,
                 fact_quote=CANON_STATEMENT,
                 canon_class="HISTORICAL",
                 canon_fact_id=self.canon["id"],
@@ -569,11 +603,16 @@ class TestWindowing(unittest.TestCase):
                 payload = {"facts": CH1_FACTS} if "river glass" in prompt else {"facts": []}
             elif purpose == "constory.pair":
                 if "brown eyes narrowed at the horizon" in prompt:
-                    payload = {"contradictions": [{
-                        "fact_ref": "F0", "quote": late_quote,
-                        "subtype": "appearance_mismatch",
-                        "reasoning": "eye colour changed",
-                    }]}
+                    payload = {
+                        "contradictions": [
+                            {
+                                "fact_ref": "F0",
+                                "quote": late_quote,
+                                "subtype": "appearance_mismatch",
+                                "reasoning": "eye colour changed",
+                            }
+                        ]
+                    }
                 else:
                     payload = {"contradictions": []}
             elif purpose == "constory.verify":
@@ -588,8 +627,10 @@ class TestWindowing(unittest.TestCase):
         f = self.db.list_narrative_findings(self.work_id)[0]
         self.assertGreater(f["contradiction_offset"], 16_000)
         self.assertEqual(
-            self.long_ch2[f["contradiction_offset"]:
-                          f["contradiction_offset"] + len(f["contradiction_quote"])],
+            self.long_ch2[
+                f["contradiction_offset"] : f["contradiction_offset"]
+                + len(f["contradiction_quote"])
+            ],
             f["contradiction_quote"],
         )
 
@@ -601,9 +642,9 @@ class TestRunClaim(unittest.TestCase):
     def test_claim_refuse_release(self):
         wid = "claim-test-work"
         self.assertTrue(try_claim_run(wid))
-        self.assertFalse(try_claim_run(wid))          # second claim refused
+        self.assertFalse(try_claim_run(wid))  # second claim refused
         release_run_claim(wid, error="executor unavailable")
-        self.assertTrue(try_claim_run(wid))           # released -> claimable
+        self.assertTrue(try_claim_run(wid))  # released -> claimable
         release_run_claim(wid)
 
 

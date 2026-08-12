@@ -80,9 +80,7 @@ SUBTYPES: dict[str, tuple[str, ...]] = {
 }
 
 # subtype -> category reverse map (19 entries)
-SUBTYPE_CATEGORY: dict[str, str] = {
-    sub: cat for cat, subs in SUBTYPES.items() for sub in subs
-}
+SUBTYPE_CATEGORY: dict[str, str] = {sub: cat for cat, subs in SUBTYPES.items() for sub in subs}
 assert len(SUBTYPE_CATEGORY) == 19, "ConStory subtype registry must have exactly 19 entries"
 
 CANON_CLASSES = ("HISTORICAL", "INFERRED", "INVENTED")
@@ -159,6 +157,7 @@ def dedupe_key(
 # LLM plumbing (gateway, temp 0.0, fail loudly)
 # ---------------------------------------------------------------------------
 
+
 class ConStoryLLMError(RuntimeError):
     """An extraction/pairing/verification call failed — the run must stop.
 
@@ -170,8 +169,8 @@ class ConStoryLLMError(RuntimeError):
 _TIMEOUT_SEC = 60
 _MAX_FACTS_PER_CHAPTER = 30
 _MAX_PROPOSALS = 20
-_PAIR_FACT_BATCH = 80          # prior facts per pairing call
-_MAX_FACT_STATEMENT = 240      # chars of a fact statement rendered in prompts
+_PAIR_FACT_BATCH = 80  # prior facts per pairing call
+_MAX_FACT_STATEMENT = 240  # chars of a fact statement rendered in prompts
 
 
 def _call(prompt: str, *, purpose: str, cfg: Any, db: OrivellumDB) -> Any:
@@ -254,9 +253,8 @@ Return ONLY JSON: {{"verdict": "confirmed" or "rejected",
 # Pipeline stages
 # ---------------------------------------------------------------------------
 
-def _extract_chapter_facts(
-    db: OrivellumDB, cfg: Any, chapter: dict
-) -> list[dict]:
+
+def _extract_chapter_facts(db: OrivellumDB, cfg: Any, chapter: dict) -> list[dict]:
     """Stage 1 — extract grounded facts from one chapter.
 
     Returns [{"statement", "quote", "offset", "chapter_id", "chapter_seq"}].
@@ -390,7 +388,8 @@ def _check_chapter(
         )
         for prop in (parsed.get("contradictions") or [])[:_MAX_PROPOSALS]:
             finding = _stage_proposal(
-                db, cfg,
+                db,
+                cfg,
                 prop=prop,
                 text=text,
                 work_id=work_id,
@@ -438,9 +437,7 @@ def _stage_proposal(
         return None
     curr_offset, curr_quote = found
 
-    prior_fact, canon_fact = _resolve_ref(
-        prop.get("fact_ref") or "", prior_facts, canon_facts
-    )
+    prior_fact, canon_fact = _resolve_ref(prop.get("fact_ref") or "", prior_facts, canon_facts)
     if prior_fact is not None:
         fact_quote = prior_fact["quote"]
         fact_statement = prior_fact["statement"]
@@ -496,9 +493,7 @@ def _stage_proposal(
         "contradiction_quote": curr_quote,
         "contradiction_chapter": curr_seq,
         "contradiction_offset": curr_offset,
-        "reasoning": str(
-            verdict.get("reasoning") or prop.get("reasoning") or ""
-        ).strip(),
+        "reasoning": str(verdict.get("reasoning") or prop.get("reasoning") or "").strip(),
         # severity intentionally absent — the DB write path computes it from
         # (subtype, canon_class); nothing upstream may pick it.
         "canon_class": canon_class,
@@ -592,11 +587,16 @@ def run_constory_check(db: OrivellumDB, cfg: Any, *, work_id: str) -> dict:
         )
         try:
             result = _run_locked(db, cfg, work_id=work_id)
-            _set_run(work_id, state="done", finished_at=time.time(), **{
-                "chapters_done": result["chapters"],
-                "chapters_total": result["chapters"],
-                "findings_created": result["findings_created"],
-            })
+            _set_run(
+                work_id,
+                state="done",
+                finished_at=time.time(),
+                **{
+                    "chapters_done": result["chapters"],
+                    "chapters_total": result["chapters"],
+                    "findings_created": result["findings_created"],
+                },
+            )
             return result
         except Exception as exc:
             _set_run(work_id, state="error", finished_at=time.time(), error=str(exc))
@@ -639,7 +639,8 @@ def _run_locked(db: OrivellumDB, cfg: Any, *, work_id: str) -> dict:
         if i > 0:  # chapter 1 has nothing prior to contradict
             staged.extend(
                 _check_chapter(
-                    db, cfg,
+                    db,
+                    cfg,
                     work_id=work_id,
                     chapter=chapter,
                     prior_facts=all_facts,
@@ -655,7 +656,11 @@ def _run_locked(db: OrivellumDB, cfg: Any, *, work_id: str) -> dict:
     swap = db.replace_open_narrative_findings(work_id, staged, detector="constory")
     logger.info(
         "constory: work=%s chapters=%d staged=%d created=%d cleared_open=%d",
-        work_id, len(chapters), len(staged), swap["created"], swap["removed"],
+        work_id,
+        len(chapters),
+        len(staged),
+        swap["created"],
+        swap["removed"],
     )
     return {
         "chapters": len(chapters),
@@ -667,6 +672,7 @@ def _run_locked(db: OrivellumDB, cfg: Any, *, work_id: str) -> dict:
 # ---------------------------------------------------------------------------
 # CED — contradiction error density (findings per 10,000 words)
 # ---------------------------------------------------------------------------
+
 
 def compute_ced(db: OrivellumDB, work_id: str) -> dict:
     """CED per chapter and for the whole book.

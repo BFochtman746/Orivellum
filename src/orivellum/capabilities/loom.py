@@ -140,8 +140,10 @@ def _get_contract(chapter: dict) -> dict:
 def _word_range(contract: dict) -> tuple[int, int]:
     wr = contract.get("word_range") or []
     if (
-        isinstance(wr, (list, tuple)) and len(wr) == 2
-        and all(isinstance(x, (int, float)) for x in wr) and 0 < wr[0] <= wr[1]
+        isinstance(wr, (list, tuple))
+        and len(wr) == 2
+        and all(isinstance(x, (int, float)) for x in wr)
+        and 0 < wr[0] <= wr[1]
     ):
         return int(wr[0]), int(wr[1])
     raise LoomError("chapter contract has no valid word_range [min, max]")
@@ -242,8 +244,7 @@ def _personas_for_cast(db: OrivellumDB, work_id: str, cast: list[str]) -> list[d
         if p is None:
             for prior_id in prior_ids:  # nearest earlier volume first
                 prior = {
-                    q["name"].lower(): q
-                    for q in db.list_loom_personas(prior_id, status="approved")
+                    q["name"].lower(): q for q in db.list_loom_personas(prior_id, status="approved")
                 }.get(key)
                 if prior is not None:
                     p = {**prior, "inherited_from_work_id": prior_id}
@@ -251,7 +252,8 @@ def _personas_for_cast(db: OrivellumDB, work_id: str, cast: list[str]) -> list[d
         (out.append(p) if p else missing.append(str(name)))
     if missing:
         raise LoomError(
-            "no approved persona for cast member(s): " + ", ".join(missing)
+            "no approved persona for cast member(s): "
+            + ", ".join(missing)
             + " — personas are review-gated and must be approved before drafting"
             + " (earlier volumes of the series were also checked)"
         )
@@ -350,9 +352,7 @@ def _render_world_state(state: dict[str, dict]) -> str:
     )
 
 
-def assemble_context(
-    db: OrivellumDB, cfg: OrivellumConfig, *, work_id: str, chapter: dict
-) -> dict:
+def assemble_context(db: OrivellumDB, cfg: OrivellumConfig, *, work_id: str, chapter: dict) -> dict:
     """The B5 drafting context — contract, horizon-restricted personas, world
     state, previous closing passage verbatim, retrieved canon, voice envelope.
     Every block is budget-clipped and reported, context-compiler style."""
@@ -371,7 +371,7 @@ def assemble_context(
 
     state = db.get_world_state(work_id)
     prev = _prev_chapter(db, work_id, int(chapter["seq"]))
-    closing = (prev["text"][-CLOSING_PASSAGE_CHARS:] if prev else "")
+    closing = prev["text"][-CLOSING_PASSAGE_CHARS:] if prev else ""
 
     entities = cast + [str(contract.get("location") or "")]
     facts = _facts_for_entities(db, work_id, entities)
@@ -385,9 +385,8 @@ def assemble_context(
         "personas": "\n\n".join(persona_blocks),
         "world_state": _render_world_state(state),
         "closing": closing or "(no previous chapter — this is the opening)",
-        "canon": "\n".join(
-            f"- [{f['classification']}] {f['statement']}" for f in facts
-        ) or "(no canon facts retrieved for the named entities)",
+        "canon": "\n".join(f"- [{f['classification']}] {f['statement']}" for f in facts)
+        or "(no canon facts retrieved for the named entities)",
         "voice": json.dumps(voice, ensure_ascii=False) if voice else "(no voice envelope)",
     }
     blocks, report = {}, {}
@@ -443,22 +442,24 @@ def _parse_json_obj(text: str | None) -> dict | None:
 # ── Agents ────────────────────────────────────────────────────────────────────
 
 
-def _gateway(db, cfg, *, model, purpose, system, user, temperature, extra=None,
-             timeout=180):
+def _gateway(db, cfg, *, model, purpose, system, user, temperature, extra=None, timeout=180):
     from orivellum.capabilities.llm import llm_call
 
     return llm_call(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        cfg=cfg, db=db, model=model, purpose=purpose,
-        temperature=temperature, timeout=timeout, extra=extra,
+        cfg=cfg,
+        db=db,
+        model=model,
+        purpose=purpose,
+        temperature=temperature,
+        timeout=timeout,
+        extra=extra,
     )
 
 
 def _persona_block(ctx: dict, name: str) -> str:
     if f"### {name}" in ctx["blocks"]["personas"]:
-        block = next(
-            b for b in ctx["blocks"]["personas"].split("### ") if b.startswith(name)
-        )
+        block = next(b for b in ctx["blocks"]["personas"].split("### ") if b.startswith(name))
         return f"YOUR CHARACTER:\n{block}"
     return f"YOUR CHARACTER: {name}"
 
@@ -474,7 +475,7 @@ def _agent_prompt(ctx: dict, name: str, feedback: str) -> str:
     if feedback:
         parts.append(f"CRITIC FEEDBACK on your last proposal (address it):\n{feedback}")
     parts.append(
-        'Propose ONE next action for your character that advances the contracted beat. '
+        "Propose ONE next action for your character that advances the contracted beat. "
         'JSON only: {"action": "specific physical/verbal action", '
         '"motivation": "why, in character", "dialogue": "line spoken, or empty"}'
     )
@@ -557,9 +558,13 @@ def _propose_actions(db, cfg, ctx, *, drafter, critic, llm_ids) -> tuple[list[di
         won = None
         for _attempt in range(MAX_ACTION_ATTEMPTS):
             r = _gateway(
-                db, cfg, model=drafter, purpose="loom.agent.action",
+                db,
+                cfg,
+                model=drafter,
+                purpose="loom.agent.action",
                 system=f"You are the character {name}. Stay strictly in character. JSON only.",
-                user=_agent_prompt(ctx, name, feedback), temperature=0.2,
+                user=_agent_prompt(ctx, name, feedback),
+                temperature=0.2,
             )
             llm_ids.append(r.call_id)
             if not r.ok:
@@ -569,9 +574,13 @@ def _propose_actions(db, cfg, ctx, *, drafter, critic, llm_ids) -> tuple[list[di
                 feedback = "Your reply was not the required JSON action object."
                 continue
             c = _gateway(
-                db, cfg, model=critic, purpose="loom.critic.action",
+                db,
+                cfg,
+                model=critic,
+                purpose="loom.critic.action",
                 system="You are a strict story critic. JSON only.",
-                user=_critic_prompt(ctx, name, action), temperature=0.1,
+                user=_critic_prompt(ctx, name, action),
+                temperature=0.1,
             )
             llm_ids.append(c.call_id)
             if not c.ok:
@@ -610,15 +619,14 @@ def _entropy_spans(logprobs: list | None) -> dict:
         return {"available": True, "spans": [], "tokens": len(nlls)}
     hot: list[tuple[int, int]] = []
     for i in range(len(nlls) - ENTROPY_WINDOW + 1):
-        window = nlls[i:i + ENTROPY_WINDOW]
+        window = nlls[i : i + ENTROPY_WINDOW]
         if sum(window) / ENTROPY_WINDOW > ENTROPY_NLL_THRESHOLD:
             if hot and i <= hot[-1][1]:
                 hot[-1] = (hot[-1][0], i + ENTROPY_WINDOW)
             else:
                 hot.append((i, i + ENTROPY_WINDOW))
     spans = [
-        {"text": "".join(toks[a:b]).strip(),
-         "mean_nll": round(sum(nlls[a:b]) / (b - a), 3)}
+        {"text": "".join(toks[a:b]).strip(), "mean_nll": round(sum(nlls[a:b]) / (b - a), 3)}
         for a, b in hot[:MAX_VERIFY_SPANS]
     ]
     return {"available": True, "spans": spans, "tokens": len(nlls)}
@@ -631,7 +639,10 @@ def _verify_spans(db, cfg, ctx, spans: list[dict], *, critic, llm_ids) -> list[d
     results = []
     for span in spans:
         r = _gateway(
-            db, cfg, model=critic, purpose="loom.entropy.verify",
+            db,
+            cfg,
+            model=critic,
+            purpose="loom.entropy.verify",
             system="You verify a suspect passage against the record. JSON only.",
             user=f"""CANON FACTS:
 {ctx["blocks"]["canon"]}
@@ -649,11 +660,21 @@ JSON only: {{"ok": true|false, "issue": "the contradiction, or empty"}}""",
         llm_ids.append(r.call_id)
         verdict = _parse_json_obj(r.text) if r.ok else None
         if verdict is None:
-            results.append({**span, "verified": False,
-                            "issue": f"verification failed: {r.error or 'malformed response'}"})
+            results.append(
+                {
+                    **span,
+                    "verified": False,
+                    "issue": f"verification failed: {r.error or 'malformed response'}",
+                }
+            )
         else:
-            results.append({**span, "verified": bool(verdict.get("ok")),
-                            "issue": str(verdict.get("issue") or "")})
+            results.append(
+                {
+                    **span,
+                    "verified": bool(verdict.get("ok")),
+                    "issue": str(verdict.get("issue") or ""),
+                }
+            )
     return results
 
 
@@ -674,7 +695,10 @@ def _beat_check(db, cfg, ctx, prose: str, *, critic, llm_ids) -> dict:
     to MAGNET's goal generator.  Its response to a miss is a FINDING for the
     author, never a changed goal."""
     r = _gateway(
-        db, cfg, model=critic, purpose="loom.critic.beat",
+        db,
+        cfg,
+        model=critic,
+        purpose="loom.critic.beat",
         system="You are a beat compliance controller. JSON only.",
         user=f"""CONTRACTED BEAT:
 {json.dumps(ctx["contract"].get("beat"), ensure_ascii=False)}
@@ -710,7 +734,9 @@ JSON only: {{"accomplishes_beat": true|false, "premature_reveal": true|false, "f
 def _escalate(db, work_id, chapter, description) -> str:
     target_id, target_type = _escalation_target(db, work_id, chapter["id"])
     return db.create_finding(
-        object_id=target_id, object_type=target_type, kind="loom_escalation",
+        object_id=target_id,
+        object_type=target_type,
+        kind="loom_escalation",
         severity="high",
         description=f"LOOM chapter {chapter.get('seq')}: {description}",
         meta={"chapter_id": chapter["id"], "chapter_seq": chapter.get("seq")},
@@ -737,16 +763,33 @@ def _store_draft(db, work_id, chapter, prose, meta) -> dict:
                 f"chapter seq {chapter.get('seq')} was approved mid-run — "
                 "approved chapters are never overwritten; draft discarded"
             )
-        rev = int(db._conn.execute(
-            "SELECT COALESCE(MAX(rev), 0) AS m FROM loom_chapter_revision WHERE chapter_id=?",
-            (chapter["id"],),
-        ).fetchone()["m"]) + 1
+        rev = (
+            int(
+                db._conn.execute(
+                    "SELECT COALESCE(MAX(rev), 0) AS m FROM loom_chapter_revision "
+                    "WHERE chapter_id=?",
+                    (chapter["id"],),
+                ).fetchone()["m"]
+            )
+            + 1
+        )
         db._conn.execute(
             """INSERT INTO loom_chapter_revision(id, chapter_id, work_id, rev,
                text, word_count, meta, created_at, parent_rev, origin, created_by)
                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-            (rid, chapter["id"], work_id, rev, prose, wc, json.dumps(meta), now,
-             rev - 1 if rev > 1 else None, "ai_generated", "loom"),
+            (
+                rid,
+                chapter["id"],
+                work_id,
+                rev,
+                prose,
+                wc,
+                json.dumps(meta),
+                now,
+                rev - 1 if rev > 1 else None,
+                "ai_generated",
+                "loom",
+            ),
         )
         db._conn.execute(
             "UPDATE book_chapters SET text=?, updated_at=? WHERE id=?",
@@ -778,26 +821,36 @@ def _run(db: OrivellumDB, cfg: OrivellumConfig, *, work_id: str, chapter_id: str
 
     llm_ids: list[int | None] = []
     evidence: dict[str, Any] = {
-        "chapter_seq": seq, "context_report": ctx["context_report"],
-        "horizon_map": ctx["horizon_map"], "replay": replay,
+        "chapter_seq": seq,
+        "context_report": ctx["context_report"],
+        "horizon_map": ctx["horizon_map"],
+        "replay": replay,
         "models": {"drafter": drafter, "critic": critic},
     }
 
     accepted, stalled = _propose_actions(
-        db, cfg, ctx, drafter=drafter, critic=critic, llm_ids=llm_ids)
+        db, cfg, ctx, drafter=drafter, critic=critic, llm_ids=llm_ids
+    )
     evidence["accepted_actions"] = [
-        {"character": a["character"], "action": a["action"]} for a in accepted]
+        {"character": a["character"], "action": a["action"]} for a in accepted
+    ]
     evidence["stalled_characters"] = stalled
     if stalled:
-        _escalate(db, work_id, chapter,
-                  "beat stall — no critic-accepted action for: " + ", ".join(stalled))
+        _escalate(
+            db,
+            work_id,
+            chapter,
+            "beat stall — no critic-accepted action for: " + ", ".join(stalled),
+        )
     if not accepted:
         evidence["llm_call_ids"] = [i for i in llm_ids if i is not None]
-        return {"status": "escalated", "evidence": evidence,
-                "reason": "no character action survived the critic"}
+        return {
+            "status": "escalated",
+            "evidence": evidence,
+            "reason": "no character action survived the critic",
+        }
 
-    prose, selected, logprobs = _narrate(
-        db, cfg, ctx, accepted, drafter=drafter, llm_ids=llm_ids)
+    prose, selected, logprobs = _narrate(db, cfg, ctx, accepted, drafter=drafter, llm_ids=llm_ids)
     evidence["selected_actions"] = [a["character"] for a in selected]
 
     # Beat compliance + word band (the controller: escalate, never rewrite).
@@ -809,17 +862,25 @@ def _run(db: OrivellumDB, cfg: OrivellumConfig, *, work_id: str, chapter_id: str
 
     # Entropy gate BEFORE the chapter is stored.
     evidence["entropy"] = _entropy_gate(
-        db, cfg, ctx, logprobs, work_id=work_id, chapter=chapter,
-        critic=critic, llm_ids=llm_ids)
+        db, cfg, ctx, logprobs, work_id=work_id, chapter=chapter, critic=critic, llm_ids=llm_ids
+    )
 
     # Store first (atomic approval re-check inside — raises without writing
     # anything if the chapter was approved mid-run), THEN commit world state:
     # a refused draft must leave the world untouched.
-    evidence["revision"] = _store_draft(db, work_id, chapter, prose, {
-        "beat": ctx["contract"].get("beat"),
-        "selected_actions": evidence["selected_actions"],
-        "word_count": wc, "entropy": evidence["entropy"], "beat_check": beat,
-    })
+    evidence["revision"] = _store_draft(
+        db,
+        work_id,
+        chapter,
+        prose,
+        {
+            "beat": ctx["contract"].get("beat"),
+            "selected_actions": evidence["selected_actions"],
+            "word_count": wc,
+            "entropy": evidence["entropy"],
+            "beat_check": beat,
+        },
+    )
 
     # Commit: ONLY the selected actions' world updates (overwrite semantics).
     updates: dict[str, str] = {}
@@ -833,22 +894,30 @@ def _run(db: OrivellumDB, cfg: OrivellumConfig, *, work_id: str, chapter_id: str
         (evidence["revision"]["id"], "chapter_revision"),
         (chapter["id"], "book_chapter"),
     ):
-        db.record_provenance(artifact_id, kind, origin="ai_generated",
-                             llm_call_ids=call_ids, declared_by="loom")
+        db.record_provenance(
+            artifact_id, kind, origin="ai_generated", llm_call_ids=call_ids, declared_by="loom"
+        )
 
     problems = _compliance_problems(wc, lo, hi, beat)
     for p in problems:
         _escalate(db, work_id, chapter, p)
     status = "escalated" if (problems or stalled) else "done"
-    return {"status": status, "evidence": evidence,
-            "reason": "; ".join(problems) if problems else None}
+    return {
+        "status": status,
+        "evidence": evidence,
+        "reason": "; ".join(problems) if problems else None,
+    }
 
 
 def _narrate(db, cfg, ctx, accepted, *, drafter, llm_ids) -> tuple[str, list[dict], list | None]:
     n = _gateway(
-        db, cfg, model=drafter, purpose="loom.narrator",
+        db,
+        cfg,
+        model=drafter,
+        purpose="loom.narrator",
         system="You are the narrator. JSON only.",
-        user=_narrator_prompt(ctx, accepted), temperature=0.35,
+        user=_narrator_prompt(ctx, accepted),
+        temperature=0.35,
         extra={"logprobs": True, "top_logprobs": 1},
     )
     llm_ids.append(n.call_id)
@@ -870,9 +939,7 @@ def _narrate(db, cfg, ctx, accepted, *, drafter, llm_ids) -> tuple[str, list[dic
             "to all actions (only SELECTED actions may commit world updates)"
         )
     if any(i < 0 or i >= len(accepted) for i in sel):
-        raise LoomError(
-            "narrator selection index out of range — rejecting the response"
-        )
+        raise LoomError("narrator selection index out of range — rejecting the response")
     selected_idx = sorted(set(sel))
     if not selected_idx:
         raise LoomError("narrator selected no valid actions — nothing to commit")
@@ -883,11 +950,16 @@ def _entropy_gate(db, cfg, ctx, logprobs, *, work_id, chapter, critic, llm_ids) 
     entropy = _entropy_spans(logprobs)
     if entropy["spans"]:
         entropy["verification"] = _verify_spans(
-            db, cfg, ctx, entropy["spans"], critic=critic, llm_ids=llm_ids)
+            db, cfg, ctx, entropy["spans"], critic=critic, llm_ids=llm_ids
+        )
         for v in entropy["verification"]:
             if not v["verified"]:
-                _escalate(db, work_id, chapter,
-                          f"entropy gate: unverified high-uncertainty span — {v['issue'][:200]}")
+                _escalate(
+                    db,
+                    work_id,
+                    chapter,
+                    f"entropy gate: unverified high-uncertainty span — {v['issue'][:200]}",
+                )
     return entropy
 
 
@@ -913,6 +985,7 @@ def run_loom_draft(
         logger.exception("LOOM draft failed (work=%s chapter=%s)", work_id, chapter_id)
         db.finish_loom_run(run_id, status="error", error=str(exc))
         raise
-    db.finish_loom_run(run_id, status=result["status"], evidence=result["evidence"],
-                       error=result.get("reason"))
+    db.finish_loom_run(
+        run_id, status=result["status"], evidence=result["evidence"], error=result.get("reason")
+    )
     return result

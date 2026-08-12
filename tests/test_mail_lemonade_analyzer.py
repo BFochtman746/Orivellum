@@ -116,11 +116,19 @@ _MSG = {
 def test_analyze_happy_path_with_threat_signal(monkeypatch):
     import json as _json
 
-    resp = _Resp(payload=_chat_payload("```json\n" + _json.dumps(_GOOD) + "\n```"),
-                 content=b"x" * 100)
+    resp = _Resp(
+        payload=_chat_payload("```json\n" + _json.dumps(_GOOD) + "\n```"), content=b"x" * 100
+    )
     monkeypatch.setattr(la.httpx, "Client", _client_returning(resp))
-    evidence = [ThreatEvidence(feed="openphish", indicator="bad.example.com",
-                               indicator_type="domain", confidence=0.85, description="")]
+    evidence = [
+        ThreatEvidence(
+            feed="openphish",
+            indicator="bad.example.com",
+            indicator_type="domain",
+            confidence=0.85,
+            description="",
+        )
+    ]
     out = la.analyze(_MSG, evidence, model_id="m1")
     assert out.attention_level == "high"
     assert out.recommended_action == "CREATE_DRAFT"
@@ -131,8 +139,9 @@ def test_analyze_happy_path_with_threat_signal(monkeypatch):
 def test_analyze_clamps_confidence(monkeypatch):
     import json as _json
 
-    resp = _Resp(payload=_chat_payload(_json.dumps({**_GOOD, "confidence": 7.5})),
-                 content=b"x" * 100)
+    resp = _Resp(
+        payload=_chat_payload(_json.dumps({**_GOOD, "confidence": 7.5})), content=b"x" * 100
+    )
     monkeypatch.setattr(la.httpx, "Client", _client_returning(resp))
     assert la.analyze(_MSG, []).confidence == 1.0
 

@@ -44,9 +44,7 @@ def _clean_env(monkeypatch):
 
 
 def _stub_db(monkeypatch, settings: dict):
-    monkeypatch.setattr(
-        auth_keys, "_db_setting", lambda name: settings.get(name, "")
-    )
+    monkeypatch.setattr(auth_keys, "_db_setting", lambda name: settings.get(name, ""))
 
 
 def test_env_login_key_wins_over_everything(_clean_env):

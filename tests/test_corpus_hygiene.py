@@ -355,8 +355,11 @@ def test_coverage_report_is_upper_bound_with_unseen_count(tmp_path):
     for subject, times in (("Alpha", 2), ("Beta", 1), ("Gamma", 1)):
         for i in range(times):
             db.create_knowledge_item(
-                work_id=work["id"], kind="entity", text=f"{subject} mention {i}",
-                subject=subject, source_doc_id=doc_id,
+                work_id=work["id"],
+                kind="entity",
+                text=f"{subject} mention {i}",
+                subject=subject,
+                source_doc_id=doc_id,
             )
 
     report = detect_hygiene(work["id"], db)

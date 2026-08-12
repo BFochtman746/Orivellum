@@ -42,32 +42,129 @@ from .metrics import register_bands, sentence_length_stats, words_of
 # ── Signal lexicons (defaults; extendable via instrument thresholds) ─────────
 
 TENSION_LEXICON = (
-    "afraid", "fear", "feared", "terror", "dread", "danger", "dangerous",
-    "threat", "threatened", "warning", "warned", "trembled", "trembling",
-    "shook", "shaking", "silence fell", "held his breath", "held her breath",
-    "heart pounded", "heart raced", "blood ran cold", "froze", "panic",
-    "desperate", "desperation", "urgent", "urgency", "too late", "no time",
-    "screamed", "scream", "cried out", "gasped", "stumbled", "fled",
-    "hunted", "trapped", "cornered", "knife", "blade drawn", "blood",
-    "dying", "death", "dead", "kill", "killed", "wound", "wounded",
+    "afraid",
+    "fear",
+    "feared",
+    "terror",
+    "dread",
+    "danger",
+    "dangerous",
+    "threat",
+    "threatened",
+    "warning",
+    "warned",
+    "trembled",
+    "trembling",
+    "shook",
+    "shaking",
+    "silence fell",
+    "held his breath",
+    "held her breath",
+    "heart pounded",
+    "heart raced",
+    "blood ran cold",
+    "froze",
+    "panic",
+    "desperate",
+    "desperation",
+    "urgent",
+    "urgency",
+    "too late",
+    "no time",
+    "screamed",
+    "scream",
+    "cried out",
+    "gasped",
+    "stumbled",
+    "fled",
+    "hunted",
+    "trapped",
+    "cornered",
+    "knife",
+    "blade drawn",
+    "blood",
+    "dying",
+    "death",
+    "dead",
+    "kill",
+    "killed",
+    "wound",
+    "wounded",
 )
 
 CONFLICT_LEXICON = (
-    "argued", "argument", "quarrel", "quarreled", "fought", "fight",
-    "fighting", "struck", "strike", "blow", "shouted", "shouting", "yelled",
-    "accused", "accusation", "refused", "refusal", "defied", "defiance",
-    "betrayed", "betrayal", "enemy", "enemies", "against him", "against her",
-    "confronted", "confrontation", "demanded", "demand", "threatened",
-    "clashed", "clash", "war", "battle", "raid", "seized", "stole",
-    "swore at", "cursed", "rage", "fury", "furious", "anger", "angry",
+    "argued",
+    "argument",
+    "quarrel",
+    "quarreled",
+    "fought",
+    "fight",
+    "fighting",
+    "struck",
+    "strike",
+    "blow",
+    "shouted",
+    "shouting",
+    "yelled",
+    "accused",
+    "accusation",
+    "refused",
+    "refusal",
+    "defied",
+    "defiance",
+    "betrayed",
+    "betrayal",
+    "enemy",
+    "enemies",
+    "against him",
+    "against her",
+    "confronted",
+    "confrontation",
+    "demanded",
+    "demand",
+    "threatened",
+    "clashed",
+    "clash",
+    "war",
+    "battle",
+    "raid",
+    "seized",
+    "stole",
+    "swore at",
+    "cursed",
+    "rage",
+    "fury",
+    "furious",
+    "anger",
+    "angry",
 )
 
 CAUSAL_MARKERS = (
-    "because", "so that", "therefore", "as a result", "which meant",
-    "and so", "since", "led to", "caused", "in consequence", "for that reason",
-    "that is why", "thanks to", "owing to", "due to", "in answer",
-    "in return", "in revenge", "provoked", "forced him", "forced her",
-    "drove him", "drove her", "made him", "made her",
+    "because",
+    "so that",
+    "therefore",
+    "as a result",
+    "which meant",
+    "and so",
+    "since",
+    "led to",
+    "caused",
+    "in consequence",
+    "for that reason",
+    "that is why",
+    "thanks to",
+    "owing to",
+    "due to",
+    "in answer",
+    "in return",
+    "in revenge",
+    "provoked",
+    "forced him",
+    "forced her",
+    "drove him",
+    "drove her",
+    "made him",
+    "made her",
 )
 
 _SCENE_BREAK = re.compile(
@@ -78,36 +175,194 @@ _CAPWORD = re.compile(r"\b[A-Z][a-z][a-z']+\b")
 # Common sentence-openers that look like proper nouns but aren't names.
 _CAP_STOPWORDS = frozenset(
     (
-        "The", "She", "His", "Her", "They", "There", "Then", "That", "This",
-        "But", "And", "When", "What", "Where", "Why", "How", "Not", "Now",
-        "For", "You", "Yet", "Was", "Were", "Are", "Had", "Has", "Have",
-        "With", "From", "Into", "After", "Before", "Over", "Under", "One",
-        "Two", "Three", "All", "Some", "None", "Each", "Every", "Once",
-        "Still", "Even", "Only", "Perhaps", "Though", "While", "Until",
-        "Beyond", "Behind", "Above", "Below", "Chapter", "Part", "Book",
+        "The",
+        "She",
+        "His",
+        "Her",
+        "They",
+        "There",
+        "Then",
+        "That",
+        "This",
+        "But",
+        "And",
+        "When",
+        "What",
+        "Where",
+        "Why",
+        "How",
+        "Not",
+        "Now",
+        "For",
+        "You",
+        "Yet",
+        "Was",
+        "Were",
+        "Are",
+        "Had",
+        "Has",
+        "Have",
+        "With",
+        "From",
+        "Into",
+        "After",
+        "Before",
+        "Over",
+        "Under",
+        "One",
+        "Two",
+        "Three",
+        "All",
+        "Some",
+        "None",
+        "Each",
+        "Every",
+        "Once",
+        "Still",
+        "Even",
+        "Only",
+        "Perhaps",
+        "Though",
+        "While",
+        "Until",
+        "Beyond",
+        "Behind",
+        "Above",
+        "Below",
+        "Chapter",
+        "Part",
+        "Book",
     )
 )
 
 _THEME_STOPWORDS = frozenset(
     (
-        "about", "after", "again", "against", "almost", "along", "already",
-        "always", "another", "anything", "around", "because", "before",
-        "began", "behind", "being", "beneath", "beside", "better", "between",
-        "beyond", "brought", "called", "came", "cannot", "could", "down",
-        "during", "either", "enough", "every", "first", "found", "gave",
-        "going", "great", "hands", "having", "himself", "herself", "house",
-        "inside", "instead", "knew", "know", "known", "later", "little",
-        "looked", "looking", "made", "might", "morning", "moved", "much",
-        "never", "night", "nothing", "often", "once", "only", "other",
-        "others", "outside", "over", "people", "perhaps", "place", "right",
-        "said", "same", "seemed", "should", "since", "small", "something",
-        "sometimes", "still", "such", "taken", "than", "that", "their",
-        "them", "themselves", "then", "there", "these", "they", "thing",
-        "things", "think", "this", "those", "though", "thought", "three",
-        "through", "time", "times", "toward", "turned", "under", "until",
-        "upon", "very", "voice", "walked", "wanted", "watched", "were",
-        "what", "when", "where", "which", "while", "whose", "will", "with",
-        "within", "without", "woman", "women", "words", "would", "years",
+        "about",
+        "after",
+        "again",
+        "against",
+        "almost",
+        "along",
+        "already",
+        "always",
+        "another",
+        "anything",
+        "around",
+        "because",
+        "before",
+        "began",
+        "behind",
+        "being",
+        "beneath",
+        "beside",
+        "better",
+        "between",
+        "beyond",
+        "brought",
+        "called",
+        "came",
+        "cannot",
+        "could",
+        "down",
+        "during",
+        "either",
+        "enough",
+        "every",
+        "first",
+        "found",
+        "gave",
+        "going",
+        "great",
+        "hands",
+        "having",
+        "himself",
+        "herself",
+        "house",
+        "inside",
+        "instead",
+        "knew",
+        "know",
+        "known",
+        "later",
+        "little",
+        "looked",
+        "looking",
+        "made",
+        "might",
+        "morning",
+        "moved",
+        "much",
+        "never",
+        "night",
+        "nothing",
+        "often",
+        "once",
+        "only",
+        "other",
+        "others",
+        "outside",
+        "over",
+        "people",
+        "perhaps",
+        "place",
+        "right",
+        "said",
+        "same",
+        "seemed",
+        "should",
+        "since",
+        "small",
+        "something",
+        "sometimes",
+        "still",
+        "such",
+        "taken",
+        "than",
+        "that",
+        "their",
+        "them",
+        "themselves",
+        "then",
+        "there",
+        "these",
+        "they",
+        "thing",
+        "things",
+        "think",
+        "this",
+        "those",
+        "though",
+        "thought",
+        "three",
+        "through",
+        "time",
+        "times",
+        "toward",
+        "turned",
+        "under",
+        "until",
+        "upon",
+        "very",
+        "voice",
+        "walked",
+        "wanted",
+        "watched",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "whose",
+        "will",
+        "with",
+        "within",
+        "without",
+        "woman",
+        "women",
+        "words",
+        "would",
+        "years",
         "young",
     )
 )
@@ -163,8 +418,7 @@ def _per_1k(hits: int, n_words: int) -> float:
 def _proper_nouns(text: str) -> set[str]:
     """Recurring capitalized words — a cheap named-entity signal."""
     counts = Counter(
-        m.group(0) for m in _CAPWORD.finditer(text or "")
-        if m.group(0) not in _CAP_STOPWORDS
+        m.group(0) for m in _CAPWORD.finditer(text or "") if m.group(0) not in _CAP_STOPWORDS
     )
     return {w for w, c in counts.items() if c >= 2}
 
@@ -223,9 +477,7 @@ def _finding(
 
 
 def _curve(profiles: list[dict], key: str) -> list[dict]:
-    return [
-        {"chapter": p["seq"], "value": p[key], "words": p["words"]} for p in profiles
-    ]
+    return [{"chapter": p["seq"], "value": p[key], "words": p["words"]} for p in profiles]
 
 
 def _story_evidence(p: dict, hits_key: str | None = None) -> dict:
@@ -262,19 +514,33 @@ def detect_structural_enforcement(profiles: list[dict], th: dict) -> tuple[list[
         measures = {"words": p["words"], "median_words": median, "ratio": round(ratio, 2)}
         if len(sized) >= 3 and ratio > max_ratio:
             findings.append(
-                _finding(p, "chapter_length_outlier_long", "medium",
-                         {"measures": measures, **_opening_quote(p["text"])})
+                _finding(
+                    p,
+                    "chapter_length_outlier_long",
+                    "medium",
+                    {"measures": measures, **_opening_quote(p["text"])},
+                )
             )
         elif len(sized) >= 3 and ratio < min_ratio:
             findings.append(
-                _finding(p, "chapter_length_outlier_short", "low",
-                         {"measures": measures, **_opening_quote(p["text"])})
+                _finding(
+                    p,
+                    "chapter_length_outlier_short",
+                    "low",
+                    {"measures": measures, **_opening_quote(p["text"])},
+                )
             )
         if p["words"] >= mono_words and p["scene_breaks"] == 0:
             findings.append(
-                _finding(p, "monolithic_chapter", "medium",
-                         {"measures": {"words": p["words"], "scene_breaks": 0},
-                          **_opening_quote(p["text"])})
+                _finding(
+                    p,
+                    "monolithic_chapter",
+                    "medium",
+                    {
+                        "measures": {"words": p["words"], "scene_breaks": 0},
+                        **_opening_quote(p["text"]),
+                    },
+                )
             )
     return findings, {"median_words": median, "chapters": len(profiles)}
 
@@ -334,11 +600,19 @@ def detect_pressure_curve(profiles: list[dict], th: dict) -> tuple[list[dict], d
             live_now = [p for p in profiles if p["words"] > 0]
             rep = min(live_now, key=lambda p: abs(p["tension_per_1k"] - mean))
             findings.append(
-                _finding(None, "flat_pressure_curve", "medium",
-                         {"measures": {"coefficient_of_variation": round(cv, 3),
-                                       "flat_ceiling": flat_cv,
-                                       "mean_tension_per_1k": round(mean, 2)},
-                          **_story_evidence(rep, "tension_hits")})
+                _finding(
+                    None,
+                    "flat_pressure_curve",
+                    "medium",
+                    {
+                        "measures": {
+                            "coefficient_of_variation": round(cv, 3),
+                            "flat_ceiling": flat_cv,
+                            "mean_tension_per_1k": round(mean, 2),
+                        },
+                        **_story_evidence(rep, "tension_hits"),
+                    },
+                )
             )
         # Mid-book sag against the rolling mean of the previous 3 chapters.
         live = [p for p in profiles if p["words"] > 0]
@@ -348,11 +622,19 @@ def detect_pressure_curve(profiles: list[dict], th: dict) -> tuple[list[dict], d
             p = live[i]
             if roll > 0 and p["tension_per_1k"] < roll * (1 - sag_pct / 100.0):
                 findings.append(
-                    _finding(p, "pressure_sag", "low",
-                             {"measures": {"tension_per_1k": p["tension_per_1k"],
-                                           "rolling_mean_prev3": round(roll, 2),
-                                           "sag_threshold_pct": sag_pct},
-                              **_opening_quote(p["text"])})
+                    _finding(
+                        p,
+                        "pressure_sag",
+                        "low",
+                        {
+                            "measures": {
+                                "tension_per_1k": p["tension_per_1k"],
+                                "rolling_mean_prev3": round(roll, 2),
+                                "sag_threshold_pct": sag_pct,
+                            },
+                            **_opening_quote(p["text"]),
+                        },
+                    )
                 )
     return findings, summary
 
@@ -380,18 +662,32 @@ def detect_conflict_escalation(profiles: list[dict], th: dict) -> tuple[list[dic
         if final_mean <= first_mean:
             rep = min(live[-third:], key=lambda p: p["conflict_per_1k"])
             findings.append(
-                _finding(None, "no_conflict_escalation", "medium",
-                         {"measures": {"first_third_mean": round(first_mean, 2),
-                                       "final_third_mean": round(final_mean, 2)},
-                          **_story_evidence(rep, "conflict_hits")})
+                _finding(
+                    None,
+                    "no_conflict_escalation",
+                    "medium",
+                    {
+                        "measures": {
+                            "first_third_mean": round(first_mean, 2),
+                            "final_third_mean": round(final_mean, 2),
+                        },
+                        **_story_evidence(rep, "conflict_hits"),
+                    },
+                )
             )
         # Middle-third chapters with zero conflict signal.
         for p in live[third : len(live) - third]:
             if p["words"] >= min_words and not p["conflict_hits"]:
                 findings.append(
-                    _finding(p, "conflict_absent", "low",
-                             {"measures": {"conflict_per_1k": 0.0, "words": p["words"]},
-                              **_opening_quote(p["text"])})
+                    _finding(
+                        p,
+                        "conflict_absent",
+                        "low",
+                        {
+                            "measures": {"conflict_per_1k": 0.0, "words": p["words"]},
+                            **_opening_quote(p["text"]),
+                        },
+                    )
                 )
     return findings, summary
 
@@ -419,8 +715,12 @@ def detect_scene_purpose(profiles: list[dict], th: dict) -> tuple[list[dict], di
         }
         if not new_names and not p["conflict_hits"] and not p["tension_hits"] and not has_dialogue:
             findings.append(
-                _finding(p, "purpose_unclear", "medium",
-                         {"measures": signals, **_opening_quote(p["text"])})
+                _finding(
+                    p,
+                    "purpose_unclear",
+                    "medium",
+                    {"measures": signals, **_opening_quote(p["text"])},
+                )
             )
     return findings, {"chapters_checked": checked}
 
@@ -449,11 +749,19 @@ def detect_story_momentum(profiles: list[dict], th: dict) -> tuple[list[dict], d
             stalled_seqs.append(p["seq"])
             stalled_by_seq[p["seq"]] = p
             findings.append(
-                _finding(p, "momentum_stall", "medium",
-                         {"measures": {"mean_sentence_words": p["sentences"]["mean"],
-                                       "dialogue_ratio": p["register"]["dialogue_ratio"],
-                                       "tension_per_1k": p["tension_per_1k"]},
-                          **_opening_quote(p["text"])})
+                _finding(
+                    p,
+                    "momentum_stall",
+                    "medium",
+                    {
+                        "measures": {
+                            "mean_sentence_words": p["sentences"]["mean"],
+                            "dialogue_ratio": p["register"]["dialogue_ratio"],
+                            "tension_per_1k": p["tension_per_1k"],
+                        },
+                        **_opening_quote(p["text"]),
+                    },
+                )
             )
     # Flatline: N consecutive stalled chapters is a story-level failure.
     run = 1
@@ -461,10 +769,15 @@ def detect_story_momentum(profiles: list[dict], th: dict) -> tuple[list[dict], d
         run = run + 1 if b == a + 1 else 1
         if run == flatline_run:
             findings.append(
-                _finding(None, "momentum_flatline", "high",
-                         {"measures": {"consecutive_stalled": flatline_run,
-                                       "ending_chapter": b},
-                          **_story_evidence(stalled_by_seq[b])})
+                _finding(
+                    None,
+                    "momentum_flatline",
+                    "high",
+                    {
+                        "measures": {"consecutive_stalled": flatline_run, "ending_chapter": b},
+                        **_story_evidence(stalled_by_seq[b]),
+                    },
+                )
             )
             break
     return findings, {"stalled_chapters": stalled_seqs}
@@ -487,7 +800,8 @@ def _motif_candidates(profiles: list[dict], th: dict) -> list[str]:
     frequency: Counter[str] = Counter()
     for p in opening:
         all_tokens = [
-            w.lower() for w in words_of(p["text"])
+            w.lower()
+            for w in words_of(p["text"])
             if len(w) >= min_len and w.lower() not in _THEME_STOPWORDS
         ]
         tokens = set(all_tokens) - {n.lower() for n in p["proper_nouns"]}
@@ -511,8 +825,7 @@ def detect_theme_integrity(profiles: list[dict], th: dict) -> tuple[list[dict], 
         return [], {"note": "too few chapters for theme analysis", "motifs": []}
     motifs = _motif_candidates(profiles, th)
     if not motifs:
-        return [], {"note": "no recurring motifs derivable from the opening third",
-                    "motifs": []}
+        return [], {"note": "no recurring motifs derivable from the opening third", "motifs": []}
     findings: list[dict] = []
     third = len(live) // 3
     for p in live[third:]:
@@ -522,9 +835,15 @@ def detect_theme_integrity(profiles: list[dict], th: dict) -> tuple[list[dict], 
         present = [m for m in motifs if m in tokens]
         if not present:
             findings.append(
-                _finding(p, "theme_dropout", "low",
-                         {"measures": {"motifs": motifs, "motifs_present": 0},
-                          **_opening_quote(p["text"])})
+                _finding(
+                    p,
+                    "theme_dropout",
+                    "low",
+                    {
+                        "measures": {"motifs": motifs, "motifs_present": 0},
+                        **_opening_quote(p["text"]),
+                    },
+                )
             )
     return findings, {"motifs": motifs}
 
@@ -565,7 +884,8 @@ def run_detector(
     flagged = {f["chapter_id"] for f in findings if f["chapter_id"]}
     considered = (
         [p for p in profiles if p["chapter_id"] == chapter_id]
-        if chapter_id is not None else profiles
+        if chapter_id is not None
+        else profiles
     )
     total = len([p for p in considered if p["words"] > 0]) or 1
     story_level = any(f["chapter_id"] is None for f in findings)

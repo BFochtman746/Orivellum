@@ -81,11 +81,16 @@ def run_instrument(key: str, req: RunRequest):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if key in _BACKGROUND_KEYS:
+
         def _job() -> None:
             try:
                 assay.run_instrument(
-                    db, cfg, key=key, work_id=req.work_id,
-                    chapter_id=req.chapter_id, run_id=run_id,
+                    db,
+                    cfg,
+                    key=key,
+                    work_id=req.work_id,
+                    chapter_id=req.chapter_id,
+                    run_id=run_id,
                 )
             except Exception:
                 # run_instrument already marked the run row 'error'.
@@ -98,8 +103,12 @@ def run_instrument(key: str, req: RunRequest):
 
     try:
         run = assay.run_instrument(
-            db, cfg, key=key, work_id=req.work_id,
-            chapter_id=req.chapter_id, run_id=run_id,
+            db,
+            cfg,
+            key=key,
+            work_id=req.work_id,
+            chapter_id=req.chapter_id,
+            run_id=run_id,
         )
     except (assay.AssayError, JudgeModelError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -241,8 +250,11 @@ def sign_gate(work_id: str, gate_key: str, req: SignatureRequest):
         # The signer is the authenticated principal (single-author system) —
         # NEVER a caller-supplied name, so signatures cannot be impersonated.
         sig_id = db.create_assay_signature(
-            work_id=work_id, gate_key=gate_key,
-            author="user", decision=req.decision, note=req.note,
+            work_id=work_id,
+            gate_key=gate_key,
+            author="user",
+            decision=req.decision,
+            note=req.note,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -267,7 +279,8 @@ def set_voice_baseline(work_id: str, req: BaselineRequest):
     _require_work(db, work_id)
     try:
         payload = assay.build_voice_baseline(
-            db, work_id,
+            db,
+            work_id,
             reference_text=req.reference_text,
             character_names=req.character_names,
         )

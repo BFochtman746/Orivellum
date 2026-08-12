@@ -39,9 +39,9 @@ WORD_BAND = (1_000, 9_000)
 EARLY_BAND = (0.15, 0.30)
 EARLY_BAND_WEIGHT = 3.0
 
-_CANON_CHAPTER_CAP = 60          # LLM canon extraction: max chapters per audit
-_PERSONA_CAP = 12                # max characters reconstructed per audit
-_CHAPTER_TEXT_CAP = 8_000        # chars of chapter text sent to the model
+_CANON_CHAPTER_CAP = 60  # LLM canon extraction: max chapters per audit
+_PERSONA_CAP = 12  # max characters reconstructed per audit
+_CHAPTER_TEXT_CAP = 8_000  # chars of chapter text sent to the model
 _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _VALID_CLASSIFICATIONS = {"HISTORICAL", "INFERRED", "INVENTED"}
 # Signature gates (D15–D17) are author decisions, not battery instruments.
@@ -86,6 +86,7 @@ def _load_chapters(db: Any, work_id: str) -> list[dict]:
 # Step 2 — the ten deterministic tests
 # ---------------------------------------------------------------------------
 
+
 def _test(test_id: str, name: str, passed: bool, evidence: dict) -> dict:
     return {"id": test_id, "name": name, "passed": bool(passed), "evidence": evidence}
 
@@ -94,24 +95,34 @@ def _t1_contiguity(chapters: list[dict]) -> dict:
     seqs = {int(c["seq"]) for c in chapters if c.get("seq") is not None}
     top = max(seqs) if seqs else 0
     gaps = [n for n in range(1, top + 1) if n not in seqs]
-    return _test("T1", "Chapters contiguous 1..N", bool(seqs) and not gaps,
-                 {"chapter_count": len(chapters), "max_seq": top, "gaps": gaps})
+    return _test(
+        "T1",
+        "Chapters contiguous 1..N",
+        bool(seqs) and not gaps,
+        {"chapter_count": len(chapters), "max_seq": top, "gaps": gaps},
+    )
 
 
 def _t2_text(chapters: list[dict]) -> dict:
     empty = [int(c["seq"]) for c in chapters if not (c.get("text") or "").strip()]
-    return _test("T2", "All chapters have text", bool(chapters) and not empty,
-                 {"empty_chapters": empty})
+    return _test(
+        "T2", "All chapters have text", bool(chapters) and not empty, {"empty_chapters": empty}
+    )
 
 
 def _t3_word_band(chapters: list[dict]) -> dict:
     lo, hi = WORD_BAND
     outliers = [
         {"seq": int(c["seq"]), "title": c.get("title") or "", "words": c["word_count"]}
-        for c in chapters if not (lo <= c["word_count"] <= hi)
+        for c in chapters
+        if not (lo <= c["word_count"] <= hi)
     ]
-    return _test("T3", "Word counts within genre band", bool(chapters) and not outliers,
-                 {"band": [lo, hi], "outliers": outliers})
+    return _test(
+        "T3",
+        "Word counts within genre band",
+        bool(chapters) and not outliers,
+        {"band": [lo, hi], "outliers": outliers},
+    )
 
 
 def _t4_blueprint(db: Any, work_id: str) -> dict:
@@ -126,8 +137,12 @@ def _t4_blueprint(db: Any, work_id: str) -> dict:
         p["kind"] == "blueprint"
         for p in db.list_position_proposals(work_id=work_id, status="approved")
     )
-    return _test("T4", "Blueprint exists", bool(g8) or ratified,
-                 {"g8_artifact": bool(g8), "ratified_defacto_blueprint": ratified})
+    return _test(
+        "T4",
+        "Blueprint exists",
+        bool(g8) or ratified,
+        {"g8_artifact": bool(g8), "ratified_defacto_blueprint": ratified},
+    )
 
 
 def _t5_canon(db: Any, work_id: str) -> dict:
@@ -139,8 +154,9 @@ def _t5_canon(db: Any, work_id: str) -> dict:
             (work_id,),
         ).fetchall()
     counts = {r["classification"]: r["c"] for r in rows}
-    return _test("T5", "Canon table populated", sum(counts.values()) > 0,
-                 {"count_by_classification": counts})
+    return _test(
+        "T5", "Canon table populated", sum(counts.values()) > 0, {"count_by_classification": counts}
+    )
 
 
 def _t6_voice(db: Any, work_id: str) -> dict:
@@ -150,16 +166,23 @@ def _t6_voice(db: Any, work_id: str) -> dict:
 
     resolved = resolve_assay_baseline(db, work_id, "voice_envelope")
     baseline = (resolved or {}).get("payload")
-    return _test("T6", "Voice baseline exists", baseline is not None,
-                 {"stored": baseline is not None,
-                  "source": (baseline or {}).get("source"),
-                  "inherited": bool((resolved or {}).get("inherited")),
-                  "source_work_id": (resolved or {}).get("source_work_id")})
+    return _test(
+        "T6",
+        "Voice baseline exists",
+        baseline is not None,
+        {
+            "stored": baseline is not None,
+            "source": (baseline or {}).get("source"),
+            "inherited": bool((resolved or {}).get("inherited")),
+            "source_work_id": (resolved or {}).get("source_work_id"),
+        },
+    )
 
 
 def _press_book(work_id: str) -> tuple[dict | None, str | None]:
     try:
         from orivellum.capabilities.finishing import press  # noqa: PLC0415
+
         books = press.list_books(work_id=work_id)
         return (books[0] if books else None), None
     except Exception as exc:  # press not configured / no press.db yet
@@ -186,26 +209,38 @@ def _t8_matter(book: dict | None, err: str | None) -> dict:
 def _t9_pages(db: Any, work_id: str) -> dict:
     work = db.get_work(work_id) or {}
     try:
-        meta = json.loads(work.get("meta") or "{}") if isinstance(work.get("meta"), str) \
+        meta = (
+            json.loads(work.get("meta") or "{}")
+            if isinstance(work.get("meta"), str)
             else (work.get("meta") or {})
+        )
     except Exception:
         meta = {}
     pages = meta.get("actual_pages")
-    return _test("T9", "actual_pages known", isinstance(pages, int) and pages > 0,
-                 {"actual_pages": pages if isinstance(pages, int) else None,
-                  "note": "layout run not recorded" if not pages else "recorded in work meta"})
+    return _test(
+        "T9",
+        "actual_pages known",
+        isinstance(pages, int) and pages > 0,
+        {
+            "actual_pages": pages if isinstance(pages, int) else None,
+            "note": "layout run not recorded" if not pages else "recorded in work meta",
+        },
+    )
 
 
 def _t10_standard(db: Any) -> dict:
     from orivellum.capabilities import assay  # noqa: PLC0415
+
     registered = {
-        i["key"] for i in db.list_assay_instruments()
-        if i.get("certification") != "retired"
+        i["key"] for i in db.list_assay_instruments() if i.get("certification") != "retired"
     }
     missing = [k for k in assay.INSTRUMENT_KEYS if k not in registered]
-    return _test("T10", "Standard bound (D13–D17 registered)", not missing,
-                 {"registered": sorted(registered & set(assay.INSTRUMENT_KEYS)),
-                  "missing": missing})
+    return _test(
+        "T10",
+        "Standard bound (D13–D17 registered)",
+        not missing,
+        {"registered": sorted(registered & set(assay.INSTRUMENT_KEYS)), "missing": missing},
+    )
 
 
 def deterministic_tests(db: Any, work_id: str, chapters: list[dict]) -> list[dict]:
@@ -230,10 +265,46 @@ def deterministic_tests(db: Any, work_id: str, chapters: list[dict]) -> list[dic
 # ---------------------------------------------------------------------------
 
 _STOPWORDS = {
-    "The", "A", "An", "And", "But", "Or", "It", "He", "She", "They", "We",
-    "You", "I", "His", "Her", "Their", "Then", "When", "There", "This",
-    "That", "What", "Why", "How", "Not", "No", "Yes", "In", "On", "At",
-    "By", "For", "With", "From", "To", "Of", "As", "If", "So", "Now",
+    "The",
+    "A",
+    "An",
+    "And",
+    "But",
+    "Or",
+    "It",
+    "He",
+    "She",
+    "They",
+    "We",
+    "You",
+    "I",
+    "His",
+    "Her",
+    "Their",
+    "Then",
+    "When",
+    "There",
+    "This",
+    "That",
+    "What",
+    "Why",
+    "How",
+    "Not",
+    "No",
+    "Yes",
+    "In",
+    "On",
+    "At",
+    "By",
+    "For",
+    "With",
+    "From",
+    "To",
+    "Of",
+    "As",
+    "If",
+    "So",
+    "Now",
 }
 
 
@@ -267,15 +338,17 @@ def _defacto_blueprint_payload(chapters: list[dict]) -> dict:
     for c in chapters:
         text = c.get("text") or ""
         cast = [n for n, k in _proper_nouns(text).most_common(6) if k >= 2]
-        rows.append({
-            "seq": int(c["seq"]),
-            "title": c.get("title") or "",
-            "word_count": c["word_count"],
-            "scene_count": c["scene_count"],
-            "cast": cast,
-            "opening": _snippet(text.split("\n\n", 1)[0]),
-            "exit_state": _snippet(text.rsplit("\n\n", 1)[-1]),
-        })
+        rows.append(
+            {
+                "seq": int(c["seq"]),
+                "title": c.get("title") or "",
+                "word_count": c["word_count"],
+                "scene_count": c["scene_count"],
+                "cast": cast,
+                "opening": _snippet(text.split("\n\n", 1)[0]),
+                "exit_state": _snippet(text.rsplit("\n\n", 1)[-1]),
+            }
+        )
     return {"chapters": rows, "chapter_count": len(rows)}
 
 
@@ -283,6 +356,7 @@ def _defacto_voice_payload(chapters: list[dict], names: list[str]) -> dict:
     """A4 metrics computed over the existing chapters — the manuscript is its
     own voice authority.  Computed only; STORED as baseline only on approval."""
     from orivellum.capabilities.assay import metrics  # noqa: PLC0415
+
     text = "\n\n".join(c.get("text") or "" for c in chapters)
     if not text.strip():
         raise PositionError("no chapter text to compute a de-facto voice spec from")
@@ -294,18 +368,34 @@ def _defacto_voice_payload(chapters: list[dict], names: list[str]) -> dict:
 
 
 def _insert_canon_proposal(
-    db: Any, *, pid: str, title: str, text: str, classification: str,
-    work_id: str, source_path: str, source_location: str,
+    db: Any,
+    *,
+    pid: str,
+    title: str,
+    text: str,
+    classification: str,
+    work_id: str,
+    source_path: str,
+    source_location: str,
 ) -> bool:
     from datetime import UTC, datetime  # noqa: PLC0415
+
     with db._lock:
         cur = db._conn.execute(
             """INSERT OR IGNORE INTO wa_canon_proposals
                (id, fact_title, fact_text, classification, scope, source_path,
                 source_location, status, created_at)
                VALUES(?,?,?,?,?,?,?,'proposed',?)""",
-            (pid, title, text, classification, f"work:{work_id}", source_path,
-             source_location, datetime.now(UTC).isoformat()),
+            (
+                pid,
+                title,
+                text,
+                classification,
+                f"work:{work_id}",
+                source_path,
+                source_location,
+                datetime.now(UTC).isoformat(),
+            ),
         )
         db._conn.commit()
     return cur.rowcount > 0
@@ -325,22 +415,32 @@ def _parse_json_list(raw: str) -> list:
 def _canon_items_for_chapter(db: Any, cfg: Any, chapter: dict) -> list[dict]:
     """One LLM call per chapter; strict validation, no fabrication."""
     from orivellum.capabilities.llm import llm_call  # noqa: PLC0415
+
     text = (chapter.get("text") or "")[:_CHAPTER_TEXT_CAP]
     r = llm_call(
         [
-            {"role": "system", "content": (
-                "Extract every factual claim this chapter establishes about the "
-                "story world (names, dates, places, relationships, physical facts). "
-                "Return ONLY a JSON list of objects: "
-                '{"statement": str, "classification": "HISTORICAL"|"INFERRED"|"INVENTED", '
-                '"quote": str} where quote is the exact supporting text from the chapter. '
-                "HISTORICAL means verifiable real-world fact; INFERRED means implied by "
-                "the text; INVENTED means fictional. No prose, no markdown."
-            )},
-            {"role": "user",
-             "content": f"Chapter {chapter['seq']}: {chapter.get('title') or ''}\n\n{text}"},
+            {
+                "role": "system",
+                "content": (
+                    "Extract every factual claim this chapter establishes about the "
+                    "story world (names, dates, places, relationships, physical facts). "
+                    "Return ONLY a JSON list of objects: "
+                    '{"statement": str, "classification": "HISTORICAL"|"INFERRED"|"INVENTED", '
+                    '"quote": str} where quote is the exact supporting text from the chapter. '
+                    "HISTORICAL means verifiable real-world fact; INFERRED means implied by "
+                    "the text; INVENTED means fictional. No prose, no markdown."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Chapter {chapter['seq']}: {chapter.get('title') or ''}\n\n{text}",
+            },
         ],
-        cfg=cfg, db=db, purpose="position.canon_extract", timeout=120, temperature=0.0,
+        cfg=cfg,
+        db=db,
+        purpose="position.canon_extract",
+        timeout=120,
+        temperature=0.0,
     )
     if not r.ok:
         raise PositionError(f"canon extraction LLM failure: {r.error}")
@@ -383,8 +483,11 @@ def _reconstruct_canon(db: Any, cfg: Any, work_id: str, chapters: list[dict]) ->
                     it["statement"] += " [source gap: HISTORICAL claim without locatable source]"
             pid = _det_id("canon", work_id, it["statement"])
             created = _insert_canon_proposal(
-                db, pid=pid, title=_snippet(it["statement"], 60),
-                text=it["statement"], classification=classification,
+                db,
+                pid=pid,
+                title=_snippet(it["statement"], 60),
+                text=it["statement"],
+                classification=classification,
                 work_id=work_id,
                 source_path=f"work:{work_id}/chapter:{chapter['seq']}",
                 source_location=location,
@@ -398,6 +501,7 @@ def _persona_payload(db: Any, cfg: Any, name: str, chapters: list[dict]) -> dict
     """One character's attributes/relationships as the prose establishes them,
     with the chapter where each was set.  Strictly validated model output."""
     from orivellum.capabilities.llm import llm_call  # noqa: PLC0415
+
     excerpts = []
     budget = 6_000
     for c in chapters:
@@ -412,15 +516,22 @@ def _persona_payload(db: Any, cfg: Any, name: str, chapters: list[dict]) -> dict
             break
     r = llm_call(
         [
-            {"role": "system", "content": (
-                "Reconstruct this character exactly as the excerpts establish them. "
-                "Return ONLY a JSON list of objects: "
-                '{"kind": "attribute"|"relationship", "statement": str, "chapter": int, '
-                '"quote": str}. Only include what the text supports. No prose.'
-            )},
+            {
+                "role": "system",
+                "content": (
+                    "Reconstruct this character exactly as the excerpts establish them. "
+                    "Return ONLY a JSON list of objects: "
+                    '{"kind": "attribute"|"relationship", "statement": str, "chapter": int, '
+                    '"quote": str}. Only include what the text supports. No prose.'
+                ),
+            },
             {"role": "user", "content": f"Character: {name}\n\n" + "\n".join(excerpts)},
         ],
-        cfg=cfg, db=db, purpose="position.persona", timeout=120, temperature=0.0,
+        cfg=cfg,
+        db=db,
+        purpose="position.persona",
+        timeout=120,
+        temperature=0.0,
     )
     if not r.ok:
         raise PositionError(f"persona LLM failure: {r.error}")
@@ -428,17 +539,18 @@ def _persona_payload(db: Any, cfg: Any, name: str, chapters: list[dict]) -> dict
     for it in _parse_json_list(r.text):
         if not isinstance(it, dict) or not str(it.get("statement") or "").strip():
             continue
-        items.append({
-            "kind": "relationship" if it.get("kind") == "relationship" else "attribute",
-            "statement": str(it["statement"]).strip(),
-            "chapter": int(it.get("chapter") or 0),
-            "quote": str(it.get("quote") or "").strip(),
-        })
+        items.append(
+            {
+                "kind": "relationship" if it.get("kind") == "relationship" else "attribute",
+                "statement": str(it["statement"]).strip(),
+                "chapter": int(it.get("chapter") or 0),
+                "quote": str(it.get("quote") or "").strip(),
+            }
+        )
     return {"name": name, "established": items, "mention_excerpts": len(excerpts)}
 
 
-def reconstruct(db: Any, cfg: Any, *, audit_id: str, work_id: str,
-                chapters: list[dict]) -> dict:
+def reconstruct(db: Any, cfg: Any, *, audit_id: str, work_id: str, chapters: list[dict]) -> dict:
     """Step 3 — derive the missing origination artifacts from the prose and
     stage every one as a review-gated proposal.  Nothing writes authority."""
     result: dict = {"proposals": {}, "errors": []}
@@ -448,9 +560,12 @@ def reconstruct(db: Any, cfg: Any, *, audit_id: str, work_id: str,
     bp = _defacto_blueprint_payload(chapters)
     created = db.upsert_position_proposal(
         proposal_id=_det_id("blueprint", work_id),
-        work_id=work_id, audit_id=audit_id, kind="blueprint",
+        work_id=work_id,
+        audit_id=audit_id,
+        kind="blueprint",
         title=f"De-facto blueprint ({len(chapters)} chapters)",
-        payload=bp, evidence={"derived_from": "existing chapter text", "deterministic": True},
+        payload=bp,
+        evidence={"derived_from": "existing chapter text", "deterministic": True},
     )
     result["proposals"]["blueprint"] = {"created": created}
 
@@ -459,9 +574,12 @@ def reconstruct(db: Any, cfg: Any, *, audit_id: str, work_id: str,
         vp = _defacto_voice_payload(chapters, names)
         created = db.upsert_position_proposal(
             proposal_id=_det_id("voice_spec", work_id),
-            work_id=work_id, audit_id=audit_id, kind="voice_spec",
+            work_id=work_id,
+            audit_id=audit_id,
+            kind="voice_spec",
             title="De-facto voice spec (manuscript as its own voice authority)",
-            payload=vp, evidence={"derived_from": vp["source"], "deterministic": True},
+            payload=vp,
+            evidence={"derived_from": vp["source"], "deterministic": True},
         )
         result["proposals"]["voice_spec"] = {"created": created}
     except PositionError as exc:
@@ -477,7 +595,9 @@ def reconstruct(db: Any, cfg: Any, *, audit_id: str, work_id: str,
             break
         created = db.upsert_position_proposal(
             proposal_id=_det_id("persona", work_id, name),
-            work_id=work_id, audit_id=audit_id, kind="persona",
+            work_id=work_id,
+            audit_id=audit_id,
+            kind="persona",
             title=f"Persona reconstruction: {name}",
             payload=payload,
             evidence={"derived_from": "prose excerpts", "character": name},
@@ -496,6 +616,7 @@ def reconstruct(db: Any, cfg: Any, *, audit_id: str, work_id: str,
 # Step 4 — instrument battery
 # ---------------------------------------------------------------------------
 
+
 def run_battery(db: Any, cfg: Any, work_id: str) -> dict:
     """B6 continuity + B7 fact check (ConStory checks prose against canon),
     B8 voice/drift + D13/D14, B9 hierarchical judge.  Every failure is
@@ -508,15 +629,19 @@ def run_battery(db: Any, cfg: Any, work_id: str) -> dict:
             continue  # D15–D17 open on the author's signature, not an audit
         try:
             run = assay.run_instrument(db, cfg, key=key, work_id=work_id)
-            instruments.append({
-                "key": key, "status": "done",
-                "verdict": run.get("verdict"),
-                "findings_count": run.get("findings_count", 0),
-            })
+            instruments.append(
+                {
+                    "key": key,
+                    "status": "done",
+                    "verdict": run.get("verdict"),
+                    "findings_count": run.get("findings_count", 0),
+                }
+            )
         except Exception as exc:
             instruments.append({"key": key, "status": "error", "error": str(exc)})
 
     from orivellum.capabilities.constory import compute_ced, run_constory_check  # noqa: PLC0415
+
     try:
         cres = run_constory_check(db, cfg, work_id=work_id)
         constory = {"status": "done", **cres}
@@ -545,6 +670,7 @@ def _open_narrative_findings(db: Any, work_id: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Steps 5–6 — stage derivation + completion plan
 # ---------------------------------------------------------------------------
+
 
 def _battery_clean(battery: dict, *, severities: tuple[str, ...]) -> bool:
     """True only when ConStory actually ran AND left no open finding at the
@@ -575,7 +701,8 @@ def _drift_clean(battery: dict) -> bool:
     """Voice/drift acceptance: envelope + all four drift detectors + the two
     Tier-1 gates (D13 pacing, D14 drift confirmation) ran and came back clean."""
     keys = {
-        i["key"] for i in battery.get("instruments", [])
+        i["key"]
+        for i in battery.get("instruments", [])
         if i["key"].startswith(("drift.", "voice."))
     }
     keys |= {"voice.envelope", "gate.d13", "gate.d14"}
@@ -588,8 +715,9 @@ def _judge_recorded(battery: dict) -> bool:
     return _instruments_ok(battery, keys={"judge.hierarchical"})
 
 
-def _stage_ladder(tests: dict, battery: dict, chapters: list[dict],
-                  approved: dict) -> list[tuple[str, str, bool]]:
+def _stage_ladder(
+    tests: dict, battery: dict, chapters: list[dict], approved: dict
+) -> list[tuple[str, str, bool]]:
     """Ordered acceptance rungs.  Derived stage = the first failing rung —
     'highest stage all of whose acceptance tests pass, with no gaps below'."""
     return [
@@ -598,8 +726,11 @@ def _stage_ladder(tests: dict, battery: dict, chapters: list[dict],
         ("A3", "Blueprint sealed or ratified", tests["T4"]["passed"]),
         ("A4", "Voice baseline stored", tests["T6"]["passed"]),
         ("A5", "Standard bound", tests["T10"]["passed"]),
-        ("B4", "Chapter scaffold sound",
-         bool(chapters) and tests["T1"]["passed"] and tests["T2"]["passed"]),
+        (
+            "B4",
+            "Chapter scaffold sound",
+            bool(chapters) and tests["T1"]["passed"] and tests["T2"]["passed"],
+        ),
         ("B5", "Drafting within band", tests["T3"]["passed"]),
         ("B6", "Continuity clean", _battery_clean(battery, severities=("critical", "high"))),
         ("B8", "Voice within envelope", _drift_clean(battery)),
@@ -610,8 +741,7 @@ def _stage_ladder(tests: dict, battery: dict, chapters: list[dict],
     ]
 
 
-def derive_stage(tests: dict, battery: dict, chapters: list[dict],
-                 approved: dict) -> dict:
+def derive_stage(tests: dict, battery: dict, chapters: list[dict], approved: dict) -> dict:
     ladder = _stage_ladder(tests, battery, chapters, approved)
     derived, failed_rung = "B16", None
     for stage, label, passed in ladder:
@@ -650,26 +780,28 @@ def _repair_list(findings: list[dict], total_chapters: int) -> list[dict]:
     items = []
     for f in findings:
         seq = int(f.get("chapter_seq") or f.get("contradiction_chapter") or 0)
-        items.append({
-            "finding_id": f["id"],
-            "chapter_seq": seq,
-            "severity": f["severity"],
-            "category": f.get("category") or "",
-            "summary": _snippet(f.get("reasoning") or f.get("subtype") or "", 200),
-            "weight": _repair_weight(seq, total_chapters),
-        })
-    items.sort(key=lambda i: (
-        -i["weight"], _SEVERITY_RANK.get(i["severity"], 9), i["chapter_seq"]))
+        items.append(
+            {
+                "finding_id": f["id"],
+                "chapter_seq": seq,
+                "severity": f["severity"],
+                "category": f.get("category") or "",
+                "summary": _snippet(f.get("reasoning") or f.get("subtype") or "", 200),
+                "weight": _repair_weight(seq, total_chapters),
+            }
+        )
+    items.sort(key=lambda i: (-i["weight"], _SEVERITY_RANK.get(i["severity"], 9), i["chapter_seq"]))
     return items
 
 
-def completion_plan(db: Any, work_id: str, *, stage: dict, tests: dict,
-                    chapters: list[dict], findings: list[dict]) -> dict:
+def completion_plan(
+    db: Any, work_id: str, *, stage: dict, tests: dict, chapters: list[dict], findings: list[dict]
+) -> dict:
     """Three ordered lists: Backfill, Repair (early band weighted), Complete."""
     backfill = [
-        {"stage": s["stage"], "artifact": s["label"],
-         "action": "ratify through the review gate"}
-        for s in stage["ladder"] if s["stage"].startswith("A") and not s["passed"]
+        {"stage": s["stage"], "artifact": s["label"], "action": "ratify through the review gate"}
+        for s in stage["ladder"]
+        if s["stage"].startswith("A") and not s["passed"]
     ]
     repair = _repair_list(findings, len(chapters))
 
@@ -680,19 +812,23 @@ def completion_plan(db: Any, work_id: str, *, stage: dict, tests: dict,
             target = p["payload"].get("chapter_count")
     if target and target > len(chapters):
         for seq in range(len(chapters) + 1, int(target) + 1):
-            complete.append({
-                "seq": seq,
-                "contract": "derive from ratified de-facto blueprint + sealed structure",
-            })
+            complete.append(
+                {
+                    "seq": seq,
+                    "contract": "derive from ratified de-facto blueprint + sealed structure",
+                }
+            )
     elif not tests["T4"]["passed"]:
-        complete.append({"note": "remaining-chapter contracts require a ratified "
-                                 "blueprint (see Backfill)"})
+        complete.append(
+            {"note": "remaining-chapter contracts require a ratified blueprint (see Backfill)"}
+        )
     return {"backfill": backfill, "repair": repair, "complete": complete}
 
 
 # ---------------------------------------------------------------------------
 # The audit — orchestration
 # ---------------------------------------------------------------------------
+
 
 def _run(db: Any, cfg: Any, *, audit_id: str, work_id: str) -> dict:
     chapters = _load_chapters(db, work_id)
@@ -710,16 +846,19 @@ def _run(db: Any, cfg: Any, *, audit_id: str, work_id: str) -> dict:
 
     stage = derive_stage(tests, battery, chapters, approved)
     claimed = claimed_stage(db, work_id)
-    plan = completion_plan(db, work_id, stage=stage, tests=tests,
-                           chapters=chapters, findings=findings)
+    plan = completion_plan(
+        db, work_id, stage=stage, tests=tests, chapters=chapters, findings=findings
+    )
     battery.pop("_open_findings", None)
 
     evidence = {
         "chapters": {
             "count": len(chapters),
             "total_words": sum(c["word_count"] for c in chapters),
-            "per_chapter": [{"seq": int(c["seq"]), "words": c["word_count"],
-                             "scenes": c["scene_count"]} for c in chapters],
+            "per_chapter": [
+                {"seq": int(c["seq"]), "words": c["word_count"], "scenes": c["scene_count"]}
+                for c in chapters
+            ],
         },
         "tests": tests_list,
         "reconstruction": recon,
@@ -751,7 +890,8 @@ def run_position_audit(db: Any, cfg: Any, *, audit_id: str, work_id: str) -> dic
         db.finish_position_audit(audit_id, status="error", error=str(exc))
         raise
     db.finish_position_audit(
-        audit_id, status="done",
+        audit_id,
+        status="done",
         derived_stage=result["derived_stage"],
         claimed_stage=result["claimed_stage"],
         evidence=result["evidence"],

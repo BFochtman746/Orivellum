@@ -108,26 +108,28 @@ class PromotionBase(unittest.TestCase):
     def _register_candidate(self, in_shadow: bool = True) -> dict:
         self.db.upsert_assay_instrument(dict(CANDIDATE))
         if in_shadow:
-            self.db.set_assay_certification(
-                CANDIDATE["key"], "shadow", actor="user", note="test"
-            )
+            self.db.set_assay_certification(CANDIDATE["key"], "shadow", actor="user", note="test")
         return self.db.get_assay_instrument(CANDIDATE["key"])
 
     def _disposition_n(self, inst: dict, tp: int, fp: int) -> None:
-        run = assay.run_instrument(
-            self.db, _cfg(), key=inst["key"], work_id=self.work_id
-        )
+        run = assay.run_instrument(self.db, _cfg(), key=inst["key"], work_id=self.work_id)
         findings = self.db.list_assay_findings(run["id"])
         needed = tp + fp
         # The catalog fixture fires multiple findings; synthesize extras if
         # the fixture produced fewer than needed.
         while len(findings) < needed:
             fid = self.db.create_assay_finding(
-                run_id=run["id"], instrument_id=inst["id"], work_id=self.work_id,
-                chapter_id=None, unit=f"chapter {len(findings)}",
-                force_check=inst["key"], issue_type="catalog_prose",
-                severity="medium", classification="deterministic",
-                action="author_review", evidence={},
+                run_id=run["id"],
+                instrument_id=inst["id"],
+                work_id=self.work_id,
+                chapter_id=None,
+                unit=f"chapter {len(findings)}",
+                force_check=inst["key"],
+                issue_type="catalog_prose",
+                severity="medium",
+                classification="deterministic",
+                action="author_review",
+                evidence={},
             )
             findings.append(self.db.get_assay_finding(fid))
         for i, f in enumerate(findings[:needed]):
@@ -194,9 +196,7 @@ class TestLifecycle(PromotionBase):
         self._disposition_n(inst, tp=2, fp=2)  # 0.5 < 0.75 bar
         with self.assertRaises(ValueError):
             self.db.set_assay_certification(inst["key"], "certified", actor="user")
-        self.assertEqual(
-            self.db.get_assay_instrument(inst["key"])["certification"], "shadow"
-        )
+        self.assertEqual(self.db.get_assay_instrument(inst["key"])["certification"], "shadow")
 
     def test_certification_evidence_uses_complete_record_not_window(self):
         # Even if the rendering window (list_assay_dispositions) were to
@@ -207,16 +207,16 @@ class TestLifecycle(PromotionBase):
         inst = self._register_candidate()
         self._disposition_n(inst, tp=3, fp=3)  # full record: 0.5 < 0.75 bar
         favorable_window = [
-            d for d in self.db.list_assay_dispositions(inst["id"])
+            d
+            for d in self.db.list_assay_dispositions(inst["id"])
             if d["disposition"] == "true_positive"
         ]
-        with patch.object(
-            self.db, "list_assay_dispositions", return_value=favorable_window
-        ), self.assertRaises(ValueError):
+        with (
+            patch.object(self.db, "list_assay_dispositions", return_value=favorable_window),
+            self.assertRaises(ValueError),
+        ):
             self.db.set_assay_certification(inst["key"], "certified", actor="user")
-        self.assertEqual(
-            self.db.get_assay_instrument(inst["key"])["certification"], "shadow"
-        )
+        self.assertEqual(self.db.get_assay_instrument(inst["key"])["certification"], "shadow")
 
     def test_concurrent_reseed_bar_change_is_enforced_not_stale(self):
         # Race from review: a re-seed replaces the promotion bar between the
@@ -236,10 +236,14 @@ class TestLifecycle(PromotionBase):
         )
         self.db.upsert_assay_instrument(stricter)
         real_get = self.db.get_assay_instrument
-        with patch.object(
-            self.db, "get_assay_instrument",
-            side_effect=[stale, real_get(inst["key"])],
-        ), self.assertRaises(ValueError):
+        with (
+            patch.object(
+                self.db,
+                "get_assay_instrument",
+                side_effect=[stale, real_get(inst["key"])],
+            ),
+            self.assertRaises(ValueError),
+        ):
             # Pre-read sees the stale weak bar; the in-transaction re-read
             # must apply the stricter current bar and refuse (0.8 < 0.95).
             self.db.set_assay_certification(inst["key"], "certified", actor="user")
@@ -273,9 +277,7 @@ class TestLifecycle(PromotionBase):
             promotion={"min_precision": 0.8, "min_dispositions": 4},
         )
         self.db.upsert_assay_instrument(changed)  # auto-demotes to shadow
-        self.assertEqual(
-            self.db.get_assay_instrument(inst["key"])["certification"], "shadow"
-        )
+        self.assertEqual(self.db.get_assay_instrument(inst["key"])["certification"], "shadow")
         with self.assertRaises(ValueError):
             self.db.set_assay_certification(inst["key"], "certified", actor="user")
         self._disposition_n(self.db.get_assay_instrument(inst["key"]), tp=4, fp=0)
@@ -286,8 +288,11 @@ class TestLifecycle(PromotionBase):
         inst = self._register_candidate()
         self._disposition_n(inst, tp=3, fp=1)
         self.db.set_assay_certification(
-            inst["key"], "certified", actor="user",
-            precision=1.0, sample_size=999,  # lies — must be overridden
+            inst["key"],
+            "certified",
+            actor="user",
+            precision=1.0,
+            sample_size=999,  # lies — must be overridden
         )
         event = self.db.list_assay_certification_events(inst["id"])[0]
         self.assertEqual(event["precision_val"], 0.75)
@@ -323,9 +328,7 @@ class TestLifecycle(PromotionBase):
         renamed = dict(CANDIDATE)
         renamed["name"] = "Drift: Catalog (renamed)"
         self.db.upsert_assay_instrument(renamed)
-        self.assertEqual(
-            self.db.get_assay_instrument(inst["key"])["certification"], "certified"
-        )
+        self.assertEqual(self.db.get_assay_instrument(inst["key"])["certification"], "certified")
 
     def test_concurrent_transition_loses_cas(self):
         # Simulate a lost race: the validated from-status is stale by the
@@ -337,9 +340,12 @@ class TestLifecycle(PromotionBase):
         stale = dict(inst)
         stale["certification"] = "advisory"  # pretends it is still advisory
         real_get = self.db.get_assay_instrument
-        with patch.object(
-            self.db, "get_assay_instrument", side_effect=[stale, real_get(inst["key"])]
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                self.db, "get_assay_instrument", side_effect=[stale, real_get(inst["key"])]
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             self.db.set_assay_certification(inst["key"], "shadow", actor="user")
         events = self.db.list_assay_certification_events(inst["id"])
         # Only the original advisory->shadow event from setup exists.
@@ -357,9 +363,7 @@ class TestLifecycle(PromotionBase):
 class TestShadowExecution(PromotionBase):
     def test_shadow_run_labeled_and_never_blocking(self):
         self._register_candidate()
-        run = assay.run_instrument(
-            self.db, _cfg(), key=CANDIDATE["key"], work_id=self.work_id
-        )
+        run = assay.run_instrument(self.db, _cfg(), key=CANDIDATE["key"], work_id=self.work_id)
         auth = run["evidence"]["authority"]
         self.assertTrue(auth["shadow"])
         self.assertFalse(auth["blocking"])
@@ -370,9 +374,7 @@ class TestShadowExecution(PromotionBase):
 
     def test_candidate_uses_own_thresholds_via_baseline_runner(self):
         self._register_candidate()
-        run = assay.run_instrument(
-            self.db, _cfg(), key=CANDIDATE["key"], work_id=self.work_id
-        )
+        run = assay.run_instrument(self.db, _cfg(), key=CANDIDATE["key"], work_id=self.work_id)
         # It dispatched the drift.catalog runner family — findings carry the
         # catalog issue type but under the candidate's instrument id.
         findings = self.db.list_assay_findings(run["id"])
@@ -382,9 +384,7 @@ class TestShadowExecution(PromotionBase):
 
     def test_companion_coruns_with_baseline_and_links(self):
         self._register_candidate()
-        primary = assay.run_instrument(
-            self.db, _cfg(), key="drift.catalog", work_id=self.work_id
-        )
+        primary = assay.run_instrument(self.db, _cfg(), key="drift.catalog", work_id=self.work_id)
         inst = self.db.get_assay_instrument(CANDIDATE["key"])
         runs = self.db.list_assay_runs(self.work_id, instrument_id=inst["id"])
         self.assertEqual(len(runs), 1)
@@ -405,9 +405,7 @@ class TestShadowExecution(PromotionBase):
         # Sabotage: make the companion's own claim conflict by pre-claiming.
         inst = self.db.get_assay_instrument(broken["key"])
         self.db.create_assay_run(instrument_id=inst["id"], work_id=self.work_id)
-        primary = assay.run_instrument(
-            self.db, _cfg(), key="drift.catalog", work_id=self.work_id
-        )
+        primary = assay.run_instrument(self.db, _cfg(), key="drift.catalog", work_id=self.work_id)
         self.assertEqual(primary["status"], "done")
 
     def test_shadow_companions_do_not_corun_recursively(self):
@@ -494,9 +492,7 @@ class TestParity(PromotionBase):
         self.assertGreaterEqual(report["pairs"][0]["agreement"], 0.0)
 
     def test_parity_empty_without_baseline(self):
-        report = promotion.parity_report(
-            self.db, self.db.get_assay_instrument("drift.catalog")
-        )
+        report = promotion.parity_report(self.db, self.db.get_assay_instrument("drift.catalog"))
         self.assertIsNone(report["mean_agreement"])
         self.assertEqual(report["pairs"], [])
 

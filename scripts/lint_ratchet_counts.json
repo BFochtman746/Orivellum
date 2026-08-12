@@ -293,9 +293,9 @@
   "E501": 2
  },
  "src/orivellum/capabilities/learning.py": {
-  "C901": 3,
-  "E501": 11,
-  "SIM105": 3,
+  "C901": 5,
+  "E501": 10,
+  "SIM105": 6,
   "SIM108": 1
  },
  "src/orivellum/capabilities/mail/action_policy.py": {
@@ -421,7 +421,7 @@
  "src/orivellum/database/db.py": {
   "C901": 3,
   "E501": 22,
-  "RET504": 3,
+  "RET504": 4,
   "SIM105": 4
  },
  "src/orivellum/database/mail_store.py": {
@@ -510,8 +510,7 @@
   "F841": 1
  },
  "tests/test_learning_assess.py": {
-  "E501": 14,
-  "F841": 1
+  "E501": 13
  },
  "tests/test_library_retranscribe.py": {
   "E402": 1

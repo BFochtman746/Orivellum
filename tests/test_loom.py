@@ -54,9 +54,17 @@ class StubLLM:
     """Dispatch llm_call by purpose; records every prompt for conditioning
     assertions.  call_id/logprobs mirror the extended LLMResult contract."""
 
-    def __init__(self, *, reject_all=False, narrator_logprobs=None, verify_ok=True,
-                 beat_ok=True, prose_words=200, narrator_selected=None,
-                 down_purposes=()):
+    def __init__(
+        self,
+        *,
+        reject_all=False,
+        narrator_logprobs=None,
+        verify_ok=True,
+        beat_ok=True,
+        prose_words=200,
+        narrator_selected=None,
+        down_purposes=(),
+    ):
         self.calls: list[dict] = []
         self.reject_all = reject_all
         self.narrator_logprobs = narrator_logprobs
@@ -73,45 +81,67 @@ class StubLLM:
     def __call__(self, messages, **kwargs):
         purpose = kwargs.get("purpose", "")
         user = messages[-1]["content"]
-        self.calls.append({"purpose": purpose, "user": user,
-                           "model": kwargs.get("model")})
+        self.calls.append({"purpose": purpose, "user": user, "model": kwargs.get("model")})
 
         def ok(payload, logprobs=None):
-            return SimpleNamespace(ok=True, text=json.dumps(payload), error=None,
-                                   call_id=len(self.calls), logprobs=logprobs)
+            return SimpleNamespace(
+                ok=True,
+                text=json.dumps(payload),
+                error=None,
+                call_id=len(self.calls),
+                logprobs=logprobs,
+            )
 
         if purpose in self.down_purposes:
-            return SimpleNamespace(ok=False, text=None, error="gateway down",
-                                   call_id=None, logprobs=None)
+            return SimpleNamespace(
+                ok=False, text=None, error="gateway down", call_id=None, logprobs=None
+            )
         if purpose == "loom.agent.action":
-            return ok({"action": f"advances the beat (call {len(self.calls)})",
-                       "motivation": "duty", "dialogue": ""})
+            return ok(
+                {
+                    "action": f"advances the beat (call {len(self.calls)})",
+                    "motivation": "duty",
+                    "dialogue": "",
+                }
+            )
         if purpose == "loom.critic.action":
             if self.reject_all:
                 return ok({"accept": False, "feedback": "too vague — be concrete"})
             m = re.search(r"CHARACTER: (\w+)", user)
             name = m.group(1) if m else "X"
-            return ok({"accept": True, "feedback": "",
-                       "world_updates": {f"Character:{name}":
-                                         f"acted in call {len(self.calls)}"}})
+            return ok(
+                {
+                    "accept": True,
+                    "feedback": "",
+                    "world_updates": {f"Character:{name}": f"acted in call {len(self.calls)}"},
+                }
+            )
         if purpose == "loom.narrator":
             self.narr += 1
-            prose = (f"PROSE-{self.narr} "
-                     + "the caravan rolled east through the wet grey fields "
-                     * max(1, self.prose_words // 8)).strip()
+            prose = (
+                f"PROSE-{self.narr} "
+                + "the caravan rolled east through the wet grey fields "
+                * max(1, self.prose_words // 8)
+            ).strip()
             selected = self.narrator_selected
             if selected is None:  # default: select every offered action
                 selected = [int(i) for i in re.findall(r"^\[(\d+)\]", user, re.M)]
-            return ok({"selected": selected, "prose": prose},
-                      logprobs=self.narrator_logprobs)
+            return ok({"selected": selected, "prose": prose}, logprobs=self.narrator_logprobs)
         if purpose == "loom.critic.beat":
-            return ok({"accomplishes_beat": self.beat_ok, "premature_reveal": False,
-                       "feedback": "" if self.beat_ok else "prose drifted off the beat"})
+            return ok(
+                {
+                    "accomplishes_beat": self.beat_ok,
+                    "premature_reveal": False,
+                    "feedback": "" if self.beat_ok else "prose drifted off the beat",
+                }
+            )
         if purpose == "loom.entropy.verify":
-            return ok({"ok": self.verify_ok,
-                       "issue": "" if self.verify_ok else "contradicts canon"})
-        return SimpleNamespace(ok=False, text=None, error=f"unknown purpose {purpose}",
-                               call_id=None, logprobs=None)
+            return ok(
+                {"ok": self.verify_ok, "issue": "" if self.verify_ok else "contradicts canon"}
+            )
+        return SimpleNamespace(
+            ok=False, text=None, error=f"unknown purpose {purpose}", call_id=None, logprobs=None
+        )
 
 
 def _hot_logprobs(n=60, nll=5.0):
@@ -133,20 +163,30 @@ class LoomBase(unittest.TestCase):
         self._tmp.cleanup()
 
     def _persona(self, name, horizon=None, approve=True):
-        pid = self.db.create_loom_persona(self.work_id, name, {
-            "role": "traveler", "diction_profile": {"register": "plain"},
-            "knowledge_horizon": horizon or {},
-        })
+        pid = self.db.create_loom_persona(
+            self.work_id,
+            name,
+            {
+                "role": "traveler",
+                "diction_profile": {"register": "plain"},
+                "knowledge_horizon": horizon or {},
+            },
+        )
         if approve:
             self.assertEqual(
-                self.db.resolve_loom_persona(pid, decision="approved", author="Brian"),
-                "ok")
+                self.db.resolve_loom_persona(pid, decision="approved", author="Brian"), "ok"
+            )
         return pid
 
     def _contract(self, seq, **over):
-        c = {"beat": f"Beat for chapter {seq}", "act": 1, "cast": list(self.CAST),
-             "location": "the yard", "word_range": [50, 400],
-             "must_not_reveal": ["the twist"]}
+        c = {
+            "beat": f"Beat for chapter {seq}",
+            "act": 1,
+            "cast": list(self.CAST),
+            "location": "the yard",
+            "word_range": [50, 400],
+            "must_not_reveal": ["the twist"],
+        }
         c.update(over)
         return c
 
@@ -162,8 +202,17 @@ class LoomBase(unittest.TestCase):
                 """INSERT INTO book_chapters(id, work_id, seq, level, title, text,
                    source_doc_id, status, meta, created_at, updated_at)
                    VALUES(?,?,?,1,?,?,NULL,?,?,?,?)""",
-                (oid, self.work_id, seq, f"Chapter {seq}", text, status,
-                 json.dumps(meta), _now(), _now()),
+                (
+                    oid,
+                    self.work_id,
+                    seq,
+                    f"Chapter {seq}",
+                    text,
+                    status,
+                    json.dumps(meta),
+                    _now(),
+                    _now(),
+                ),
             )
             self.db._conn.commit()
         return oid
@@ -185,8 +234,16 @@ class LoomBase(unittest.TestCase):
                 """INSERT INTO graph_node(id, work_id, chapter_id, node_type, name,
                    description, evidence_quote, evidence_offset, attributes,
                    created_at) VALUES(?,?,?,?,?,?,'quoted evidence',0,?,?)""",
-                (str(uuid.uuid4()), self.work_id, chapter_id, node_type, name,
-                 description, json.dumps(attrs or {}), _now()),
+                (
+                    str(uuid.uuid4()),
+                    self.work_id,
+                    chapter_id,
+                    node_type,
+                    name,
+                    description,
+                    json.dumps(attrs or {}),
+                    _now(),
+                ),
             )
             self.db._conn.commit()
 
@@ -196,8 +253,12 @@ class LoomBase(unittest.TestCase):
         with patch("orivellum.capabilities.llm.llm_call", stub):
             try:
                 result = loom.run_loom_draft(
-                    self.db, cfg or _cfg(),
-                    run_id=run_id, work_id=self.work_id, chapter_id=chapter_id)
+                    self.db,
+                    cfg or _cfg(),
+                    run_id=run_id,
+                    work_id=self.work_id,
+                    chapter_id=chapter_id,
+                )
             except Exception as exc:
                 return run_id, exc, stub
         return run_id, result, stub
@@ -205,7 +266,8 @@ class LoomBase(unittest.TestCase):
     def _findings(self):
         with self.db._lock:
             rows = self.db._conn.execute(
-                "SELECT * FROM findings WHERE kind='loom_escalation'").fetchall()
+                "SELECT * FROM findings WHERE kind='loom_escalation'"
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -241,8 +303,9 @@ class TestThreeChapterAcceptance(LoomBase):
         self.assertIn("Character:Mara", ch2_agent_prompt)
         self.assertIn("(as of ch 1)", ch2_agent_prompt)
         # … and on chapter 1's closing passage verbatim.
-        ch1_text = dict(self.db._conn.execute(
-            "SELECT text FROM book_chapters WHERE id=?", (chs[0],)).fetchone())["text"]
+        ch1_text = dict(
+            self.db._conn.execute("SELECT text FROM book_chapters WHERE id=?", (chs[0],)).fetchone()
+        )["text"]
         ch2_narr_prompt = stubs[1].prompts("loom.narrator")[0]
         self.assertIn(ch1_text[-200:], ch2_narr_prompt)
         self.assertIn("PROSE-1", ch2_narr_prompt)
@@ -289,8 +352,9 @@ class TestCriticGate(LoomBase):
     def test_every_accepted_action_passed_the_critic(self):
         cid = self._seed_chapter(1)
         _run_id, result, stub = self._draft(cid)
-        self.assertEqual(len(stub.prompts("loom.critic.action")),
-                         len(stub.prompts("loom.agent.action")))
+        self.assertEqual(
+            len(stub.prompts("loom.critic.action")), len(stub.prompts("loom.agent.action"))
+        )
         self.assertEqual(len(result["evidence"]["accepted_actions"]), 2)
 
     def test_drafter_never_judges_its_own_output(self):
@@ -321,7 +385,8 @@ class TestRefusals(LoomBase):
         self.assertEqual(self.db.get_loom_run(run_id)["status"], "error")
         with self.db._lock:
             row = self.db._conn.execute(
-                "SELECT text FROM book_chapters WHERE id=?", (cid,)).fetchone()
+                "SELECT text FROM book_chapters WHERE id=?", (cid,)
+            ).fetchone()
         self.assertEqual(row["text"], "the sacred text")
 
     def test_no_contract_refused(self):
@@ -373,29 +438,27 @@ class TestRefusals(LoomBase):
                 self.assertEqual(self.db.list_chapter_revisions(cid), [])
                 self.assertEqual(self.db.get_world_state(self.work_id), {})
                 with self.db._lock:  # release chapter for next subtest
-                    self.db._conn.execute(
-                        "DELETE FROM book_chapters WHERE id=?", (cid,))
+                    self.db._conn.execute("DELETE FROM book_chapters WHERE id=?", (cid,))
                     self.db._conn.commit()
 
     def test_approval_mid_run_discards_everything(self):
         cid = self._seed_chapter(1, text="the sacred text")
         chapter = loom._get_chapter(self.db, self.work_id, cid)
         with self.db._lock:  # approve AFTER the entry check would have passed
-            self.db._conn.execute(
-                "UPDATE book_chapters SET status='approved' WHERE id=?", (cid,))
+            self.db._conn.execute("UPDATE book_chapters SET status='approved' WHERE id=?", (cid,))
             self.db._conn.commit()
         with self.assertRaises(loom.LoomError):
             loom._store_draft(self.db, self.work_id, chapter, "new prose", {})
         self.assertEqual(self.db.list_chapter_revisions(cid), [])
         with self.db._lock:
             row = self.db._conn.execute(
-                "SELECT text FROM book_chapters WHERE id=?", (cid,)).fetchone()
+                "SELECT text FROM book_chapters WHERE id=?", (cid,)
+            ).fetchone()
         self.assertEqual(row["text"], "the sacred text")
 
     def test_gateway_failure_finishes_run_as_error(self):
         cid = self._seed_chapter(1)
-        run_id, result, _ = self._draft(
-            cid, StubLLM(down_purposes={"loom.agent.action"}))
+        run_id, result, _ = self._draft(cid, StubLLM(down_purposes={"loom.agent.action"}))
         self.assertIsInstance(result, loom.LoomError)
         run = self.db.get_loom_run(run_id)
         self.assertEqual(run["status"], "error")
@@ -412,26 +475,28 @@ class TestKnowledgeHorizon(LoomBase):
         # Rebuild Mara: knows f1 from act 1; f2 only unlocks at act 2.
         with self.db._lock:
             self.db._conn.execute(
-                "DELETE FROM loom_persona WHERE work_id=? AND name='Mara'",
-                (self.work_id,))
+                "DELETE FROM loom_persona WHERE work_id=? AND name='Mara'", (self.work_id,)
+            )
             self.db._conn.commit()
         self._persona("Mara", horizon={"1": [f1], "2": [f2]})
         cid = self._seed_chapter(1, contract=self._contract(1, act=1))
         _run_id, result, stub = self._draft(cid)
         self.assertNotIsInstance(result, Exception)
-        mara_prompt = next(p for p in stub.prompts("loom.agent.action")
-                           if "YOUR CHARACTER:\nMara" in p
-                           or "YOUR CHARACTER: Mara" in p)
+        mara_prompt = next(
+            p
+            for p in stub.prompts("loom.agent.action")
+            if "YOUR CHARACTER:\nMara" in p or "YOUR CHARACTER: Mara" in p
+        )
         self.assertIn("well water is poisoned", mara_prompt)
         self.assertNotIn("duke secretly funds", mara_prompt)
         self.assertEqual(result["evidence"]["horizon_map"]["Mara"], [f1])
         # The critic judging Mara's action sees the same horizon-restricted
         # persona — it cannot enforce what it was never shown.
-        critic_prompt = next(p for p in stub.prompts("loom.critic.action")
-                             if "CHARACTER: Mara" in p)
+        critic_prompt = next(
+            p for p in stub.prompts("loom.critic.action") if "CHARACTER: Mara" in p
+        )
         self.assertIn("well water is poisoned", critic_prompt)
-        self.assertNotIn("duke secretly funds",
-                         critic_prompt.split("CANON FACTS IN PLAY")[0])
+        self.assertNotIn("duke secretly funds", critic_prompt.split("CANON FACTS IN PLAY")[0])
 
 
 # ── Prompt grounding ──────────────────────────────────────────────────────────
@@ -446,17 +511,16 @@ class TestPromptGrounding(LoomBase):
         _run_id, result, stub = self._draft(cid2)
         self.assertNotIsInstance(result, Exception)
         critic_prompt = stub.prompts("loom.critic.action")[0]
-        self.assertIn("YOUR CHARACTER", critic_prompt)          # persona block
-        self.assertIn("register", critic_prompt)                # diction profile
+        self.assertIn("YOUR CHARACTER", critic_prompt)  # persona block
+        self.assertIn("register", critic_prompt)  # diction profile
         self.assertIn("yard gate is always barred", critic_prompt)  # canon
-        self.assertIn("Location:Yard", critic_prompt)           # world state
+        self.assertIn("Location:Yard", critic_prompt)  # world state
         self.assertIn("ends at the barred gate", critic_prompt)  # closing passage
         self.assertIn("CHAPTER CONTRACT", critic_prompt)
 
     def test_narrator_receives_personas_canon_and_voice(self):
         self._seed_fact("The yard gate is always barred at dusk.")
-        self.db.set_assay_baseline(self.work_id, "voice_envelope",
-                                   {"register": "spare and plain"})
+        self.db.set_assay_baseline(self.work_id, "voice_envelope", {"register": "spare and plain"})
         cid = self._seed_chapter(1)
         _run_id, result, stub = self._draft(cid)
         self.assertNotIsInstance(result, Exception)
@@ -465,7 +529,7 @@ class TestPromptGrounding(LoomBase):
         self.assertIn("Mara", narr_prompt)
         self.assertIn("Tobin", narr_prompt)
         self.assertIn("yard gate is always barred", narr_prompt)  # canon
-        self.assertIn("spare and plain", narr_prompt)             # voice envelope
+        self.assertIn("spare and plain", narr_prompt)  # voice envelope
         self.assertIn("VOICE ENVELOPE", narr_prompt)
 
 
@@ -482,8 +546,7 @@ class TestEntropyGate(LoomBase):
         self.assertGreater(len(entropy["spans"]), 0)
         self.assertGreater(len(stub.prompts("loom.entropy.verify")), 0)
         self.assertFalse(entropy["verification"][0]["verified"])
-        self.assertTrue(any("entropy gate" in f["description"]
-                            for f in self._findings()))
+        self.assertTrue(any("entropy gate" in f["description"] for f in self._findings()))
 
     def test_absent_logprobs_reported_never_fabricated(self):
         cid = self._seed_chapter(1)
@@ -514,38 +577,37 @@ class TestWorldState(LoomBase):
         self.assertEqual(len(state), 1)  # only the selected character's update
 
     def test_overwrite_semantics(self):
-        self.db.commit_world_state(self.work_id, {"Character:Mara": "at the yard"},
-                                   source_chapter_seq=1)
+        self.db.commit_world_state(
+            self.work_id, {"Character:Mara": "at the yard"}, source_chapter_seq=1
+        )
         self.db.commit_world_state(
             self.work_id,
             {"Character:Mara": "on the road", "Object:Gate": "open"},
-            source_chapter_seq=2)
+            source_chapter_seq=2,
+        )
         state = self.db.get_world_state(self.work_id)
-        self.assertEqual(state["Character:Mara"],
-                         {"value": "on the road", "source_chapter_seq": 2})
+        self.assertEqual(state["Character:Mara"], {"value": "on the road", "source_chapter_seq": 2})
         self.assertEqual(len(state), 2)
 
     def test_replay_mid_book_folds_graph_forward_in_order(self):
         ch1 = self._seed_chapter(1, text="chapter one prose")
         ch2 = self._seed_chapter(2, text="chapter two prose")
         self._seed_node(ch1, "Character", "Mara", "leaves the yard")
-        self._seed_node(ch2, "Character", "Mara", "reaches the ford",
-                        attrs={"mood": "grim"})
+        self._seed_node(ch2, "Character", "Mara", "reaches the ford", attrs={"mood": "grim"})
         self._seed_node(ch2, "Location", "Ford", "swollen by rain")
         # Stale state that MUST be discarded by the replay.
-        self.db.commit_world_state(self.work_id, {"Character:Mara": "STALE"},
-                                   source_chapter_seq=9)
+        self.db.commit_world_state(self.work_id, {"Character:Mara": "STALE"}, source_chapter_seq=9)
         report = loom.replay_world_state(self.db, self.work_id, upto_seq=3)
         self.assertEqual(report["folded_nodes"], 3)
         state = self.db.get_world_state(self.work_id)
-        self.assertEqual(state["Character:Mara"]["value"],
-                         "reaches the ford; mood=grim")
+        self.assertEqual(state["Character:Mara"]["value"], "reaches the ford; mood=grim")
         self.assertEqual(state["Character:Mara"]["source_chapter_seq"], 2)
         self.assertIn("Location:Ford", state)
         # upto_seq=2 sees only chapter 1's state.
         loom.replay_world_state(self.db, self.work_id, upto_seq=2)
-        self.assertEqual(self.db.get_world_state(self.work_id)
-                         ["Character:Mara"]["value"], "leaves the yard")
+        self.assertEqual(
+            self.db.get_world_state(self.work_id)["Character:Mara"]["value"], "leaves the yard"
+        )
 
     def test_resume_auto_replays_when_state_is_empty(self):
         ch1 = self._seed_chapter(1, text="chapter one prose ends at the gate")
@@ -560,8 +622,7 @@ class TestWorldState(LoomBase):
         # Re-drafting chapter 1 after later chapters committed state: the
         # draft must never see its own or the future's state.
         cid = self._seed_chapter(1)
-        self.db.commit_world_state(self.work_id, {"Character:Mara": "FUTURE"},
-                                   source_chapter_seq=5)
+        self.db.commit_world_state(self.work_id, {"Character:Mara": "FUTURE"}, source_chapter_seq=5)
         _run_id, result, stub = self._draft(cid)
         self.assertNotIsInstance(result, Exception)
         self.assertIsNotNone(result["evidence"]["replay"])
@@ -594,19 +655,18 @@ class TestRunClaimAndPersonaGate(LoomBase):
         with self.assertRaises(ValueError):  # approval needs a signature
             self.db.resolve_loom_persona(pid, decision="approved", author="  ")
         self.assertEqual(
-            self.db.resolve_loom_persona(pid, decision="approved", author="Brian"),
-            "ok")
+            self.db.resolve_loom_persona(pid, decision="approved", author="Brian"), "ok"
+        )
         self.assertEqual(
-            self.db.resolve_loom_persona(pid, decision="rejected", author="Brian"),
-            "conflict")
+            self.db.resolve_loom_persona(pid, decision="rejected", author="Brian"), "conflict"
+        )
         self.assertEqual(
-            self.db.resolve_loom_persona("nope", decision="approved", author="B"),
-            "not_found")
+            self.db.resolve_loom_persona("nope", decision="approved", author="B"), "not_found"
+        )
 
     def test_persona_rejection_needs_no_signature(self):
         pid = self.db.create_loom_persona(self.work_id, "Discard", {})
-        self.assertEqual(
-            self.db.resolve_loom_persona(pid, decision="rejected"), "ok")
+        self.assertEqual(self.db.resolve_loom_persona(pid, decision="rejected"), "ok")
         self.assertEqual(self.db.get_loom_persona(pid)["resolved_by"], "user")
 
     def test_duplicate_persona_name_refused(self):
@@ -615,10 +675,12 @@ class TestRunClaimAndPersonaGate(LoomBase):
             self.db.create_loom_persona(self.work_id, "Vex", {})
 
     def test_provenance_merges_call_ids(self):
-        self.db.record_provenance("a1", "chapter_revision", origin="ai_generated",
-                                  llm_call_ids=[1, 2], declared_by="loom")
-        self.db.record_provenance("a1", "chapter_revision", origin="ai_generated",
-                                  llm_call_ids=[2, 3], declared_by="loom")
+        self.db.record_provenance(
+            "a1", "chapter_revision", origin="ai_generated", llm_call_ids=[1, 2], declared_by="loom"
+        )
+        self.db.record_provenance(
+            "a1", "chapter_revision", origin="ai_generated", llm_call_ids=[2, 3], declared_by="loom"
+        )
         prov = self.db.get_provenance("a1", "chapter_revision")
         self.assertEqual(prov["llm_call_ids"], [1, 2, 3])
         with self.assertRaises(ValueError):

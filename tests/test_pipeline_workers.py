@@ -81,9 +81,7 @@ def test_dag_forward_self_and_duplicate_refs_fail():
 
 
 def test_dag_unresolvable_and_title_refs():
-    assert any(
-        "unresolvable" in p for p in pw.check_architecture_dag([_ch(1), _ch(2, ["Ghost"])])
-    )
+    assert any("unresolvable" in p for p in pw.check_architecture_dag([_ch(1), _ch(2, ["Ghost"])]))
     # Title references resolve to their seq.
     assert pw.check_architecture_dag([_ch(1, title="Intro"), _ch(2, ["Intro"])]) == []
 

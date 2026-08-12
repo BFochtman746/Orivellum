@@ -72,9 +72,7 @@ def get_series(series_id: str):
 def update_series(series_id: str, req: SeriesPatch):
     db = get_db()
     try:
-        s = SeriesStore(db).update_series(
-            series_id, title=req.title, description=req.description
-        )
+        s = SeriesStore(db).update_series(series_id, title=req.title, description=req.description)
     except SeriesError as e:
         raise HTTPException(422, str(e)) from e
     if not s:
@@ -205,9 +203,7 @@ def series_overview(series_id: str):
                 "open_findings": open_total,
                 "open_severe_findings": open_severe,
                 "cross_book_findings": int(cross["n"]),
-                "continuity": (
-                    "attention" if open_severe else ("warn" if open_total else "ok")
-                ),
+                "continuity": ("attention" if open_severe else ("warn" if open_total else "ok")),
             }
         )
 

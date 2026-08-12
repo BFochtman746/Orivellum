@@ -121,49 +121,87 @@ class DbGuardTests(AtlasBase):
     def test_bad_node_type_refused(self):
         with self.assertRaises(ValueError):
             self.db.create_graph_node(
-                work_id=self.work_id, chapter_id=None, node_type="Deity",
-                name="X", evidence_quote="q", evidence_offset=0,
+                work_id=self.work_id,
+                chapter_id=None,
+                node_type="Deity",
+                name="X",
+                evidence_quote="q",
+                evidence_offset=0,
             )
 
     def test_missing_evidence_refused(self):
         with self.assertRaises(ValueError):
             self.db.create_graph_node(
-                work_id=self.work_id, chapter_id=None, node_type="Character",
-                name="Job", evidence_quote="  ", evidence_offset=0,
+                work_id=self.work_id,
+                chapter_id=None,
+                node_type="Character",
+                name="Job",
+                evidence_quote="  ",
+                evidence_offset=0,
             )
         with self.assertRaises(ValueError):
             self.db.create_graph_node(
-                work_id=self.work_id, chapter_id=None, node_type="Character",
-                name="Job", evidence_quote="q", evidence_offset=-1,
+                work_id=self.work_id,
+                chapter_id=None,
+                node_type="Character",
+                name="Job",
+                evidence_quote="q",
+                evidence_offset=-1,
             )
 
     def test_bad_edge_type_refused(self):
         a = self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Character",
-            name="Job", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Character",
+            name="Job",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         b = self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Event",
-            name="The storm", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Event",
+            name="The storm",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         with self.assertRaises(ValueError):
             self.db.create_graph_edge(
-                work_id=self.work_id, chapter_id=None, src=a, dst=b,
-                edge_type="loves", evidence_quote="q", evidence_offset=0,
+                work_id=self.work_id,
+                chapter_id=None,
+                src=a,
+                dst=b,
+                edge_type="loves",
+                evidence_quote="q",
+                evidence_offset=0,
             )
 
     def test_edge_group_derived_from_type(self):
         a = self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Character",
-            name="Job", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Character",
+            name="Job",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         b = self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Event",
-            name="The storm", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Event",
+            name="The storm",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         self.db.create_graph_edge(
-            work_id=self.work_id, chapter_id=None, src=a, dst=b,
-            edge_type="undergoes", evidence_quote="q", evidence_offset=3,
+            work_id=self.work_id,
+            chapter_id=None,
+            src=a,
+            dst=b,
+            edge_type="undergoes",
+            evidence_quote="q",
+            evidence_offset=3,
         )
         edges = self.db.list_graph_edges(work_ids=[self.work_id])
         self.assertEqual(len(edges), 1)
@@ -173,9 +211,14 @@ class DbGuardTests(AtlasBase):
         ch = _seed_chapter(self.db, self.work_id, 0, "One", "text")
         with self.assertRaises(ValueError):
             self.db.create_graph_inconsistency(
-                work_id=self.work_id, chapter_id=ch, description="d",
-                current_quote="a", current_offset=0,
-                prior_chapter_id=ch, prior_quote="", prior_offset=0,
+                work_id=self.work_id,
+                chapter_id=ch,
+                description="d",
+                current_quote="a",
+                current_offset=0,
+                prior_chapter_id=ch,
+                prior_quote="",
+                prior_offset=0,
             )
 
 
@@ -195,7 +238,9 @@ class ExtractionTests(AtlasBase):
         ch = _seed_chapter(self.db, self.work_id, 0, "The Storm", _CH_TEXT)
         with patch("orivellum.capabilities.llm.llm_call", stub):
             counts = extract_chapter_graph(
-                self.db, _cfg(), work_id=self.work_id,
+                self.db,
+                _cfg(),
+                work_id=self.work_id,
                 chapter={"id": ch, "seq": 0, "title": "The Storm", "text": _CH_TEXT},
             )
         return ch, counts
@@ -209,7 +254,7 @@ class ExtractionTests(AtlasBase):
                         "description": "A storm destroys the house.",
                         "evidence_quote": "The storm came out of the east and struck",
                     },
-                    {   # fabricated quote — must be discarded
+                    {  # fabricated quote — must be discarded
                         "name": "Angels sing",
                         "description": "…",
                         "evidence_quote": "The angels sang above the whirlwind",
@@ -222,19 +267,19 @@ class ExtractionTests(AtlasBase):
                         "description": "The protagonist.",
                         "evidence_quote": "Job of Uz rose before dawn",
                     },
-                    {   # out-of-schema type — discarded, not coerced
+                    {  # out-of-schema type — discarded, not coerced
                         "name": "The Accuser",
                         "node_type": "Deity",
                         "description": "…",
                         "evidence_quote": "Job tore his robe",
                     },
-                    {   # duplicate of pass-1/2 name — discarded
+                    {  # duplicate of pass-1/2 name — discarded
                         "name": "Job of Uz",
                         "node_type": "Character",
                         "description": "dup",
                         "evidence_quote": "Job tore his robe",
                     },
-                    {   # ungroundable — discarded
+                    {  # ungroundable — discarded
                         "name": "Bildad",
                         "node_type": "Character",
                         "description": "…",
@@ -248,13 +293,13 @@ class ExtractionTests(AtlasBase):
                         "edge_type": "experiences",
                         "evidence_quote": "Job tore his robe and fell to the ground",
                     },
-                    {   # out-of-schema edge type — discarded
+                    {  # out-of-schema edge type — discarded
                         "src": "Job of Uz",
                         "dst": "The storm strikes",
                         "edge_type": "loves",
                         "evidence_quote": "Job tore his robe",
                     },
-                    {   # unknown endpoint — discarded
+                    {  # unknown endpoint — discarded
                         "src": "Zophar",
                         "dst": "The storm strikes",
                         "edge_type": "performs",
@@ -307,7 +352,9 @@ class ExtractionTests(AtlasBase):
         ch, _ = self._run(stub)
         with patch("orivellum.capabilities.llm.llm_call", self._stub()):
             extract_chapter_graph(
-                self.db, _cfg(), work_id=self.work_id,
+                self.db,
+                _cfg(),
+                work_id=self.work_id,
                 chapter={"id": ch, "seq": 0, "title": "The Storm", "text": _CH_TEXT},
             )
         self.assertEqual(len(self.db.list_graph_nodes(work_ids=[self.work_id])), 2)
@@ -336,7 +383,9 @@ class OffsetIntegrityTests(AtlasBase):
         ch = _seed_chapter(self.db, self.work_id, 0, "One", raw_text)
         with patch("orivellum.capabilities.llm.llm_call", stub):
             extract_chapter_graph(
-                self.db, _cfg(), work_id=self.work_id,
+                self.db,
+                _cfg(),
+                work_id=self.work_id,
                 chapter={"id": ch, "seq": 0, "title": "One", "text": raw_text},
             )
         node = self.db.list_graph_nodes(work_ids=[self.work_id])[0]
@@ -358,8 +407,19 @@ class OffsetIntegrityTests(AtlasBase):
                            description, evidence_quote, evidence_offset, attributes,
                            canon_fact_id, created_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                    (_uid(), self.work_id, None, "Character", "Job", "", "   ", 0,
-                     "{}", None, now()),
+                    (
+                        _uid(),
+                        self.work_id,
+                        None,
+                        "Character",
+                        "Job",
+                        "",
+                        "   ",
+                        0,
+                        "{}",
+                        None,
+                        now(),
+                    ),
                 )
             with self.assertRaises(sqlite3.IntegrityError):
                 self.db._conn.execute(
@@ -367,8 +427,19 @@ class OffsetIntegrityTests(AtlasBase):
                            description, evidence_quote, evidence_offset, attributes,
                            canon_fact_id, created_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                    (_uid(), self.work_id, None, "Character", "Job", "", "quote", -3,
-                     "{}", None, now()),
+                    (
+                        _uid(),
+                        self.work_id,
+                        None,
+                        "Character",
+                        "Job",
+                        "",
+                        "quote",
+                        -3,
+                        "{}",
+                        None,
+                        now(),
+                    ),
                 )
             self.db._conn.rollback()
 
@@ -397,7 +468,9 @@ class VerbatimSpanTests(AtlasBase):
         ch = _seed_chapter(self.db, self.work_id, 0, "One", raw_text)
         with patch("orivellum.capabilities.llm.llm_call", stub):
             extract_chapter_graph(
-                self.db, _cfg(), work_id=self.work_id,
+                self.db,
+                _cfg(),
+                work_id=self.work_id,
                 chapter={"id": ch, "seq": 0, "title": "One", "text": raw_text},
             )
         node = self.db.list_graph_nodes(work_ids=[self.work_id])[0]
@@ -482,8 +555,10 @@ class GatewayFailureTests(AtlasBase):
         # can't complete — nothing may be committed for chapter 2, so the
         # stored inconsistency survives.
         half_down = _StubLLM(
-            {**{k: v for k, v in self._GOOD.items() if k != "atlas.propose"},
-             "atlas.propose": propose}  # no atlas.verify handler -> ok=False
+            {
+                **{k: v for k, v in self._GOOD.items() if k != "atlas.propose"},
+                "atlas.propose": propose,
+            }  # no atlas.verify handler -> ok=False
         )
         with (
             patch("orivellum.capabilities.llm.llm_call", half_down),
@@ -522,9 +597,7 @@ class EmptiedChapterPurgeTests(AtlasBase):
 
         # The chapter is subsequently cleared (whitespace-only text).
         with self.db._lock:
-            self.db._conn.execute(
-                "UPDATE book_chapters SET text='   ' WHERE id=?", (ch,)
-            )
+            self.db._conn.execute("UPDATE book_chapters SET text='   ' WHERE id=?", (ch,))
             self.db._conn.commit()
         with patch("orivellum.capabilities.llm.llm_call", stub):
             build_work_graph(self.db, _cfg(), work_id=self.work_id)
@@ -563,7 +636,9 @@ class LongChapterWindowTests(AtlasBase):
         ch = _seed_chapter(self.db, self.work_id, 0, "Long", text)
         with patch("orivellum.capabilities.llm.llm_call", stub):
             extract_chapter_graph(
-                self.db, _cfg(), work_id=self.work_id,
+                self.db,
+                _cfg(),
+                work_id=self.work_id,
                 chapter={"id": ch, "seq": 0, "title": "Long", "text": text},
             )
         # More than one extraction window ran…
@@ -584,16 +659,29 @@ class WorkGraphMergeTests(AtlasBase):
         )
         self.assertIsNotNone(doc)
         a = self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Character",
-            name="Job", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Character",
+            name="Job",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         b = self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Event",
-            name="The storm", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Event",
+            name="The storm",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         self.db.create_graph_edge(
-            work_id=self.work_id, chapter_id=None, src=a, dst=b,
-            edge_type="experiences", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            src=a,
+            dst=b,
+            edge_type="experiences",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         graph = self.db.get_work_graph(self.work_id)
         labels = {n["label"] for n in graph["nodes"]}
@@ -602,8 +690,10 @@ class WorkGraphMergeTests(AtlasBase):
         self.assertIn(
             ("Job".lower(), "experiences"),
             {
-                (next(n["label"] for n in graph["nodes"] if n["id"] == e["source"]).lower(),
-                 e["type"])
+                (
+                    next(n["label"] for n in graph["nodes"] if n["id"] == e["source"]).lower(),
+                    e["type"],
+                )
                 for e in graph["edges"]
                 if e["type"] == "experiences"
             },
@@ -613,16 +703,29 @@ class WorkGraphMergeTests(AtlasBase):
 class WorkGraphBudgetTests(AtlasBase):
     def _atlas_pair(self):
         a = self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Character",
-            name="Job", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Character",
+            name="Job",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         b = self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Event",
-            name="The storm", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Event",
+            name="The storm",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         self.db.create_graph_edge(
-            work_id=self.work_id, chapter_id=None, src=a, dst=b,
-            edge_type="experiences", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            src=a,
+            dst=b,
+            edge_type="experiences",
+            evidence_quote="q",
+            evidence_offset=0,
         )
 
     def test_saturated_legacy_graph_still_shows_atlas_and_no_dangling_edges(self):
@@ -680,7 +783,9 @@ class CanonLinkTests(AtlasBase):
         ch = _seed_chapter(self.db, self.work_id, 0, "One", _CH_TEXT)
         with patch("orivellum.capabilities.llm.llm_call", stub):
             extract_chapter_graph(
-                self.db, _cfg(), work_id=self.work_id,
+                self.db,
+                _cfg(),
+                work_id=self.work_id,
                 chapter={"id": ch, "seq": 0, "title": "One", "text": _CH_TEXT},
             )
         node = self.db.list_graph_nodes(work_ids=[self.work_id])[0]
@@ -691,19 +796,25 @@ class MultiWorkScopingTests(AtlasBase):
     def test_graphs_do_not_leak_between_works(self):
         other = self.db.create_work("Book Two", work_type="book")["id"]
         self.db.create_graph_node(
-            work_id=self.work_id, chapter_id=None, node_type="Character",
-            name="Job", evidence_quote="q", evidence_offset=0,
+            work_id=self.work_id,
+            chapter_id=None,
+            node_type="Character",
+            name="Job",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         self.db.create_graph_node(
-            work_id=other, chapter_id=None, node_type="Character",
-            name="Elihu", evidence_quote="q", evidence_offset=0,
+            work_id=other,
+            chapter_id=None,
+            node_type="Character",
+            name="Elihu",
+            evidence_quote="q",
+            evidence_offset=0,
         )
         self.assertEqual(
             [n["name"] for n in self.db.list_graph_nodes(work_ids=[self.work_id])], ["Job"]
         )
-        self.assertEqual(
-            [n["name"] for n in self.db.list_graph_nodes(work_ids=[other])], ["Elihu"]
-        )
+        self.assertEqual([n["name"] for n in self.db.list_graph_nodes(work_ids=[other])], ["Elihu"])
         # Trilogy-wide query spans both.
         self.assertEqual(len(self.db.list_graph_nodes(work_ids=[self.work_id, other])), 2)
 
@@ -719,26 +830,76 @@ _FILLER = (
 
 # (cur_seq, current_quote, prior_seq, prior_quote, description)
 _CONTRADICTIONS = [
-    (1, "Job owned five hundred sheep in all.", 0,
-     "Job owned seven thousand sheep and three thousand camels.", "Sheep count"),
-    (1, "Eliphaz arrived from Shuah on the seventh day.", 0,
-     "Eliphaz arrived from Teman on the third day.", "Eliphaz origin/day"),
-    (2, "The storm came out of the west at dusk.", 0,
-     "The storm came out of the east at dawn.", "Storm direction/time"),
-    (2, "The eldest son lived in a tent of goat hair.", 0,
-     "The eldest son lived in a stone house by the river.", "Eldest son dwelling"),
-    (3, "Dinah wore a crimson veil at the market.", 0,
-     "Dinah wore a blue veil at the market.", "Veil colour"),
-    (3, "Bildad was the youngest of the three friends.", 1,
-     "Bildad was the eldest of the three friends.", "Bildad age order"),
-    (4, "The feast lasted three days and ended in silence.", 1,
-     "The feast lasted seven days and ended in song.", "Feast length"),
-    (4, "Job cursed the day aloud before his friends.", 2,
-     "Job kept silence for seven days and seven nights.", "Silence broken"),
-    (5, "The messenger came on foot across the dry ravine.", 2,
-     "The messenger rode a grey mare across the flooded ford.", "Messenger travel"),
-    (5, "Zophar quoted the proverb of the papyrus reed.", 3,
-     "Zophar refused every proverb and spoke plainly.", "Zophar proverb"),
+    (
+        1,
+        "Job owned five hundred sheep in all.",
+        0,
+        "Job owned seven thousand sheep and three thousand camels.",
+        "Sheep count",
+    ),
+    (
+        1,
+        "Eliphaz arrived from Shuah on the seventh day.",
+        0,
+        "Eliphaz arrived from Teman on the third day.",
+        "Eliphaz origin/day",
+    ),
+    (
+        2,
+        "The storm came out of the west at dusk.",
+        0,
+        "The storm came out of the east at dawn.",
+        "Storm direction/time",
+    ),
+    (
+        2,
+        "The eldest son lived in a tent of goat hair.",
+        0,
+        "The eldest son lived in a stone house by the river.",
+        "Eldest son dwelling",
+    ),
+    (
+        3,
+        "Dinah wore a crimson veil at the market.",
+        0,
+        "Dinah wore a blue veil at the market.",
+        "Veil colour",
+    ),
+    (
+        3,
+        "Bildad was the youngest of the three friends.",
+        1,
+        "Bildad was the eldest of the three friends.",
+        "Bildad age order",
+    ),
+    (
+        4,
+        "The feast lasted three days and ended in silence.",
+        1,
+        "The feast lasted seven days and ended in song.",
+        "Feast length",
+    ),
+    (
+        4,
+        "Job cursed the day aloud before his friends.",
+        2,
+        "Job kept silence for seven days and seven nights.",
+        "Silence broken",
+    ),
+    (
+        5,
+        "The messenger came on foot across the dry ravine.",
+        2,
+        "The messenger rode a grey mare across the flooded ford.",
+        "Messenger travel",
+    ),
+    (
+        5,
+        "Zophar quoted the proverb of the papyrus reed.",
+        3,
+        "Zophar refused every proverb and spoke plainly.",
+        "Zophar proverb",
+    ),
 ]
 
 
@@ -879,7 +1040,9 @@ class UnverifiableProposalTests(AtlasBase):
             self.assertRaises(AtlasLLMError),
         ):
             verify_chapter(
-                self.db, _cfg(), work_id=self.work_id,
+                self.db,
+                _cfg(),
+                work_id=self.work_id,
                 chapter={"id": ch1, "seq": 1, "title": "Two", "text": _FILLER},
                 prior_chapters=[{"id": ch0, "seq": 0, "title": "One", "text": _FILLER}],
             )
@@ -1110,8 +1273,7 @@ class AtomicNestedFailureTests(AtlasBase):
             def execute(self, sql, params=()):
                 if "UPDATE memory_conflicts" in sql and "resolved=1" in sql:
                     real_conn.execute(
-                        "UPDATE memory_conflicts SET resolved=1, resolution='dismissed' "
-                        "WHERE id=?",
+                        "UPDATE memory_conflicts SET resolved=1, resolution='dismissed' WHERE id=?",
                         (conflict_id,),
                     )
                 return real_conn.execute(sql, params)
@@ -1133,11 +1295,14 @@ class AtomicNestedFailureTests(AtlasBase):
     def test_governed_write_failure_inside_atomic_keeps_outer_work(self):
         with self.db.atomic():
             self.db.set_setting("outer_probe3", "kept")
-            with self.assertRaises(RuntimeError), self.db.governed_write(
-                operation="test.op",
-                event_type="test.event",
-                object_id="obj1",
-                object_type="test",
+            with (
+                self.assertRaises(RuntimeError),
+                self.db.governed_write(
+                    operation="test.op",
+                    event_type="test.event",
+                    object_id="obj1",
+                    object_type="test",
+                ),
             ):
                 self.db._conn.execute(
                     "INSERT INTO memory_conflicts"
@@ -1438,8 +1603,7 @@ class LegacyEntityCompatTests(AtlasBase):
         # Legacy stores still populated (consumers not yet migrated) …
         with self.db._lock:
             names = {
-                r["name"]
-                for r in self.db._conn.execute("SELECT name FROM entities").fetchall()
+                r["name"] for r in self.db._conn.execute("SELECT name FROM entities").fetchall()
             }
             relations = [
                 r["relation"]

@@ -30,21 +30,56 @@ from .metrics import register_bands, split_sentences, words_of
 # ── Signature lexicons (defaults; extendable via thresholds) ─────────────────
 
 ARGUMENT_MARKERS = (
-    "therefore", "thus", "hence", "it follows", "consequently", "for if",
-    "must be", "cannot be", "one must", "we must conclude", "in other words",
-    "that is to say", "the truth is", "consider that", "is it not",
+    "therefore",
+    "thus",
+    "hence",
+    "it follows",
+    "consequently",
+    "for if",
+    "must be",
+    "cannot be",
+    "one must",
+    "we must conclude",
+    "in other words",
+    "that is to say",
+    "the truth is",
+    "consider that",
+    "is it not",
 )
 
 ASSERTIVE_MODALS = (
-    "surely", "must", "cannot", "will not", "shall", "certainly",
-    "listen to me", "hear me", "i will answer", "know this", "mark this",
+    "surely",
+    "must",
+    "cannot",
+    "will not",
+    "shall",
+    "certainly",
+    "listen to me",
+    "hear me",
+    "i will answer",
+    "know this",
+    "mark this",
 )
 
 RESOLUTION_LEXICON = (
-    "restored", "restoration", "redeemed", "redemption", "made whole",
-    "whole again", "healed", "at peace", "comforted", "blessed him",
-    "doubled", "twice as much", "happily", "all was well", "his latter days",
-    "prospered", "recompense", "reward for his",
+    "restored",
+    "restoration",
+    "redeemed",
+    "redemption",
+    "made whole",
+    "whole again",
+    "healed",
+    "at peace",
+    "comforted",
+    "blessed him",
+    "doubled",
+    "twice as much",
+    "happily",
+    "all was well",
+    "his latter days",
+    "prospered",
+    "recompense",
+    "reward for his",
 )
 
 
@@ -96,8 +131,7 @@ def detect_theology_lecture(text: str, thresholds: dict | None = None) -> list[d
                     "argument_markers_per_1000_words": round(per_1k, 2),
                 },
                 "quotes": [
-                    {"offset": off, "quote": _quote_around(text, off)}
-                    for off, _ in markers[:5]
+                    {"offset": off, "quote": _quote_around(text, off)} for off, _ in markers[:5]
                 ],
             }
         ]
@@ -129,9 +163,7 @@ def detect_catalog(text: str, thresholds: dict | None = None) -> list[dict]:
                     "series_runs": len(runs),
                     "series_runs_per_1000_words": round(per_1k, 2),
                 },
-                "quotes": [
-                    {"offset": off, "quote": run[:200]} for off, run in runs[:5]
-                ],
+                "quotes": [{"offset": off, "quote": run[:200]} for off, run in runs[:5]],
             }
         ]
     return []
@@ -179,17 +211,13 @@ def detect_elihu(text: str, thresholds: dict | None = None) -> list[dict]:
             {
                 "issue_type": "elihu",
                 "measures": {"consecutive_paragraphs": len(flagged)},
-                "quotes": [
-                    {"offset": off, "quote": para[:200]} for off, para in flagged[:4]
-                ],
+                "quotes": [{"offset": off, "quote": para[:200]} for off, para in flagged[:4]],
             }
         )
     return detections
 
 
-def detect_restoration(
-    text: str, chapter_seq: int, thresholds: dict | None = None
-) -> list[dict]:
+def detect_restoration(text: str, chapter_seq: int, thresholds: dict | None = None) -> list[dict]:
     """Resolution language appearing before its permitted chapter."""
     th = thresholds or {}
     prohibited_before = int(th.get("prohibited_before_chapter", 71))
@@ -206,9 +234,7 @@ def detect_restoration(
                 "prohibited_before_chapter": prohibited_before,
                 "hits": len(hits),
             },
-            "quotes": [
-                {"offset": off, "quote": _quote_around(text, off)} for off, _ in hits[:6]
-            ],
+            "quotes": [{"offset": off, "quote": _quote_around(text, off)} for off, _ in hits[:6]],
         }
     ]
 
