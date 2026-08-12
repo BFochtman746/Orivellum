@@ -48,8 +48,17 @@ interface GapItem {
   kind: string; title: string; description: string; severity: string;
   metadata?: Record<string, string>;
 }
+// Chao1 + Good–Turing coverage — an UPPER bound ("at most") with unseen
+// counts. Replaces the removed self-referential coverage_pct.
+interface CoverageOverall {
+  completeness: number | null;
+  unseen_est: number | null;
+  band: string;
+  summary: string;
+}
+interface CoverageReport { overall: CoverageOverall }
 interface GapReport {
-  coverage_pct: number; total_chapters: number;
+  coverage: CoverageReport | null; total_chapters: number | null;
   gaps: GapItem[]; suggested_queries: string[];
 }
 interface Chapter {
@@ -289,10 +298,22 @@ export default function WorkIntelligence() {
         />
         <MetricCard
           label="Coverage"
-          value={gaps ? `${gaps.coverage_pct}%` : "—"}
-          sub="research coverage"
+          value={
+            gaps?.coverage?.overall?.completeness != null
+              ? `≤${Math.round(gaps.coverage.overall.completeness * 100)}%`
+              : "—"
+          }
+          sub={
+            gaps?.coverage?.overall?.unseen_est != null && gaps.coverage.overall.unseen_est > 0
+              ? `~${Math.round(gaps.coverage.overall.unseen_est)} entities unseen (upper bound)`
+              : "entity coverage, upper bound"
+          }
           loading={gapsLoading}
-          color={gaps ? scoreColor(gaps.coverage_pct) : "text-muted-foreground"}
+          color={
+            gaps?.coverage?.overall?.completeness != null
+              ? scoreColor(gaps.coverage.overall.completeness * 100)
+              : "text-muted-foreground"
+          }
         />
         <MetricCard
           label="Hygiene"

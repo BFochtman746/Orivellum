@@ -1196,7 +1196,7 @@ def workspace_top_gaps(limit: int = 3, refresh: bool = False):
             db.cache_work_gaps(
                 work["id"],
                 gap_dicts,
-                report.coverage_pct,
+                report.coverage,
                 suggested_queries=report.suggested_queries,
             )
             for g in gap_dicts:
@@ -1232,7 +1232,7 @@ def works_gaps(work_id: str, refresh: bool = False):
         if cached is not None:
             return {
                 "work_id": work_id,
-                "coverage_pct": cached["coverage_pct"],
+                "coverage": cached["coverage"],
                 "total_chapters": None,
                 "suggested_queries": cached["suggested_queries"],
                 "evaluated_at": cached["evaluated_at"],
@@ -1256,14 +1256,14 @@ def works_gaps(work_id: str, refresh: bool = False):
     # responses return them without re-running detection.
     try:
         db.cache_work_gaps(
-            work_id, gap_dicts, report.coverage_pct, suggested_queries=report.suggested_queries
+            work_id, gap_dicts, report.coverage, suggested_queries=report.suggested_queries
         )
     except Exception as exc:
         logger.debug("Gap cache write failed: %s", exc)
 
     return {
         "work_id": report.work_id,
-        "coverage_pct": report.coverage_pct,
+        "coverage": report.coverage,
         "total_chapters": report.total_chapters,
         "suggested_queries": report.suggested_queries,
         "evaluated_at": report.evaluated_at,
@@ -1574,7 +1574,7 @@ def _check_stage_gate(
                     db.cache_work_gaps(
                         work_id,
                         gaps,
-                        report.coverage_pct,
+                        report.coverage,
                         suggested_queries=report.suggested_queries,
                     )
                 except Exception:

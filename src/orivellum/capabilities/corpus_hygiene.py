@@ -54,7 +54,10 @@ class HygieneReport:
     work_id: str
     findings: list[HygieneFinding]
     suggested_queries: list[str]
-    coverage_pct: int  # 0-100 — chapters with sufficient coverage
+    # Chao1/Good–Turing coverage report (capabilities/coverage_estimate.py):
+    # an UPPER-bound estimate of entity/term coverage with unseen counts —
+    # replaces the removed self-referential coverage_pct.
+    coverage: dict
     total_chapters: int
     evaluated_at: str
 
@@ -333,10 +336,15 @@ def detect_hygiene(work_id: str, db: OrivellumDB) -> HygieneReport:
             )
         )
 
-    # ── Coverage % and query suggestions ──────────────────────────────────────
+    # ── Coverage estimate and query suggestions ───────────────────────────────
 
-    covered = max(0, total - uncovered - weak)
-    coverage_pct = round(covered / total * 100) if total > 0 else 0
+    # Honest coverage: Chao1 + Good–Turing over entity/term mention
+    # frequencies — an upper bound on what has been seen, with estimated
+    # unseen counts. The old chapters-with-enough-items percentage measured
+    # the corpus against itself and was removed.
+    from orivellum.capabilities.coverage_estimate import estimate_coverage
+
+    coverage = estimate_coverage(db, work_id)
 
     suggestions: list[str] = []
     for ch in chapters:
@@ -359,7 +367,7 @@ def detect_hygiene(work_id: str, db: OrivellumDB) -> HygieneReport:
         work_id=work_id,
         findings=findings,
         suggested_queries=suggestions[:8],
-        coverage_pct=coverage_pct,
+        coverage=coverage,
         total_chapters=total,
         evaluated_at=datetime.datetime.now(datetime.UTC).isoformat(),
     )

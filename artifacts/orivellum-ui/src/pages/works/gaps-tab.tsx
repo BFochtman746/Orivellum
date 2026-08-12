@@ -114,8 +114,28 @@ interface GapItem {
   metadata: Record<string, unknown>;
   finding_key?: string;
 }
+// Chao1 + Good–Turing coverage estimate — an UPPER bound on entity/term
+// coverage ("at most"), with estimated unseen counts. Replaces the removed
+// self-referential coverage_pct.
+interface CoverageEstimate {
+  n: number; s_obs: number; f1: number; f2: number;
+  s_est: number | null;
+  unseen_est: number | null; unseen_low: number | null; unseen_high: number | null;
+  good_turing: number | null;
+  completeness: number | null;
+  band: "under_sampled" | "moderate" | "well_sampled" | "no_data";
+  summary: string;
+}
+interface CoverageClass extends CoverageEstimate { class: string }
+interface CoverageReport {
+  method: string; framing: string; scope_note: string;
+  overall: CoverageEstimate;
+  classes: CoverageClass[];
+  under_sampled_classes: string[];
+  well_sampled_classes: string[];
+}
 interface GapReport {
-  coverage_pct: number; total_chapters: number;
+  coverage: CoverageReport | null; total_chapters: number | null;
   gaps: GapItem[]; suggested_queries: string[]; evaluated_at: string;
 }
 
@@ -255,12 +275,12 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
 
   return (
     <div className="space-y-6">
-      {/* Coverage bar */}
+      {/* Coverage estimate — Chao1/Good–Turing upper bound, never a bare % */}
       <div className="p-4 rounded-xl border border-border/50 bg-muted/10 space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-primary" />
-            <span className="font-medium text-sm">Research coverage</span>
+            <span className="font-medium text-sm">Entity coverage (estimated)</span>
           </div>
           <div className="flex items-center gap-2">
             <Link
@@ -269,7 +289,11 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
             >
               oracle
             </Link>
-            <span className="text-lg font-mono font-bold">{data.coverage_pct}%</span>
+            <span className="text-lg font-mono font-bold">
+              {data.coverage?.overall?.completeness != null
+                ? `≤ ${Math.round(data.coverage.overall.completeness * 100)}%`
+                : "—"}
+            </span>
             <button
               onClick={() => { setForceRefresh(true); refetch(); }}
               disabled={isFetching}
@@ -279,19 +303,40 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
             </button>
           </div>
         </div>
-        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all duration-500"
-            style={{
-              width: `${data.coverage_pct}%`,
-              background:
-                data.coverage_pct >= 80 ? "var(--green-2)" :
-                data.coverage_pct >= 50 ? "var(--gilt)" : "var(--rust)",
-            }}
-          />
-        </div>
-        <p className="text-xs font-mono text-muted-foreground">
-          {data.total_chapters} chapter{data.total_chapters !== 1 ? "s" : ""} analysed
+        {data.coverage?.overall?.completeness != null ? (
+          <>
+            <p className="text-xs text-muted-foreground">{data.coverage.overall.summary}</p>
+            {data.coverage.classes.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {data.coverage.classes.map((c) => (
+                  <span
+                    key={c.class}
+                    title={c.summary}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-mono"
+                    style={
+                      c.band === "under_sampled" ? GAP_SEVERITY_STYLE.high :
+                      c.band === "well_sampled" ? GAP_SEVERITY_STYLE.low :
+                      GAP_SEVERITY_STYLE.medium
+                    }
+                  >
+                    {c.class}
+                    {" ≤"}{c.completeness != null ? `${Math.round(c.completeness * 100)}%` : "—"}
+                    {c.unseen_est != null && c.unseen_est > 0 && ` · ~${Math.round(c.unseen_est)} unseen`}
+                    {c.band === "under_sampled" && " · under-sampled"}
+                    {c.band === "well_sampled" && " · well-sampled"}
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No entity mentions extracted yet — coverage cannot be estimated.
+          </p>
+        )}
+        <p className="text-[10px] font-mono text-muted-foreground">
+          Upper bound (Chao1 + Good–Turing) over entity mentions — measures what's been
+          sampled, not understanding.
         </p>
       </div>
 

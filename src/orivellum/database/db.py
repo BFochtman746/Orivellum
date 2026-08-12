@@ -5753,7 +5753,7 @@ class OrivellumDB:
         self,
         work_id: str,
         gaps: list[dict],
-        coverage_pct: float | None = None,
+        coverage: dict | None = None,
         suggested_queries: list[str] | None = None,
     ) -> None:
         """Persist the most-recent gap detection result for *work_id*.
@@ -5762,11 +5762,21 @@ class OrivellumDB:
         one cache entry.  The caller is responsible for serialising ``gaps``
         via ``json.dumps`` / passing a list of dicts.
 
+        *coverage* is the Chao1/Good–Turing coverage report (see
+        ``capabilities/coverage_estimate.py``) — an upper-bound estimate, not
+        the removed self-referential percentage.
+
         *suggested_queries* is stored alongside the gaps so that cached
         responses have the same shape as fresh detection runs.
         """
         import json as _json
 
+        completeness = (coverage or {}).get("overall", {}).get("completeness")
+        detail = (
+            f"coverage≤{completeness * 100:.0f}% (upper bound)"
+            if completeness is not None
+            else "coverage=no_data"
+        )
         now = _now()
         with self.governed_write(
             operation="gaps.cache_updated",
@@ -5774,21 +5784,21 @@ class OrivellumDB:
             object_id=work_id,
             object_type="work",
             actor="system",
-            detail=f"coverage={coverage_pct:.1f}%",
+            detail=detail,
         ):
             self._conn.execute(
                 """INSERT INTO work_gap_cache
-                       (work_id, gaps_json, coverage_pct, evaluated_at, suggested_queries_json)
+                       (work_id, gaps_json, coverage_json, evaluated_at, suggested_queries_json)
                    VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(work_id) DO UPDATE SET
                      gaps_json               = excluded.gaps_json,
-                     coverage_pct            = excluded.coverage_pct,
+                     coverage_json           = excluded.coverage_json,
                      evaluated_at            = excluded.evaluated_at,
                      suggested_queries_json  = excluded.suggested_queries_json""",
                 (
                     work_id,
                     _json.dumps(gaps),
-                    coverage_pct,
+                    _json.dumps(coverage) if coverage is not None else None,
                     now,
                     _json.dumps(suggested_queries or []),
                 ),
@@ -5821,7 +5831,7 @@ class OrivellumDB:
 
         with self._lock:
             row = self._conn.execute(
-                "SELECT gaps_json, coverage_pct, evaluated_at, "
+                "SELECT gaps_json, coverage_json, evaluated_at, "
                 "       COALESCE(suggested_queries_json, '[]') AS suggested_queries_json "
                 "FROM work_gap_cache WHERE work_id=?",
                 (work_id,),
@@ -5842,7 +5852,7 @@ class OrivellumDB:
             return None
         return {
             "gaps": _json.loads(row["gaps_json"] or "[]"),
-            "coverage_pct": row["coverage_pct"],
+            "coverage": _json.loads(row["coverage_json"]) if row["coverage_json"] else None,
             "evaluated_at": evaluated,
             "suggested_queries": _json.loads(row["suggested_queries_json"] or "[]"),
         }
@@ -5850,8 +5860,9 @@ class OrivellumDB:
     def get_all_cached_gaps(self, max_age_seconds: int = 3600) -> list[dict]:
         """Return all non-stale cached gap rows as a flat list.
 
-        Each entry includes ``work_id``, ``gaps`` (list), ``coverage_pct``,
-        ``evaluated_at``, and ``suggested_queries`` (list[str]).
+        Each entry includes ``work_id``, ``gaps`` (list), ``coverage``
+        (Chao1/Good–Turing report dict or None), ``evaluated_at``, and
+        ``suggested_queries`` (list[str]).
         Stale rows are silently excluded.
         """
         import datetime
@@ -5862,7 +5873,7 @@ class OrivellumDB:
         ).strftime("%Y-%m-%d %H:%M:%S")
         with self._lock:
             rows = self._conn.execute(
-                "SELECT work_id, gaps_json, coverage_pct, evaluated_at, "
+                "SELECT work_id, gaps_json, coverage_json, evaluated_at, "
                 "       COALESCE(suggested_queries_json, '[]') AS suggested_queries_json "
                 "FROM work_gap_cache WHERE evaluated_at >= ?",
                 (cutoff,),
@@ -5873,7 +5884,7 @@ class OrivellumDB:
                 {
                     "work_id": row["work_id"],
                     "gaps": _json.loads(row["gaps_json"] or "[]"),
-                    "coverage_pct": row["coverage_pct"],
+                    "coverage": _json.loads(row["coverage_json"]) if row["coverage_json"] else None,
                     "evaluated_at": row["evaluated_at"],
                     "suggested_queries": _json.loads(row["suggested_queries_json"] or "[]"),
                 }

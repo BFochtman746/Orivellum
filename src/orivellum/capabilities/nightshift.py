@@ -831,7 +831,7 @@ def _pass_gap_analysis(db: OrivellumDB, report: list[str]) -> None:
                     db.cache_work_gaps(
                         work["id"],
                         gap_dicts,
-                        gr.coverage_pct,
+                        gr.coverage,
                         suggested_queries=gr.suggested_queries,
                     )
                 except Exception:

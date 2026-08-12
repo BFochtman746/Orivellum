@@ -3393,4 +3393,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         )
     """,
     ),
+    # v141 — Honest coverage estimates replace coverage_pct.  The old number
+    # measured the corpus against itself (chapters with "enough" items ÷
+    # chapters) and was removed as self-referential.  coverage_json stores the
+    # Chao1 + Good–Turing report (see capabilities/coverage_estimate.py):
+    # per-class richness estimates, unseen counts with 95% CIs, and sampling
+    # completeness as an UPPER bound.  coverage_pct is dropped, not kept
+    # alongside — nothing may fall back to the self-referential metric.
+    (
+        141,
+        "Replace work_gap_cache.coverage_pct with Chao1/Good–Turing coverage_json",
+        """
+        ALTER TABLE work_gap_cache ADD COLUMN coverage_json TEXT;
+        ALTER TABLE work_gap_cache DROP COLUMN coverage_pct
+    """,
+    ),
 ]

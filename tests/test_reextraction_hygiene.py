@@ -95,7 +95,7 @@ class ReextractionHygieneTest(unittest.TestCase):
                 (stale_vec_id,),
             )
             self.db._conn.commit()
-        self.db.cache_work_gaps(self.work["id"], gaps=[{"kind": "test"}], coverage_pct=50.0)
+        self.db.cache_work_gaps(self.work["id"], gaps=[{"kind": "test"}], coverage={"overall": {"completeness": 0.5}})
 
         self._rewrite_stored_file(NEW_TEXT)
         r = self.client.post(f"/api/library/{self.doc_id}/reprocess?force=true")

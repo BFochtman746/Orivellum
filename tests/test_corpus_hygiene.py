@@ -9,7 +9,9 @@ Covers all seven gap types:
   6. stale_source       — documents imported > 1 year ago
   7. duplicate_research — knowledge items with Jaccard similarity ≥ 0.8
 
-Also verifies coverage_pct, suggested_queries, and the GET endpoint.
+Also verifies the Chao1/Good–Turing coverage report, suggested_queries, and
+the GET endpoint (and that the removed self-referential coverage_pct never
+reappears on the surface).
 """
 
 from __future__ import annotations
@@ -89,7 +91,7 @@ def test_empty_work_has_no_gaps(tmp_path):
     report = detect_hygiene(work["id"], db)
 
     assert report.findings == []
-    assert report.coverage_pct == 0
+    assert report.coverage["overall"]["completeness"] is None
     assert report.total_chapters == 0
 
 
@@ -321,36 +323,55 @@ def test_gap7_absent_for_distinct_items(tmp_path):
     assert "duplicate_research" not in kinds
 
 
-# ── coverage_pct tests ────────────────────────────────────────────────────────
+# ── coverage estimate tests ───────────────────────────────────────────────────
 
 
-def test_coverage_pct_zero_when_all_uncovered(tmp_path):
-    """All chapters uncovered → coverage_pct = 0."""
+def test_coverage_no_data_without_entity_mentions(tmp_path):
+    """No entity/term mentions → coverage is honestly 'no data', never 0%."""
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Coverage Work")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Ch1", "Ch2"])
+    # 'fact' items are not mention classes — they must not fabricate coverage.
+    _add_knowledge(db, work["id"], "some fact", source_doc_id=doc_id)
 
     report = detect_hygiene(work["id"], db)
-    assert report.coverage_pct == 0
+    assert report.coverage["overall"]["completeness"] is None
+    assert report.coverage["overall"]["band"] == "no_data"
     assert report.total_chapters == 2
 
 
-def test_coverage_pct_hundred_when_all_covered(tmp_path):
-    """All chapters well-covered → coverage_pct = 100."""
+def test_coverage_report_is_upper_bound_with_unseen_count(tmp_path):
+    """Entity mentions → Chao1 report with 'at most' framing + unseen count."""
     _, db = _make_app(tmp_path)
     from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Full Coverage")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Only Chapter"])
-    for i in range(3):
-        _add_knowledge(db, work["id"], f"fact {i}", source_doc_id=doc_id)
+    # 3 entities: "Alpha" twice (doubleton), "Beta" once, "Gamma" once.
+    for subject, times in (("Alpha", 2), ("Beta", 1), ("Gamma", 1)):
+        for i in range(times):
+            db.create_knowledge_item(
+                work_id=work["id"], kind="entity", text=f"{subject} mention {i}",
+                subject=subject, source_doc_id=doc_id,
+            )
 
     report = detect_hygiene(work["id"], db)
-    assert report.coverage_pct == 100
+    cov = report.coverage
+    assert cov["framing"] == "upper_bound"
+    overall = cov["overall"]
+    # S_obs=3, f1=2, f2=1 → Chao1 = 3 + 4/2 = 5, unseen = 2, completeness = 0.6
+    assert overall["s_obs"] == 3
+    assert overall["s_est"] == 5.0
+    assert overall["unseen_est"] == 2.0
+    assert abs(overall["completeness"] - 0.6) < 1e-9
+    assert "At most" in overall["summary"]
+    entity_cls = next(c for c in cov["classes"] if c["class"] == "entity")
+    assert entity_cls["band"] == "under_sampled"
+    assert "entity" in cov["under_sampled_classes"]
 
 
 # ── API endpoint test ─────────────────────────────────────────────────────────
@@ -369,13 +390,15 @@ def test_gaps_endpoint_returns_correct_shape(tmp_path):
 
     data = resp.json()
     assert "gaps" in data
-    assert "coverage_pct" in data
+    assert "coverage" in data
     assert "total_chapters" in data
     assert "suggested_queries" in data
     assert "evaluated_at" in data
 
+    # The self-referential metric is gone — removed, not left alongside.
+    assert "coverage_pct" not in data
     assert data["total_chapters"] == 1
-    assert data["coverage_pct"] == 0
+    assert data["coverage"]["framing"] == "upper_bound"
     assert any(g["kind"] == "uncovered_chapter" for g in data["gaps"])
 
 
