@@ -10,7 +10,7 @@
  * machine proposals happen here and in the Chancery review inbox; the insert
  * path refuses facts that violate the authority rules.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useGdDark } from "@/lib/useGdDark";
 import { toast } from "sonner";
 import {
-  ScrollText, Loader2, Plus, X, ShieldCheck, Landmark, Sparkles, GitBranch, Waves,
+  ScrollText, Loader2, Plus, X, ShieldCheck, Landmark, Sparkles, GitBranch, Waves, PenLine,
 } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -141,13 +141,21 @@ function FactRipple({ fact, fallbackWorkId }: { fact: CanonFact; fallbackWorkId:
   );
 }
 
-function FactCard({ fact, fallbackWorkId }: { fact: CanonFact; fallbackWorkId: string | null }) {
+function FactCard({
+  fact, fallbackWorkId, onRevise, onJumpToFact,
+}: {
+  fact: CanonFact;
+  fallbackWorkId: string | null;
+  onRevise: (fact: CanonFact) => void;
+  onJumpToFact: (factId: string) => void;
+}) {
   const meta = CLASS_META[fact.classification];
   const Icon = meta.icon;
   const dimmed = fact.status !== "active";
   return (
     <div
-      className="border border-l-4 rounded-xl bg-card p-4 space-y-2"
+      id={`fact-${fact.id}`}
+      className="border border-l-4 rounded-xl bg-card p-4 space-y-2 scroll-mt-20"
       style={{ borderLeftColor: meta.style.color as string, opacity: dimmed ? 0.55 : 1 }}
       data-testid={`fact-${fact.id}`}
     >
@@ -167,6 +175,18 @@ function FactCard({ fact, fallbackWorkId }: { fact: CanonFact; fallbackWorkId: s
             </Badge>
           )}
         </div>
+        {fact.status === "active" && (
+          <button
+            type="button"
+            onClick={() => onRevise(fact)}
+            className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-widest text-muted-foreground hover:text-foreground shrink-0"
+            title="Revise this fact — the replacement explicitly supersedes it, keeping the audit trail"
+            data-testid={`fact-revise-${fact.id}`}
+          >
+            <PenLine className="w-3 h-3" style={{ color: "var(--gilt)" }} />
+            Revise
+          </button>
+        )}
       </div>
       <p className="text-sm text-foreground whitespace-pre-wrap break-words">{fact.statement}</p>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -179,7 +199,17 @@ function FactCard({ fact, fallbackWorkId }: { fact: CanonFact; fallbackWorkId: s
             <ShieldCheck className="w-3 h-3" />signed {fact.signed_by}
           </span>
         )}
-        {fact.superseded_by && <span className="font-mono text-[11px]">revised</span>}
+        {fact.superseded_by && (
+          <button
+            type="button"
+            onClick={() => onJumpToFact(fact.superseded_by!)}
+            className="font-mono text-[11px] underline underline-offset-2 hover:text-foreground"
+            title="Jump to the fact that replaced this one"
+            data-testid={`fact-successor-${fact.id}`}
+          >
+            revised → successor
+          </button>
+        )}
       </div>
       {fact.status === "active" && <FactRipple fact={fact} fallbackWorkId={fallbackWorkId} />}
     </div>
@@ -193,6 +223,8 @@ export default function CanonPage() {
   const [classFilter, setClassFilter] = useState<Classification | "all">("all");
   const [showRetired, setShowRetired] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [revising, setRevising] = useState<CanonFact | null>(null);
+  const [jumpTo, setJumpTo] = useState<string | null>(null);
 
   const { data: worksData } = useQuery<{ works: WorkLite[] }>({
     queryKey: ["works-lite"],
@@ -235,6 +267,23 @@ export default function CanonPage() {
   const refresh = () => {
     refetch();
     qc.invalidateQueries({ queryKey: ["canon-counts"] });
+  };
+
+  // Successor navigation: the replacement may sit outside the current
+  // classification filter, so jumping first widens the filter, then scrolls
+  // once the target card is actually in the DOM.
+  useEffect(() => {
+    if (!jumpTo) return;
+    const el = document.getElementById(`fact-${jumpTo}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setJumpTo(null);
+    }
+  }, [jumpTo, facts]);
+
+  const jumpToFact = (factId: string) => {
+    setClassFilter("all"); // a revision may have changed classification
+    setJumpTo(factId);
   };
 
   return (
@@ -293,7 +342,7 @@ export default function CanonPage() {
         <div className="ml-auto">
           <Button size="sm" variant="outline" className="h-8 gap-1.5"
                   style={{ borderColor: "var(--line-2)" }}
-                  onClick={() => setAdding((v) => !v)}
+                  onClick={() => { setRevising(null); setAdding((v) => !v); }}
                   data-testid="canon-add-toggle">
             {adding ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
             {adding ? "Cancel" : "New fact"}
@@ -301,11 +350,22 @@ export default function CanonPage() {
         </div>
       </div>
 
-      {adding && (
+      {adding && !revising && (
         <NewFactForm
           works={works}
           defaultWorkId={workFilter}
           onCreated={() => { setAdding(false); refresh(); }}
+        />
+      )}
+
+      {revising && (
+        <NewFactForm
+          key={revising.id}
+          works={works}
+          defaultWorkId={workFilter}
+          revises={revising}
+          onCancel={() => setRevising(null)}
+          onCreated={() => { setRevising(null); refresh(); }}
         />
       )}
 
@@ -324,7 +384,19 @@ export default function CanonPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {facts.map((f) => <FactCard key={f.id} fact={f} fallbackWorkId={workFilter} />)}
+          {facts.map((f) => (
+            <FactCard
+              key={f.id}
+              fact={f}
+              fallbackWorkId={workFilter}
+              onJumpToFact={jumpToFact}
+              onRevise={(fact) => {
+                setAdding(false);
+                setRevising(fact);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -332,17 +404,26 @@ export default function CanonPage() {
 }
 
 function NewFactForm({
-  works, defaultWorkId, onCreated,
+  works, defaultWorkId, onCreated, revises, onCancel,
 }: {
   works: WorkLite[];
   defaultWorkId: string | null;
   onCreated: () => void;
+  /** Revise mode: the active fact the new one explicitly supersedes.
+   *  Pre-fills the form; scope is locked to the predecessor's (a revision
+   *  changes what a fact SAYS, never where it applies). */
+  revises?: CanonFact;
+  onCancel?: () => void;
 }) {
-  const [statement, setStatement] = useState("");
-  const [classification, setClassification] = useState<Classification>("HISTORICAL");
-  const [sourceRef, setSourceRef] = useState("");
-  const [signedBy, setSignedBy] = useState("");
-  const [workId, setWorkId] = useState<string | "series">(defaultWorkId ?? "series");
+  const [statement, setStatement] = useState(revises?.statement ?? "");
+  const [classification, setClassification] = useState<Classification>(
+    revises?.classification ?? "HISTORICAL"
+  );
+  const [sourceRef, setSourceRef] = useState(revises?.source_ref ?? "");
+  const [signedBy, setSignedBy] = useState(revises?.signed_by ?? "");
+  const [workId, setWorkId] = useState<string | "series">(
+    revises ? (revises.work_id ?? "series") : (defaultWorkId ?? "series")
+  );
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -357,23 +438,48 @@ function NewFactForm({
           source_ref: sourceRef,
           signed_by: signedBy,
           work_id: workId === "series" ? null : workId,
+          ...(revises
+            ? { supersedes: revises.id, parent_ids: revises.parent_ids }
+            : {}),
         }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => null);
-        throw new Error(j?.detail || `Create failed (${r.status})`);
+        throw new Error(j?.detail || `${revises ? "Revise" : "Create"} failed (${r.status})`);
       }
-      toast.success("Fact added to canon");
+      toast.success(revises ? "Fact revised — predecessor marked superseded" : "Fact added to canon");
       onCreated();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Create failed");
+      toast.error(e instanceof Error ? e.message : (revises ? "Revise failed" : "Create failed"));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="border rounded-xl bg-card p-4 space-y-3" style={{ borderColor: "var(--line-2)" }}>
+    <div className="border rounded-xl bg-card p-4 space-y-3"
+         style={{ borderColor: revises ? "var(--gilt-line)" : "var(--line-2)" }}>
+      {revises && (
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-mono uppercase tracking-widest" style={{ color: "var(--gilt)" }}>
+              Revising
+            </span>{" "}
+            — the new fact will explicitly supersede{" "}
+            <span className="font-mono">{revises.id.slice(0, 8)}</span>; the old
+            statement stays in the record as superseded.
+          </p>
+          {onCancel && (
+            <button type="button" onClick={onCancel}
+                    aria-label="Cancel revision"
+                    title="Cancel revision"
+                    className="text-muted-foreground hover:text-foreground shrink-0"
+                    data-testid="revise-cancel">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      )}
       <textarea
         value={statement}
         onChange={(e) => setStatement(e.target.value)}
@@ -389,7 +495,9 @@ function NewFactForm({
           {CLASSIFICATIONS.map((c) => <option key={c} value={c}>{CLASS_META[c].label}</option>)}
         </select>
         <select value={workId} onChange={(e) => setWorkId(e.target.value)}
-                className="h-8 px-2 rounded-md border bg-background text-xs"
+                disabled={!!revises}
+                title={revises ? "A revision keeps its predecessor's scope" : undefined}
+                className="h-8 px-2 rounded-md border bg-background text-xs disabled:opacity-60"
                 style={{ borderColor: "var(--line-2)" }} data-testid="new-fact-work">
           <option value="series">Series-wide</option>
           {works.map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}
@@ -414,8 +522,12 @@ function NewFactForm({
       <div className="flex justify-end">
         <Button size="sm" disabled={saving || !statement.trim()} onClick={submit}
                 data-testid="new-fact-submit">
-          {saving ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : <Plus className="w-3 h-3 mr-1.5" />}
-          Add to canon
+          {saving
+            ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" />
+            : revises
+              ? <PenLine className="w-3 h-3 mr-1.5" />
+              : <Plus className="w-3 h-3 mr-1.5" />}
+          {revises ? "Revise canon" : "Add to canon"}
         </Button>
       </div>
     </div>

@@ -562,8 +562,23 @@ class CanonStore:
             args.append(status)
         q += " ORDER BY created_at DESC LIMIT ?"
         args.append(max(1, min(limit, 5000)))
-        rows = self._db.read_conn().execute(q, args).fetchall()
-        return [_fact_dict(r) for r in rows]
+        conn = self._db.read_conn()
+        facts = [_fact_dict(r) for r in conn.execute(q, args).fetchall()]
+        # Successor links (same field get_fact computes) — batch, not N+1.
+        superseded = [f["id"] for f in facts if f["status"] == "superseded"]
+        successors: dict[str, str] = {}
+        for chunk_start in range(0, len(superseded), 500):
+            chunk = superseded[chunk_start : chunk_start + 500]
+            ph = ",".join("?" * len(chunk))
+            for r in conn.execute(
+                f"SELECT supersedes, id FROM canon_fact "
+                f"WHERE supersedes IN ({ph}) ORDER BY created_at ASC",
+                chunk,
+            ):
+                successors[r["supersedes"]] = r["id"]  # newest wins
+        for f in facts:
+            f["superseded_by"] = successors.get(f["id"])
+        return facts
 
     def counts(self) -> dict:
         rows = (
