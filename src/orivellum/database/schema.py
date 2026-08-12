@@ -4055,4 +4055,90 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON review_finding(dedupe_key, created_at)
     """,
     ),
+    # ── Migration 155: book-to-book handoff contracts and audit ──────────────
+    # handoff_package — versioned End-State Package for a book: what it leaves
+    #   behind (dramatic question, character states, injuries, possessions,
+    #   promises, threads, emotional tone, world state).  author ratification
+    #   gates it before it binds the successor.
+    # opening_contract — versioned Opening Contract for a successor book: what
+    #   its opening scenes acknowledge, change, or deliberately withhold.
+    # handoff_audit — automated comparison run with coverage metadata.
+    # handoff_finding — individual findings (14 types) with grounded evidence
+    #   spans, code-computed severity, and a closed resolution list.
+    (
+        155,
+        "Book-to-book handoff packages, opening contracts, audit runs, findings",
+        """
+        CREATE TABLE IF NOT EXISTS handoff_package (
+            id TEXT PRIMARY KEY,
+            work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            version INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft','ratified','superseded')),
+            payload TEXT NOT NULL DEFAULT '{}',
+            extraction_meta TEXT NOT NULL DEFAULT '{}',
+            author_intent TEXT NOT NULL DEFAULT '',
+            ratified_at TEXT,
+            ratified_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(work_id, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_handoff_package_work
+            ON handoff_package(work_id, version DESC);
+        CREATE TABLE IF NOT EXISTS opening_contract (
+            id TEXT PRIMARY KEY,
+            work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            version INTEGER NOT NULL DEFAULT 1,
+            prior_package_id TEXT REFERENCES handoff_package(id) ON DELETE SET NULL,
+            window_chars INTEGER NOT NULL DEFAULT 0,
+            payload TEXT NOT NULL DEFAULT '{}',
+            extraction_meta TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(work_id, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_opening_contract_work
+            ON opening_contract(work_id, version DESC);
+        CREATE TABLE IF NOT EXISTS handoff_audit (
+            id TEXT PRIMARY KEY,
+            prior_work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            successor_work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            package_id TEXT REFERENCES handoff_package(id) ON DELETE SET NULL,
+            contract_id TEXT REFERENCES opening_contract(id) ON DELETE SET NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','running','done','failed')),
+            coverage TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_handoff_audit_prior
+            ON handoff_audit(prior_work_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_handoff_audit_successor
+            ON handoff_audit(successor_work_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS handoff_finding (
+            id TEXT PRIMARY KEY,
+            audit_id TEXT NOT NULL
+                REFERENCES handoff_audit(id) ON DELETE CASCADE,
+            finding_type TEXT NOT NULL,
+            severity TEXT NOT NULL CHECK (severity IN (
+                'low','medium','high','critical')),
+            subject TEXT NOT NULL DEFAULT '',
+            explanation TEXT NOT NULL,
+            evidence TEXT NOT NULL DEFAULT '[]',
+            insufficient_evidence INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open' CHECK (status IN (
+                'open','accepted','intentional','dismissed')),
+            resolution_note TEXT NOT NULL DEFAULT '',
+            resolved_at TEXT,
+            dedupe_key TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_handoff_finding_dedupe
+            ON handoff_finding(audit_id, dedupe_key);
+        CREATE INDEX IF NOT EXISTS idx_handoff_finding_audit
+            ON handoff_finding(audit_id, severity)
+    """,
+    ),
 ]

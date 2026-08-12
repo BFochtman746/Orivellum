@@ -16,6 +16,7 @@ import WorkDetail from '@/pages/works/detail';
 import WorkIntelligence from '@/pages/works/intelligence';
 import GapOraclePage from '@/pages/works/gap-oracle';
 import ContinuityPage from '@/pages/works/continuity';
+import HandoffPage from '@/pages/works/handoff';
 import SeriesList from '@/pages/series/index';
 import SeriesDetail from '@/pages/series/detail';
 import CollectionsPage from '@/pages/collections/index';
@@ -148,6 +149,7 @@ function RoutedPages() {
         <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>
         <Route path="/works/:workId/gap-oracle">{() => <RouteWithBoundary component={GapOraclePage} />}</Route>
         <Route path="/works/:workId/continuity">{() => <RouteWithBoundary component={ContinuityPage} />}</Route>
+        <Route path="/works/:workId/handoff">{() => <RouteWithBoundary component={HandoffPage} />}</Route>
         <Route path="/series">{() => <RouteWithBoundary component={SeriesList} />}</Route>
         <Route path="/series/:seriesId">{() => <RouteWithBoundary component={SeriesDetail} />}</Route>
         <Route path="/collections">{() => <RouteWithBoundary component={CollectionsPage} />}</Route>

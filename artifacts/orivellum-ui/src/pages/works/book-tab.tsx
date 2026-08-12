@@ -1501,6 +1501,11 @@ function ScopeStrip({ workId }: { workId: string }) {
                     Continuity review
                   </Button>
                 </Link>
+                <Link href={`/works/${workId}/handoff`}>
+                  <Button variant="outline" size="sm" data-testid="button-handoff-contracts">
+                    Handoff contracts
+                  </Button>
+                </Link>
               </>
             ) : (
               <p className="text-muted-foreground">
