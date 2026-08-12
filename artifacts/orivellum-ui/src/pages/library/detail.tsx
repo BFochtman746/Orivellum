@@ -251,6 +251,23 @@ function confidenceTier(pct: number): { label: string; color: string } {
   return               { label: "Low confidence",    color: "var(--rust)" };
 }
 
+/** Human label for the extraction tier that produced the document's text. */
+function extractionMethodLabel(meta: Record<string, any> | null | undefined): string {
+  const method = meta?.extraction_method ?? meta?.ocr_engine ?? meta?.parse_method;
+  if (!method) return "—";
+  const labels: Record<string, string> = {
+    docling: "Docling (layout-aware)",
+    pdfplumber: "pdfplumber",
+    pypdf: "pypdf",
+    vlm_ocr: "AI vision OCR",
+    vlm: "AI vision OCR",
+    markitdown: "markitdown",
+    tesseract: "Tesseract OCR",
+    raw_fallback: "raw text",
+  };
+  return labels[String(method)] ?? String(method);
+}
+
 function ConfidenceBar({ value, source }: { value: number; source?: string }) {
   const pct = Math.round(value * 100);
   const { label, color } = confidenceTier(pct);
@@ -1736,6 +1753,7 @@ export default function DocumentDetail() {
             { label: "Kind",      value: doc.kind ?? "—" },
             { label: "Readiness", value: readiness },
             { label: "Words",     value: doc.word_count ? doc.word_count.toLocaleString() : "—" },
+            { label: "Extraction", value: extractionMethodLabel((doc as any).meta) },
             { label: "Size",      value: (doc as any).size_bytes ? formatBytes((doc as any).size_bytes) : "—" },
             { label: "Imported",  value: doc.created_at ? format(new Date(doc.created_at), "PPP") : "—" },
             { label: "SHA-256",   value: doc.sha256 ?? "—" },

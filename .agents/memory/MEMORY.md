@@ -19,6 +19,7 @@
 - [Orivellum polling patterns](orivellum-polling-patterns.md) — Conditional refetchInterval throughout; docs poll at 4s while "imported"; health polls 10-15s always; dashboard/lists poll 30s always.
 - [Orivellum hardening decisions](orivellum-hardening.md) — Rate limiting, output rotation, streaming timeout, error barriers, connection indicators, model attribution, single-command startup.
 - [Orivellum media capabilities](orivellum-media-capabilities.md) — TTS via espeak-ng+ffmpeg; OCR via tesseract5 (probe needed); PDF 3-tier fallback; DOCX tables extracted; XLSX 5000-row cap.
+- [Docling PDF tier](orivellum-docling.md) — optional first PDF tier; convert() serialized via dedicated lock (pipeline not thread-safe); pipeline meta write merges, never replaces.
 - [Sidebar, cognition, nightshift, progress panel](orivellum-sidebar-cognition.md) — useConnectivity single source of truth; deepMode toggle; schema v40/v41; nightshift daemon; automemory; quiz tab; work files drawer.
 - [Windows compatibility](orivellum-windows-compat.md) — bash/nix probes guarded by sys.platform; tesseract Windows path; espeak error message; disk_usage drive; setup-windows.ps1 + start.ps1 scripts.
 - [Windows pnpm TTY quirk](windows-pnpm-tty.md) — pnpm silently skips launching Vite when stdout is redirected; must open Vite in a new console window (Start-Process without -NoNewWindow/-Redirect).

@@ -48,6 +48,18 @@ class ExtractionResult:
 
 
 def _extract_pdf(path: Path, db=None) -> ExtractionResult:
+    # --- Docling (preferred: layout-aware — multi-column reading order,
+    #     table structure, clean Markdown).  Optional dependency; the tier
+    #     returns None when unavailable/disabled/failed and we fall through. ---
+    try:
+        from orivellum.capabilities.docling_extract import docling_pdf_tier
+
+        docling_result = docling_pdf_tier(path, db=db)
+        if docling_result is not None and docling_result.ok:
+            return docling_result
+    except Exception as exc:  # noqa: BLE001 — Docling must never block extraction
+        logger.warning("Docling tier error on %s: %s — falling through", path.name, exc)
+
     # --- pdfplumber (primary: best for text-layer PDFs) ---
     try:
         import pdfplumber
@@ -73,6 +85,7 @@ def _extract_pdf(path: Path, db=None) -> ExtractionResult:
                 word_count=len(full.split()),
                 pages=pages,
                 headings=headings,
+                meta={"extraction_method": "pdfplumber"},
             )
         logger.info("pdfplumber found no text in %s — trying pypdf", path.name)
     except Exception as exc:
@@ -103,6 +116,7 @@ def _extract_pdf(path: Path, db=None) -> ExtractionResult:
                 word_count=len(full2.split()),
                 pages=pages2,
                 headings=headings2,
+                meta={"extraction_method": "pypdf"},
             )
         logger.info("pypdf also found no text in %s — falling back to markitdown", path.name)
     except Exception as exc:
@@ -417,7 +431,7 @@ def _vlm_pdf_ocr(path: Path, db=None) -> ExtractionResult | None:
             word_count=len(full.split()),
             pages=page_segs,
             headings=page_headings,
-            meta={"ocr_engine": "vlm", "ocr_model": _vision_model},
+            meta={"extraction_method": "vlm_ocr", "ocr_engine": "vlm", "ocr_model": _vision_model},
         )
     except Exception as exc:
         logger.warning("VLM PDF OCR failed on %s: %s", path.name, exc)
@@ -609,6 +623,7 @@ def _extract_fallback(path: Path, kind: str) -> ExtractionResult:
             full_text=text,
             word_count=len(text.split()),
             pages=[PageSegment(page=1, text=text)],
+            meta={"extraction_method": "markitdown"},
         )
     except Exception as exc:
         logger.warning("markitdown fallback failed on %s: %s", path.name, exc)

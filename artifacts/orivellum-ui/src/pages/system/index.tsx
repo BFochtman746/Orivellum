@@ -1617,6 +1617,133 @@ function AudioEnhancementCard() {
   );
 }
 
+// ─── Docling layout-aware PDF extraction card ─────────────────────────────────
+
+type DoclingStatus = {
+  enabled: boolean;
+  installed: boolean;
+  error: string | null;
+  install_hint: string | null;
+};
+
+function useDoclingSetting() {
+  return useQuery({
+    queryKey: ["system", "docling"],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/docling`);
+      if (!r.ok) throw new Error("Failed to fetch Docling setting");
+      return r.json() as Promise<DoclingStatus>;
+    },
+    staleTime: 30_000,
+  });
+}
+
+function useSetDoclingSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const r = await apiFetch(`${API_BASE}/api/system/settings/docling`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) throw new Error("Failed to update Docling setting");
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system", "docling"] });
+      toast.success("Docling setting saved");
+    },
+    onError: () => toast.error("Could not update Docling setting"),
+  });
+}
+
+function useReprobeDocling() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${API_BASE}/api/system/docling/probe`, { method: "POST" });
+      if (!r.ok) throw new Error("Probe request failed");
+      return r.json() as Promise<{ installed: boolean; error: string | null }>;
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["system", "docling"] });
+      if (res.installed) {
+        toast.success("Docling detected — layout-aware PDF parsing is active");
+      } else {
+        toast.error("Docling is still not installed — see the install hint on the card");
+      }
+    },
+    onError: () => toast.error("Could not re-check availability"),
+  });
+}
+
+function DoclingCard() {
+  const { data, isLoading } = useDoclingSetting();
+  const setDocling = useSetDoclingSetting();
+  const reprobe = useReprobeDocling();
+
+  return (
+    <Card className="vellum-card" data-testid="card-docling">
+      <CardContent className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <FileSearch className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--gilt)' }} />
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-medium text-sm">Layout-Aware PDF Parsing (Docling)</h3>
+                {data && (
+                  <Badge
+                    variant={data.installed ? "default" : "secondary"}
+                    className="text-[10px] h-4 px-1.5"
+                  >
+                    {data.installed ? "installed" : "not installed"}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                When installed, complex PDFs — multi-column pages, borderless tables, mixed
+                layouts — are parsed with <span className="font-medium text-foreground">Docling</span>{" "}
+                as the first extraction tier: tables come out as structured Markdown and reading
+                order stays correct. If it is missing or fails, extraction silently falls back to
+                the existing tiers, so nothing breaks by leaving it off.
+              </p>
+              {data && !data.installed && data.install_hint && (
+                <p className="font-mono text-[11px] text-muted-foreground break-all">
+                  Install: {data.install_hint}
+                </p>
+              )}
+              {data && !data.installed && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs mt-1"
+                  disabled={reprobe.isPending}
+                  onClick={() => reprobe.mutate()}
+                  data-testid="button-docling-probe"
+                >
+                  {reprobe.isPending && <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />}
+                  Check again
+                </Button>
+              )}
+            </div>
+          </div>
+          {isLoading ? (
+            <Skeleton className="w-10 h-5 rounded-full" />
+          ) : (
+            <Switch
+              checked={data?.enabled ?? true}
+              disabled={setDocling.isPending}
+              onCheckedChange={(v) => setDocling.mutate(v)}
+              data-testid="switch-docling"
+            />
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Cross-encoder Reranker card ──────────────────────────────────────────────
 
 type RerankerStatus = {
@@ -2847,6 +2974,9 @@ export default function System() {
 
       {/* Audio Enhancement (DeepFilterNet3) */}
       <AudioEnhancementCard />
+
+      {/* Layout-aware PDF parsing (Docling) */}
+      <DoclingCard />
 
       {/* Browser alerts (document / audiobook ready notifications) */}
       <BrowserAlertsCard />

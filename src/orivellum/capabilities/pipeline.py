@@ -617,15 +617,28 @@ def _process_document_reserved(
             db.update_document_extracted(doc_id, "", 0, readiness="no_text", error_message=msg)
             return
 
-        # Store ZIP manifest / extractor meta so the UI can show per-member status
+        # Store extractor meta (extraction_method provenance, ZIP manifest, …)
+        # so the UI can show where the text came from.  MERGED into existing
+        # meta — never a wholesale replace — so keys written at import time
+        # (from_zip, zip_folder, shield findings) survive re-extraction.
         if result.meta:
             try:
                 import json as _json
 
                 with db._lock:
+                    _row = db._conn.execute(
+                        "SELECT meta FROM documents WHERE id=?", (doc_id,)
+                    ).fetchone()
+                    try:
+                        _existing = _json.loads(_row["meta"]) if _row and _row["meta"] else {}
+                        if not isinstance(_existing, dict):
+                            _existing = {}
+                    except Exception:
+                        _existing = {}
+                    _existing.update(result.meta)
                     db._conn.execute(
                         "UPDATE documents SET meta=? WHERE id=?",
-                        (_json.dumps(result.meta), doc_id),
+                        (_json.dumps(_existing), doc_id),
                     )
                     db._conn.commit()
                 db.audit(

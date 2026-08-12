@@ -823,6 +823,59 @@ def set_audio_enhance_setting(body: AudioEnhanceUpdate):
     return {"enabled": body.enabled, "ok": True, "installed": installed}
 
 
+@router.get("/system/settings/docling")
+def get_docling_setting():
+    """Return Docling availability and whether the layout-aware PDF tier is enabled.
+
+    The tier defaults to ENABLED — installing the optional package is the only
+    setup step.  ``enabled`` reflects the user setting; ``installed`` whether
+    the package is importable right now.
+    """
+    db = get_db()
+    enabled = db.get_setting("docling_enabled", "true").lower() == "true"
+    from orivellum.capabilities.docling_extract import probe as _docling_probe
+
+    pr = _docling_probe(force=False)
+    return {
+        "enabled": enabled,
+        "installed": pr["available"],
+        "error": pr["error"],
+        "install_hint": pr["install_hint"],
+        "model": "Docling",
+    }
+
+
+@router.post("/system/docling/probe")
+def probe_docling():
+    """Re-probe Docling availability — no server restart needed after install."""
+    from orivellum.capabilities.docling_extract import probe as _docling_probe
+
+    pr = _docling_probe(force=True)
+    return {
+        "installed": pr["available"],
+        "error": pr["error"],
+        "install_hint": pr["install_hint"],
+        "model": "Docling",
+    }
+
+
+class DoclingUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/system/settings/docling")
+def set_docling_setting(body: DoclingUpdate):
+    """Enable or disable the Docling layout-aware PDF extraction tier."""
+    db = get_db()
+    db.set_setting("docling_enabled", "true" if body.enabled else "false", actor="user")
+    installed = None
+    if body.enabled:
+        from orivellum.capabilities.docling_extract import probe as _docling_probe
+
+        installed = _docling_probe(force=False)["available"]
+    return {"enabled": body.enabled, "ok": True, "installed": installed}
+
+
 @router.get("/system/settings/ai-extraction")
 def get_ai_extraction_setting():
     """Return whether LLM-powered knowledge extraction is enabled."""
