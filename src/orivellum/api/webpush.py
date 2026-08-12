@@ -31,6 +31,67 @@ def _b64u(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
+_MAX_ENDPOINT_LEN = 1024
+_MAX_KEY_LEN = 512
+
+
+def validate_subscription(endpoint: str, p256dh: str, auth: str) -> str | None:
+    """Return an error string when the subscription is not acceptable.
+
+    The server performs outbound requests to the stored endpoint, so an
+    unvalidated endpoint is an SSRF primitive: require HTTPS, no embedded
+    credentials, and a host that resolves only to global addresses (Web Push
+    provider endpoints are always public HTTPS URLs).  Resolution happens at
+    subscribe time; a later re-resolve to a private address (DNS rebinding)
+    would only reach pywebpush's HTTP client, which never returns response
+    bodies to the subscriber.
+    """
+    from urllib.parse import urlsplit
+
+    if len(endpoint) > _MAX_ENDPOINT_LEN:
+        return "endpoint URL too long"
+    if len(p256dh) > _MAX_KEY_LEN or len(auth) > _MAX_KEY_LEN:
+        return "subscription keys too long"
+    try:
+        parts = urlsplit(endpoint)
+    except ValueError:
+        return "malformed endpoint URL"
+    if parts.scheme != "https":
+        return "Web Push endpoints must use https"
+    if parts.username or parts.password:
+        return "endpoint must not embed credentials"
+    host = parts.hostname
+    if not host:
+        return "endpoint has no host"
+    return _resolve_check(host, parts.port or 443)
+
+
+def _resolve_check(host: str, port: int) -> str | None:
+    """Resolve *host* and refuse anything that is not a global address."""
+    import ipaddress
+    import socket
+
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return "endpoint host does not resolve"
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return "endpoint resolves to an invalid address"
+        if (
+            addr.is_loopback
+            or addr.is_private
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+            or addr.is_unspecified
+        ):
+            return "endpoint resolves to a private or local address"
+    return None
+
+
 def ensure_vapid_keys(db: OrivellumDB) -> str:
     """Return the public key (base64url, uncompressed point), creating keys once."""
     pub = db.get_setting(_PUB_KEY, "")

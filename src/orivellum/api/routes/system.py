@@ -71,6 +71,11 @@ def push_subscribe(body: PushSubscriptionBody):
     auth = body.keys.get("auth", "")
     if not body.endpoint or not p256dh or not auth:
         raise HTTPException(422, "Subscription must include endpoint and p256dh/auth keys")
+    from orivellum.api import webpush
+
+    err = webpush.validate_subscription(body.endpoint, p256dh, auth)
+    if err:
+        raise HTTPException(422, f"Rejected push subscription: {err}")
     db = get_db()
     db.save_push_subscription(body.endpoint, p256dh, auth)
     return {"ok": True, "subscription_count": len(db.list_push_subscriptions())}

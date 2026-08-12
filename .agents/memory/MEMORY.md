@@ -125,4 +125,7 @@
 - [Security test floor](orivellum-security-floor.md) — floor + zero-caller CI rules with shrink-only dated allowlists; bare _set_setting never commits — use set_setting_unaudited for secret settings.
 - [Work proposals & ratification](orivellum-work-proposals.md) — Works only via signed ratification; claim+side effects in one db.atomic(); snapshot row post-claim; conditional-UPDATE re-points; bump chunk cache post-commit.
 - [RE-PROJECTION quarantine & re-harvest](orivellum-reprojection.md) — quarantined_reprojection must be excluded at EVERY scattered raw-SQL read; closed ontologies discard, never coerce; token-fenced run claims; atomic pilot CAS.
+- [Capability gate](orivellum-capability-gate.md) — walk mounted APIRoutes (include_router wraps), shrink-only unproven baseline, verb-aware UI evidence.
+- [iPhone continuity core](orivellum-continuity-core.md) — durable outbox exactly-once via client_msg_id; requeue orphaned "sending" ops; journal pump decoupled from HTTP tail; partial-index ON CONFLICT needs WHERE.
+- [E2E navigation reality](orivellum-e2e-nav.md) — dev SPA serves at ROOT (proxy strips base); e2e helpers' sidebar NAV_MAP + BASE_PATH are stale post-shell-redesign; navigate via pushState from root.
 - [Promotion gate & lifecycle provenance](orivellum-promotion-gate.md) — Promote-to-Book gate lives inside create_book_pipeline(require_ready=True) under the lock; lifecycle actor is explicit; dedup guards re-check inside db.atomic().

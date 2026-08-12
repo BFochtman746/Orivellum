@@ -217,6 +217,68 @@ class TestPump:
         )
         assert text == "part1part2"
 
+    def test_closed_tail_does_not_accumulate_frames(self, db):
+        """A dead tail must never retain the generation in RAM: after the tail
+        closes, the relay detaches and drops every subsequent frame."""
+        from orivellum.api import genjournal
+
+        conv = db.create_conversation(title="c")
+        n_frames = genjournal._RELAY_MAXSIZE * 3
+
+        async def fake_gen():
+            for i in range(n_frames):
+                yield _sse({"token": f"t{i}"})
+                if i % 100 == 0:
+                    await asyncio.sleep(0)  # let the tail run
+            yield "data: [DONE]\n\n"
+
+        async def run():
+            tail = genjournal.wrap(db, conv["id"], fake_gen())
+            frames = await _collect(tail, limit=2)  # job_id + first token
+            job_id = json.loads(frames[0][len("data: "):])["job_id"]
+            relay = None
+            # Grab the relay from the running pump task's frame locals.
+            task = genjournal._TASKS[job_id]
+            relay = task.get_coro().cr_frame.f_locals["relay"]
+            await tail.aclose()  # client disconnects
+            assert relay.attached is False  # tail close detaches immediately
+            for _ in range(200):
+                if db.get_gen_job(job_id)["state"] != "running":
+                    break
+                await asyncio.sleep(0.02)
+            return job_id, relay
+
+        job_id, relay = asyncio.run(run())
+        assert db.get_gen_job(job_id)["state"] == "done"
+        # Detached relay holds at most the EOF sentinel — never the stream.
+        assert relay.qsize() <= 1
+
+    def test_relay_overflow_detaches_instead_of_growing(self, db):
+        """A tail that stops reading (suspended phone) must not buffer the
+        whole generation: the relay caps at maxsize, then detaches."""
+        from orivellum.api.genjournal import _EOF, _Relay
+
+        async def run():
+            relay = _Relay(maxsize=8)
+            for i in range(100):
+                relay.push(f"frame{i}")
+            assert relay.attached is False
+            assert relay.qsize() <= 8
+            # A late-waking tail terminates: EOF is reachable.
+            seen = []
+            for _ in range(8):
+                item = await relay.get()
+                if item is _EOF:
+                    break
+                seen.append(item)
+            else:
+                raise AssertionError("EOF never reached after detach")
+            # Frames pushed after detach are dropped silently.
+            relay.push("late")
+            assert relay.qsize() == 0
+
+        asyncio.run(run())
+
     def test_generator_exception_journals_failed(self, db):
         from orivellum.api import genjournal
 
@@ -313,7 +375,16 @@ class TestPushEndpoints:
             data["vapid_public_key"]
         )
 
-    def test_subscribe_unsubscribe_roundtrip(self, db, client):
+    def test_subscribe_unsubscribe_roundtrip(self, db, client, monkeypatch):
+        import socket
+
+        # Pretend the endpoint host resolves publicly — the SSRF validator
+        # itself is exercised by test_subscribe_rejects_ssrf_endpoints.
+        monkeypatch.setattr(
+            socket,
+            "getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
+        )
         sub = {
             "endpoint": "https://push.example/ep1",
             "keys": {"p256dh": "pk", "auth": "ak"},
@@ -331,6 +402,37 @@ class TestPushEndpoints:
         )
         assert r.json()["removed"] is True
         assert db.list_push_subscriptions() == []
+
+    def test_subscribe_rejects_ssrf_endpoints(self, db, client):
+        """The server sends outbound requests to stored endpoints — private,
+        non-HTTPS, or credentialed targets must be refused at intake."""
+        keys = {"p256dh": "k", "auth": "a"}
+        bad = [
+            "http://push.example.com/x",              # not https
+            "https://127.0.0.1/x",                    # loopback
+            "https://localhost/x",                    # resolves to loopback
+            "https://10.0.0.5/x",                     # RFC-1918
+            "https://192.168.1.10:9000/x",            # RFC-1918 with port
+            "https://user:pw@push.example.com/x",     # embedded credentials
+            "https://push.example.com/" + "a" * 1100,  # oversized URL
+        ]
+        for endpoint in bad:
+            r = client.post(
+                "/api/system/push/subscribe",
+                json={"endpoint": endpoint, "keys": keys},
+            )
+            assert r.status_code == 422, f"accepted {endpoint!r}"
+        assert db.list_push_subscriptions() == []
+
+    def test_subscribe_rejects_oversized_keys(self, db, client):
+        r = client.post(
+            "/api/system/push/subscribe",
+            json={
+                "endpoint": "https://push.example.com/x",
+                "keys": {"p256dh": "k" * 600, "auth": "a"},
+            },
+        )
+        assert r.status_code == 422
 
     def test_subscribe_rejects_incomplete_payload(self, db, client):
         r = client.post(

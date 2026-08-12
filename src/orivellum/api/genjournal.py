@@ -45,6 +45,51 @@ _FLUSH_SECONDS = 1.0
 # Sentinel pushed to the relay queue when the job is over.
 _EOF = None
 
+# Live relay bound: enough for bursty token streams to a healthy client, but
+# small enough that an abandoned tail cannot hold a whole generation in RAM.
+_RELAY_MAXSIZE = 512
+
+
+class _Relay:
+    """Bounded live channel between the pump and the HTTP tail.
+
+    The journal is the durable recovery path — the relay only serves the
+    token-level latency of a *connected* client.  When the tail is gone or too
+    slow (queue full), the relay detaches: frames are dropped from then on and
+    an EOF is left in the queue so a late-waking tail terminates instead of
+    blocking forever.  Detaching never affects the pump or the journal.
+    """
+
+    def __init__(self, maxsize: int = _RELAY_MAXSIZE) -> None:
+        self._q: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
+        self.attached = True
+
+    def push(self, frame: str | None) -> None:
+        if not self.attached:
+            return
+        try:
+            self._q.put_nowait(frame)
+        except asyncio.QueueFull:
+            # Tail stopped reading (suspended phone, dead connection).
+            self.detach()
+
+    def detach(self) -> None:
+        """Stop relaying and guarantee the tail sees an EOF."""
+        if not self.attached:
+            return
+        self.attached = False
+        if self._q.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._q.get_nowait()
+        with contextlib.suppress(asyncio.QueueFull):
+            self._q.put_nowait(_EOF)
+
+    def qsize(self) -> int:
+        return self._q.qsize()
+
+    async def get(self) -> str | None:
+        return await self._q.get()
+
 
 class _Coalescer:
     """Buffers token/thinking text into periodic journal chunk events."""
@@ -122,7 +167,7 @@ async def _pump(
     db: OrivellumDB,
     job_id: str,
     gen: AsyncGenerator[str],
-    relay: asyncio.Queue,
+    relay: _Relay,
 ) -> None:
     """Drain the generator to completion, journalling + relaying every frame.
 
@@ -135,7 +180,7 @@ async def _pump(
     try:
         async for frame in gen:
             # Relay first — live clients get token-level latency.
-            relay.put_nowait(frame)
+            relay.push(frame)
             if _journal_frame(db, job_id, coalescer, frame):
                 state = "done"
     except asyncio.CancelledError:
@@ -157,7 +202,7 @@ async def _pump(
                 db.finish_gen_job(job_id, "done")
             else:
                 db.finish_gen_job(job_id, "failed")
-        relay.put_nowait(_EOF)
+        relay.detach()
         _TASKS.pop(job_id, None)
 
 
@@ -175,12 +220,18 @@ async def wrap(
     disconnect closes only this tail — the pump keeps running to completion.
     """
     job_id = db.create_gen_job(conversation_id, client_msg_id=client_msg_id)
-    relay: asyncio.Queue = asyncio.Queue()
+    relay = _Relay()
     task = asyncio.get_running_loop().create_task(_pump(db, job_id, gen, relay))
     _TASKS[job_id] = task
-    yield f"data: {json.dumps({'job_id': job_id})}\n\n"
-    while True:
-        frame = await relay.get()
-        if frame is _EOF:
-            return
-        yield frame
+    try:
+        yield f"data: {json.dumps({'job_id': job_id})}\n\n"
+        while True:
+            frame = await relay.get()
+            if frame is _EOF:
+                return
+            yield frame
+    finally:
+        # Tail closed (client disconnect / iOS suspension): detach so the pump
+        # stops queueing frames nobody will read.  The pump itself keeps
+        # running to completion — recovery happens via the journal.
+        relay.detach()
