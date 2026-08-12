@@ -991,11 +991,17 @@ def _resolve_work_proposal(db, item_id: str, body: ResolveBody) -> dict:
             raise HTTPException(409, "Work proposal was already resolved")
         return {"ok": True, "decision": "reject"}
 
-    # ── Approve: claim + all side effects in ONE transaction ───────────────
-    # The claim, Work creation, member re-points, provenance, and finalize
-    # commit together or not at all.  Any failure rolls the whole thing back,
-    # so there is never a ratified proposal with an orphaned Work or a
-    # half-assigned membership — the author simply retries.
+    return _ratify_work_proposal(db, item_id, author, domain)
+
+
+def _ratify_work_proposal(db, item_id: str, author: str, domain: str) -> dict:
+    """Approve path: claim + all side effects in ONE transaction.
+
+    The claim, Work creation, member re-points, provenance, and finalize
+    commit together or not at all.  Any failure rolls the whole thing back,
+    so there is never a ratified proposal with an orphaned Work or a
+    half-assigned membership — the author simply retries.
+    """
     try:
         with db.atomic():
             if not db.claim_work_proposal(item_id, "ratified", author):
@@ -1010,6 +1016,14 @@ def _resolve_work_proposal(db, item_id: str, body: ResolveBody) -> dict:
             result = _apply_work_proposal_approval(db, item_id, proposal, author, domain)
     except _ProposalAlreadyResolved:
         raise HTTPException(409, "Work proposal was already resolved") from None
+    except _ProposalObsolete:
+        # Rollback already reverted the claim — the proposal stays queued and
+        # the next generation pass will refresh or supersede it.
+        raise HTTPException(
+            409,
+            "No proposed member is still eligible — the proposal is stale; "
+            "re-run subject scanning to refresh it",
+        ) from None
     except HTTPException:
         raise
     except Exception as exc:
@@ -1033,6 +1047,12 @@ def _resolve_work_proposal(db, item_id: str, body: ResolveBody) -> dict:
 
 class _ProposalAlreadyResolved(Exception):
     """Internal sentinel: the atomic claim lost the race (rolls back the txn)."""
+
+
+class _ProposalObsolete(Exception):
+    """Internal sentinel: every proposed member became ineligible since
+    generation — creating an empty Work would violate the subject intent, so
+    the whole transaction (claim included) rolls back."""
 
 
 def _apply_work_proposal_approval(
@@ -1066,6 +1086,10 @@ def _apply_work_proposal_approval(
         linked += 1
         if cid:
             collection_counts[cid] = collection_counts.get(cid, 0) + 1
+    if linked == 0:
+        # Every proposed member became ineligible since generation — never
+        # finalize an empty Work (raising rolls back the claim + Work).
+        raise _ProposalObsolete
     for cid, count in collection_counts.items():
         db.add_work_collection(work["id"], cid, count)
     db.finalize_work_proposal(item_id, work["id"], domain)

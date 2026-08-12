@@ -436,6 +436,60 @@ def test_generate_endpoint_feeds_review_queue(db, client):
     assert sum(1 for i in q.json()["items"] if i["item_type"] == "work_proposal") == 2
 
 
+def test_ratify_never_creates_empty_work(db, client):
+    """If EVERY proposed member became ineligible since generation, ratifying
+    must not create an empty Work — the whole transaction rolls back and the
+    proposal stays queued (409)."""
+    quantum, _b = _seed_two_subjects(db)
+    generate_work_proposals(db)
+    props = db.list_work_proposals()
+    target = next(p for p in props if set(p["member_doc_ids"]) == set(sorted(quantum)))
+    other = db.create_work("Claimed elsewhere")
+    for did in quantum:
+        assert db.update_document_work(did, other["id"])
+    r = _resolve(client, target["id"], decision="approve", author="Brian", domain="technical")
+    assert r.status_code == 409
+    # no empty Work created; proposal still queued; members keep their owner
+    assert [w["id"] for w in db.list_works()] == [other["id"]]
+    assert db.get_work_proposal(target["id"])["status"] == "proposed"
+    for did in quantum:
+        assert db.get_document(did)["work_id"] == other["id"]
+
+
+def test_merge_never_fuses_same_collection_clusters_transitively(db):
+    """Bridge case: clusters A(coll1), B(coll2), C(coll1) all mutually
+    centroid-close.  B may merge with ONE of them, but A and C must never end
+    up in the same component — that would re-fuse a within-collection split."""
+    import numpy as np
+
+    from orivellum.capabilities.work_proposals import _merge_across_collections
+
+    def unit(v):
+        a = np.array(v, dtype=np.float32)
+        return a / np.linalg.norm(a)
+
+    # All three pairwise similarities are >= 0.95 (> _MERGE_THRESHOLD)
+    embs = {}
+    docs = {}
+    clusters = []
+    for name, coll, vec in (
+        ("a", "coll1", (1.0, 0.0, 0.0)),
+        ("b", "coll2", (0.98, 0.2, 0.0)),
+        ("c", "coll1", (0.92, 0.39, 0.0)),
+    ):
+        members = [f"{name}{i}" for i in range(3)]
+        for m in members:
+            embs[m] = unit(vec)
+            docs[m] = {"collection_id": coll}
+        clusters.append(members)
+
+    merged = _merge_across_collections(clusters, embs, docs)
+    a_set, c_set = set(clusters[0]), set(clusters[2])
+    for comp in merged:
+        s = set(comp)
+        assert not (s & a_set and s & c_set), "same-collection clusters fused transitively"
+
+
 def test_rerun_after_ratification_does_not_clobber(db, client):
     quantum, _b = _seed_two_subjects(db)
     generate_work_proposals(db)

@@ -143,6 +143,12 @@ def _merge_across_collections(
     # Within-collection clusters are pure — one origin collection each.
     origins = [docs[c[0]].get("collection_id") or "__none__" for c in clusters]
     parent = list(range(len(clusters)))
+    # Invariant: a merged component holds AT MOST ONE cluster per source
+    # collection.  A pairwise same-collection check is not enough — union-find
+    # would still let two same-collection clusters meet transitively through a
+    # bridge cluster from a third collection, re-fusing a within-collection
+    # split into one overbroad subject.
+    comp_origins: dict[int, set[str]] = {i: {origins[i]} for i in range(len(clusters))}
 
     def find(i: int) -> int:
         while parent[i] != i:
@@ -152,12 +158,14 @@ def _merge_across_collections(
 
     for i in range(len(clusters)):
         for j in range(i + 1, len(clusters)):
-            if origins[i] == origins[j]:
-                continue  # cross-collection merges only
             if float(np.dot(centroids[i], centroids[j])) >= _MERGE_THRESHOLD:
                 ri, rj = find(i), find(j)
-                if ri != rj:
-                    parent[rj] = ri
+                if ri == rj:
+                    continue
+                if comp_origins[ri] & comp_origins[rj]:
+                    continue  # would place two same-collection clusters together
+                parent[rj] = ri
+                comp_origins[ri] |= comp_origins.pop(rj)
 
     merged: dict[int, list[str]] = defaultdict(list)
     for i, members in enumerate(clusters):
