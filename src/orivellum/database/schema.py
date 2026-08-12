@@ -4141,4 +4141,105 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON handoff_finding(audit_id, severity)
     """,
     ),
+    # v156 — Scene-level pacing & immersion engine
+    (
+        156,
+        "Scene model, metrics, pacing runs and findings, profiles",
+        """
+        CREATE TABLE IF NOT EXISTS scenes (
+            id                   TEXT PRIMARY KEY,
+            chapter_id           TEXT NOT NULL REFERENCES book_chapters(id) ON DELETE CASCADE,
+            work_id              TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            seq                  INTEGER NOT NULL DEFAULT 0,
+            title                TEXT,
+            source_offset_start  INTEGER,
+            source_offset_end    INTEGER,
+            word_count           INTEGER NOT NULL DEFAULT 0,
+            purpose              TEXT,
+            pov                  TEXT,
+            setting              TEXT,
+            time_elapsed_mins    INTEGER,
+            status               TEXT NOT NULL DEFAULT 'proposed'
+                CHECK (status IN ('proposed','confirmed','dismissed')),
+            meta                 TEXT NOT NULL DEFAULT '{}',
+            created_at           TEXT NOT NULL,
+            updated_at           TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS scenes_chapter ON scenes(chapter_id);
+        CREATE INDEX IF NOT EXISTS scenes_work    ON scenes(work_id);
+        CREATE INDEX IF NOT EXISTS scenes_work_seq ON scenes(work_id, seq);
+
+        CREATE TABLE IF NOT EXISTS scene_metrics (
+            id                      TEXT PRIMARY KEY,
+            scene_id                TEXT NOT NULL REFERENCES scenes(id) ON DELETE CASCADE,
+            work_id                 TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            version                 INTEGER NOT NULL DEFAULT 1,
+            tension_before          REAL,
+            tension_after           REAL,
+            emotional_intensity     REAL,
+            revelation_density      REAL,
+            action_ratio            REAL,
+            reflection_ratio        REAL,
+            sensory_grounding       REAL,
+            has_aftermath           INTEGER NOT NULL DEFAULT 0,
+            has_orientation         INTEGER NOT NULL DEFAULT 0,
+            irreversible_turns      INTEGER NOT NULL DEFAULT 0,
+            reader_questions_created  INTEGER NOT NULL DEFAULT 0,
+            reader_questions_answered INTEGER NOT NULL DEFAULT 0,
+            consequence_present     INTEGER NOT NULL DEFAULT 0,
+            purpose_clear           INTEGER NOT NULL DEFAULT 0,
+            evidence                TEXT NOT NULL DEFAULT '[]',
+            model_output            TEXT NOT NULL DEFAULT '{}',
+            created_at              TEXT NOT NULL,
+            UNIQUE(scene_id, version)
+        );
+        CREATE INDEX IF NOT EXISTS sm_scene ON scene_metrics(scene_id);
+        CREATE INDEX IF NOT EXISTS sm_work  ON scene_metrics(work_id);
+
+        CREATE TABLE IF NOT EXISTS pacing_profiles (
+            id           TEXT PRIMARY KEY,
+            work_id      TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE UNIQUE,
+            profile_name TEXT NOT NULL DEFAULT 'deep_immersive',
+            thresholds   TEXT NOT NULL DEFAULT '{}',
+            updated_at   TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS pacing_runs (
+            id           TEXT PRIMARY KEY,
+            work_id      TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            profile_name TEXT NOT NULL DEFAULT 'deep_immersive',
+            status       TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','running','done','failed')),
+            coverage     TEXT NOT NULL DEFAULT '{}',
+            error        TEXT,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS pr_work   ON pacing_runs(work_id);
+        CREATE INDEX IF NOT EXISTS pr_status ON pacing_runs(status);
+
+        CREATE TABLE IF NOT EXISTS pacing_findings (
+            id              TEXT PRIMARY KEY,
+            run_id          TEXT NOT NULL REFERENCES pacing_runs(id) ON DELETE CASCADE,
+            work_id         TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            detector        TEXT NOT NULL,
+            finding_type    TEXT NOT NULL,
+            severity        TEXT NOT NULL
+                CHECK (severity IN ('low','medium','high','critical')),
+            subject         TEXT NOT NULL DEFAULT '',
+            explanation     TEXT NOT NULL,
+            evidence        TEXT NOT NULL DEFAULT '[]',
+            recommendation  TEXT NOT NULL DEFAULT '{}',
+            status          TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open','accepted','intentional','dismissed')),
+            resolution_note TEXT NOT NULL DEFAULT '',
+            resolved_at     TEXT,
+            dedupe_key      TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            UNIQUE(run_id, dedupe_key)
+        );
+        CREATE INDEX IF NOT EXISTS pf_run  ON pacing_findings(run_id);
+        CREATE INDEX IF NOT EXISTS pf_work ON pacing_findings(work_id);
+    """,
+    ),
 ]

@@ -1506,6 +1506,11 @@ function ScopeStrip({ workId }: { workId: string }) {
                     Handoff contracts
                   </Button>
                 </Link>
+                <Link href={`/works/${workId}/pacing`}>
+                  <Button variant="outline" size="sm" data-testid="button-pacing-immersion">
+                    Pacing & immersion
+                  </Button>
+                </Link>
               </>
             ) : (
               <p className="text-muted-foreground">

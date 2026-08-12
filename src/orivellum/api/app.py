@@ -710,6 +710,7 @@ def create_app() -> FastAPI:
         projects,
         reharvest,
         handoff,
+        pacing,
         review,
         review_runs,
         series,
@@ -768,6 +769,7 @@ def create_app() -> FastAPI:
         reharvest,
         review_runs,
         handoff,
+        pacing,
     ]
     for module in _route_modules:
         app.include_router(module.router)
