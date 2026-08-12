@@ -1201,8 +1201,26 @@ function AudiobookTab({
   const [vsAbSegsDone, setVsAbSegsDone] = useState(0);
   const [vsAbSegsTotal, setVsAbSegsTotal] = useState(0);
   const [vsAbCachedSegs, setVsAbCachedSegs] = useState(0);
-  const vsAbJobIdRef = useRef<string | null>(null);
-  const vsAbPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Single-poller lifecycle for the document render job — same tracker class
+  // as Work renders (single timer, no-op re-attach, stale in-flight responses
+  // discarded). Handlers are re-bound on every render below.
+  const docTrackerHandlers = useRef<{
+    onAttach: (jobId: string, snap: WorkRenderSnapshot) => void;
+    onProgress: (status: WorkRenderStatus) => void;
+    onTerminal: (jobId: string, status: WorkRenderStatus) => void;
+    onGone: (jobId: string) => void;
+  }>(null!);
+  const docTrackerRef = useRef<WorkRenderTracker | null>(null);
+  if (!docTrackerRef.current) {
+    docTrackerRef.current = new WorkRenderTracker({
+      fetchStatus: id => apiFetch(`${BASE}/studio/tts/document/${id}/status`),
+      onAttach: (id, snap) => docTrackerHandlers.current.onAttach(id, snap),
+      onProgress: s => docTrackerHandlers.current.onProgress(s),
+      onTerminal: (id, s) => docTrackerHandlers.current.onTerminal(id, s),
+      onGone: id => docTrackerHandlers.current.onGone(id),
+    });
+  }
+  const docTracker = docTrackerRef.current;
   // What the segment cache already holds for the selected document + settings —
   // drives the document-mode "Resume" affordance (mirrors resumeInfo for Works).
   type DocResumeInfo = { total_segments: number; cached_segments: number; resumable: boolean };
@@ -1535,9 +1553,8 @@ function AudiobookTab({
   // re-attaches live progress.
   useEffect(() => {
     return () => {
-      if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
+      docTracker.detach();
       workTracker.detach();
-      vsAbJobIdRef.current = null;
     };
   }, []);
 
@@ -1563,10 +1580,10 @@ function AudiobookTab({
   // for the TTS engine, and finished segments stay cached so a later
   // Generate resumes instead of starting over.
   useEffect(() => {
-    if (vsAbJobIdRef.current) {
-      if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
-      apiFetch(`${BASE}/studio/tts/document/${vsAbJobIdRef.current}`, { method: "DELETE" }).catch(() => {});
-      vsAbJobIdRef.current = null;
+    const oldJobId = docTracker.currentJobId;
+    if (oldJobId) {
+      docTracker.detach();
+      apiFetch(`${BASE}/studio/tts/document/${oldJobId}`, { method: "DELETE" }).catch(() => {});
       setVsAbJobId(null);
       setLoading(false);
       toast("Stopped the previous document's render — finished parts are saved for resume.");
@@ -1665,6 +1682,42 @@ function AudiobookTab({
     },
   };
 
+  // Re-bind the document tracker's handlers on every render too, so they
+  // close over the current docs list / docId.
+  docTrackerHandlers.current = {
+    onAttach: (job_id, snap) => {
+      setVsAbJobId(job_id);
+      setVsAbSegsTotal(snap.total_segments ?? 0);
+      setVsAbSegsDone(snap.segments_done ?? 0);
+      setVsAbCachedSegs(snap.cached_segments ?? 0);
+      setLoading(true); // stays true while polling
+    },
+    onProgress: status => {
+      setVsAbSegsDone(status.segments_done ?? 0);
+      setVsAbCachedSegs(status.cached_segments ?? 0);
+    },
+    onTerminal: (_job_id, status) => {
+      setVsAbJobId(null);
+      setLoading(false);
+      if (status.state === "done") {
+        const mp3Path = (status as WorkRenderStatus & { mp3_path?: string }).mp3_path ?? "";
+        const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(mp3Path)}`;
+        setAudioUrl(serveUrl);
+        setAudioName(`${docs.find((d: any) => d.id === docId)?.title ?? "audiobook"}.mp3`);
+        toast.success("Audiobook ready — tap play below");
+      } else if (status.state === "failed") {
+        toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
+      } else {
+        toast("Generation stopped — finished parts are saved. Generate again to resume.");
+      }
+    },
+    onGone: () => {
+      setVsAbJobId(null);
+      setLoading(false);
+      toast.error("Server restarted — audiobook job was lost. Please try again.");
+    },
+  };
+
   // Point the progress UI at a work render job (freshly started or
   // rediscovered) and begin polling it. Exactly one poller may exist:
   // re-attaching to the job we're already polling is a no-op, and any older
@@ -1713,7 +1766,7 @@ function AudiobookTab({
         const data = await r.json();
         if (cancelled) return;
         const mine = (data.jobs ?? []).find((j: any) => j.doc_id === docId);
-        if (mine && !vsAbJobIdRef.current) {
+        if (mine && !docTracker.currentJobId) {
           attachDocJob(mine.job_id, mine);
           toast.info("Reconnected to the render already running for this document");
         }
@@ -1825,66 +1878,17 @@ function AudiobookTab({
 
   // Point the progress UI at a document render job (freshly started or
   // rediscovered via /studio/tts/document/active) and begin polling it.
-  // Clears any older interval first so a discovery/Generate race can never
-  // leave two timers polling.
-  function attachDocJob(
-    job_id: string,
-    snap?: { segments_done?: number; total_segments?: number; cached_segments?: number },
-  ) {
-    if (vsAbJobIdRef.current === job_id) return; // already attached
-    if (vsAbPollRef.current) { clearInterval(vsAbPollRef.current); vsAbPollRef.current = null; }
-    vsAbJobIdRef.current = job_id;
-    setVsAbJobId(job_id);
-    setVsAbSegsTotal(snap?.total_segments ?? 0);
-    setVsAbSegsDone(snap?.segments_done ?? 0);
-    setVsAbCachedSegs(snap?.cached_segments ?? 0);
-    setLoading(true); // stays true while polling
-    const iv: ReturnType<typeof setInterval> = setInterval(async () => {
-      // The user may have switched document/mode (detach) or started
-      // another job — this closure must never update state for a stale job.
-      if (vsAbJobIdRef.current !== job_id) { clearInterval(iv); return; }
-      const stopPolling = () => {
-        clearInterval(iv);
-        if (vsAbPollRef.current === iv) vsAbPollRef.current = null;
-      };
-      try {
-        const sr = await apiFetch(`${BASE}/studio/tts/document/${job_id}/status`);
-        if (vsAbJobIdRef.current !== job_id) { clearInterval(iv); return; }
-        if (!sr.ok) {
-          if (sr.status === 404) {
-            stopPolling();
-            vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
-            toast.error("Server restarted — audiobook job was lost. Please try again.");
-          }
-          return;
-        }
-        const status = await sr.json();
-        setVsAbSegsDone(status.segments_done ?? 0);
-        setVsAbCachedSegs(status.cached_segments ?? 0);
-        const terminal = ["done", "failed", "cancelled"].includes(status.state);
-        if (terminal) {
-          stopPolling();
-          vsAbJobIdRef.current = null; setVsAbJobId(null); setLoading(false);
-          if (status.state === "done") {
-            const serveUrl = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`;
-            setAudioUrl(serveUrl);
-            setAudioName(`${docs.find((d: any) => d.id === docId)?.title ?? "audiobook"}.mp3`);
-            toast.success("Audiobook ready — tap play below");
-          } else if (status.state === "failed") {
-            toast.error(`Audiobook failed: ${status.error ?? "unknown error"}`, { duration: 10_000 });
-          } else {
-            toast("Generation stopped — finished parts are saved. Generate again to resume.");
-          }
-        }
-      } catch { /* transient poll errors */ }
-    }, 2000);
-    vsAbPollRef.current = iv;
+  // All race handling (single poller, no-op re-attach, stale-response
+  // discard) lives in WorkRenderTracker — same guarantees as Work renders.
+  function attachDocJob(job_id: string, snap?: WorkRenderSnapshot) {
+    docTracker.attach(job_id, snap ?? {});
   }
 
   async function handleCancelDocGenerate() {
-    if (!vsAbJobIdRef.current) return;
+    const jobId = docTracker.currentJobId;
+    if (!jobId) return;
     try {
-      await apiFetch(`${BASE}/studio/tts/document/${vsAbJobIdRef.current}`, { method: "DELETE" });
+      await apiFetch(`${BASE}/studio/tts/document/${jobId}`, { method: "DELETE" });
     } catch { /* best-effort */ }
   }
 
