@@ -32,6 +32,7 @@ from db_reset import (  # noqa: E402
     _find_db,
     _get_tables,
     _build_fk_graph,
+    check_restore_compatibility,
     export_backup,
     import_from_backup,
     topo_sort,
@@ -88,6 +89,16 @@ def main() -> None:
         "SELECT value FROM settings WHERE scope='global' AND key='schema_version'"
     ).fetchone()
     pre_schema_version = pre_schema_version[0] if pre_schema_version else "0"
+
+    # Schema compatibility check — before any destructive step
+    print("Checking restore compatibility …")
+    try:
+        check_restore_compatibility(conn, manifest, fts_virtual)
+        print("  ✅ All backup tables present in target schema")
+    except RuntimeError as e:
+        print(f"  ❌ {e}", file=sys.stderr)
+        print("Aborting — apply missing migrations before restoring this backup.", file=sys.stderr)
+        sys.exit(1)
 
     # Confirmation gate
     if not args.yes:

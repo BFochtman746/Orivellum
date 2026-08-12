@@ -18,10 +18,10 @@ Full cycle:
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
-import re
 import sqlite3
 import sys
 import textwrap
@@ -80,6 +80,30 @@ def _sha256_file(path: Path) -> str:
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# BLOB-safe JSON serialization
+# ---------------------------------------------------------------------------
+
+def _json_default(obj: object) -> object:
+    """JSON encoder hook: converts bytes to tagged base64 so BLOBs survive a
+    round-trip through JSON without data loss or TypeError."""
+    if isinstance(obj, bytes):
+        return {"__blob__": base64.b64encode(obj).decode("ascii")}
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _revive_row(row: dict) -> dict:
+    """Inverse of _json_default: converts tagged base64 dicts back to bytes
+    so BLOB columns can be re-inserted into SQLite without corruption."""
+    result: dict = {}
+    for k, v in row.items():
+        if isinstance(v, dict) and tuple(v) == ("__blob__",):
+            result[k] = base64.b64decode(v["__blob__"])
+        else:
+            result[k] = v
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +258,7 @@ def export_backup(
     manifest_tables = []
     for table in tables_sorted:
         rows = _export_table_rows(conn, table)
-        content = json.dumps(rows, ensure_ascii=False).encode("utf-8")
+        content = json.dumps(rows, ensure_ascii=False, default=_json_default).encode("utf-8")
         json_path = tables_dir / f"{table}.json"
         json_path.write_bytes(content)
         sha = _sha256_bytes(content)
@@ -317,6 +341,51 @@ def verify_manifest(backup_dir: Path) -> dict:
         raise RuntimeError("Manifest verification failed:\n" + "\n".join(failed))
 
     return manifest
+
+
+def check_restore_compatibility(
+    conn: sqlite3.Connection,
+    manifest: dict,
+    fts_virtual: set[str],
+) -> None:
+    """Raise RuntimeError before any destructive step if the target DB is
+    missing tables that exist in the backup manifest.
+
+    This prevents silent data loss where a table present in the backup
+    (e.g. from a newer schema) cannot be imported because the target DB
+    was never migrated to include it.
+
+    Call this BEFORE wipe_database so the database is still intact when
+    the error is reported.
+
+    Tables classified as log_operational are exempt: they are intentionally
+    cleared during reset and never re-imported.
+    """
+    live_tables = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+
+    missing: list[str] = []
+    for t in manifest["tables"]:
+        name = t["name"]
+        cl = t.get("classification", classify_table(name, fts_virtual))
+        # log_operational tables are cleared and never re-imported, so missing
+        # ones do not block the restore.
+        if cl == "log_operational":
+            continue
+        if name not in live_tables:
+            missing.append(f"  {name!r} (classification: {cl})")
+
+    if missing:
+        raise RuntimeError(
+            f"Restore compatibility check failed — {len(missing)} table(s) from the backup "
+            f"are absent from the target database.\n"
+            f"Apply the missing schema migrations before restoring this backup.\n"
+            + "\n".join(missing)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +533,10 @@ def import_from_backup(
             try:
                 imported = 0
                 for i, row in enumerate(rows):
-                    values = [row.get(c) for c in col_names]
+                    # _revive_row decodes any {"__blob__": "<base64>"} values back
+                    # to bytes so BLOB columns round-trip correctly.
+                    revived = _revive_row(row)
+                    values = [revived.get(c) for c in col_names]
                     try:
                         conn.execute(sql, values)
                         imported += 1
@@ -473,7 +545,7 @@ def import_from_backup(
                         conn.execute("ROLLBACK")
                         raise RuntimeError(
                             f"FK/uniqueness violation in table '{table}', row {i}: {e}\n"
-                            f"  Row data: {json.dumps(row, ensure_ascii=False)[:200]}"
+                            f"  Row data: {json.dumps(row, ensure_ascii=False, default=str)[:200]}"
                         ) from e
                 conn.execute(f"RELEASE {sp}")
                 stats[table] = {
@@ -684,6 +756,16 @@ def main() -> None:
     if args.backup_only:
         print("--backup-only: exiting. No changes made.")
         sys.exit(0)
+
+    # --- Schema compatibility check (before any destructive step) ---
+    print("Checking restore compatibility …")
+    try:
+        check_restore_compatibility(conn, manifest, fts_virtual)
+        print("  ✅ All backup tables present in target schema")
+    except RuntimeError as e:
+        print(f"  ❌ {e}", file=sys.stderr)
+        print("Aborting — apply missing migrations before running reset.", file=sys.stderr)
+        sys.exit(1)
 
     # --- Confirmation gate ---
     if not args.yes:

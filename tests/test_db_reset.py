@@ -28,11 +28,13 @@ _scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
 if str(_scripts_dir) not in sys.path:
     sys.path.insert(0, str(_scripts_dir))
 
+import base64
+
 import db_reset as dr
 
 
 # ---------------------------------------------------------------------------
-# Minimal test schema with FK relationships
+# Minimal test schema with FK relationships and a BLOB column
 # ---------------------------------------------------------------------------
 
 _SETUP_SQL = """
@@ -104,6 +106,13 @@ CREATE TABLE IF NOT EXISTS work_gap_cache (
     evaluated_at TEXT NOT NULL
 );
 
+-- Table with a BLOB column (mirrors real minhash_sig / vectors tables)
+CREATE TABLE IF NOT EXISTS embeddings (
+    id TEXT PRIMARY KEY REFERENCES objects(id) ON DELETE CASCADE,
+    doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    embedding BLOB NOT NULL
+);
+
 -- FTS virtual table
 CREATE VIRTUAL TABLE IF NOT EXISTS works_fts USING fts5(title, work_id UNINDEXED);
 """
@@ -148,6 +157,12 @@ def _make_test_db(tmp: str) -> tuple[sqlite3.Connection, str]:
 
     # Derived cache (should BE re-imported)
     conn.execute("INSERT INTO work_gap_cache VALUES('wgc1','o1','{\"gaps\":[]}',?)", (now,))
+
+    # BLOB column — mimics vectors.embedding / minhash_sig.sig
+    # 'o5' object needed as parent for embeddings row
+    conn.execute("INSERT INTO objects VALUES('o5','embedding',1,?)", (now,))
+    blob_data = bytes(range(16))  # 16 bytes: \x00\x01…\x0f
+    conn.execute("INSERT INTO embeddings VALUES('o5','o2',?)", (blob_data,))
 
     # FTS
     conn.execute("INSERT INTO works_fts VALUES('The Great Work','o1')")
@@ -214,7 +229,7 @@ class TestTableDiscovery(unittest.TestCase):
         tables, _, _ = dr._get_tables(self.conn)
         expected = {"settings", "objects", "works", "documents", "chunks",
                     "conversations", "messages", "access_log", "outbox",
-                    "work_gap_cache", "works_fts"}
+                    "work_gap_cache", "embeddings", "works_fts"}
         for t in expected:
             self.assertIn(t, tables, f"Expected table '{t}' not found")
 
@@ -537,6 +552,168 @@ class TestRestoreRoundTrip(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             dr.verify_manifest(self.backup_dir)
         self.assertIn("mismatch", str(ctx.exception).lower())
+
+
+class TestBlobRoundTrip(unittest.TestCase):
+    """BLOB columns must survive JSON serialization and re-import without loss.
+
+    SQLite BLOB columns return Python bytes, which are not JSON serializable
+    by default.  db_reset.py uses tagged base64 encoding:
+      {"__blob__": "<base64>"}
+    and _revive_row() decodes them back on import.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.conn, self.db_path = _make_test_db(self.tmp)
+        tables, fts_virtual, _ = dr._get_tables(self.conn)
+        deps = dr._build_fk_graph(self.conn, tables)
+        self.tables_sorted = dr.topo_sort(tables, deps)
+        self.fts_virtual = fts_virtual
+        self.backup_dir = Path(self.tmp) / "backup"
+        self.manifest = dr.export_backup(
+            self.conn, self.backup_dir, self.tables_sorted, self.fts_virtual
+        )
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_blob_column_serialized_as_tagged_base64(self):
+        """The JSON file must not contain raw bytes — it must use {__blob__: ...}."""
+        json_path = self.backup_dir / "tables" / "embeddings.json"
+        self.assertTrue(json_path.exists(), "embeddings.json must be in backup")
+        raw = json_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        self.assertEqual(len(data), 1, "One embedding row was inserted")
+        val = data[0]["embedding"]
+        self.assertIsInstance(val, dict, "BLOB must be encoded as a dict")
+        self.assertIn("__blob__", val, "Must use __blob__ tag")
+        # Verify the base64 decodes to the original bytes
+        decoded = base64.b64decode(val["__blob__"])
+        self.assertEqual(decoded, bytes(range(16)))
+
+    def test_blob_roundtrips_correctly(self):
+        """After wipe + reimport the BLOB value must equal the original bytes."""
+        dr.wipe_database(self.conn, self.tables_sorted)
+        dr.import_from_backup(
+            self.conn, self.tables_sorted, self.backup_dir,
+            self.fts_virtual, self.manifest,
+        )
+        row = self.conn.execute(
+            "SELECT embedding FROM embeddings WHERE id='o5'"
+        ).fetchone()
+        self.assertIsNotNone(row, "embeddings row must be present after reimport")
+        self.assertIsInstance(row[0], bytes, "embedding column must come back as bytes")
+        self.assertEqual(row[0], bytes(range(16)),
+                         "BLOB value must survive the round-trip unchanged")
+
+    def test_json_dumps_does_not_crash_on_blob(self):
+        """_json_default must prevent TypeError for any table with BLOB columns."""
+        rows = dr._export_table_rows(self.conn, "embeddings")
+        # This must not raise TypeError
+        serialized = json.dumps(rows, default=dr._json_default)
+        self.assertIn("__blob__", serialized)
+
+    def test_revive_row_decodes_tagged_blob(self):
+        """_revive_row must convert {"__blob__": "<b64>"} back to bytes."""
+        original = bytes([0xFF, 0x00, 0xAB, 0xCD])
+        tagged = {"id": "x", "data": {"__blob__": base64.b64encode(original).decode()}}
+        revived = dr._revive_row(tagged)
+        self.assertEqual(revived["data"], original)
+        self.assertEqual(revived["id"], "x")  # non-blob fields unchanged
+
+    def test_revive_row_leaves_non_blob_dicts_intact(self):
+        """A regular dict value must not be mistakenly treated as a blob."""
+        row = {"id": "x", "meta": {"foo": "bar", "baz": 42}}
+        revived = dr._revive_row(row)
+        self.assertEqual(revived["meta"], {"foo": "bar", "baz": 42})
+
+
+class TestSchemaCompatibility(unittest.TestCase):
+    """check_restore_compatibility must raise before any destructive step
+    when the backup references tables absent from the target schema."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.conn, self.db_path = _make_test_db(self.tmp)
+        tables, fts_virtual, _ = dr._get_tables(self.conn)
+        deps = dr._build_fk_graph(self.conn, tables)
+        self.tables_sorted = dr.topo_sort(tables, deps)
+        self.fts_virtual = fts_virtual
+        self.backup_dir = Path(self.tmp) / "backup"
+        self.manifest = dr.export_backup(
+            self.conn, self.backup_dir, self.tables_sorted, self.fts_virtual
+        )
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_compatible_schema_passes(self):
+        """A backup taken from the same schema must not raise."""
+        # Should not raise
+        dr.check_restore_compatibility(self.conn, self.manifest, self.fts_virtual)
+
+    def test_missing_table_raises_before_wipe(self):
+        """If the backup has a table the target DB does not, raise RuntimeError."""
+        # Inject a fake table entry into the manifest
+        fake_manifest = {
+            **self.manifest,
+            "tables": self.manifest["tables"] + [
+                {
+                    "name": "future_table_v999",
+                    "row_count": 5,
+                    "sha256": "abc",
+                    "file": "tables/future_table_v999.json",
+                    "classification": "user_data",
+                }
+            ],
+        }
+        with self.assertRaises(RuntimeError) as ctx:
+            dr.check_restore_compatibility(self.conn, fake_manifest, self.fts_virtual)
+        err = str(ctx.exception)
+        self.assertIn("future_table_v999", err)
+        self.assertIn("absent", err.lower())
+
+    def test_missing_log_table_does_not_raise(self):
+        """Log-operational tables are cleared and never re-imported, so
+        a missing log table in the target must NOT block the restore."""
+        fake_manifest = {
+            **self.manifest,
+            "tables": self.manifest["tables"] + [
+                {
+                    "name": "ghost_access_log",
+                    "row_count": 0,
+                    "sha256": "abc",
+                    "file": "tables/ghost_access_log.json",
+                    "classification": "log_operational",
+                }
+            ],
+        }
+        # Must not raise — log tables are skipped
+        dr.check_restore_compatibility(self.conn, fake_manifest, self.fts_virtual)
+
+    def test_database_unchanged_when_check_fails(self):
+        """The DB must still be intact (all rows present) after a failed check."""
+        fake_manifest = {
+            **self.manifest,
+            "tables": self.manifest["tables"] + [
+                {
+                    "name": "nonexistent_table",
+                    "row_count": 1,
+                    "sha256": "abc",
+                    "file": "tables/nonexistent_table.json",
+                    "classification": "user_data",
+                }
+            ],
+        }
+        with self.assertRaises(RuntimeError):
+            dr.check_restore_compatibility(self.conn, fake_manifest, self.fts_virtual)
+
+        # DB must still have all original rows
+        n = self.conn.execute("SELECT COUNT(*) FROM works").fetchone()[0]
+        self.assertEqual(n, 1, "works table must be intact after failed compatibility check")
+        n = self.conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        self.assertEqual(n, 2, "messages table must be intact after failed compatibility check")
 
 
 if __name__ == "__main__":
