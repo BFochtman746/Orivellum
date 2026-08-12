@@ -156,3 +156,74 @@ def test_create_draft_refuses_unknown_record(tmp_path):
     db = _make_db(tmp_path)
     with pytest.raises(MailStewardError, match="not found"):
         steward.create_draft(db, "missing-record", "some-nonce")
+
+
+# ── Persistence of steward state writes ──────────────────────────────────────
+
+
+def test_sync_mail_disconnect_is_durable_across_reopen(tmp_path):
+    """A failed token path must mark disconnected VISIBLY and DURABLY —
+    otherwise the system keeps reporting connected and retries forever."""
+    from orivellum.database.db import OrivellumDB
+
+    path = str(tmp_path / "test.db")
+    db = OrivellumDB(path)
+    db.set_setting_unaudited("mail_steward.connected", "true")
+
+    out = steward.sync_mail(db, cfg=None)  # no token stored → client is None
+    assert out == {"error": "token_unavailable"}
+    assert db.get_setting("mail_steward.connected", "") == "false"
+    db.close()
+
+    db2 = OrivellumDB(path)
+    assert db2.get_setting("mail_steward.connected", "") == "false", (
+        "disconnect flag must survive a restart (committed, not left in an "
+        "open transaction)"
+    )
+    db2.close()
+
+
+class _FolderClient:
+    def __init__(self, existing=None):
+        self._existing = existing or []
+        self.created = []
+
+    def list_mail_folders(self):
+        return self._existing
+
+    def create_mail_folder(self, name):
+        self.created.append(name)
+        return {"id": "fid-created", "displayName": name}
+
+
+def test_review_folder_id_persists_across_reopen(tmp_path):
+    from orivellum.database.db import OrivellumDB
+
+    path = str(tmp_path / "test.db")
+    db = OrivellumDB(path)
+    client = _FolderClient(existing=[{"id": "fid-existing", "displayName": "A-01 Review"}])
+    assert steward._ensure_review_folder(client, db) == "fid-existing"
+    db.close()
+
+    db2 = OrivellumDB(path)
+    assert db2.get_setting("mail_steward.review_folder_id", "") == "fid-existing", (
+        "resolved folder id must be committed or every sync re-lists folders"
+    )
+    # Cached path: no Graph calls needed at all on a warm DB.
+    assert steward._ensure_review_folder(None, db2) == "fid-existing"
+    db2.close()
+
+
+def test_review_folder_created_when_missing_and_persisted(tmp_path):
+    from orivellum.database.db import OrivellumDB
+
+    path = str(tmp_path / "test.db")
+    db = OrivellumDB(path)
+    client = _FolderClient(existing=[{"id": "x", "displayName": "Inbox"}])
+    assert steward._ensure_review_folder(client, db) == "fid-created"
+    assert client.created == ["A-01 Review"]
+    db.close()
+
+    db2 = OrivellumDB(path)
+    assert db2.get_setting("mail_steward.review_folder_id", "") == "fid-created"
+    db2.close()

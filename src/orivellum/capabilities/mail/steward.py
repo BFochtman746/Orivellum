@@ -74,12 +74,12 @@ def _ensure_review_folder(client: Any, db: Any) -> str:
     for f in folders:
         if f.get("displayName", "").lower() == _DEFAULT_REVIEW_FOLDER.lower():
             fid = f["id"]
-            db._set_setting("mail_steward.review_folder_id", fid)
+            db.set_setting_unaudited("mail_steward.review_folder_id", fid)
             return fid
 
     new_folder = client.create_mail_folder(_DEFAULT_REVIEW_FOLDER)
     fid = new_folder["id"]
-    db._set_setting("mail_steward.review_folder_id", fid)
+    db.set_setting_unaudited("mail_steward.review_folder_id", fid)
     return fid
 
 
@@ -96,7 +96,7 @@ def sync_mail(db: Any, cfg: Any) -> dict[str, Any]:
 
     client = _get_fresh_client(db)
     if client is None:
-        db._set_setting("mail_steward.connected", "false")
+        db.set_setting_unaudited("mail_steward.connected", "false")
         return {"error": "token_unavailable"}
 
     from orivellum.database.mail_store import MailStore

@@ -1,46 +1,40 @@
 ---
 name: Security test floor & settings durability
-description: CI floor/zero-caller rules for security paths, and the settings-commit trap
+description: CI floor/zero-caller policy for security paths, and the settings-commit trap
 ---
 
-# Security test floor (tests/test_security_floor.py)
+# Security test floor policy
 
-Two mechanical CI rules, enforced as pytest tests (CI runs `pytest tests/`):
+Two mechanical CI rules live as pytest tests (so plain `pytest tests/` enforces
+them). They must stay **AST-based** (imports/identifiers) — text greps let
+docstring/string mentions mask genuinely dead or untested code (~15 names when
+converted).
 
-1. **Floor rule** — every module imported (incl. function-local imports) by a
-   security/permission/unattended root (nightshift, custodian, autonomy, the
-   mail package, shield, auth_keys, api/_deps) must be referenced by at least
-   one file in tests/. New imports on those paths fail CI until a test names them.
-2. **Zero-caller rule** — (a) every capabilities module must be imported by
-   production code outside itself; (b) every public entry point must be
-   referenced outside its own module by production code or tests.
+1. **Floor rule** — any module imported by a permission decision, security
+   path, or unattended job must be imported by at least one test file.
+2. **Zero-caller rule** — a capabilities module nothing imports, or a public
+   entry point nothing references outside its module, fails the build.
+   **Why:** websearch/training_plan/rerank_candidates all shipped built but
+   never wired.
 
-Both have dated allowlists inside the test file. **They must only shrink** —
-72 names grandfathered 2026-08-12.
-
-**Why:** websearch/training_plan/rerank_candidates all shipped built-but-unwired;
-security modules (token_vault, oauth, action_policy) shipped with zero tests.
+Both allowlists are dated AND ratcheted by a max-size constant — growing one
+requires raising the constant, a loud reviewable act. Only shrink them.
 
 # Settings durability trap
 
-`db._set_setting()` does NOT commit — `governed_write` is normally the only
-committer. A bare `_set_setting` call leaves the write in an open transaction,
-invisible to the read connection (`get_setting` uses a separate read conn) and
-lost on restart unless a later commit piggybacks it. This silently broke mail
-token persistence.
+`db._set_setting()` does NOT commit; the read connection never sees the write
+and it is lost on restart unless a later commit piggybacks it. This silently
+broke mail token persistence and the steward's disconnect flag.
 
-**How to apply:** for secret/plumbing settings that must not hit the audit log,
-use `db.set_setting_unaudited(key, value)`. It commits via `_maybe_commit`, so
-inside `atomic()` it correctly defers to the outer transaction (a later
-exception rolls it back). Never call `_set_setting` directly outside
-`governed_write`, and never call `self._conn.commit()` from a mutation method
-— `_maybe_commit` is the only correct committer.
+**How to apply:** `db.set_setting_unaudited(key, value)` is the only correct
+direct-setting writer for secret/plumbing keys (no audit row). It commits via
+`_maybe_commit`, so inside `atomic()` it defers to the outer transaction and
+rolls back with it. Mutation methods must never call `self._conn.commit()`
+directly. When a state flag must survive restart, add a reopen-the-DB
+persistence test — in-process reads pass even when the write was uncommitted.
 
-# Other pinned behaviors (see the mail test files)
+# Mail policy pins
 
 - `ACTION_DELETE` requires explicit user approval even when `delete_enabled`
   (was missing from the approval-required tuple — a real policy hole).
-- MailStore nonces are FK-bound to a real mail record; tests must seed one via
-  `upsert_mail_record` before `issue_nonce`.
-- Rules must be AST-based (imports/identifiers), never text greps —
-  docstring/string mentions masked ~15 genuinely dead or untested names.
+- Mail nonces are FK-bound to a real mail record; tests must seed one first.
