@@ -3750,4 +3750,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE documents ADD COLUMN lifecycle_by TEXT
     """,
     ),
+    # v149 — Continuity-error disposition provenance (task: surface continuity
+    # errors to the author). Mirrors narrative_finding: a disposition is an
+    # authored decision, so we record who made it, when, and (for
+    # 'intentional') why. Legacy rows stay NULL — unknown provenance.
+    (
+        149,
+        "add disposition provenance columns to graph_inconsistency",
+        """
+        ALTER TABLE graph_inconsistency ADD COLUMN disposition_by TEXT;
+        ALTER TABLE graph_inconsistency ADD COLUMN disposition_at TEXT;
+        ALTER TABLE graph_inconsistency ADD COLUMN disposition_note TEXT NOT NULL DEFAULT ''
+    """,
+    ),
 ]

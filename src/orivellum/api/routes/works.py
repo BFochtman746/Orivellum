@@ -416,6 +416,87 @@ def works_duplicates(work_id: str, resolved: bool = False):
     return {"pairs": pairs, "count": len(pairs)}
 
 
+# ── Continuity errors (ATLAS-O graph inconsistencies) ────────────────────────
+
+
+class InconsistencyStatusUpdate(BaseModel):
+    status: str
+    note: str = ""
+
+
+@router.get("/works/{work_id}/inconsistencies")
+def works_list_inconsistencies(work_id: str, status: str | None = None):
+    """Verified cross-chapter continuity errors for a Work.
+
+    Each item carries both quoted passages plus chapter titles/sequence
+    numbers (joined here so the UI never has to N+1 chapters).  ``counts``
+    aggregates all dispositions regardless of the ``status`` filter, so the
+    panel can show open/resolved tallies from one call.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    if status is not None and status not in db.GRAPH_INCONSISTENCY_STATUSES:
+        raise HTTPException(422, f"status must be one of {list(db.GRAPH_INCONSISTENCY_STATUSES)}")
+    items = db.list_graph_inconsistencies(work_id=work_id, status=status)
+
+    # Chapter lookup for display: title + seq for both sides of each finding.
+    chapter_ids = {i["chapter_id"] for i in items} | {i["prior_chapter_id"] for i in items}
+    chapters: dict[str, dict] = {}
+    if chapter_ids:
+        placeholders = ",".join("?" * len(chapter_ids))
+        rows = (
+            db.read_conn()
+            .execute(
+                f"SELECT id, title, seq FROM book_chapters WHERE id IN ({placeholders})",
+                list(chapter_ids),
+            )
+            .fetchall()
+        )
+        chapters = {r["id"]: {"title": r["title"], "seq": r["seq"]} for r in rows}
+    for i in items:
+        cur = chapters.get(i["chapter_id"]) or {}
+        pri = chapters.get(i["prior_chapter_id"]) or {}
+        i["chapter_title"] = cur.get("title")
+        i["chapter_seq"] = cur.get("seq")
+        i["prior_chapter_title"] = pri.get("title")
+        i["prior_chapter_seq"] = pri.get("seq")
+
+    count_rows = (
+        db.read_conn()
+        .execute(
+            "SELECT status, COUNT(*) AS n FROM graph_inconsistency WHERE work_id=? GROUP BY status",
+            (work_id,),
+        )
+        .fetchall()
+    )
+    counts = {r["status"]: r["n"] for r in count_rows}
+    return {"inconsistencies": items, "counts": counts}
+
+
+@router.patch("/works/{work_id}/inconsistencies/{inconsistency_id}")
+def works_update_inconsistency(
+    work_id: str, inconsistency_id: str, body: InconsistencyStatusUpdate
+):
+    """Set a continuity error's disposition (open / fixed / intentional / wontfix).
+
+    An authored decision: governed write with audit + provenance.
+    'intentional' requires a note explaining why the contradiction is deliberate.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    try:
+        updated = db.update_graph_inconsistency_status(
+            inconsistency_id, body.status, work_id=work_id, note=body.note, actor="author"
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if updated is None:
+        raise HTTPException(404, f"Inconsistency {inconsistency_id!r} not found in this Work")
+    return {"inconsistency": updated}
+
+
 @router.get("/works/{work_id}/knowledge")
 def works_knowledge(work_id: str, kind: str | None = None):
     db = get_db()

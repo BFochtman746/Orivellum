@@ -8982,13 +8982,19 @@ class OrivellumDB:
     def delete_graph_for_chapter(self, chapter_id: str) -> None:
         """Drop all graph rows observed in one chapter (idempotent re-extract).
 
-        Edges referencing this chapter's nodes cascade via FK; inconsistencies
-        raised BY this chapter are dropped, but rows where this chapter is
-        only the prior side are kept — they were raised by a later chapter
-        whose extraction is not being redone.
+        Edges referencing this chapter's nodes cascade via FK; OPEN
+        inconsistencies raised BY this chapter are dropped, but rows where
+        this chapter is only the prior side are kept — they were raised by a
+        later chapter whose extraction is not being redone.  Dispositioned
+        rows (fixed/intentional/wontfix) are author decisions, never machine
+        output, so they are preserved across rebuilds (same rule as
+        delete_open_narrative_findings).
         """
         with self._lock:
-            self._conn.execute("DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,))
+            self._conn.execute(
+                "DELETE FROM graph_inconsistency WHERE chapter_id=? AND status='open'",
+                (chapter_id,),
+            )
             self._conn.execute("DELETE FROM graph_edge WHERE chapter_id=?", (chapter_id,))
             self._conn.execute("DELETE FROM graph_node WHERE chapter_id=?", (chapter_id,))
             self._maybe_commit()
@@ -9047,9 +9053,17 @@ class OrivellumDB:
         return out
 
     def delete_graph_inconsistencies_for_chapter(self, chapter_id: str) -> None:
-        """Drop the inconsistencies RAISED BY one chapter (before re-verify)."""
+        """Drop the OPEN inconsistencies RAISED BY one chapter (before re-verify).
+
+        Dispositioned rows (fixed/intentional/wontfix) survive — they are
+        author decisions, and create_graph_inconsistency dedupes against them
+        so a re-verify never resurrects a dismissed finding as open.
+        """
         with self._lock:
-            self._conn.execute("DELETE FROM graph_inconsistency WHERE chapter_id=?", (chapter_id,))
+            self._conn.execute(
+                "DELETE FROM graph_inconsistency WHERE chapter_id=? AND status='open'",
+                (chapter_id,),
+            )
             self._maybe_commit()
 
     def create_graph_inconsistency(
@@ -9065,7 +9079,16 @@ class OrivellumDB:
         prior_offset: int,
         reasoning: str = "",
     ) -> str:
-        """Store a VERIFIED cross-chapter inconsistency (LAW 3 on both sides)."""
+        """Store a VERIFIED cross-chapter inconsistency (LAW 3 on both sides).
+
+        Idempotent on identity: when a row with the same
+        (work_id, chapter_id, prior_chapter_id, current_quote, prior_quote)
+        already exists — in ANY status — its id is returned and nothing is
+        written.  This is what makes author dispositions durable across
+        ATLAS-O re-verification: the re-run's delete pass only removes open
+        rows, and this dedupe prevents a dismissed finding from being
+        re-inserted as a fresh open duplicate (never-resurrect rule).
+        """
         for label, quote, offset in (
             ("current", current_quote, current_offset),
             ("prior", prior_quote, prior_offset),
@@ -9076,6 +9099,15 @@ class OrivellumDB:
                 raise ValueError(f"inconsistency requires a non-negative {label} offset")
         iid = _uuid()
         with self._lock:
+            existing = self._conn.execute(
+                """SELECT id FROM graph_inconsistency
+                   WHERE work_id=? AND chapter_id=? AND prior_chapter_id=?
+                     AND current_quote=? AND prior_quote=?
+                   LIMIT 1""",
+                (work_id, chapter_id, prior_chapter_id, current_quote, prior_quote),
+            ).fetchone()
+            if existing:
+                return existing["id"]
             self._conn.execute(
                 """INSERT INTO graph_inconsistency(id, work_id, chapter_id, description,
                        current_quote, current_offset, prior_chapter_id, prior_quote,
@@ -9121,6 +9153,75 @@ class OrivellumDB:
         args.append(max(1, min(limit, 5000)))
         rows = self.read_conn().execute(q, args).fetchall()
         return [dict(r) for r in rows]
+
+    GRAPH_INCONSISTENCY_STATUSES = ("open", "fixed", "intentional", "wontfix")
+
+    def update_graph_inconsistency_status(
+        self,
+        inconsistency_id: str,
+        status: str,
+        *,
+        work_id: str | None = None,
+        note: str = "",
+        actor: str = "author",
+    ) -> dict | None:
+        """Set an inconsistency's disposition; returns the updated row or None.
+
+        This is a user-visible authored decision, so it runs under
+        ``governed_write`` (audit row + outbox event) and records disposition
+        provenance (who / when / why).  Rules (mirroring
+        update_narrative_finding_disposition):
+
+        - ``status`` must be one of :data:`GRAPH_INCONSISTENCY_STATUSES`;
+          anything else raises ``ValueError`` before touching the DB.
+        - ``'intentional'`` REQUIRES a non-empty note — an author declaring a
+          contradiction deliberate must say why.
+        - Reopening (``'open'``) clears the disposition provenance.
+        - When ``work_id`` is given the update is scoped to that Work, so a
+          route can never re-disposition another Work's finding.
+        """
+        if status not in self.GRAPH_INCONSISTENCY_STATUSES:
+            raise ValueError(
+                f"invalid inconsistency status {status!r} — "
+                f"must be one of {self.GRAPH_INCONSISTENCY_STATUSES}"
+            )
+        note = (note or "").strip()
+        if status == "intentional" and not note:
+            raise ValueError("disposition 'intentional' requires a note")
+        with self._lock:
+            # Existence/scope check first so a miss never emits audit noise.
+            check_q = "SELECT id, status FROM graph_inconsistency WHERE id=?"
+            check_args: list = [inconsistency_id]
+            if work_id is not None:
+                check_q += " AND work_id=?"
+                check_args.append(work_id)
+            row = self._conn.execute(check_q, check_args).fetchone()
+            if row is None:
+                return None
+            prior_status = row["status"]
+            if status == "open":
+                by, at, note = None, None, ""
+            else:
+                by, at = actor, _now()
+            with self.governed_write(
+                operation="continuity.dispositioned",
+                event_type="continuity.dispositioned",
+                object_id=inconsistency_id,
+                object_type="graph_inconsistency",
+                actor=actor,
+                payload={"from": prior_status, "to": status},
+                detail=f"{prior_status}->{status}",
+            ):
+                self._conn.execute(
+                    """UPDATE graph_inconsistency
+                       SET status=?, disposition_by=?, disposition_at=?, disposition_note=?
+                       WHERE id=?""",
+                    (status, by, at, note, inconsistency_id),
+                )
+            updated = self._conn.execute(
+                "SELECT * FROM graph_inconsistency WHERE id=?", (inconsistency_id,)
+            ).fetchone()
+        return dict(updated) if updated else None
 
     # ── /ATLAS-O ──────────────────────────────────────────────────────────────
 

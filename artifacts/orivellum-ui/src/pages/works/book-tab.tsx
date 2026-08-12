@@ -29,6 +29,8 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
+  GitCompareArrows,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { BrainstormB3Panel } from "./brainstorm-tab";
@@ -1153,6 +1155,263 @@ function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string
 
 // ─── Book tab ─────────────────────────────────────────────────────────────────
 
+// ─── Continuity errors (ATLAS-O verified inconsistencies) ────────────────────
+
+interface ContinuityError {
+  id: string;
+  description: string;
+  reasoning: string;
+  status: "open" | "fixed" | "intentional" | "wontfix";
+  chapter_id: string;
+  chapter_title: string | null;
+  chapter_seq: number | null;
+  current_quote: string;
+  prior_chapter_id: string;
+  prior_chapter_title: string | null;
+  prior_chapter_seq: number | null;
+  prior_quote: string;
+  disposition_by: string | null;
+  disposition_note: string;
+  created_at: string;
+}
+
+interface ContinuityResponse {
+  inconsistencies: ContinuityError[];
+  counts: Record<string, number>;
+}
+
+const CONTINUITY_STATUS_LABELS: Record<string, string> = {
+  fixed: "Fixed",
+  intentional: "Intentional",
+  wontfix: "Won't fix",
+};
+
+function chapterRef(title: string | null, seq: number | null): string {
+  if (title) return seq != null ? `Ch. ${seq} — ${title}` : title;
+  return seq != null ? `Chapter ${seq}` : "Unknown chapter";
+}
+
+function ContinuityQuote({ label, quote, style }: { label: string; quote: string; style?: React.CSSProperties }) {
+  return (
+    <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-2" style={style}>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-1">{label}</div>
+      <blockquote className="text-sm font-serif italic leading-snug">“{quote}”</blockquote>
+    </div>
+  );
+}
+
+function ContinuityItem({ item, workId }: { item: ContinuityError; workId: string }) {
+  const queryClient = useQueryClient();
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const setStatus = useMutation({
+    mutationFn: async ({ status, note }: { status: string; note?: string }) => {
+      const r = await apiFetch(`${BASE}/works/${workId}/inconsistencies/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, note: note ?? "" }),
+      });
+      if (!r.ok) throw new Error("Failed to update the continuity error");
+      return r.json();
+    },
+    onSuccess: (_d, { status }) => {
+      setNoteOpen(false);
+      setNote("");
+      queryClient.invalidateQueries({ queryKey: ["continuity", workId] });
+      toast.success(
+        status === "open"
+          ? "Reopened"
+          : `Marked ${CONTINUITY_STATUS_LABELS[status]?.toLowerCase() ?? status}`,
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const resolved = item.status !== "open";
+
+  return (
+    <div
+      className={`rounded-lg border p-4 space-y-3 ${resolved ? "opacity-60" : ""}`}
+      style={resolved ? undefined : { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
+      data-testid={`row-continuity-${item.id}`}
+    >
+      <div className="flex items-start gap-2">
+        <GitCompareArrows className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "var(--rust)" }} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium leading-snug">{item.description}</p>
+          {item.reasoning && (
+            <p className="text-xs text-muted-foreground mt-1 leading-snug">{item.reasoning}</p>
+          )}
+        </div>
+        {resolved && (
+          <Badge variant="outline" className="text-[10px] shrink-0">
+            {CONTINUITY_STATUS_LABELS[item.status] ?? item.status}
+          </Badge>
+        )}
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-2">
+        <ContinuityQuote
+          label={`Earlier · ${chapterRef(item.prior_chapter_title, item.prior_chapter_seq)}`}
+          quote={item.prior_quote}
+        />
+        <ContinuityQuote
+          label={`Contradicts · ${chapterRef(item.chapter_title, item.chapter_seq)}`}
+          quote={item.current_quote}
+          style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}
+        />
+      </div>
+
+      {resolved && (item.disposition_note || item.disposition_by) && (
+        <div className="text-xs text-muted-foreground italic">
+          {item.disposition_note && <>“{item.disposition_note}” — </>}
+          {item.disposition_by ?? "author"}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {resolved ? (
+          <Button
+            variant="outline" size="sm" className="h-7 text-xs gap-1.5"
+            disabled={setStatus.isPending}
+            onClick={() => setStatus.mutate({ status: "open" })}
+            data-testid={`button-continuity-reopen-${item.id}`}
+          >
+            <RefreshCw className="w-3 h-3" /> Reopen
+          </Button>
+        ) : noteOpen ? (
+          <div className="flex items-center gap-2 flex-wrap w-full">
+            <input
+              className="flex-1 min-w-[200px] h-7 rounded-md border border-border bg-background px-2 text-xs"
+              placeholder="Why is this contradiction deliberate?"
+              value={note}
+              autoFocus
+              onChange={(e) => setNote(e.target.value)}
+              data-testid={`input-continuity-note-${item.id}`}
+            />
+            <Button
+              variant="outline" size="sm" className="h-7 text-xs gap-1.5"
+              disabled={setStatus.isPending || !note.trim()}
+              onClick={() => setStatus.mutate({ status: "intentional", note: note.trim() })}
+              data-testid={`button-continuity-note-confirm-${item.id}`}
+            >
+              {setStatus.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              Mark intentional
+            </Button>
+            <Button
+              variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground"
+              onClick={() => { setNoteOpen(false); setNote(""); }}
+              data-testid={`button-continuity-note-cancel-${item.id}`}
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Button
+              variant="outline" size="sm" className="h-7 text-xs gap-1.5"
+              disabled={setStatus.isPending}
+              onClick={() => setStatus.mutate({ status: "fixed" })}
+              data-testid={`button-continuity-fixed-${item.id}`}
+            >
+              <CheckCircle2 className="w-3 h-3" style={{ color: "var(--green-2)" }} /> Fixed it
+            </Button>
+            <Button
+              variant="outline" size="sm" className="h-7 text-xs gap-1.5"
+              disabled={setStatus.isPending}
+              onClick={() => setNoteOpen(true)}
+              data-testid={`button-continuity-intentional-${item.id}`}
+            >
+              <Sparkles className="w-3 h-3" /> Intentional
+            </Button>
+            <Button
+              variant="ghost" size="sm" className="h-7 text-xs gap-1.5 text-muted-foreground"
+              disabled={setStatus.isPending}
+              onClick={() => setStatus.mutate({ status: "wontfix" })}
+              data-testid={`button-continuity-wontfix-${item.id}`}
+            >
+              <EyeOff className="w-3 h-3" /> Won't fix
+            </Button>
+            {setStatus.isPending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ContinuityPanel({ workId }: { workId: string }) {
+  const [showResolved, setShowResolved] = useState(false);
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["continuity", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/inconsistencies`);
+      if (!r.ok) throw new Error("Failed to load continuity errors");
+      return r.json() as Promise<ContinuityResponse>;
+    },
+    enabled: !!workId,
+    staleTime: 30_000,
+  });
+
+  const all = data?.inconsistencies ?? [];
+  const open = all.filter((i) => i.status === "open");
+  const resolvedCount =
+    (data?.counts?.fixed ?? 0) + (data?.counts?.intentional ?? 0) + (data?.counts?.wontfix ?? 0);
+
+  // Nothing recorded at all → stay quiet; the section only earns space once
+  // ATLAS-O has actually verified a contradiction for this Work.
+  if (!isLoading && !isError && all.length === 0) return null;
+
+  const visible = showResolved ? all : open;
+
+  return (
+    <div className="space-y-3" data-testid="section-continuity">
+      <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+        <GitCompareArrows className="w-3.5 h-3.5" /> Continuity errors
+        {open.length > 0 && (
+          <span
+            className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+            style={{ color: "var(--rust)", background: "var(--rust-soft)" }}
+          >
+            {open.length}
+          </span>
+        )}
+        {resolvedCount > 0 && (
+          <button
+            className="ml-auto normal-case tracking-normal text-[11px] underline underline-offset-2 text-muted-foreground hover:text-foreground"
+            onClick={() => setShowResolved((v) => !v)}
+            data-testid="button-continuity-toggle-resolved"
+          >
+            {showResolved ? "Hide resolved" : `Show resolved (${resolvedCount})`}
+          </button>
+        )}
+      </h3>
+
+      {isLoading ? (
+        <Skeleton className="h-24 w-full" />
+      ) : isError ? (
+        <div className="text-sm text-muted-foreground py-4 text-center border rounded-lg">
+          Could not load continuity errors.
+        </div>
+      ) : visible.length === 0 ? (
+        <div
+          className="text-sm font-serif py-4 text-center border rounded-lg"
+          style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+        >
+          No open continuity errors — every verified contradiction has been addressed.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {visible.map((i) => (
+            <ContinuityItem key={i.id} item={i} workId={workId} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function BookTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [settingCanonical, setSettingCanonical] = useState<string | null>(null);
@@ -1388,6 +1647,9 @@ export function BookTab({ workId }: { workId: string }) {
           </div>
         </div>
       </div>
+
+      {/* Continuity errors — verified cross-chapter contradictions */}
+      <ContinuityPanel workId={workId} />
 
       {/* Trailer Architect */}
       <TrailerPanel workId={workId} lifecycle={workLifecycle} />
