@@ -3455,4 +3455,83 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON completeness_transition(assertion_id, at)
     """,
     ),
+    # v143 — PCWA over the world graph (brutal review Part 1, build item 6).
+    #
+    # 1. graph_relation_meta: mined per-(class, relation) statistics —
+    #    functionality, per-relation card_k, and mined max cardinality —
+    #    derived from graph_edge/graph_node counts and RE-DERIVABLE: every
+    #    recompute replaces the Work's rows wholesale, so the metadata tracks
+    #    the graph as it grows.  Detectors read this table, never re-mine.
+    #
+    # 2. completeness_assertion gains a 'proposed' status: PCWA closure
+    #    inferences (functional-predicate closure, card_k oracles) are
+    #    MACHINE-PROPOSED completeness knowledge — they accumulate, but they
+    #    never suppress gaps and never auto-ratify.  Only a human signature
+    #    moves proposed→active (see assert_completeness / ratify).  SQLite
+    #    cannot alter a CHECK, so both tables are rebuilt; rows are copied
+    #    verbatim and the child table is rebuilt after the parent so its FK
+    #    points at the new table.
+    (
+        143,
+        "PCWA relation metadata + machine-proposed completeness assertions",
+        """
+        CREATE TABLE IF NOT EXISTS graph_relation_meta (
+            id            TEXT PRIMARY KEY,
+            work_id       TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            node_type     TEXT NOT NULL,
+            edge_type     TEXT NOT NULL,
+            n_subjects    INTEGER NOT NULL,
+            functional    INTEGER NOT NULL DEFAULT 0,
+            functional_share REAL NOT NULL DEFAULT 0,
+            card_k        INTEGER,
+            max_cardinality INTEGER,
+            max_cardinality_share REAL,
+            value_histogram TEXT NOT NULL DEFAULT '{}',
+            computed_at   TEXT NOT NULL,
+            UNIQUE(work_id, node_type, edge_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_relation_meta_work
+            ON graph_relation_meta(work_id);
+        ALTER TABLE completeness_assertion RENAME TO completeness_assertion_v142;
+        ALTER TABLE completeness_transition RENAME TO completeness_transition_v142;
+        CREATE TABLE completeness_assertion (
+            id               TEXT PRIMARY KEY,
+            work_id          TEXT REFERENCES works(id) ON DELETE CASCADE,
+            gap_class        TEXT NOT NULL,
+            scope            TEXT NOT NULL,
+            unit             TEXT NOT NULL DEFAULT '',
+            frame_node_id    TEXT NOT NULL DEFAULT '',
+            frame_source_ref TEXT NOT NULL DEFAULT '',
+            basis            TEXT NOT NULL,
+            no_value         INTEGER NOT NULL DEFAULT 0,
+            status           TEXT NOT NULL DEFAULT 'active'
+                             CHECK(status IN ('proposed','active','retracted')),
+            status_reason    TEXT NOT NULL DEFAULT '',
+            signed_by        TEXT NOT NULL,
+            meta             TEXT NOT NULL DEFAULT '{}',
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+        INSERT INTO completeness_assertion
+            SELECT * FROM completeness_assertion_v142;
+        CREATE TABLE completeness_transition (
+            id           TEXT PRIMARY KEY,
+            assertion_id TEXT NOT NULL
+                         REFERENCES completeness_assertion(id) ON DELETE CASCADE,
+            from_status  TEXT NOT NULL,
+            to_status    TEXT NOT NULL,
+            reason       TEXT NOT NULL DEFAULT '',
+            signed_by    TEXT NOT NULL DEFAULT '',
+            at           TEXT NOT NULL
+        );
+        INSERT INTO completeness_transition
+            SELECT * FROM completeness_transition_v142;
+        DROP TABLE completeness_transition_v142;
+        DROP TABLE completeness_assertion_v142;
+        CREATE INDEX IF NOT EXISTS idx_completeness_work_status
+            ON completeness_assertion(work_id, status);
+        CREATE INDEX IF NOT EXISTS idx_completeness_transition
+            ON completeness_transition(assertion_id, at)
+    """,
+    ),
 ]

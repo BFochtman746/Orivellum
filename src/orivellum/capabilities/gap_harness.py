@@ -41,6 +41,12 @@ from orivellum.capabilities.gap_engine import (
     candidates_failure_clusters,
     candidates_never_explained,
 )
+from orivellum.capabilities.pcwa import (
+    DETECTOR_MINED_CARD,
+    DETECTOR_PEER,
+    candidates_mined_cardinality,
+    candidates_peer_group,
+)
 
 if TYPE_CHECKING:
     from orivellum.database.db import OrivellumDB
@@ -54,6 +60,8 @@ DETECTOR_CANDIDATES = {
     DETECTOR_DEADEND: candidates_dead_end,
     DETECTOR_FAILURE: candidates_failure_clusters,
     DETECTOR_DOMAIN_COVERAGE: candidates_domain_coverage,
+    DETECTOR_MINED_CARD: candidates_mined_cardinality,
+    DETECTOR_PEER: candidates_peer_group,
 }
 
 

@@ -170,6 +170,54 @@ def completeness_history(assertion_id: str):
     }
 
 
+class CompletenessRatifyRequest(BaseModel):
+    signed_by: str = Field(min_length=1)
+    basis: str = ""  # optional override; defaults to the machine's statistical basis
+
+
+@router.post("/completeness-assertions/{assertion_id}/ratify")
+def ratify_completeness(assertion_id: str, req: CompletenessRatifyRequest):
+    """Ratify a MACHINE-PROPOSED assertion with a human signature.
+
+    Only a ``proposed`` row can be ratified; the transition is ledgered as
+    "ratified" and the region closes (open gaps dismissed with the
+    assertion cited) — machine inferences never close anything on their own.
+    """
+    db = get_db()
+    try:
+        return db.ratify_completeness(assertion_id, signed_by=req.signed_by, basis=req.basis)
+    except KeyError as exc:
+        raise HTTPException(404, f"Assertion {assertion_id!r} not found") from exc
+    except ValueError as exc:
+        # Not 'proposed' any more — a state conflict, atomically detected.
+        raise HTTPException(409, str(exc)) from exc
+
+
+# ── PCWA detectors over the world graph (brutal review Part 1, item 6) ────────
+
+
+@router.post("/works/{work_id}/pcwa/scan")
+def run_pcwa(work_id: str):
+    """Mine relation metadata and run all four PCWA mechanisms (zero model calls)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.pcwa import run_pcwa_scan
+
+    return run_pcwa_scan(work_id, db)
+
+
+@router.get("/works/{work_id}/pcwa/relations")
+def pcwa_relations(work_id: str):
+    """The mined per-(class, relation) metadata — functionality, card_k,
+    max cardinality — re-derivable from the graph at any time."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    relations = db.list_relation_meta(work_id)
+    return {"work_id": work_id, "relations": relations, "total": len(relations)}
+
+
 # ── G-M3/G-M4: structural detectors + golden oracle + open-world harness ─────
 
 
@@ -185,6 +233,7 @@ def run_gap_scan(work_id: str, req: GapScanRequest | None = None):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities import domain_model as dm
     from orivellum.capabilities import gap_engine as ge
+    from orivellum.capabilities import pcwa
 
     emitters = {
         ge.DETECTOR_CITATION: ge.detect_citation_gaps,
@@ -193,6 +242,8 @@ def run_gap_scan(work_id: str, req: GapScanRequest | None = None):
         ge.DETECTOR_FAILURE: ge.detect_failure_clusters,
         dm.DETECTOR_DOMAIN_COVERAGE: dm.detect_domain_coverage,
         ge.GAP_CLASS_DOMAIN_FRONTIER: dm.detect_domain_frontier,
+        pcwa.DETECTOR_MINED_CARD: pcwa.detect_mined_cardinality,
+        pcwa.DETECTOR_PEER: pcwa.detect_peer_group,
     }
     wanted = (req.detectors if req and req.detectors else None) or list(emitters)
     unknown = [d for d in wanted if d not in emitters]

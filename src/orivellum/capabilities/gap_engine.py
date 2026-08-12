@@ -11,7 +11,7 @@ Design rules (Engine Contract):
   * Citation   — the insert path REFUSES gaps without frame_node_id,
                  frame_source_ref, and evidence_absent (db layer).
   * Severity   — computed here from (gap_class, centrality, dependent_count,
-                 blocking_active_work).  Never asked of a model.
+                 agreement, measured demand).  Never asked of a model.
   * Detectors  — deterministic; ZERO model calls.
 
 First true detector: **citation-graph closure** — works cited by held
@@ -43,10 +43,18 @@ GAP_CLASS_DOMAIN_FRONTIER = "domain_frontier"
 # ── Severity ──────────────────────────────────────────────────────────────────
 # Deterministic scoring — never model-assigned.  centrality is how often the
 # absent thing is referenced (total mentions); dependent_count is how many
-# distinct held artifacts depend on it; blocking_active_work marks a gap that
-# is holding up a live pipeline stage.
+# distinct held artifacts depend on it; demand is measured retrieval/query
+# traffic against the region — high demand is what marks a gap as blocking.
 
 _CLASS_WEIGHT = {GAP_CLASS_CITATION: 1}  # room for future classes
+
+# Demand at or above this many measured touches (user queries + logged
+# knowledge retrievals against the region) is "blocking": real, repeated
+# traffic is hitting an absence.  This REPLACES the hand-written
+# blocking_active_work flag — blocking status is now measured from usage,
+# never declared by a caller (brutal review §4.2, demand-weighted
+# completeness).
+DEMAND_BLOCKING = 6
 
 
 def compute_severity(
@@ -54,7 +62,6 @@ def compute_severity(
     *,
     centrality: int = 0,
     dependent_count: int = 0,
-    blocking_active_work: bool = False,
     agreement: int = 0,
     demand: int = 0,
 ) -> str:
@@ -62,8 +69,10 @@ def compute_severity(
 
     ``agreement`` is the count of independent reference sources establishing
     the frame node (Domain Model consensus level); ``demand`` is MEASURED
-    usage pressure (user queries touching the node) — never a hand flag.
-    Both default to 0 so pre-domain detectors are unchanged.
+    usage pressure — user queries plus logged knowledge retrievals touching
+    the region — never a hand flag.  Demand at or above
+    :data:`DEMAND_BLOCKING` marks the gap as blocking real work, which is
+    the only path to ``critical``.
 
     A frontier gap is a decision the user owes, not a deficiency: its
     severity is capped at ``medium`` no matter what the counts say.
@@ -74,9 +83,10 @@ def compute_severity(
     score *= _CLASS_WEIGHT.get(gap_class, 1)
     if gap_class == GAP_CLASS_DOMAIN_FRONTIER:
         return "medium" if score >= 5 else "low"
-    if blocking_active_work:
+    blocking = demand >= DEMAND_BLOCKING
+    if blocking:
         score += 12
-    if score >= 18 and blocking_active_work:
+    if score >= 18 and blocking:
         return "critical"
     if score >= 12:
         return "high"

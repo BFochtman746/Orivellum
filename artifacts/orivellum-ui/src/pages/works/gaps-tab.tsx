@@ -160,7 +160,7 @@ interface CompletenessAssertion {
   scope: string;
   basis: string;
   no_value: number;
-  status: "active" | "retracted";
+  status: "proposed" | "active" | "retracted";
   signed_by: string;
   updated_at: string;
 }
@@ -172,6 +172,7 @@ const GAP_CLASS_OPTIONS = [
   "failure_clustering",
   "domain_coverage",
   "domain_frontier",
+  "graph_pair",
 ];
 
 function CompletenessAssertions({ workId }: { workId: string }) {
@@ -186,7 +187,7 @@ function CompletenessAssertions({ workId }: { workId: string }) {
   const { data } = useQuery<{ assertions: CompletenessAssertion[] }>({
     queryKey: ["work-completeness", workId],
     queryFn: () =>
-      apiFetch(`${WORK_API_BASE}/works/${workId}/completeness-assertions?status=active`).then((r) => {
+      apiFetch(`${WORK_API_BASE}/works/${workId}/completeness-assertions`).then((r) => {
         if (!r.ok) throw new Error("completeness fetch failed");
         return r.json();
       }),
@@ -245,15 +246,48 @@ function CompletenessAssertions({ workId }: { workId: string }) {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const ratifyMutation = useMutation({
+    mutationFn: async ({ id, signed_by }: { id: string; signed_by: string }) => {
+      const r = await apiFetch(`${WORK_API_BASE}/completeness-assertions/${id}/ratify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signed_by }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail || "ratify failed");
+      return r.json();
+    },
+    onSuccess: (row: { closed_gap_ids?: string[] }) => {
+      const n = row.closed_gap_ids?.length ?? 0;
+      toast.success(
+        n > 0
+          ? `Proposal ratified — ${n} open gap${n === 1 ? "" : "s"} closed`
+          : "Proposal ratified — region closed"
+      );
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const handleRatify = (a: CompletenessAssertion) => {
+    const signed_by = window.prompt(
+      `Ratify "${a.gap_class} / ${a.scope}" as complete? Sign with your name:`
+    );
+    if (!signed_by?.trim()) return;
+    ratifyMutation.mutate({ id: a.id, signed_by: signed_by.trim() });
+  };
+
   const handleRetract = (a: CompletenessAssertion) => {
-    const reason = window.prompt(`Why retract "${a.gap_class} / ${a.scope}"? A reason is required.`);
+    const verb = a.status === "proposed" ? "decline" : "retract";
+    const reason = window.prompt(`Why ${verb} "${a.gap_class} / ${a.scope}"? A reason is required.`);
     if (!reason?.trim()) return;
-    const signed_by = window.prompt("Sign the retraction (your name):", a.signed_by);
+    const signed_by = window.prompt(`Sign the ${verb} (your name):`, a.status === "proposed" ? "" : a.signed_by);
     if (!signed_by?.trim()) return;
     retractMutation.mutate({ id: a.id, reason: reason.trim(), signed_by: signed_by.trim() });
   };
 
-  const assertions = data?.assertions ?? [];
+  const all = data?.assertions ?? [];
+  const assertions = all.filter((a) => a.status === "active");
+  const proposals = all.filter((a) => a.status === "proposed");
 
   return (
     <div className="p-4 rounded-xl border border-border/50 bg-muted/10 space-y-3">
@@ -273,11 +307,61 @@ function CompletenessAssertions({ workId }: { workId: string }) {
         </button>
       </div>
 
-      {assertions.length === 0 && !showForm && (
+      {assertions.length === 0 && proposals.length === 0 && !showForm && (
         <p className="text-xs text-muted-foreground">
           No regions asserted complete. When you know you hold everything on a topic,
           assert it here — gap detectors and research runs will stop re-asking.
         </p>
+      )}
+
+      {proposals.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[10px] font-mono text-muted-foreground">
+            {proposals.length} machine-proposed closure{proposals.length === 1 ? "" : "s"} — nothing
+            closes until you sign
+          </p>
+          {proposals.map((a) => (
+            <div
+              key={a.id}
+              className="flex items-start gap-2 px-3 py-2 rounded-lg border border-dashed border-border/60 bg-background/30"
+              data-testid={`proposal-${a.id}`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-mono font-medium">
+                    {a.gap_class} / {a.scope === "*" ? "entire class" : a.scope}
+                  </span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">
+                    proposed
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{a.basis}</p>
+                <p className="text-[10px] font-mono text-muted-foreground/70 mt-0.5">
+                  {a.signed_by}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleRatify(a)}
+                  disabled={ratifyMutation.isPending}
+                  className="text-[10px] font-mono text-emerald-600 hover:text-emerald-500 disabled:opacity-40"
+                  data-testid={`button-ratify-${a.id}`}
+                >
+                  ratify
+                </button>
+                <button
+                  onClick={() => handleRetract(a)}
+                  disabled={retractMutation.isPending}
+                  className="text-[10px] font-mono text-muted-foreground hover:text-destructive disabled:opacity-40"
+                  data-testid={`button-decline-${a.id}`}
+                >
+                  decline
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {assertions.map((a) => (

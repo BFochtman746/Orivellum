@@ -175,7 +175,7 @@ def _blocking_gap(db, work_id, detector):
         evidence_absent="not held",
         centrality=9,
         dependent_count=3,
-        blocking_active_work=True,
+        demand=9,  # measured demand above DEMAND_BLOCKING — the blocking path
         force_check=detector,
     )
 

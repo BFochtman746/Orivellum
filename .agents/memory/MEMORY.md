@@ -116,3 +116,4 @@
 - [Research writeback & review gate](orivellum-research-writeback.md) — web claims land as 'proposed', question-safe allowlist gates all question/grading grounding; whole-corpus reseed + cycle guard + durable nightly cursor.
 - [Depth ladder & reverse research loop](orivellum-depth-ladder.md) — graduation = streak AND ladder; rubric fails closed above recall; assessments bound to server-issued single-use questions; work-scoped request resolution.
 - [Gap Engine](orivellum-gap-engine.md) — work-scoped identity, derived severity, never-resurrect; open-world oracle; blocking gate = fingerprint-current measurement ≥20 labels; Domain Model = proposal-only triangulated frame, frontier never critical.
+- [PCWA absence detectors](orivellum-pcwa.md) — node-ID-keyed regions (names collide), zero-value cardinality gaps with prevalence gate, atomic ratify claim, blocking = measured demand only.

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING
 
@@ -279,8 +280,15 @@ def corpus_evidence_count(db: OrivellumDB, work_id: str, term: str) -> int:
 
 
 def demand_count(db: OrivellumDB, work_id: str, term: str) -> int:
-    """MEASURED demand: user messages in this Work's conversations that touch
-    the node phrase.  Retrospective usage, never a hand-written flag."""
+    """MEASURED demand: real query + retrieval traffic touching the region.
+
+    Two logged signals, never a hand-written flag:
+      * user messages in this Work's conversations that match the phrase
+        (query traffic, via messages_fts), plus
+      * rows in the knowledge_retrievals injection log whose retrieved
+        knowledge item's subject carries the term (retrieval traffic —
+        every time this region's knowledge was actually pulled into a chat).
+    """
     phrase = _fts_phrase(term)
     with db._lock:
         row = db._conn.execute(
@@ -289,7 +297,18 @@ def demand_count(db: OrivellumDB, work_id: str, term: str) -> int:
                WHERE messages_fts MATCH ? AND f.role = 'user' AND c.work_id = ?""",
             (phrase, work_id),
         ).fetchone()
-    return int(row["n"])
+        n = int(row["n"])
+        try:
+            r = db._conn.execute(
+                """SELECT COUNT(*) AS n FROM knowledge_retrievals kr
+                   JOIN knowledge k ON k.id = kr.knowledge_id
+                   WHERE k.work_id = ? AND lower(k.subject) LIKE ?""",
+                (work_id, f"%{(term or '').strip().lower()}%"),
+            ).fetchone()
+            n += int(r["n"])
+        except sqlite3.OperationalError:
+            pass  # pre-retrieval-log DB
+    return n
 
 
 # ── G2 coverage detector ──────────────────────────────────────────────────────

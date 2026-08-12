@@ -5906,7 +5906,6 @@ class OrivellumDB:
         evidence_absent: str,
         centrality: int = 0,
         dependent_count: int = 0,
-        blocking_active_work: bool = False,
         agreement: int = 0,
         demand: int = 0,
         unit: str = "",
@@ -5924,8 +5923,11 @@ class OrivellumDB:
         (and independent dismissals).
 
         Severity is DERIVED HERE from (gap_class, centrality, dependent_count,
-        blocking_active_work) via the deterministic scoring function — callers
-        cannot assign it, and no model is ever asked.
+        agreement, demand) via the deterministic scoring function — callers
+        cannot assign it, and no model is ever asked.  ``demand`` must be
+        MEASURED retrieval/query traffic against the region (see
+        gap_engine.measure_demand) — high demand is the only path to
+        blocking severity; there is no hand flag.
 
         REFUSES (raises ``ValueError``) any gap without a frame citation:
         ``frame_node_id``, ``frame_source_ref``, and ``evidence_absent`` must
@@ -5956,37 +5958,32 @@ class OrivellumDB:
         if not (gap_class or "").strip() or not (scope or "").strip():
             raise ValueError("gap refused: gap_class and scope are required")
 
-        from orivellum.capabilities.gap_engine import compute_severity
+        from orivellum.capabilities.gap_engine import DEMAND_BLOCKING, compute_severity
+
+        # ── Blocking-status gate (G-M4, enforced) ────────────────────────────
+        # A detector may only produce blocking-severity gaps once it carries a
+        # measured, stratified precision/recall figure from the open-world
+        # harness.  Blocking now comes from MEASURED demand (retrieval/query
+        # traffic ≥ DEMAND_BLOCKING), so for unmeasured detectors demand is
+        # clamped just below the blocking threshold — the traffic figure is
+        # kept in meta, only its blocking effect is suppressed.
+        meta = dict(meta or {})
+        if demand >= DEMAND_BLOCKING and not self.has_measured_detector(force_check):
+            meta["blocking_suppressed"] = (
+                f"measured demand {demand} ≥ {DEMAND_BLOCKING} but detector "
+                f"{force_check!r} has no harness measurement — blocking status "
+                "requires measured, stratified figures"
+            )
+            meta.setdefault("measured_demand", demand)
+            demand = DEMAND_BLOCKING - 1
 
         severity = compute_severity(
             gap_class,
             centrality=centrality,
             dependent_count=dependent_count,
-            blocking_active_work=blocking_active_work,
             agreement=agreement,
             demand=demand,
         )
-
-        # ── Blocking-status gate (G-M4, enforced) ────────────────────────────
-        # A detector may only produce blocking-severity gaps once it carries a
-        # measured, stratified precision/recall figure from the open-world
-        # harness.  Unmeasured detectors have the blocking flag suppressed —
-        # the severity is recomputed without it and the suppression recorded.
-        meta = dict(meta or {})
-        if blocking_active_work and not self.has_measured_detector(force_check):
-            blocking_active_work = False
-            severity = compute_severity(
-                gap_class,
-                centrality=centrality,
-                dependent_count=dependent_count,
-                blocking_active_work=False,
-                agreement=agreement,
-                demand=demand,
-            )
-            meta["blocking_suppressed"] = (
-                f"detector {force_check!r} has no harness measurement — "
-                "blocking status requires measured, stratified figures"
-            )
 
         gap_id = (
             "gap-"
@@ -6188,6 +6185,34 @@ class OrivellumDB:
         except sqlite3.OperationalError:
             return None  # table not present (pre-migration DB)
 
+    def ratify_completeness(self, assertion_id: str, *, signed_by: str, basis: str = "") -> dict:
+        """Atomically promote a MACHINE-PROPOSED assertion to active (signed).
+
+        The proposed-status check and the promotion happen under one lock so
+        two concurrent ratifications cannot both succeed — the second sees a
+        non-proposed row and gets the state conflict.  KeyError for an
+        unknown id; ValueError when the row is not 'proposed'.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM completeness_assertion WHERE id=?", (assertion_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"assertion {assertion_id!r} not found")
+            if row["status"] != "proposed":
+                raise ValueError(f"assertion is {row['status']!r}, not 'proposed'")
+            return self.assert_completeness(
+                work_id=row["work_id"],
+                gap_class=row["gap_class"],
+                scope=row["scope"],
+                basis=(basis or "").strip() or row["basis"],
+                signed_by=signed_by,
+                no_value=bool(row["no_value"]),
+                unit=row["unit"] or "",
+                frame_node_id=row["frame_node_id"] or "",
+                frame_source_ref=row["frame_source_ref"] or "",
+            )
+
     def assert_completeness(
         self,
         *,
@@ -6251,18 +6276,15 @@ class OrivellumDB:
                         aid,
                     ),
                 )
+                reason = "refreshed"
+                if frm == "retracted":
+                    reason = "reasserted"
+                elif frm == "proposed":
+                    reason = "ratified"  # machine proposal accepted by a human signature
                 self._conn.execute(
                     "INSERT INTO completeness_transition (id, assertion_id, from_status, "
                     "to_status, reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
-                    (
-                        _uuid(),
-                        aid,
-                        frm,
-                        "active",
-                        "reasserted" if frm == "retracted" else "refreshed",
-                        signed_by,
-                        now,
-                    ),
+                    (_uuid(), aid, frm, "active", reason, signed_by, now),
                 )
             else:
                 self._conn.execute(
@@ -6333,6 +6355,104 @@ class OrivellumDB:
         row["closed_gap_ids"] = closed_ids
         return row
 
+    def propose_completeness(
+        self,
+        *,
+        work_id: str | None,
+        gap_class: str,
+        scope: str,
+        basis: str,
+        proposed_by: str,
+        no_value: bool = False,
+        unit: str = "",
+        frame_node_id: str = "",
+        frame_source_ref: str = "",
+        meta: dict | None = None,
+    ) -> dict | None:
+        """MACHINE-PROPOSED completeness (PCWA closure inference) — never active.
+
+        A proposed assertion is accumulated closure knowledge with the
+        statistical basis recorded (e.g. "14 of 15 Characters carry exactly
+        one located_at value").  It does NOT suppress gaps and does NOT
+        dismiss anything — only a human signature ratifies it to ``active``
+        (via ``assert_completeness``, ledgered as "ratified").
+
+        Idempotent on the region identity: an existing ``proposed`` row has
+        its basis/meta refreshed; an ``active`` or ``retracted`` row is a
+        human decision and is left untouched (returns None) — a machine
+        never overrides a signature in either direction.
+        """
+        gap_class = (gap_class or "").strip()
+        scope = (scope or "").strip()
+        basis = (basis or "").strip()
+        proposed_by = (proposed_by or "").strip()
+        if not gap_class or not scope:
+            raise ValueError("proposal refused: gap_class and scope are required")
+        if not basis:
+            raise ValueError("proposal refused: basis is required — cite the statistics")
+        if not proposed_by:
+            raise ValueError("proposal refused: proposed_by is required — name the mechanism")
+
+        aid = self._completeness_id(work_id, gap_class, scope)
+        now = _now()
+        meta_json = json.dumps(meta or {})
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM completeness_assertion WHERE id=?", (aid,)
+            ).fetchone()
+            if existing is not None:
+                if existing["status"] != "proposed":
+                    return None  # a signed human decision exists — never touch it
+                self._conn.execute(
+                    "UPDATE completeness_assertion SET basis=?, no_value=?, unit=?, "
+                    "frame_node_id=?, frame_source_ref=?, meta=?, updated_at=? WHERE id=?",
+                    (
+                        basis,
+                        1 if no_value else 0,
+                        unit,
+                        frame_node_id.strip(),
+                        frame_source_ref.strip(),
+                        meta_json,
+                        now,
+                        aid,
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    """INSERT INTO completeness_assertion
+                       (id, work_id, gap_class, scope, unit, frame_node_id,
+                        frame_source_ref, basis, no_value, status, status_reason,
+                        signed_by, meta, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,'proposed','',?,?,?,?)""",
+                    (
+                        aid,
+                        work_id,
+                        gap_class,
+                        scope,
+                        unit,
+                        frame_node_id.strip(),
+                        frame_source_ref.strip(),
+                        basis,
+                        1 if no_value else 0,
+                        proposed_by,
+                        meta_json,
+                        now,
+                        now,
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO completeness_transition (id, assertion_id, from_status, "
+                    "to_status, reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
+                    (_uuid(), aid, "", "proposed", "machine-proposed", proposed_by, now),
+                )
+            self._maybe_commit()
+            row = dict(
+                self._conn.execute(
+                    "SELECT * FROM completeness_assertion WHERE id=?", (aid,)
+                ).fetchone()
+            )
+        return row
+
     def retract_completeness(self, assertion_id: str, *, reason: str, signed_by: str) -> dict:
         """Retract a completeness assertion (signed, ledgered) — the region re-opens.
 
@@ -6348,19 +6468,23 @@ class OrivellumDB:
             raise ValueError("retraction requires a reason and a signature")
         now = _now()
         with self._lock:
+            prior = self._conn.execute(
+                "SELECT status FROM completeness_assertion WHERE id=?", (assertion_id,)
+            ).fetchone()
             cur = self._conn.execute(
                 "UPDATE completeness_assertion SET status='retracted', status_reason=?, "
-                "signed_by=?, updated_at=? WHERE id=? AND status='active'",
+                "signed_by=?, updated_at=? WHERE id=? AND status IN ('active','proposed')",
                 (reason, signed_by, now, assertion_id),
             )
             if cur.rowcount == 0:
                 raise ValueError(
                     f"assertion {assertion_id!r} not found or already retracted"
                 )
+            frm = prior["status"] if prior else "active"
             self._conn.execute(
                 "INSERT INTO completeness_transition (id, assertion_id, from_status, "
                 "to_status, reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
-                (_uuid(), assertion_id, "active", "retracted", reason, signed_by, now),
+                (_uuid(), assertion_id, frm, "retracted", reason, signed_by, now),
             )
             # Re-open the gaps this assertion closed — UNLESS another active
             # assertion still covers the gap's region (an exact and a
@@ -6647,8 +6771,8 @@ class OrivellumDB:
         """True when the detector carries a CURRENT harness measurement over
         enough labels.
 
-        This is the blocking-status gate: a gap may only carry
-        ``blocking_active_work`` severity weight when its detector has
+        This is the blocking-status gate: a gap may only carry the
+        demand-derived blocking severity weight when its detector has
         measured, stratified figures from the open-world harness — computed
         over the oracle as it stands now.  A stale measurement (any label
         added, revised, or removed since) does not count.
@@ -8380,6 +8504,60 @@ class OrivellumDB:
             self._conn.execute("DELETE FROM graph_edge WHERE chapter_id=?", (chapter_id,))
             self._conn.execute("DELETE FROM graph_node WHERE chapter_id=?", (chapter_id,))
             self._maybe_commit()
+
+    # ── PCWA relation metadata (v143) ─────────────────────────────────────────
+
+    def replace_relation_meta(self, work_id: str, rows: list[dict]) -> int:
+        """Replace a Work's mined relation metadata wholesale (re-derivable).
+
+        Each row: node_type, edge_type, n_subjects, functional (0/1),
+        functional_share, card_k (int|None), max_cardinality (int|None),
+        max_cardinality_share (float|None), value_histogram (dict).
+        The whole set is swapped atomically so the metadata always reflects
+        one mining pass over the graph as it stood.
+        """
+        now = _now()
+        with self._lock:
+            self._conn.execute("DELETE FROM graph_relation_meta WHERE work_id=?", (work_id,))
+            for r in rows:
+                self._conn.execute(
+                    """INSERT INTO graph_relation_meta
+                       (id, work_id, node_type, edge_type, n_subjects, functional,
+                        functional_share, card_k, max_cardinality,
+                        max_cardinality_share, value_histogram, computed_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        _uuid(),
+                        work_id,
+                        r["node_type"],
+                        r["edge_type"],
+                        int(r["n_subjects"]),
+                        1 if r.get("functional") else 0,
+                        float(r.get("functional_share") or 0.0),
+                        r.get("card_k"),
+                        r.get("max_cardinality"),
+                        r.get("max_cardinality_share"),
+                        json.dumps(r.get("value_histogram") or {}),
+                        now,
+                    ),
+                )
+            self._maybe_commit()
+        return len(rows)
+
+    def list_relation_meta(self, work_id: str) -> list[dict]:
+        """Mined relation metadata for a Work, histogram decoded."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM graph_relation_meta WHERE work_id=? "
+                "ORDER BY node_type, edge_type",
+                (work_id,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["value_histogram"] = _jload(d.get("value_histogram"), {}) or {}
+            out.append(d)
+        return out
 
     def delete_graph_inconsistencies_for_chapter(self, chapter_id: str) -> None:
         """Drop the inconsistencies RAISED BY one chapter (before re-verify)."""

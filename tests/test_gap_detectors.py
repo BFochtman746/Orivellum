@@ -285,6 +285,8 @@ def test_scan_route_runs_all_detectors(tmp_path):
         "failure_clustering",
         "domain_coverage",
         "domain_frontier",
+        "mined_cardinality",
+        "peer_group_closure",
     }
     assert body["total_gaps"] >= 1  # the citation gap
 

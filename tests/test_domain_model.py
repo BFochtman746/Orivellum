@@ -319,7 +319,7 @@ def test_frontier_routes_to_decision_queue_and_is_never_critical(tmp_path):
     assert json.loads(gap["meta"])["queue"] == "decision"
     assert gap["severity"] in ("low", "medium")
 
-    # Even absurd counts + a blocking flag cannot make a frontier gap critical.
+    # Even absurd counts + blocking-level demand cannot make a frontier gap critical.
     assert (
         compute_severity(
             "domain_frontier",
@@ -327,7 +327,6 @@ def test_frontier_routes_to_decision_queue_and_is_never_critical(tmp_path):
             dependent_count=50,
             demand=50,
             agreement=6,
-            blocking_active_work=True,
         )
         == "medium"
     )

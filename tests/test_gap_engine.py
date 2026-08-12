@@ -198,11 +198,16 @@ def test_compute_severity_is_deterministic():
     assert compute_severity("citation_closure", centrality=1, dependent_count=1) == "low"
     assert compute_severity("citation_closure", centrality=3, dependent_count=1) == "medium"
     assert compute_severity("citation_closure", centrality=8, dependent_count=2) == "high"
+    # Blocking (and hence critical) now comes only from MEASURED demand —
+    # retrieval/query traffic at or above the DEMAND_BLOCKING threshold —
+    # never from a hand-written flag.
     assert (
-        compute_severity(
-            "citation_closure", centrality=8, dependent_count=2, blocking_active_work=True
-        )
+        compute_severity("citation_closure", centrality=8, dependent_count=2, demand=6)
         == "critical"
+    )
+    assert (
+        compute_severity("citation_closure", centrality=8, dependent_count=2, demand=5)
+        == "high"
     )
 
 
