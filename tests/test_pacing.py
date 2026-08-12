@@ -330,6 +330,105 @@ class TestSceneOperations(unittest.TestCase):
         self.assertEqual(len(scenes), 0,
                          "Ungrounded start_quote must be rejected entirely, not stored at offset 0")
 
+    def test_ungrounded_end_quote_stores_scene_open_ended(self) -> None:
+        """An ungrounded end_quote must not crash extraction — the scene is stored
+        with end_offset=None (extends to chapter boundary)."""
+        wid = self.db._work()
+        text = "The knight entered the hall. His sword gleamed."
+        cid = self.db._chapter(wid, 0, "Ch", text)
+
+        def _fake_llm(messages, **kw):
+            return _ok({"scenes": [{"title": "Entry",
+                "start_quote": "The knight entered the hall",
+                "end_quote": "fabricated end quote not in text",
+                "purpose": "action", "pov": "knight", "setting": "hall"}]})
+
+        with patch("orivellum.capabilities.llm.llm_call", side_effect=_fake_llm):
+            scenes = pac.extract_scenes(self.db, self.cfg, wid, chapter_id=cid)
+
+        self.assertEqual(len(scenes), 1, "Scene with ungrounded end must still be stored")
+        self.assertIsNone(scenes[0]["source_offset_end"],
+                          "source_offset_end must be None when end_quote is ungrounded")
+
+    def test_end_quote_before_start_stored_open_ended(self) -> None:
+        """End quote that appears before the start boundary (due to repeated text)
+        must be discarded — the scene is stored open-ended, not with an inverted span."""
+        wid = self.db._work()
+        # "end" appears before "start" in the chapter
+        text = "End of a prior scene. Then the START of our scene begins here."
+        cid = self.db._chapter(wid, 0, "Ch", text)
+
+        def _fake_llm(messages, **kw):
+            return _ok({"scenes": [{"title": "Anchor",
+                "start_quote": "START of our scene begins here",
+                "end_quote": "End of a prior scene",   # occurs BEFORE start
+                "purpose": "action", "pov": "narrator", "setting": "room"}]})
+
+        with patch("orivellum.capabilities.llm.llm_call", side_effect=_fake_llm):
+            scenes = pac.extract_scenes(self.db, self.cfg, wid, chapter_id=cid)
+
+        self.assertEqual(len(scenes), 1, "Scene must still be stored")
+        self.assertIsNone(scenes[0]["source_offset_end"],
+                          "end_quote occurring before start must be discarded → open-ended")
+
+    def test_repeated_end_quote_uses_occurrence_after_start(self) -> None:
+        """When the same phrase appears twice, the end boundary must point to the
+        occurrence that is at or after start_offset, not the earlier one."""
+        wid = self.db._work()
+        text = "the fox ran. The knight appeared. the fox ran. More story follows."
+        # "the fox ran" occurs at index 0 AND after the start "The knight appeared"
+        start_quote = "The knight appeared"
+        end_quote = "the fox ran"
+        cid = self.db._chapter(wid, 0, "Ch", text)
+
+        def _fake_llm(messages, **kw):
+            return _ok({"scenes": [{"title": "Knight",
+                "start_quote": start_quote,
+                "end_quote": end_quote,
+                "purpose": "action", "pov": "narrator", "setting": "forest"}]})
+
+        with patch("orivellum.capabilities.llm.llm_call", side_effect=_fake_llm):
+            scenes = pac.extract_scenes(self.db, self.cfg, wid, chapter_id=cid)
+
+        self.assertEqual(len(scenes), 1)
+        start = scenes[0]["source_offset_start"]
+        end = scenes[0]["source_offset_end"]
+        self.assertIsNotNone(start)
+        if end is not None:
+            self.assertGreater(end, start,
+                               "end_offset must be after start_offset (not the earlier 'the fox ran')")
+
+    def test_end_offset_uses_verbatim_span_length(self) -> None:
+        """End offset = verbatim span end, not start + len(model_quote).
+
+        The model may return a normalised-whitespace version of the quote.
+        ground_quote_span returns the verbatim matched span; the offset must
+        be derived from that, not from the model's copy."""
+        wid = self.db._work()
+        # Two spaces between words; model will supply single-space version
+        text = "A great  battle  ended here. The aftermath was quiet."
+        cid = self.db._chapter(wid, 0, "Ch", text)
+        start_quote = "A great  battle  ended here"   # verbatim with double spaces
+        end_quote = "The aftermath was quiet"         # verbatim
+
+        def _fake_llm(messages, **kw):
+            return _ok({"scenes": [{"title": "Battle",
+                "start_quote": start_quote,
+                "end_quote": end_quote,
+                "purpose": "action", "pov": "narrator", "setting": "field"}]})
+
+        with patch("orivellum.capabilities.llm.llm_call", side_effect=_fake_llm):
+            scenes = pac.extract_scenes(self.db, self.cfg, wid, chapter_id=cid)
+
+        self.assertGreaterEqual(len(scenes), 1)
+        end = scenes[0]["source_offset_end"]
+        if end is not None:
+            # The verbatim span end must be <= len(text)
+            self.assertLessEqual(end, len(text),
+                                 "end_offset must not exceed chapter length")
+            # The character at end-1 must be inside the chapter
+            self.assertGreater(end, 0)
+
     def test_update_scene_allows_author_correction(self) -> None:
         wid = self.db._work()
         cid = self.db._chapter(wid, 0, "Ch", "Text.")

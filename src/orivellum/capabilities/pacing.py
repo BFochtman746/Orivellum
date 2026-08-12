@@ -321,10 +321,23 @@ def extract_scenes(
                 continue
             start_offset = start_result[0]
 
-            # Ground the end quote
+            # Ground the end quote.  Search only in text[start_offset:] so that
+            # repeated phrases cannot produce an inverted/zero-length span.
+            # Use the verbatim span length returned by ground_quote_span — never
+            # the model's quote length, which may differ after normalisation.
             if end_quote:
-                end_result = ground_quote_span(end_quote, text)
-                end_offset = end_result[0] + len(end_quote) if end_result else None
+                end_result = ground_quote_span(end_quote, text[start_offset:])
+                if end_result is not None:
+                    end_span_start, end_span = end_result
+                    end_offset = start_offset + end_span_start + len(end_span)
+                else:
+                    # Ungrounded end: store the scene as open-ended (extends to
+                    # chapter boundary) rather than discarding it outright.
+                    logger.debug(
+                        "end_quote not grounded after start in chapter %s: %r",
+                        cid, end_quote[:40],
+                    )
+                    end_offset = None
             else:
                 end_offset = None
 
