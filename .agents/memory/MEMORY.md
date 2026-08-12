@@ -131,3 +131,4 @@
 - [Collections/series/domain layers](orivellum-structure-layers.md) — branding vs order-authority vs shared canon; collection edits refuse silent canon bind/unbind; conversions ledgered + atomic.
 - [atomic()+governed_write composition](orivellum-atomic-tx.md) — atomic must BEGIN IMMEDIATE (outermost-savepoint RELEASE commits); read_conn joins the thread's open atomic txn.
 - [Promotion gate & lifecycle provenance](orivellum-promotion-gate.md) — Promote-to-Book gate lives inside create_book_pipeline(require_ready=True) under the lock; lifecycle actor is explicit; dedup guards re-check inside db.atomic().
+- [Series continuity review](orivellum-series-review.md) — scope snapshotted at run creation; span verification excludes unverifiable quotes and forces partial; canon evidence labeled, never faked as passage.
