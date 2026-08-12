@@ -150,6 +150,39 @@ class TestGate(Base):
         # nothing ambiguous -> never gate, however expensive
         self.assertFalse(clarify.should_gate(9000, 90, True, 0, POLICY)[0])
 
+    # ── N1 adversarial tests ──────────────────────────────────────────────
+
+    def test_zero_facet_gate_refused(self):
+        """N1 adversarial (Rule 1): a gate with zero facets is refused.
+        The code path `if not facets: raise GateError(...)` exists but had no test."""
+        with self.assertRaises(clarify.GateError) as cm:
+            clarify.open_gate(self.db, "t_adv1", "x", [], cost_units=100, policy=POLICY)
+        self.assertIn("facet", str(cm.exception).lower())
+
+    def test_whitespace_only_answer_refused(self):
+        """N1 adversarial (Rule 5): a resolve with spaces only is rejected.
+
+        The "empty answer is not an answer" guard strips the value before checking.
+        We submit via kind='freeform' so the code reaches the emptiness check
+        before the offered-option check — the rule applies to all resolution paths.
+        """
+        rid = clarify.open_gate(self.db, "t_adv2", "x", [facet()],
+                                cost_units=100, policy=POLICY)
+        fid = clarify.read_gate(self.db, rid)["facets"][0]["id"]
+        with self.assertRaises(clarify.GateError) as cm:
+            clarify.resolve(self.db, fid, "   ", kind="freeform")  # whitespace only
+        self.assertIn("empty", str(cm.exception).lower())
+
+    def test_resolve_on_closed_gate_refused(self):
+        """N1 adversarial (Rule 5): once a gate is skipped, its facets are locked.
+        A second resolve must raise — defaults cannot be overwritten after close."""
+        rid = clarify.open_gate(self.db, "t_adv3", "x", [facet()],
+                                cost_units=100, policy=POLICY)
+        clarify.close_gate(self.db, rid, skip=True)
+        fid = clarify.read_gate(self.db, rid)["facets"][0]["id"]
+        with self.assertRaises(clarify.GateError):
+            clarify.resolve(self.db, fid, "technical")
+
 
 # ── next actions ──────────────────────────────────────────────────────────
 
@@ -442,6 +475,174 @@ class TestStats(Base):
         nextaction.dismiss(self.db, aid, "not now")
         self.assertEqual(
             self.db.q1("SELECT COUNT(*) c FROM next_event WHERE event='dismissed'")["c"], 1)
+
+
+# ── N2 — next-action set rules ────────────────────────────────────────────
+
+class TestN2(Base):
+    """N2 — set size, recommendation, and lift tests per MILESTONES N2."""
+
+    def test_three_action_set_with_one_rec_accepted(self):
+        """Rule 6+7: exactly 3 actions with exactly 1 recommendation is valid."""
+        sid = nextaction.offer(
+            self.db, "t", "m",
+            [
+                action(rec=True,   label="Recommended step"),
+                action(kind="act", label="Alternative A"),
+                action(kind="widen", label="Broader approach"),
+            ],
+            POLICY,
+        )
+        s = nextaction.read_set(self.db, sid)
+        self.assertEqual(len(s["actions"]), 3)
+        self.assertEqual(s["recommended"], "Recommended step")
+        self.assertTrue(s["recommended_because"],
+                        "recommendation must carry its rationale")
+
+    def test_five_action_set_refused_naming_ceiling(self):
+        """Rule 6: 5 actions exceeds max_actions=4; error must name the ceiling."""
+        with self.assertRaises(nextaction.ActionError) as cm:
+            nextaction.offer(
+                self.db, "t", "m",
+                [action(label=f"step-{i}", kind="narrow") for i in range(5)],
+                POLICY,
+                no_recommendation_reason="too many to rank",
+            )
+        self.assertIn("4", str(cm.exception),
+                      "ceiling (4) must appear in the error so the caller knows the limit")
+
+    def test_recommendation_lift_positive_at_60pct_take_rate(self):
+        """Stats: recommendation_lift > 0 when the rec is taken 60 % of the time.
+
+        20 independent threads each get one 2-action set (1 rec + 1 non-rec).
+        Taking the rec 12/20 times gives rec_take_rate = 12/20 = 0.6,
+        overall_take_rate = 12/40 = 0.3, lift = 0.3 — the recommender earns its badge.
+        """
+        for i in range(20):
+            sid = nextaction.offer(
+                self.db, f"th{i}", f"m{i}",
+                [action(rec=True, label="rec"), action(kind="act", label="alt")],
+                POLICY,
+            )
+            if i < 12:                      # take the recommendation 60 % of the time
+                acts = nextaction.read_set(self.db, sid)["actions"]
+                rec_act = next(a for a in acts if a["recommended"])
+                nextaction.select(self.db, rec_act["id"])
+            # For the remaining 8 sessions we leave the set un-taken.
+
+        st = nextaction.stats(self.db)
+        lift = st["overall"].get("recommendation_lift")
+        self.assertIsNotNone(lift, "lift must be computable after 20 sessions")
+        self.assertGreater(
+            lift, 0,
+            f"lift={lift!r}  rec_take={st['overall']['recommendation_take_rate']!r}  "
+            f"overall_take={st['overall']['take_rate']!r}",
+        )
+
+
+# ── N3 — real probes against Orivellum schema ─────────────────────────────
+
+class TestOrivellumProbes(Base):
+    """N3 — one test per real Orivellum probe; each creates a minimal fixture."""
+
+    def _probe(self, idx):
+        return generate.EXAMPLE_PROBES[idx]
+
+    def test_probe_A_source_tier_count(self):
+        """Probe 0: documents still on source tier — returns the real count."""
+        self.db.conn.executescript(
+            "CREATE TABLE IF NOT EXISTS documents (id TEXT, tier TEXT);"
+        )
+        self.db.conn.executemany("INSERT INTO documents VALUES (?,?)", [
+            (f"d{i}", "source" if i < 5 else "artifact") for i in range(8)
+        ])
+        self.db.conn.commit()
+        facts = generate.gather_facts(self.db, [self._probe(0)])
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]["count"], 5,
+                         "must return the real count, not a hardcoded number")
+        self.assertIn("5", facts[0]["anchor"])
+        self.assertIn("5", facts[0]["anchor_ref"])
+
+    def test_probe_B_batch_works_count(self):
+        """Probe 1: Works named like migration batches — returns the real count."""
+        self.db.conn.executescript(
+            "CREATE TABLE IF NOT EXISTS works (id TEXT, name TEXT);"
+        )
+        self.db.conn.executemany("INSERT INTO works VALUES (?,?)", [
+            ("w1", "MIGRATION_BATCH_001"),
+            ("w2", "MIGRATION_BATCH_002"),
+            ("w3", "Normal Work Title"),
+        ])
+        self.db.conn.commit()
+        facts = generate.gather_facts(self.db, [self._probe(1)])
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]["count"], 2)
+        self.assertIn("2", facts[0]["anchor"])
+
+    def test_probe_C_critical_findings_count(self):
+        """Probe 2: open critical findings — counts only the right severity+status."""
+        self.db.conn.executescript(
+            "CREATE TABLE pacing_findings (id TEXT, severity TEXT, status TEXT);"
+        )
+        self.db.conn.executemany("INSERT INTO pacing_findings VALUES (?,?,?)", [
+            ("f1", "critical", "open"),
+            ("f2", "critical", "open"),
+            ("f3", "high",     "open"),     # wrong severity — excluded
+            ("f4", "critical", "resolved"), # wrong status — excluded
+        ])
+        self.db.conn.commit()
+        facts = generate.gather_facts(self.db, [self._probe(2)])
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]["count"], 2)
+
+    def test_probe_D_knowledge_items_awaiting_review(self):
+        """Probe 3: AI-extracted knowledge waiting for author review."""
+        self.db.conn.executescript(
+            "CREATE TABLE knowledge_items (id TEXT, review_status TEXT);"
+        )
+        self.db.conn.executemany("INSERT INTO knowledge_items VALUES (?,?)", [
+            ("k1", "auto"),
+            ("k2", "auto"),
+            ("k3", "approved"),
+            ("k4", "rejected"),
+        ])
+        self.db.conn.commit()
+        facts = generate.gather_facts(self.db, [self._probe(3)])
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]["count"], 2)
+
+    def test_probe_E_chapters_with_no_text(self):
+        """Probe 4: chapters with NULL or blank text that belong to a Work."""
+        self.db.conn.executescript(
+            "CREATE TABLE book_chapters (id TEXT, work_id TEXT, text TEXT);"
+        )
+        self.db.conn.executemany("INSERT INTO book_chapters VALUES (?,?,?)", [
+            ("c1", "w1", None),           # NULL — counts
+            ("c2", "w1", "   "),          # blank — counts
+            ("c3", "w1", "Real text."),   # has content — excluded
+            ("c4", None,  None),          # no work_id — excluded
+        ])
+        self.db.conn.commit()
+        facts = generate.gather_facts(self.db, [self._probe(4)])
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]["count"], 2)
+
+    def test_probe_F_open_gates_count(self):
+        """Probe 5: clarify gates still open — uses the DB's own schema table."""
+        clarify.open_gate(self.db, "ta", "target-a", [facet()],
+                          cost_units=50, policy=POLICY)
+        clarify.open_gate(self.db, "tb", "target-b", [facet()],
+                          cost_units=50, policy=POLICY)
+        facts = generate.gather_facts(self.db, [self._probe(5)])
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]["count"], 2)
+
+    def test_probe_drops_silently_when_table_missing(self):
+        """N3 rule: a probe whose table doesn't exist drops out, never guesses."""
+        # pacing_findings does not exist in a fresh next.db
+        facts = generate.gather_facts(self.db, [self._probe(2)])
+        self.assertEqual(facts, [])
 
 
 def main() -> int:
