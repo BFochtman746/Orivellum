@@ -1,16 +1,16 @@
 ---
 name: xlsx auditor (dependency graph + tokenizer)
-description: Design rules for the runner's Excel auditor layer — tokenized formula analysis, workbook dependency graph, honesty guarantees
+description: Durable correctness rules for the runner's Excel auditor — tokenized parsing, exact-or-refuse resolution, honest graph bounds
 ---
 
-# xlsx auditor layer (runner)
+# xlsx auditor correctness rules (runner)
 
-- Formula parsing is via `openpyxl.formula.tokenizer` (xlsx_formula.py), never regexes. String literals, table refs, defined names, and array constants were the regex era's false-positive classes — regression tests pin zero phantom findings.
-- **Why:** an audit tool that emits false findings stops being read; regexes cannot distinguish `"See B2:C9"` (text) from a reference.
-- Structured refs (`Table1[...]`) resolve EXACTLY or refuse: `_table_area` returns a LIST of areas (disjoint `[#Headers],[#Totals]` = two rects, never a bounding box over the data body); `@` needs the calling cell; unknown columns / missing totals rows return None → disclosed via `XL-GRAPH-PARTIAL`, never silently substituted with the data body.
-- Excel resolves table columns against HEADER TEXT — openpyxl-written files desync tableColumns names from headers, so extract_tables prefers header cell values.
-- WorkbookGraph (xlsx_graph.py): edges expanded up to EXPAND_CAP cells per area; larger areas go into a per-sheet rectangle index. Containment pass buckets formula cells by (sheet,col) AND (sheet,row) and walks each capped rect's NARROW dimension (whole-row refs must never iterate 16k columns). `unread_inputs` batches rect membership per row (active col intervals cached on row change) — never a per-cell rect scan.
-- Honesty rule: INDIRECT/OFFSET and unresolvable names make the graph a lower bound — always disclosed (`XL-GRAPH-PARTIAL`), and orphan/cycle claims are qualified by it.
-- Cycle detection = iterative Tarjan SCC + self-loops (self-edges must be KEPT in expansion — dropping `pk == key` kills direct self-reference detection).
-- New finding codes: XL-CIRCULAR (CRITICAL), XL-MERGED-RANGE (HIGH), XL-ANCHOR-DRIFT/XL-DATE-MIX/XL-NAME-SHADOW (MEDIUM), XL-NAME-ORPHAN (LOW), XL-UNREAD-INPUT/XL-GRAPH-PARTIAL (INFO). Error findings name their chain root via trace_error_root.
-- **How to apply:** any future formula-parser change must keep the false-positive regressions and the large-range/structured-ref tests in tests/test_xlsx_audit.py green — they are the compatibility boundary. Graph cache (_GRAPH_CACHE) lives beside _WB_CACHE and is dropped in _drop_cache.
+- Formula parsing must go through a real tokenizer, never regexes.
+- **Why:** regexes cannot distinguish `"See B2:C9"` (text) from a reference; an audit tool that emits false findings stops being read. String literals, table refs, defined names, and array constants are the false-positive classes to guard.
+- Structured table references resolve EXACTLY or refuse: disjoint selections (headers+totals, non-adjacent columns like `T[[A],[C]]`) must yield one rectangle per region — a bounding box invents dependencies on unselected cells (false unread-input/orphan/cycle results). Refusals are disclosed as graph-partial, never silently substituted with the data body.
+- Excel resolves table columns against HEADER TEXT; files written by non-Excel tools desync stored column names from headers, so header cells are authoritative.
+- The dependency graph is an honest LOWER BOUND: dynamic refs (INDIRECT/OFFSET) and unresolvable names are always disclosed; orphan/cycle claims are qualified by that disclosure.
+- Displayed circular-reference chains must follow actual directed edges (each consecutive pair a real "reads" edge), not just sorted SCC members.
+- Self-edges must be kept during range expansion — dropping "cell references itself" kills direct circular-ref detection.
+- Huge ranges (whole column/row) must be indexed as rectangles and walked on their NARROW dimension; membership checks batched per row. Never expand 16k columns or scan every rectangle per cell.
+- **How to apply:** the false-positive, structured-ref, and large-range regression tests in the runner's xlsx audit suite are the compatibility boundary — any parser/graph change must keep them green.

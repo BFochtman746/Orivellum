@@ -137,8 +137,28 @@ class WorkbookGraph:
         return g
 
     # --------------------------------------------------------------- cycles
+    @staticmethod
+    def _edge_cycle(comp, prec):
+        """Order an SCC along ACTUAL directed edges: returns a path where
+        every consecutive pair (a, b) is a real edge (a reads b) and the last
+        element reads the first — a genuine cycle, not a sorted member list."""
+        comp_set = set(comp)
+        start = min(comp)
+        path, pos, cur = [start], {start: 0}, start
+        while True:
+            candidates = sorted(p for p in prec.get(cur, ()) if p in comp_set)
+            if not candidates:  # cannot happen in an SCC; fail honest
+                return comp
+            nxt = next((c for c in candidates if c not in pos), candidates[0])
+            if nxt in pos:
+                return path[pos[nxt] :]
+            pos[nxt] = len(path)
+            path.append(nxt)
+            cur = nxt
+
     def cycles(self, limit=20):
-        """Strongly-connected components of size > 1, plus direct self-loops.
+        """Strongly-connected components of size > 1, plus direct self-loops,
+        each returned as an edge-ordered directed cycle (see _edge_cycle).
         Iterative Tarjan — recursion depth is workbook-controlled otherwise."""
         index, low, onstack = {}, {}, set()
         stack, out, counter = [], [], [0]
@@ -179,7 +199,7 @@ class WorkbookGraph:
                         if w == node:
                             break
                     if len(comp) > 1:
-                        out.append(sorted(comp))
+                        out.append(self._edge_cycle(comp, prec))
                     elif node in prec.get(node, ()):
                         out.append([node])
                 if len(out) >= limit:

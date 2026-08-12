@@ -88,6 +88,24 @@ def test_structured_ref_item_specifiers_resolve_exactly():
     assert adjacent["areas"] == [("Data", 1, 1, 2, 4)]
 
 
+def test_structured_ref_non_contiguous_columns_stay_disjoint():
+    """T[[Alpha],[Gamma]] must never invent a dependency on column Beta."""
+    t = {"T": ("Data", 1, 1, 3, 5, 1, ["Alpha", "Beta", "Gamma"], 0)}
+    facts = fx.analyze("=SUM(T[[Alpha],[Gamma]])", "S", tables=t)
+    # two areas: col 1 and col 3 data bodies — col 2 (Beta) excluded
+    assert facts["areas"] == [("Data", 1, 2, 1, 5), ("Data", 3, 2, 3, 5)]
+    assert not any(a[1] <= 2 <= a[3] for a in facts["areas"])
+    # combined with a specifier: two header cells, still no Beta
+    hdr = fx.analyze("=T[[#Headers],[Alpha],[Gamma]]", "S", tables=t)
+    assert hdr["areas"] == [("Data", 1, 1, 1, 1), ("Data", 3, 1, 3, 1)]
+    # adjacent columns still merge into one rectangle
+    adj = fx.analyze("=SUM(T[[Alpha],[Beta]])", "S", tables=t)
+    assert adj["areas"] == [("Data", 1, 2, 2, 5)]
+    # explicit range spans contiguously by definition
+    rng = fx.analyze("=SUM(T[[Alpha]:[Gamma]])", "S", tables=t)
+    assert rng["areas"] == [("Data", 1, 2, 3, 5)]
+
+
 def test_structured_ref_this_row_uses_calling_cell():
     t = {"T": ("Data", 1, 1, 2, 5, 1, ["Amount", "Qty"], 1)}
     # formula sits in data-body row 3 → @Amount is exactly Data!A3
@@ -224,6 +242,12 @@ def test_circular_reference_is_named(tmp_path):
     details = " | ".join(f["detail"] for f in circ)
     for cell in ("M!A1", "M!B1", "M!C1", "M!E5"):
         assert cell in details, f"{cell} missing from named cycles"
+    # the displayed chain must follow ACTUAL directed edges (a reads b),
+    # not just list sorted SCC members
+    g = xlsx._graph(p)
+    for cyc in g.cycles():
+        for a, b in zip(cyc, cyc[1:] + [cyc[0]], strict=True):
+            assert b in g.precedents[a], f"{a} → {b} is not a real edge"
 
 
 def test_clean_workbook_has_no_circular_findings(tmp_path):

@@ -128,25 +128,31 @@ def _table_area(table, spec, cell=None):
     if inner.startswith("[") and inner.endswith("]"):
         inner = inner[1:-1].strip()
 
-    specs, col_items, at = set(), [], False
+    # col_groups holds (lo_name, hi_name) pairs: a range keeps its span, a
+    # single column is (name, name) — NON-ADJACENT selections stay separate
+    # rectangles so unselected columns never enter the graph
+    specs, col_groups, at = set(), [], False
     for part in _split_top(inner):
         p = part.strip()
-        if p.startswith("[") and p.endswith("]") and "]:[" not in p:
+        if "]:[" in p:  # column range [Col1]:[Col2]
+            sides = [s.strip().strip("[]").strip() for s in p.split(":")]
+            if len(sides) != 2 or not all(sides):
+                return None
+            col_groups.append((sides[0], sides[1]))
+            continue
+        if p.startswith("[") and p.endswith("]"):
             p = p[1:-1].strip()
         if not p:
             continue
-        if "]:[" in p:  # column range [Col1]:[Col2]
-            for side in p.split(":"):
-                col_items.append(side.strip().strip("[]").strip())
-        elif p.startswith("#"):
+        if p.startswith("#"):
             specs.add(p.upper())
         elif p.startswith("@"):
             at = True
             rest = p[1:].strip().strip("[]").strip()
             if rest:
-                col_items.append(rest)
+                col_groups.append((rest, rest))
         else:
-            col_items.append(p)
+            col_groups.append((p, p))
 
     # rows — a LIST of spans; adjacent spans merge, disjoint ones stay apart
     if at:
@@ -186,18 +192,31 @@ def _table_area(table, spec, cell=None):
     if any(lo > hi for lo, hi in row_spans):
         return None
 
-    # columns
-    if col_items:
+    # columns — like rows, a LIST of spans; adjacent merge, disjoint stay
+    # apart: T[[A],[C]] must never invent a dependency on column B
+    if col_groups:
         if not col_names:
             return None
+        spans = []
         try:
-            idx = [col_names.index(c) for c in col_items]
+            for lo_name, hi_name in col_groups:
+                i, j = col_names.index(lo_name), col_names.index(hi_name)
+                spans.append((c1 + min(i, j), c1 + max(i, j)))
         except ValueError:
             return None  # unknown column name — refuse, don't guess
-        cols = (c1 + min(idx), c1 + max(idx))
+        spans.sort()
+        cmerged = [list(spans[0])]
+        for a, b in spans[1:]:
+            if a <= cmerged[-1][1] + 1:
+                cmerged[-1][1] = max(cmerged[-1][1], b)
+            else:
+                cmerged.append([a, b])
+        col_spans = [tuple(m) for m in cmerged]
     else:
-        cols = (c1, c2)
-    return [(sheet, cols[0], lo, cols[1], hi) for lo, hi in row_spans]
+        col_spans = [(c1, c2)]
+    return [
+        (sheet, cs, lo, ce, hi) for lo, hi in row_spans for cs, ce in col_spans
+    ]
 
 
 def analyze(formula, sheet, names=None, tables=None, cell=None):
