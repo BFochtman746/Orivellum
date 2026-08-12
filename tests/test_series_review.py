@@ -77,37 +77,42 @@ class _Base(unittest.TestCase):
             self.db._conn.commit()
         return cid
 
-    def _ensure_quote(self, chapter_id: str, quote: str) -> None:
-        """Make the quote verifiably present in the chapter text.
+    def _ensure_quote(self, chapter_id: str, quote: str) -> int:
+        """Make the quote verifiably present and return its exact offset.
 
         Real ATLAS extraction guarantees grounded quotes (LAW 3); the ledger
-        now verifies them, so fixtures must honor the same contract.
+        now verifies quote AND offset, so fixtures must honor the contract.
         """
         with self.db._lock:
             row = self.db._conn.execute(
                 "SELECT text FROM book_chapters WHERE id=?", (chapter_id,)
             ).fetchone()
-            if row is not None and quote not in (row["text"] or ""):
+            text = (row["text"] or "") if row is not None else ""
+            if quote not in text:
+                text = f"{text} {quote}" if text else quote
                 self.db._conn.execute(
-                    "UPDATE book_chapters SET text = COALESCE(text,'') || ' ' || ? "
-                    "WHERE id=?", (quote, chapter_id))
+                    "UPDATE book_chapters SET text=? WHERE id=?",
+                    (text, chapter_id))
                 self.db._conn.commit()
+            return text.index(quote)
 
     def _node(self, work_id, chapter_id, node_type, name, **kw):
         quote = kw.pop("quote", f"...{name}...")
-        self._ensure_quote(chapter_id, quote)
+        offset = kw.pop("offset", None)
+        real_offset = self._ensure_quote(chapter_id, quote)
         return self.db.create_graph_node(
             work_id=work_id, chapter_id=chapter_id, node_type=node_type,
             name=name, evidence_quote=quote,
-            evidence_offset=kw.pop("offset", 0), **kw)
+            evidence_offset=real_offset if offset is None else offset, **kw)
 
     def _edge(self, work_id, chapter_id, src, dst, edge_type, **kw):
         quote = kw.pop("quote", "...")
-        self._ensure_quote(chapter_id, quote)
+        offset = kw.pop("offset", None)
+        real_offset = self._ensure_quote(chapter_id, quote)
         return self.db.create_graph_edge(
             work_id=work_id, chapter_id=chapter_id, src=src, dst=dst,
             edge_type=edge_type, evidence_quote=quote,
-            evidence_offset=kw.pop("offset", 0))
+            evidence_offset=real_offset if offset is None else offset)
 
 
 class MigrationTests(_Base):
@@ -289,12 +294,12 @@ class SpoilerChronologyTests(_Base):
         kael = self._node(b1["id"], c1, "Character", "Kael")
         # Kael references the Shadow King — who is only introduced in book 2
         ghost = self._node(b1["id"], c1, "Event", "Shadow King's fall",
-                           quote="the Shadow King's fall", offset=3)
+                           quote="the Shadow King's fall")
         self._edge(b1["id"], c1, kael, ghost, "references")
         # remove book-1 terminology for the entity so its FIRST introduction
         # is genuinely book 2 (the reference itself is the leak)
         self._node(b2["id"], c2, "Event", "Shadow King's fall",
-                   quote="the Shadow King finally fell", offset=0)
+                   quote="the Shadow King finally fell")
         sr.build_book_ledger(self.db, b1["id"])
         sr.build_book_ledger(self.db, b2["id"])
         scope = sr.resolve_scope(self.db, mode="full_series",
@@ -712,6 +717,54 @@ class ReviewHardeningTests(_Base):
         for e in canon_spans:
             self.assertTrue(e["source_ref"])
             self.assertIsNone(e["chapter_id"])
+
+    def test_wrong_offset_is_unverified_even_when_quote_exists(self):
+        b1, b2, c1, c2 = self._two_book_series()
+        self._node(b1["id"], c1, "Character", "Mira",
+                   quote="Mira rode north to the keep.")
+        # Quote IS in the text, but the claimed offset points elsewhere.
+        self._node(b2["id"], c2, "Character", "Mira",
+                   quote="Mira arrived at the keep at last.",
+                   offset=5, attributes={"status": "dead"})
+        sr.build_book_ledger(self.db, b1["id"])
+        sr.build_book_ledger(self.db, b2["id"])
+        scope = sr.resolve_scope(self.db, mode="full_series",
+                                 work_id=b1["id"], series_id=None)
+        findings = sr.reconcile(self.db, mode="full_series", scope=scope)
+        self.assertFalse(any(f["finding_type"] in ("state_drift", "injury_drift")
+                             for f in findings))
+        manifest = sr.build_manifest(self.db, mode="full_series", scope=scope)
+        self.assertTrue(manifest["partial"])
+        self.assertTrue(any("unverifiable" in u["reason"]
+                            for u in manifest["unreviewed_regions"]))
+
+    def test_chapter_vs_book_detects_within_book_drift(self):
+        b1 = self._work("Solo Novel")
+        c1 = self._chapter(b1["id"], 1, "One", "Doran swore by his sword arm.")
+        c2 = self._chapter(b1["id"], 2, "Two", "Doran again.")
+        c3 = self._chapter(b1["id"], 3, "Three", "Later still.")
+        self._node(b1["id"], c1, "Character", "Doran",
+                   quote="Doran swore by his sword arm.",
+                   attributes={"sword_arm": "healthy"})
+        self._node(b1["id"], c2, "Character", "Doran",
+                   quote="Doran again.",
+                   attributes={"sword_arm": "lost at the elbow"})
+        self._node(b1["id"], c3, "Character", "Doran",
+                   quote="Later still.",
+                   attributes={"sword_arm": "healthy"})
+        sr.build_book_ledger(self.db, b1["id"])
+        run = sr.create_run(self.db, mode="chapter_vs_book",
+                            work_id=b1["id"], series_id=None, chapter_id=c2)
+        scope = (run["params"] or {}).get("scope")
+        findings = sr.reconcile(self.db, mode="chapter_vs_book", scope=scope,
+                                chapter_id=c2)
+        drift = [f for f in findings
+                 if f["finding_type"] in ("state_drift", "injury_drift")]
+        self.assertTrue(drift)
+        # Every reported finding must involve the chapter under review.
+        for f in findings:
+            self.assertTrue(any(s.get("chapter_id") == c2
+                                for s in f["evidence"]))
 
     def test_chapter_id_must_exist_and_belong_to_the_work(self):
         b1, b2, _, c2 = self._two_book_series()

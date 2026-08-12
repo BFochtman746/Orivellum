@@ -233,12 +233,20 @@ def build_book_ledger(db: OrivellumDB, work_id: str) -> dict:
     ) -> None:
         meta = dict(meta or {})
         # Enforce the provenance guarantee at build time: a passage-cited
-        # item whose quote can no longer be found in the chapter text is
-        # UNVERIFIED evidence — it never feeds comparators, and the manifest
-        # names it so the run is honestly partial.
+        # item must have its quote at EXACTLY the claimed offset in the
+        # current chapter text.  Anything less (missing quote, quote found
+        # elsewhere, out-of-range offset) is UNVERIFIED evidence — it never
+        # feeds comparators, and the manifest names it so the run is
+        # honestly partial.
         if chapter_id is not None:
             text = text_by_chapter.get(chapter_id, "")
-            if not quote.strip() or quote not in text:
+            span_ok = (
+                bool(quote.strip())
+                and offset is not None
+                and 0 <= offset <= len(text) - len(quote)
+                and text[offset:offset + len(quote)] == quote
+            )
+            if not span_ok:
                 meta["span_unverified"] = True
                 unverified_by_chapter[chapter_id] = (
                     unverified_by_chapter.get(chapter_id, 0) + 1
@@ -604,6 +612,16 @@ def _by_kind(items: list[dict]) -> dict[str, list[dict]]:
     return out
 
 
+def _seg(book: dict) -> str:
+    """Comparison-segment key for a (pseudo-)book.
+
+    Normally the work id; chapter_vs_book splits one book into ordered
+    chapter segments so the SAME cross-segment comparators detect
+    within-book drift against the chapter under review.
+    """
+    return book.get("seg") or book["work_id"]
+
+
 def _cmp_timeline(books: list[dict]) -> list[dict]:
     """Same subject anchored to different years across books; age regression."""
     findings: list[dict] = []
@@ -661,7 +679,7 @@ def _cmp_character_state(books: list[dict]) -> list[dict]:
             prior = latest.get(k)
             if prior is not None:
                 p_it, p_b = prior
-                if p_b["work_id"] != b["work_id"] and \
+                if _seg(p_b) != _seg(b) and \
                         _norm(str(meta["value"])) != _norm(str(p_it["meta"]["value"])):
                     injury = bool(_INJURY.search(str(p_it["meta"]["value"]))
                                   or _INJURY.search(str(meta["value"])))
@@ -688,7 +706,7 @@ def _cmp_possession(books: list[dict]) -> list[dict]:
                 continue
             obj, holder = it["subject"], meta.get("holder") or ""
             prior = holders.get(obj)
-            if prior and prior[0] != holder and prior[2]["work_id"] != b["work_id"]:
+            if prior and prior[0] != holder and _seg(prior[2]) != _seg(b):
                 p_holder, p_it, p_b = prior
                 findings.append(_mk_finding(
                     "possession_conflict", obj,
@@ -715,7 +733,7 @@ def _cmp_relationship(books: list[dict]) -> list[dict]:
             seen.setdefault(it["subject"], {})[rel] = (it, b)
     for pair, rels in seen.items():
         aff, hos = rels.get("affinity_with"), rels.get("hostility_with")
-        if aff and hos and aff[1]["work_id"] != hos[1]["work_id"]:
+        if aff and hos and _seg(aff[1]) != _seg(hos[1]):
             a_it, a_b = aff
             h_it, h_b = hos
             findings.append(_mk_finding(
@@ -858,6 +876,53 @@ _MODE_COMPARATORS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _split_for_chapter(book: dict, chapter_id: str) -> list[dict]:
+    """Split ONE book into ordered pseudo-books around the target chapter.
+
+    chapter_vs_book must detect the same drift classes the cross-book
+    comparators find, but WITHIN a single book: everything before the
+    chapter, the chapter itself, and everything after become three ordered
+    segments (chapterless canon evidence rides with the "before" segment so
+    the chapter is always checked against established canon).  Spans keep
+    the real work_id — only the comparison segment key differs.
+    """
+    target_seq = next(
+        (it.get("chapter_seq") for it in book["items"]
+         if it.get("chapter_id") == chapter_id),
+        None,
+    )
+    if target_seq is None:
+        # Ledger has no items for the chapter — nothing to segment.
+        return [book]
+    buckets: dict[str, list[dict]] = {"before": [], "target": [], "after": []}
+    for it in book["items"]:
+        if it.get("chapter_id") == chapter_id:
+            buckets["target"].append(it)
+        elif it.get("chapter_id") is None:
+            buckets["before"].append(it)  # canon evidence precedes the chapter
+        elif (it.get("chapter_seq") or 0) < target_seq:
+            buckets["before"].append(it)
+        else:
+            buckets["after"].append(it)
+    segments = []
+    labels = {
+        "before": f"{book['title']} — before ch. {target_seq}",
+        "target": f"{book['title']} — ch. {target_seq} (under review)",
+        "after": f"{book['title']} — after ch. {target_seq}",
+    }
+    for order, key in enumerate(("before", "target", "after"), start=1):
+        if key != "target" and not buckets[key]:
+            continue
+        segments.append({
+            **book,
+            "order": order,
+            "seg": f"{book['work_id']}::{key}",
+            "title": labels[key],
+            "kinds": _by_kind(buckets[key]),
+        })
+    return segments
+
+
 def reconcile(db: OrivellumDB, *, mode: str, scope: list[dict],
               chapter_id: str | None = None) -> list[dict]:
     """Run the deterministic comparators over the scope's ledgers.
@@ -872,8 +937,13 @@ def reconcile(db: OrivellumDB, *, mode: str, scope: list[dict],
         if ledger is None:
             continue
         items = list_ledger_items(db, s["work_id"], limit=10000)
-        books.append({**s, "ledger": ledger, "kinds": _by_kind(items)})
+        books.append({**s, "seg": s["work_id"], "ledger": ledger,
+                      "kinds": _by_kind(items), "items": items})
     books.sort(key=lambda b: b["order"])
+    if mode == "chapter_vs_book" and chapter_id and books:
+        books = _split_for_chapter(books[0], chapter_id)
+    for b in books:
+        b.pop("items", None)
     findings: list[dict] = []
     for name in _MODE_COMPARATORS.get(mode, tuple(_COMPARATORS)):
         findings.extend(_COMPARATORS[name](books))
