@@ -876,6 +876,58 @@ class TestN5Chain(Base):
             self.assertEqual(row["state"], "failed",
                              f"action {aid} should be 'failed' after LLM failure; got {row['state']!r}")
 
+    def test_re_enqueue_of_done_action_does_not_redispatch(self):
+        """N5 idempotency: calling enqueue() on a 'done' action must not re-run the runner."""
+        dispatch_count = {"n": 0}
+
+        def counting_exec(act):
+            dispatch_count["n"] += 1
+            return {"ok": True}
+
+        acts = [self._cheap_action("dedup-a", recommended=True),
+                self._cheap_action("dedup-b")]
+        stored = self._offer(acts, thread="dedup-t")
+        aid = stored[0]["id"]
+
+        # First call — must claim and dispatch exactly once
+        runner_bridge.enqueue(self.db, aid, executor=counting_exec)
+        self.assertEqual(dispatch_count["n"], 1, "first enqueue must dispatch once")
+        row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+        self.assertEqual(row["state"], "done")
+
+        # Second call — action is 'done'; must NOT re-dispatch
+        result2 = runner_bridge.enqueue(self.db, aid, executor=counting_exec)
+        self.assertEqual(dispatch_count["n"], 1,
+                         "re-enqueue of done action must not re-dispatch the runner")
+        self.assertFalse(result2.get("auto"),
+                         "re-enqueue must return auto=False for an already-done action")
+        self.assertEqual(result2.get("final_state"), "done",
+                         "re-enqueue must return the existing terminal state")
+
+    def test_sequential_concurrent_claim_dispatches_only_once(self):
+        """N5 concurrent safety: the atomic conditional UPDATE allows only ONE caller
+        to claim and dispatch — sequential simulation proves the invariant without threads."""
+        dispatch_count = {"n": 0}
+
+        def counting_exec(act):
+            dispatch_count["n"] += 1
+            return {"ok": True}
+
+        acts = [self._cheap_action("claim-a", recommended=True),
+                self._cheap_action("claim-b")]
+        stored = self._offer(acts, thread="claim-t")
+        aid = stored[0]["id"]
+
+        # First call: 'offered' → claimed → dispatched → 'done'
+        runner_bridge.enqueue(self.db, aid, executor=counting_exec)
+        # Second call: 'done' → atomic claim fails (rowcount=0) → returns early
+        result2 = runner_bridge.enqueue(self.db, aid, executor=counting_exec)
+
+        self.assertEqual(dispatch_count["n"], 1,
+                         "atomic claim must prevent double-dispatch; runner called once")
+        self.assertIsNone(result2.get("unit"),
+                          "second claim must return unit=None (no dispatch)")
+
     def test_executor_string_false_is_not_treated_as_success(self):
         """N5 contract: executor ok='false' (truthy string) must NOT become ok=True."""
         acts = [self._cheap_action("str-false", recommended=True),
@@ -1004,6 +1056,35 @@ class TestEnqueueAPI(unittest.TestCase):
                          "enqueue response must report final_state=done on success")
         self.assertEqual(self._state(aid), "done",
                          "action must be in state='done' in the DB after successful dispatch")
+
+    def test_re_enqueue_via_api_does_not_redispatch_done_action(self):
+        """N5 API idempotency: second /api/next/enqueue for a done action must not re-dispatch."""
+        import unittest.mock
+        dispatch_count = {"n": 0}
+
+        def counting_dispatch(action, executor=None):
+            dispatch_count["n"] += 1
+            return {"source": "test", "ok": True, "result": "generated output"}
+
+        aid = self._seed_action()
+        with unittest.mock.patch.object(runner_bridge, "_runner_dispatch",
+                                        counting_dispatch):
+            r1 = self.client.post("/api/next/enqueue", json={
+                "thread_id": "api-t", "action_id": aid})
+            r2 = self.client.post("/api/next/enqueue", json={
+                "thread_id": "api-t", "action_id": aid})
+
+        self.assertEqual(r1.status_code, 200, r1.text)
+        self.assertEqual(r2.status_code, 200, r2.text)
+        self.assertEqual(dispatch_count["n"], 1,
+                         "second API enqueue must not re-dispatch the runner")
+        body2 = r2.json()
+        self.assertNotEqual(body2.get("final_state"), "running",
+                            "re-enqueue must not report the action as running again")
+        self.assertFalse(body2.get("auto"),
+                         "re-enqueue must return auto=False")
+        self.assertEqual(self._state(aid), "done",
+                         "action state must remain 'done' in the DB")
 
     def test_failed_dispatch_via_api_marks_action_failed(self):
         """N5 API: a failed runner dispatch from /api/next/enqueue lands in 'failed', never 'done'."""

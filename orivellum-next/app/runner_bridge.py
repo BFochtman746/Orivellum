@@ -117,6 +117,11 @@ def _runner_dispatch(action: dict, *, executor=None) -> dict:
             counts = _runner_store.unit_counts(run_id)
             failed_units = counts.get("failed", 0)
             ok = res.get("status") == "done" and failed_units == 0
+            # Extract the worker output so the caller can surface it to the operator.
+            # These are generation actions — the result must be reviewed before application.
+            digests_out = _runner_store.digests(run_id) if ok else []
+            worker_result = (digests_out[0]["digest"].get("result", "")
+                             if digests_out else "")
             return {
                 "source": "runner",
                 "ok": ok,
@@ -124,6 +129,7 @@ def _runner_dispatch(action: dict, *, executor=None) -> dict:
                 "status": res.get("status"),
                 "stop_reason": res.get("stop_reason"),
                 "failed_units": failed_units,
+                "result": worker_result,
                 "totals": res.get("totals"),
             }
         except Exception as exc:
@@ -196,9 +202,27 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None,
             executor=None) -> dict:
     """Hand one action to the runner, or explain why it waits.
 
-    ``executor`` is an optional callable ``(action_dict) -> dict`` used by
-    tests and dry-run callers in place of the real runner.  Pass ``None``
-    (the default) to use the orivellum-runner store when available.
+    Idempotency guarantee
+    ─────────────────────
+    Calling enqueue() on an action that is already done, failed, or running
+    returns the current state without re-dispatching.  The atomic conditional
+    UPDATE that claims the action ('offered'→'running') is serialised by
+    SQLite, so two concurrent callers cannot both dispatch the same action.
+
+    These are **generation** actions: the runner executes the prompt and
+    records its output in ``unit.result``, which is surfaced in the return
+    value.  The output is NOT automatically applied to the corpus — the caller
+    reviews and applies it.
+
+    Cost reconciliation
+    ───────────────────
+    action.cost_units / cost_minutes are forwarded as runner plan metadata.
+    The runner harness enforces its own CFG-level hard limits (max_units,
+    max_minutes) per run.  The Chain budget caps the whole session across
+    all steps.  This two-tier model is intentional.
+
+    ``executor`` is a callable ``(action_dict) -> dict`` for tests / dry-run;
+    pass ``None`` to use the real orivellum-runner store.
     """
     a = db.q1("SELECT * FROM next_action WHERE id=?", (action_id,))
     if not a:
@@ -210,6 +234,11 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None,
                 "why": "expired when a newer answer arrived"}
 
     if not act["auto_runnable"]:
+        # Do not re-queue actions that are already in a terminal state.
+        if act["state"] in ("done", "failed"):
+            return {"queued": False, "auto": False,
+                    "why": f"already in terminal state '{act['state']}'",
+                    "final_state": act["state"]}
         db.conn.execute("UPDATE next_action SET state='queued' WHERE id=?", (action_id,))
         db.conn.commit()
         db.event("queued", action_id=action_id, set_id=act["set_id"], kind=act["kind"],
@@ -227,35 +256,47 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None,
             raise ChainExhausted(why)
         chain.charge(act)
 
+    # ── Atomic claim ────────────────────────────────────────────────────────
+    # Only 'offered' or 'queued' states may transition to 'running'.  A single
+    # SQLite UPDATE is serialized — the first concurrent caller wins (rowcount=1);
+    # the second sees rowcount=0 and returns the current state without dispatch.
     s = db.q1("SELECT thread_id FROM next_action_set WHERE id=?", (act["set_id"],))
-    db.write(
-        f"next:{s['thread_id']}", "action.autoqueued",
-        "UPDATE next_action SET state='running' WHERE id=?",
+    claimed = db.conn.execute(
+        "UPDATE next_action SET state='running'"
+        " WHERE id=? AND state IN ('offered','queued')",
         (action_id,),
-        {"action": action_id, "label": act["label"], "reason": act["auto_reason"]},
-    )
-    db.event("queued", action_id=action_id, set_id=act["set_id"], kind=act["kind"],
+    ).rowcount
+    if not claimed:
+        db.conn.rollback()
+        current = db.q1("SELECT state FROM next_action WHERE id=?", (action_id,))
+        state = current["state"] if current else act["state"]
+        return {
+            "queued": False, "auto": False,
+            "why": f"already in state '{state}'; not re-dispatched",
+            "final_state": state, "unit": None,
+        }
+    db.ledger(f"next:{s['thread_id']}", "action.autoqueued",
+              {"action": action_id, "label": act["label"], "reason": act["auto_reason"]})
+    db.conn.commit()
+    db.event("running", action_id=action_id, set_id=act["set_id"], kind=act["kind"],
              recommended=act["recommended"], detail="auto: " + act["auto_reason"])
-    # Hand off to the orivellum-runner queue (or executor / stub fallback).
-    #
-    # Cost reconciliation: each action's cost_units / cost_minutes are forwarded
-    # to the runner as plan metadata.  The runner harness enforces its own CFG
-    # limits (max_units, max_minutes) as a per-run hard safety net.  The Chain
-    # budget (bridge level) caps the total session across all steps.  This
-    # two-tier model is intentional — the runner stops runaway units; the Chain
-    # stops runaway sessions.
+
+    # ── Dispatch ─────────────────────────────────────────────────────────────
     unit = _runner_dispatch(act, executor=executor)
 
     # Gate state transition on what the runner actually reported.
-    # This is the SINGLE place finish() is called for auto-runnable actions —
-    # both the API (h_next_enqueue) and run_chain() reach here, so neither
-    # path can leave an action stranded in 'running'.
+    # finish() is the SINGLE write path for 'done'/'failed' — both the API
+    # (h_next_enqueue) and run_chain() reach this same code.
     ok = unit.get("ok", False)
-    detail = unit.get("error") or ("executed successfully" if ok else "dispatch failed")
-    finish(db, action_id, ok=ok, detail=detail)
+    result = unit.get("result", "")
+    detail_msg = (unit.get("error")
+                  or (f"result: {result[:200]}" if ok and result
+                      else ("executed" if ok else "dispatch failed")))
+    finish(db, action_id, ok=ok, detail=detail_msg)
 
     return {"queued": True, "auto": True, "why": act["auto_reason"],
-            "final_state": "done" if ok else "failed", "unit": unit}
+            "final_state": "done" if ok else "failed",
+            "result": result, "unit": unit}
 
 
 def finish(db: DB, action_id: str, ok: bool, detail: str = "") -> None:
