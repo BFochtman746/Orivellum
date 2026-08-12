@@ -2779,7 +2779,8 @@ function CodeStudioPanel() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Upload a .zip of your project and get a prioritized list of issues and improvement proposals.
+            Upload a .zip of your project (up to 50 MB) and get a prioritized list of issues and
+            improvement proposals. All source files are read — no file count limit.
             Nothing is modified — analysis only.
           </p>
           <div className="flex items-center gap-3">

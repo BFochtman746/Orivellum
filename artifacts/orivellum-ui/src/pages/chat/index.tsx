@@ -50,7 +50,7 @@ import {
 import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
-  AlertTriangle, FolderOpen, FileText, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
+  AlertTriangle, FolderOpen, FileText, FileSpreadsheet, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
   Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon, Square,
   Sparkles, History, RefreshCw, ExternalLink, Mail, Volume2, CloudOff,
 } from "lucide-react";
@@ -487,6 +487,65 @@ function ActivitySheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ─── Excel download card ──────────────────────────────────────────────────────
+
+/**
+ * Shown inside an assistant message when the AI converted an attached file
+ * into an Excel workbook (intent="xlsx_generate").  Renders a styled download
+ * button with the filename.  The download_url comes from message meta.
+ */
+function ExcelDownloadCard({
+  downloadUrl,
+  filename,
+  title,
+}: {
+  downloadUrl: string;
+  filename: string;
+  title?: string;
+}) {
+  const handleDownload = () => {
+    const a = document.createElement("a");
+    // Ensure the URL is absolute (backend returns a relative /api/... path)
+    a.href = downloadUrl.startsWith("/") ? `${API_BASE}/${downloadUrl.replace(/^\/api\//, "")}` : downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  return (
+    <div
+      className="mt-3 flex items-center gap-3 px-4 py-3 rounded-xl border"
+      style={{
+        borderColor: "color-mix(in srgb, var(--green-2, #16a34a) 25%, transparent)",
+        background: "color-mix(in srgb, var(--green-2, #16a34a) 8%, transparent)",
+      }}
+    >
+      <FileSpreadsheet
+        className="w-5 h-5 shrink-0"
+        style={{ color: "var(--green-2, #16a34a)" }}
+      />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{title ?? filename}</p>
+        <p className="text-[11px] font-mono text-muted-foreground truncate">{filename}</p>
+      </div>
+      <Button
+        size="sm"
+        onClick={handleDownload}
+        className="shrink-0 gap-1.5 h-8"
+        style={{
+          background: "var(--green-2, #16a34a)",
+          color: "#fff",
+          border: "none",
+        }}
+      >
+        <Download className="w-3.5 h-3.5" />
+        Download
+      </Button>
+    </div>
   );
 }
 
@@ -3000,6 +3059,14 @@ export default function Chat() {
                               </button>
                             )}
                           </div>
+                          {/* Excel download card — shown when AI converted an attachment to XLSX */}
+                          {!msg.streaming && msg.meta?.intent === "xlsx_generate" && msg.meta?.download_url && (
+                            <ExcelDownloadCard
+                              downloadUrl={msg.meta.download_url as string}
+                              filename={msg.meta.filename as string ?? "workbook.xlsx"}
+                              title={msg.meta.title as string | undefined}
+                            />
+                          )}
                           {/* Action confirmation card — shown when the AI detected an action intent */}
                           {!msg.streaming && msg.meta?.intent === "action" && msg.meta?.needs_confirm && msg.meta?.action_name && (
                             <ActionConfirmCard

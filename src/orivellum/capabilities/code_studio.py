@@ -623,9 +623,9 @@ def analyze_project_zip(
                     # Skip directories and hidden files
                     if info.filename.endswith("/") or "/." in info.filename:
                         continue
-                    # Guard zip-bomb
+                    # Guard zip-bomb (50 MB total uncompressed)
                     total_size += info.file_size
-                    if total_size > 10 * 1024 * 1024:  # 10 MB limit
+                    if total_size > 50 * 1024 * 1024:
                         break
                     # Guard path traversal
                     safe_name = _safe_relpath(info.filename)
@@ -637,8 +637,11 @@ def analyze_project_zip(
                         ext = Path(safe_name).suffix.lower()
                         if ext in {".py", ".js", ".ts", ".go", ".rs", ".java",
                                    ".c", ".cpp", ".h", ".sh", ".yaml", ".toml",
-                                   ".json", ".md", ".txt", ".cfg", ".ini"}:
-                            source_texts[safe_name] = content[:5000]  # cap per file
+                                   ".json", ".md", ".txt", ".cfg", ".ini",
+                                   ".jsx", ".tsx", ".vue", ".svelte", ".rb",
+                                   ".php", ".cs", ".kt", ".swift", ".sql",
+                                   ".html", ".css", ".scss", ".env.example"}:
+                            source_texts[safe_name] = content[:20_000]  # cap per file
                     except Exception:
                         pass
         except zipfile.BadZipFile:
@@ -647,10 +650,12 @@ def analyze_project_zip(
         if not source_texts:
             return {"ok": False, "error": "No readable source files found in the zip"}
 
-        # Build analysis prompt
+        # Build analysis prompt — no file-count cap; all extracted files are included.
+        # Each file is already capped at 20 000 chars and the zip-bomb guard keeps
+        # total uncompressed size ≤ 50 MB, so the prompt stays within reason.
         code_block = "\n\n".join(
             f"=== {path} ===\n{content}"
-            for path, content in list(source_texts.items())[:20]  # cap at 20 files
+            for path, content in sorted(source_texts.items())
         )
 
         result = llm_call(
@@ -662,8 +667,8 @@ def analyze_project_zip(
             db=db,
             purpose="code_studio.analyze",
             temperature=0.1,
-            max_tokens=3000,
-            timeout=90,
+            max_tokens=6000,
+            timeout=180,
         )
 
         raw = result.text or ""

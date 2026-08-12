@@ -169,7 +169,7 @@ async def analyze_endpoint(file: UploadFile = File(...)):
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(422, "Only .zip files are accepted")
 
-    max_size = 10 * 1024 * 1024  # 10 MB
+    max_size = 50 * 1024 * 1024  # 50 MB compressed zip
     content = await file.read()
     if len(content) > max_size:
         raise HTTPException(413, f"File too large — maximum {max_size // (1024*1024)} MB")

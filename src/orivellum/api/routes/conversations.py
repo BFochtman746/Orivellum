@@ -63,6 +63,26 @@ _EXPLICIT_REMEMBER_RE = re.compile(
     r"|my (email|phone|address|birthday))\b",
     re.IGNORECASE,
 )
+
+# Patterns that signal the user wants the attached file turned into a spreadsheet.
+# Checked against the user's typed text (not the augmented attachment prefix) so
+# innocent phrases like "does this xlsx have errors?" don't trigger generation.
+# Uses a loose .{0,40} gap between the conversion verb and the format word so
+# phrases like "turn this PDF into a spreadsheet" match even with an intervening noun.
+_XLSX_INTENT_RE = re.compile(
+    r"("
+    # conversion verbs + format noun within ~40 chars
+    r"\b(turn|convert|export|change|transform)\b.{0,40}\b(excel|spreadsheet|workbook|xlsx)\b"
+    r"|\bmake\b.{0,40}\b(excel|spreadsheet|workbook)\b"
+    r"|\bput\b.{0,40}\b(excel|spreadsheet|workbook)\b"
+    r"|\bsummarize\b.{0,30}\b(table|spreadsheet|workbook)\b"
+    # "into an Excel workbook / a spreadsheet / xlsx"
+    r"|\binto\s+(an?\s+)?(excel\b|spreadsheet\b|workbook\b|xlsx\b)"
+    # bare "to excel" / "to xlsx"
+    r"|\bto\s+(excel|xlsx)\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
 # Max knowledge items to inject as context (count backstop; token budget applied first)
 _CONTEXT_KNOWLEDGE = 12  # max knowledge items injected per turn
 _CONTEXT_CHUNKS = 5  # max raw document passages injected per turn
@@ -658,6 +678,7 @@ async def send_message(conv_id: str, body: MessageSend):
     # written to the DB.
     _attached_file_name: str | None = body.file_name
     _original_user_text: str = body.text  # preserved for stored_text
+    _file_text: str = ""  # extracted text from any attached file (empty when no file)
     if body.file_b64 and body.file_name:
         _file_text = _extract_file_attachment(body.file_b64, body.file_name, body.file_media_type)
         if _file_text:
@@ -803,6 +824,48 @@ async def send_message(conv_id: str, body: MessageSend):
             )
         except Exception:
             pass  # capture is best-effort; never block the response
+
+    # ── XLSX intent short-circuit ──────────────────────────────────────────────
+    # When a file was attached AND the user's typed text says "turn into Excel /
+    # make a spreadsheet / convert to xlsx" (etc.), generate a workbook directly
+    # instead of letting the LLM produce a markdown table the user has to copy.
+    # This runs BEFORE the streaming / non-streaming split so both paths benefit.
+    if _file_text and _XLSX_INTENT_RE.search(_original_user_text):
+        _xlsx_cfg = get_config()
+        _xlsx_result = await _handle_xlsx_generation(
+            _file_text,
+            _original_user_text,
+            db,
+            _xlsx_cfg,
+            work_id=conv.get("work_id"),
+        )
+        if _xlsx_result is not None:
+            _xlsx_reply_text, _xlsx_meta = _xlsx_result
+            if body.stream:
+                from orivellum.api import genjournal
+
+                async def _xlsx_sse():
+                    _msg = db.add_message(conv_id, "assistant", _xlsx_reply_text, meta=_xlsx_meta)
+                    _maybe_auto_title(db, conv, _original_user_text)
+                    if _idem_client_msg_id:
+                        db.complete_idempotency(conv_id, _idem_client_msg_id, _msg["id"])
+                    yield f"data: {json.dumps({'message_id': _msg['id'], 'state': 'done'})}\n\n"
+                    _CHUNK = 40
+                    for _i in range(0, len(_xlsx_reply_text), _CHUNK):
+                        yield f"data: {json.dumps({'token': _xlsx_reply_text[_i:_i+_CHUNK], 'intent': 'xlsx_generate'})}\n\n"
+                    yield "data: [DONE]\n\n"
+
+                return StreamingResponse(
+                    genjournal.wrap(db, conv_id, _xlsx_sse(), client_msg_id=body.client_msg_id),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+            else:
+                _xlsx_msg = db.add_message(conv_id, "assistant", _xlsx_reply_text, meta=_xlsx_meta)
+                if _idem_client_msg_id:
+                    db.complete_idempotency(conv_id, _idem_client_msg_id, _xlsx_msg["id"])
+                _maybe_auto_title(db, conv, _original_user_text)
+                return {"message": _xlsx_msg}
 
     if body.stream:
         # Journalled job (iPhone continuity): the pump — not this HTTP
@@ -3717,6 +3780,82 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# ── XLSX generation from file attachment ──────────────────────────────────────
+
+
+async def _handle_xlsx_generation(
+    file_text: str,
+    user_text: str,
+    db: Any,
+    cfg: Any,
+    work_id: str | None = None,
+) -> tuple[str, dict] | None:
+    """Generate an Excel workbook from extracted file text.
+
+    Called when the user attaches a file AND their message contains an xlsx
+    intent phrase ("turn this into Excel", "make a spreadsheet", etc.).
+
+    Uses ``generate_from_prompt`` (format="xlsx") which runs the full LLM →
+    JSON plan → openpyxl pipeline and registers the output in the library.
+
+    Returns (reply_text, meta) where meta carries:
+      intent="xlsx_generate", download_url, filename, doc_id, title
+
+    Returns None on failure so the caller falls through to the normal AI path.
+    """
+    import asyncio
+    from pathlib import Path as _Path
+
+    try:
+        from orivellum.capabilities.generate import generate_from_prompt
+
+        # Build a clear prompt from the user's instruction + the file content
+        description = (
+            f"{user_text.strip()}\n\n"
+            f"Source file content:\n{file_text[:15_000]}"
+        )
+
+        fpath, doc_id = await asyncio.to_thread(
+            generate_from_prompt,
+            prompt=description,
+            format="xlsx",
+            filename=None,
+            work_id=work_id,
+            db=db,
+            cfg=cfg,
+        )
+
+        data_dir = _Path(cfg.data_dir)
+        try:
+            rel = str(fpath.relative_to(data_dir))
+        except ValueError:
+            rel = str(fpath)
+
+        download_url = f"/api/generate/download?path={rel}"
+        title = fpath.stem.replace("_", " ").title()
+
+        reply = (
+            f"📊 **Spreadsheet ready**\n\n"
+            f"I've converted your document into an Excel workbook: **{fpath.name}**\n\n"
+            f"Click **Download** below to save it."
+        )
+
+        meta: dict = {
+            "intent": "xlsx_generate",
+            "download_url": download_url,
+            "filename": fpath.name,
+            "doc_id": doc_id,
+            "title": title,
+        }
+
+        logger.info("XLSX generated from file attachment → %s (doc %s)", fpath.name, doc_id)
+        return reply, meta
+
+    except Exception as exc:
+        logger.warning("XLSX generation from file attachment failed: %s", exc)
+        return None
+
+
 # Intent routing helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
