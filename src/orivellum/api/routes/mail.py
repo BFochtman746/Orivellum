@@ -75,11 +75,11 @@ def _get_pending_device_code(db: Any, handle: str) -> str | None:
 
 
 def _store_pending_device_code(db: Any, handle: str, device_code: str) -> None:
-    db._set_setting(f"mail_steward.pending_dc.{handle}", device_code)
+    db.set_setting_unaudited(f"mail_steward.pending_dc.{handle}", device_code)
 
 
 def _clear_pending_device_code(db: Any, handle: str) -> None:
-    db._set_setting(f"mail_steward.pending_dc.{handle}", "")
+    db.set_setting_unaudited(f"mail_steward.pending_dc.{handle}", "")
 
 
 # ── Connection ─────────────────────────────────────────────────────────────────
@@ -174,8 +174,8 @@ def connect_poll(body: ConnectPollBody):
         display_name = ""
         mail_addr = ""
 
-    db._set_setting("mail_steward.connected", "true")
-    db._set_setting("mail_steward.account_display", f"{display_name} <{mail_addr}>")
+    db.set_setting_unaudited("mail_steward.connected", "true")
+    db.set_setting_unaudited("mail_steward.account_display", f"{display_name} <{mail_addr}>")
 
     return {
         "status": "connected",
@@ -192,9 +192,9 @@ def disconnect(body: DisconnectBody):
     from orivellum.capabilities.mail.token_vault import delete_token
 
     delete_token(db)
-    db._set_setting("mail_steward.connected", "false")
-    db._set_setting("mail_steward.account_display", "")
-    db._set_setting("mail_steward.review_folder_id", "")
+    db.set_setting_unaudited("mail_steward.connected", "false")
+    db.set_setting_unaudited("mail_steward.account_display", "")
+    db.set_setting_unaudited("mail_steward.review_folder_id", "")
     return {"disconnected": True}
 
 
@@ -483,29 +483,31 @@ class MailSettingsBody(BaseModel):
 def update_mail_settings(body: MailSettingsBody):
     db = get_db()
     if body.send_enabled is not None:
-        db._set_setting("mail_steward.send_enabled", "true" if body.send_enabled else "false")
+        db.set_setting_unaudited(
+            "mail_steward.send_enabled", "true" if body.send_enabled else "false"
+        )
     if body.lemonade_url is not None:
         url = body.lemonade_url.strip()
         if url == "":
             # Empty string = reset to built-in default
-            db._set_setting("mail_steward.lemonade_url", "http://127.0.0.1:13305/api/v1")
+            db.set_setting_unaudited("mail_steward.lemonade_url", "http://127.0.0.1:13305/api/v1")
         elif not url.startswith("http://127.") and not url.startswith("http://localhost"):
             raise HTTPException(400, "Lemonade must be a loopback URL")
         else:
-            db._set_setting("mail_steward.lemonade_url", url)
+            db.set_setting_unaudited("mail_steward.lemonade_url", url)
     if body.lemonade_model is not None:
         # Empty string = clear the model override (server picks default)
-        db._set_setting("mail_steward.lemonade_model", body.lemonade_model.strip())
+        db.set_setting_unaudited("mail_steward.lemonade_model", body.lemonade_model.strip())
     if body.sync_folders is not None:
         folders = body.sync_folders if body.sync_folders else ["inbox"]
-        db._set_setting("mail_steward.sync_folders", json.dumps(folders))
+        db.set_setting_unaudited("mail_steward.sync_folders", json.dumps(folders))
     if body.threat_feeds_enabled is not None:
-        db._set_setting(
+        db.set_setting_unaudited(
             "mail_steward.threat_feeds", "true" if body.threat_feeds_enabled else "false"
         )
     if body.context_days is not None:
         days = max(0, int(body.context_days))  # clamp: 0 = no cap
-        db._set_setting("mail_steward.context_days", str(days))
+        db.set_setting_unaudited("mail_steward.context_days", str(days))
     return {"updated": True}
 
 

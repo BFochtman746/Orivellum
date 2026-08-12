@@ -74,7 +74,7 @@ def evaluate(
                 action_type,
             )
 
-    if action_type in (ACTION_MOVE, ACTION_CREATE_DRAFT, ACTION_SEND):
+    if action_type in (ACTION_MOVE, ACTION_CREATE_DRAFT, ACTION_SEND, ACTION_DELETE):
         if not explicit_user_approval:
             return PolicyDecision(
                 False, f"{action_type} requires explicit user approval", action_type

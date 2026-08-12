@@ -70,10 +70,9 @@ def decrypt_str(ciphertext: str) -> str:
 def store_token(db: Any, token_data: dict[str, Any]) -> None:
     """Encrypt and persist token_data to the settings table."""
     encrypted = encrypt_token(token_data)
-    # Use private _set_setting to bypass the governed-write audit path so the
-    # ciphertext never appears in the audit log.
-    with db._lock:
-        db._set_setting(_SETTINGS_KEY, encrypted)
+    # Unaudited so the ciphertext never appears in the audit log, but
+    # committed — a bare _set_setting is not durable (no commit).
+    db.set_setting_unaudited(_SETTINGS_KEY, encrypted)
 
 
 def load_token(db: Any) -> dict[str, Any] | None:
@@ -89,5 +88,4 @@ def load_token(db: Any) -> dict[str, Any] | None:
 
 def delete_token(db: Any) -> None:
     """Wipe the stored token on disconnect."""
-    with db._lock:
-        db._set_setting(_SETTINGS_KEY, "")
+    db.set_setting_unaudited(_SETTINGS_KEY, "")

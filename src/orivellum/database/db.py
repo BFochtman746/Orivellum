@@ -248,6 +248,20 @@ class OrivellumDB:
         )
         return row["value"] if row and row["value"] is not None else default
 
+    def set_setting_unaudited(self, key: str, value: str) -> None:
+        """Persist a setting with a commit but WITHOUT an audit row.
+
+        For secret material (encrypted tokens) and short-lived plumbing keys
+        whose values must never appear in the audit log.  Unlike calling
+        ``_set_setting`` directly, this commits — a bare ``_set_setting``
+        leaves the write in an open transaction that is invisible to the
+        read connection and lost on restart until some later commit
+        piggybacks it.
+        """
+        with self._lock:
+            self._set_setting(key, value)
+            self._conn.commit()
+
     # Keys whose values must never appear in audit detail (secrets/tokens)
     _AUDIT_SECRET_KEYS: frozenset[str] = frozenset({"api_key", "session_secret", "token"})
 
