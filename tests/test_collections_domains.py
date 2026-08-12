@@ -72,6 +72,101 @@ class _Base(unittest.TestCase):
         return self.canon.create_fact(**kw)
 
 
+class SeriesCanonGuardTests(_Base):
+    """Series membership mutations must honor the same no-silent-canon rules
+    as collection membership — every path into a domain-served series."""
+
+    def _domain_served_series(self, *works: dict, via_collection: bool = True):
+        """A series inside a fact-bearing domain (via collection or direct)."""
+        s = self._series_with("Saga", *works)
+        d = self.domains.create(title="Universe")
+        if via_collection:
+            c = self.collections.create(title="Family")
+            self.collections.add_member(c["id"], member_kind="series", member_id=s["id"])
+            self.domains.add_member(d["id"], member_kind="collection", member_id=c["id"])
+        else:
+            self.domains.add_member(d["id"], member_kind="series", member_id=s["id"])
+        self._fact(statement="Universe law.", domain_id=d["id"])
+        return s, d
+
+    def test_series_add_member_refuses_silent_binding_via_collection(self):
+        w1 = self._work("Book 1")
+        s, _d = self._domain_served_series(w1, via_collection=True)
+        newcomer = self._work("Newcomer")
+        with self.assertRaises(SeriesError) as ctx:
+            self.series_store.add_member(s["id"], newcomer["id"], volume=2)
+        self.assertIn("bind shared canon", str(ctx.exception))
+        # nothing bound by the refusal
+        self.assertIsNone(self.series_store.series_for_work(newcomer["id"]))
+        visible = [x["statement"] for x in self.canon.list_facts(work_id=newcomer["id"])]
+        self.assertNotIn("Universe law.", visible)
+        # explicit confirmation binds — and the fact is then visible
+        self.series_store.add_member(
+            s["id"], newcomer["id"], volume=2, confirm_canon_binding=True
+        )
+        visible = [x["statement"] for x in self.canon.list_facts(work_id=newcomer["id"])]
+        self.assertIn("Universe law.", visible)
+
+    def test_series_add_member_refuses_silent_binding_direct_domain(self):
+        w1 = self._work("Book 1")
+        s, _d = self._domain_served_series(w1, via_collection=False)
+        newcomer = self._work("Newcomer")
+        with self.assertRaises(SeriesError):
+            self.series_store.add_member(s["id"], newcomer["id"], volume=2)
+
+    def test_series_remove_member_refuses_silent_unbinding(self):
+        w1 = self._work("Book 1")
+        w2 = self._work("Book 2")
+        s, d = self._domain_served_series(w1, w2, via_collection=True)
+        with self.assertRaises(SeriesError) as ctx:
+            self.series_store.remove_member(s["id"], w2["id"])
+        self.assertIn("unbind", str(ctx.exception))
+        # a direct domain membership is an independent path — removal ok
+        self.domains.add_member(d["id"], member_kind="work", member_id=w2["id"])
+        self.assertTrue(self.series_store.remove_member(s["id"], w2["id"]))
+        visible = [x["statement"] for x in self.canon.list_facts(work_id=w2["id"])]
+        self.assertIn("Universe law.", visible)
+
+    def test_delete_series_refused_while_domain_serves_it(self):
+        w1 = self._work("Book 1")
+        s, d = self._domain_served_series(w1, via_collection=True)
+        self.assertEqual(self.series_store.delete_series(s["id"]), "has_domain_canon")
+        # retracting the domain's facts unblocks (member removal then delete)
+        for f in self.canon.list_facts(domain_id=d["id"]):
+            self.canon.retract_fact(f["id"], signed_by="author")
+        self.series_store.remove_member(s["id"], w1["id"])
+        self.assertEqual(self.series_store.delete_series(s["id"]), "ok")
+        # no dangling membership rows survive the delete
+        conn = self.db.read_conn()
+        for tbl in ("canon_domain_member", "book_collection_member"):
+            self.assertIsNone(
+                conn.execute(
+                    f"SELECT 1 FROM {tbl} WHERE member_kind='series' AND member_id=?",
+                    (s["id"],),
+                ).fetchone()
+            )
+
+    def test_plain_series_add_is_ledgered_and_reversible(self):
+        w1 = self._work("Book 1")
+        s = self._series_with("Saga", w1)
+        solo = self._work("Solo")
+        self.series_store.add_member(s["id"], solo["id"], volume=2)
+        entries = self.conversions.list_ledger(subject_id=solo["id"])
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["kind"], "standalone_to_series")
+        rev = self.conversions.reverse(entries[0]["id"])
+        self.assertEqual(rev["result"], "ok")
+        self.assertIsNone(self.series_store.series_for_work(solo["id"]))
+
+    def test_conversion_service_writes_single_ledger_entry(self):
+        w1 = self._work("Book 1")
+        s = self._series_with("Saga", w1)
+        solo = self._work("Solo")
+        self.conversions.convert_standalone_to_series(solo["id"], series_id=s["id"], volume=2)
+        entries = self.conversions.list_ledger(subject_id=solo["id"])
+        self.assertEqual(len(entries), 1)  # no double entry from add_member
+
+
 class MigrationTests(_Base):
     def test_new_tables_and_columns_exist(self):
         conn = self.db.read_conn()

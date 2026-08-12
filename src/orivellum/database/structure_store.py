@@ -818,6 +818,7 @@ class ConversionService:
         series_title: str | None = None,
         volume: int = 1,
         actor: str = "author",
+        confirm_canon_binding: bool = False,
     ) -> dict:
         """Make a standalone Work a series member — nothing else changes.
 
@@ -846,7 +847,14 @@ class ConversionService:
                 series = store.create_series(title=series_title or "", actor=actor)
                 series_id = series["id"]
                 created_series = True
-            store.add_member(series_id, work_id, volume=volume, actor=actor)
+            store.add_member(
+                series_id,
+                work_id,
+                volume=volume,
+                actor=actor,
+                confirm_canon_binding=confirm_canon_binding,
+                ledger=False,  # this service writes its own richer entry below
+            )
             with db.governed_write(
                 operation="conversion.standalone_to_series",
                 event_type="conversion.standalone_to_series",
@@ -922,6 +930,14 @@ class ConversionService:
                     "They stay book-local; nothing is promoted to series canon "
                     "without per-item approval."
                 )
+            for d in SeriesStore._binding_domains_for_series(conn, series_id):
+                if not SeriesStore._work_served_outside_series(conn, d["id"], work_id):
+                    out["notes"].append(
+                        f"Canon domain {d['title']!r} serves this series with "
+                        f"{d['n']} active fact(s) — joining will bind that "
+                        "shared canon to this book (explicit confirmation "
+                        "required)."
+                    )
         if collection_id:
             if not conn.execute(
                 "SELECT 1 FROM book_collection WHERE id=?", (collection_id,)

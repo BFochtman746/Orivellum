@@ -11,22 +11,21 @@ description: The three distinct grouping layers, domain fact visibility, convers
 
 **Why:** the spec's core law — collections are branding, series order is authority, domains are shared canon. Mixing them silently rebinds facts.
 
-# Canon-binding guards on collection membership
+# No-silent-canon-binding rule (applies to EVERY membership path)
 
-Collection membership is "branding only" ONLY while no fact-bearing domain serves the collection. Guards in `CollectionStore` (structure_store.py):
-- `add_member` refuses when a domain with active facts serves the collection unless `confirm_canon_binding=True` (joining would silently bind that canon).
-- `remove_member` checks EVERY fact-bearing domain (not just the first) and every remaining path (direct membership, other collections) before allowing removal.
+Any mutation that changes whether a fact-bearing domain reaches a book is a canon event, not a filing change. That includes indirect paths: adding a work to a series whose series sits in a domain-served collection binds the domain's facts just as surely as joining the domain directly.
 
-**How to apply:** any new path that adds/removes collection or domain members must re-check reachability for ALL active-fact domains, under the write lock.
+**Rule:** every membership mutation (collection add/remove, series add/remove/delete, domain edits) must compute reachability for ALL active-fact domains and all remaining paths, then refuse newly-binding changes without explicit confirmation (`confirm_canon_binding`) and refuse unbinding changes unless an independent path exists.
+
+**Why:** a completion review caught series-level mutations bypassing the collection-level guards — guards on one entry point are worthless if a sibling entry point reaches the same state.
 
 # Conversions
 
-- `ConversionService` (structure_store.py): standalone→series, per-item canon promotion (retract + establish at new scope — NEVER a supersede, supersede keeps scope), ledgered in `conversion_ledger`, reversible via `reverse(ledger_id)`.
-- Every forward/reverse operation is wrapped in `db.atomic()` so membership + ledger + fact changes commit together (fault-injection tests in tests/test_collections_domains.py prove rollback).
-- Overrides never promote — an override is the book's departure, not shared canon.
-- `recommend_classification()` is deterministic code, never a model; it recommends, the author decides.
+- Per-item canon promotion = retract + establish at the new scope, NEVER a supersede (supersede keeps scope). Overrides never promote — an override is the book's departure, not shared canon.
+- Every path that turns a standalone into a series member must land in the same reversible `conversion_ledger` (plain series add ledgered too; ConversionService writes its own richer entry, so composed paths pass `ledger=False` to avoid doubles).
+- Forward and reverse operations are single transactions — membership + ledger + fact changes commit together; classification recommendation is deterministic code, never a model.
 
 # Gotchas
 
 - `SeriesStore.series_for_work` returns keys `series_id`/`series_title` (NOT `id`/`title`).
-- `/works/{id}/scopes` (works.py) feeds the Book tab ScopeStrip; `/works/{id}/collections` is the OLD provenance endpoint — leave it alone.
+- `/works/{id}/scopes` feeds the Book tab ScopeStrip; `/works/{id}/collections` is the OLD provenance endpoint — leave it alone.

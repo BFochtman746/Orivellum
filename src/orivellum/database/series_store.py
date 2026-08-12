@@ -17,6 +17,7 @@ the main OrivellumDB instance and operate on its connection/lock.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import uuid
@@ -95,7 +96,7 @@ class SeriesStore:
 
     def delete_series(self, series_id: str, *, actor: str = "author") -> str:
         """Delete a series.  Returns 'ok' | 'not_found' | 'has_canon' |
-        'has_continuity'.
+        'has_continuity' | 'has_domain_canon'.
 
         Refused while series-scoped canon facts exist ('has_canon'), or while
         any member's removal would break established cross-book continuity
@@ -116,6 +117,13 @@ class SeriesStore:
         for member in self.list_members(series_id):
             if self._removal_blocker(series_id, member["work_id"]):
                 return "has_continuity"
+        # Deleting the series severs every member's series-path into any
+        # canon domain that serves it — refuse while a member book would
+        # lose active domain canon with no independent path.
+        for d in self._binding_domains_for_series(conn, series_id):
+            for member in self.list_members(series_id):
+                if not self._work_served_outside_series(conn, d["id"], member["work_id"]):
+                    return "has_domain_canon"
         with db.governed_write(
             operation="series.deleted",
             event_type="series.deleted",
@@ -132,6 +140,17 @@ class SeriesStore:
                 (series_id,),
             )
             db._conn.execute("DELETE FROM series_member WHERE series_id=?", (series_id,))
+            # Membership rows pointing at a deleted series must not dangle.
+            # Safe by construction: the has_domain_canon guard above proved
+            # no member book loses active canon by severing these paths.
+            db._conn.execute(
+                "DELETE FROM canon_domain_member WHERE member_kind='series' AND member_id=?",
+                (series_id,),
+            )
+            db._conn.execute(
+                "DELETE FROM book_collection_member WHERE member_kind='series' AND member_id=?",
+                (series_id,),
+            )
             db._conn.execute("DELETE FROM series WHERE id=?", (series_id,))
         return "ok"
 
@@ -203,8 +222,66 @@ class SeriesStore:
 
     # ── Membership ─────────────────────────────────────────────────────────────
 
+    # ── Canon-domain reachability (shared guard for every membership path) ────
+
+    @staticmethod
+    def _binding_domains_for_series(conn: Any, series_id: str) -> list[dict]:
+        """Canon domains with ACTIVE facts that serve this series — either by
+        direct series membership or through a collection containing it.
+        Membership changes on such a series change which books that shared
+        canon binds, so they are never silent."""
+        return [
+            dict(r)
+            for r in conn.execute(
+                """SELECT DISTINCT d.id, d.title,
+                          (SELECT COUNT(*) FROM canon_fact f
+                            WHERE f.domain_id = d.id AND f.status='active') AS n
+                   FROM canon_domain d
+                   JOIN canon_domain_member dm ON dm.domain_id = d.id
+                   WHERE ((dm.member_kind='series' AND dm.member_id=?)
+                       OR (dm.member_kind='collection' AND EXISTS (
+                             SELECT 1 FROM book_collection_member bcm
+                              WHERE bcm.collection_id = dm.member_id
+                                AND bcm.member_kind='series' AND bcm.member_id=?)))
+                     AND EXISTS (SELECT 1 FROM canon_fact f
+                                  WHERE f.domain_id = d.id AND f.status='active')""",
+                (series_id, series_id),
+            ).fetchall()
+        ]
+
+    @staticmethod
+    def _work_served_outside_series(conn: Any, domain_id: str, work_id: str) -> bool:
+        """Is the Work served by this domain through any path that does NOT
+        depend on its series membership?  (Direct work membership in the
+        domain, or the Work itself belonging to a collection the domain
+        serves.  A Work has at most one series, so no other series path
+        exists.)"""
+        direct = conn.execute(
+            "SELECT 1 FROM canon_domain_member "
+            "WHERE domain_id=? AND member_kind='work' AND member_id=?",
+            (domain_id, work_id),
+        ).fetchone()
+        if direct:
+            return True
+        via_collection = conn.execute(
+            """SELECT 1 FROM canon_domain_member dm
+               JOIN book_collection_member bcm
+                 ON bcm.collection_id = dm.member_id
+               WHERE dm.domain_id=? AND dm.member_kind='collection'
+                 AND bcm.member_kind='work' AND bcm.member_id=?""",
+            (domain_id, work_id),
+        ).fetchone()
+        return via_collection is not None
+
     def add_member(
-        self, series_id: str, work_id: str, *, volume: int, actor: str = "author"
+        self,
+        series_id: str,
+        work_id: str,
+        *,
+        volume: int,
+        actor: str = "author",
+        confirm_canon_binding: bool = False,
+        ledger: bool = True,
     ) -> dict:
         db = self._db
         if not self._exists(series_id):
@@ -235,6 +312,22 @@ class SeriesStore:
                     "were never verified against. Add it as the latest "
                     "volume, or retract its facts first."
                 )
+        # Joining a series that a fact-bearing canon domain serves is a canon
+        # event, not a filing change — the domain's facts immediately bind the
+        # new member's book.  Never do that silently.
+        newly_bound = [
+            d
+            for d in self._binding_domains_for_series(conn, series_id)
+            if not self._work_served_outside_series(conn, d["id"], work_id)
+        ]
+        if newly_bound and not confirm_canon_binding:
+            names = ", ".join(f"{d['title']!r} ({d['n']} fact(s))" for d in newly_bound)
+            raise SeriesError(
+                "Refused: joining this series would bind shared canon — "
+                f"domain(s) {names} serve it. Confirm the canon binding "
+                "explicitly (confirm_canon_binding) after previewing the "
+                "impact, or retract the domain's facts first."
+            )
         mid = str(uuid.uuid4())
         try:
             with db.governed_write(
@@ -250,6 +343,31 @@ class SeriesStore:
                     "VALUES(?,?,?,?,?)",
                     (mid, series_id, work_id, int(volume), _now()),
                 )
+                if ledger:
+                    # A standalone Work joining a series IS a conversion —
+                    # every path records it in the same reversible ledger.
+                    # (ConversionService passes ledger=False and writes its
+                    # own richer entry in the same transaction.)
+                    db._conn.execute(
+                        """INSERT INTO conversion_ledger
+                           (id, kind, subject_kind, subject_id, payload, actor, created_at)
+                           VALUES(?,?,?,?,?,?,?)""",
+                        (
+                            str(uuid.uuid4()),
+                            "standalone_to_series",
+                            "work",
+                            work_id,
+                            json.dumps(
+                                {
+                                    "series_id": series_id,
+                                    "volume": int(volume),
+                                    "created_series": False,
+                                }
+                            ),
+                            actor,
+                            _now(),
+                        ),
+                    )
         except sqlite3.IntegrityError as exc:
             msg = str(exc).lower()
             if "series_member.work_id" in msg and "series_member.series_id" not in msg:
@@ -313,6 +431,19 @@ class SeriesStore:
         blocker = self._removal_blocker(series_id, work_id)
         if blocker:
             raise SeriesError(blocker)
+        # Leaving the series must not silently unbind shared canon: every
+        # fact-bearing domain that serves this series needs an independent
+        # path to the Work, or the removal is refused explicitly.
+        conn = db.read_conn()
+        for d in self._binding_domains_for_series(conn, series_id):
+            if not self._work_served_outside_series(conn, d["id"], work_id):
+                raise SeriesError(
+                    f"Refused: canon domain {d['title']!r} serves this Work "
+                    "only through this series and has established facts — "
+                    "removing it would silently unbind that canon. Add the "
+                    "Work to the domain directly first, or retract the "
+                    "domain's facts."
+                )
         with db.governed_write(
             operation="series.member_removed",
             event_type="series.member_removed",

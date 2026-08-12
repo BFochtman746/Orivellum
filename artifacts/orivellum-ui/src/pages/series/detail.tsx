@@ -91,11 +91,26 @@ function AddVolumeDialog({
     if (!workId) return;
     setBusy(true);
     try {
-      const resp = await apiFetch(`${BASE}/series/${seriesId}/members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ work_id: workId, volume: nextVolume }),
-      });
+      const send = (confirm: boolean) =>
+        apiFetch(`${BASE}/series/${seriesId}/members`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            work_id: workId, volume: nextVolume, confirm_canon_binding: confirm,
+          }),
+        });
+      let resp = await send(false);
+      if (!resp.ok && resp.status === 422) {
+        const detail = (await resp.clone().json())?.detail || "";
+        // A canon domain serves this series — binding is explicit, never silent
+        if (String(detail).includes("bind shared canon")) {
+          if (!window.confirm(`${detail}\n\nBind this canon to the new book?`)) {
+            setBusy(false);
+            return;
+          }
+          resp = await send(true);
+        }
+      }
       if (!resp.ok) throw new Error((await resp.json())?.detail || `HTTP ${resp.status}`);
       toast.success(`Added as volume ${nextVolume}`);
       queryClient.invalidateQueries({ queryKey: ["series-overview", seriesId] });

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from orivellum.api._deps import get_db, require_auth
+from orivellum.database.series_store import SeriesError
 from orivellum.database.structure_store import (
     CollectionStore,
     ConversionService,
@@ -260,6 +261,7 @@ class StandaloneToSeriesBody(BaseModel):
     series_id: str | None = None
     series_title: str | None = None
     volume: int = Field(default=1, ge=1)
+    confirm_canon_binding: bool = False
 
 
 class PromoteBody(BaseModel):
@@ -294,15 +296,10 @@ def standalone_to_series(req: StandaloneToSeriesBody):
             series_id=req.series_id,
             series_title=req.series_title,
             volume=req.volume,
+            confirm_canon_binding=req.confirm_canon_binding,
         )
-    except StructureError as e:
+    except (StructureError, SeriesError) as e:
         raise HTTPException(422, str(e)) from e
-    except Exception as e:
-        from orivellum.database.series_store import SeriesError
-
-        if isinstance(e, SeriesError):
-            raise HTTPException(422, str(e)) from e
-        raise
 
 
 @router.get("/conversions/link-preview")

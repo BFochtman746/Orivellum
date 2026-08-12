@@ -38,6 +38,7 @@ class SeriesPatch(BaseModel):
 class MemberAdd(BaseModel):
     work_id: str
     volume: int = Field(ge=1)
+    confirm_canon_binding: bool = False
 
 
 class MemberPatch(BaseModel):
@@ -105,6 +106,14 @@ def delete_series(series_id: str):
             "member books latest-volume-first (retracting their canon or "
             "overrides as refused) before deleting it.",
         )
+    if result == "has_domain_canon":
+        raise HTTPException(
+            409,
+            "A canon domain with established facts serves this series — "
+            "deleting it would silently unbind that shared canon from its "
+            "member books. Add the books to the domain directly first, or "
+            "retract the domain's facts.",
+        )
     return {"ok": True, "id": series_id}
 
 
@@ -112,7 +121,12 @@ def delete_series(series_id: str):
 def add_member(series_id: str, req: MemberAdd):
     db = get_db()
     try:
-        return SeriesStore(db).add_member(series_id, req.work_id, volume=req.volume)
+        return SeriesStore(db).add_member(
+            series_id,
+            req.work_id,
+            volume=req.volume,
+            confirm_canon_binding=req.confirm_canon_binding,
+        )
     except SeriesError as e:
         raise HTTPException(422, str(e)) from e
 
