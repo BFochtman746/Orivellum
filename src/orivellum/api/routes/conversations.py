@@ -922,45 +922,86 @@ async def send_message(conv_id: str, body: MessageSend):
             from orivellum.api import genjournal
 
             async def _code_gen_sse():
+                import queue as _queue
+
                 from orivellum.api._deps import get_config as _get_cfg
                 from orivellum.capabilities.code_studio import run_pipeline as _rpipe
 
                 _cfg = _get_cfg()
                 _out_dir = _P(_cfg.data_dir) / "outputs" / "generate" / "code_studio"
 
-                # 1. Emit an immediate heartbeat so the SSE connection is live
-                #    before the pipeline starts.  This prevents proxy / client
-                #    timeouts during the 1–3 min generation window.
-                yield f"data: {json.dumps({'token': '\u23f3 Generating project\u2026', 'state': 'pending'})}\n\n"
+                # 1. Emit an immediate "planning" progress frame so the
+                #    activity strip shows before the pipeline thread even starts.
+                #    This also triggers userAcknowledged on the client, removing
+                #    the placeholder spinner and replacing it with the real stage.
+                yield f"data: {json.dumps({'code_progress': {'stage': 'planning', 'label': 'Planning project\u2026', 'n': 0, 'total': 0}})}\n\n"
 
-                # 2. Run the pipeline as a Task so we can yield keepalive frames
-                #    every 25 s while it runs — preventing proxy timeout.
-                # Tests are executed inside an isolated subprocess.  The
-                # subprocess inherits a minimal env (no secrets, tmpdir HOME)
-                # and is bounded by resource.setrlimit limits (CPU, memory,
-                # file size, process count).  The Replit container itself is
-                # the outer isolation boundary; nested containers are not
-                # available on this platform.
+                # 2. Thread-safe queue: the pipeline thread pushes progress
+                #    events; the async generator drains them between polls.
+                _prog_q: _queue.SimpleQueue = _queue.SimpleQueue()
+
+                def _on_progress(stage: str, label: str, n: int, total: int) -> None:
+                    _prog_q.put_nowait({"stage": stage, "label": label, "n": n, "total": total})
+
+                # 3. Run the pipeline in a thread.
+                # SECURITY: run_tests_server_side=False — generated code is
+                # never executed on the API host.  Testing is left to the
+                # Studio tab (which routes to an isolated worker).
                 _cg_task = _asyncio.ensure_future(
                     _asyncio.to_thread(
                         _rpipe,
                         description=_cg_user_text,
                         language=None,
                         out_dir=_out_dir,
-                        run_tests_server_side=True,  # resource-limited subprocess
+                        run_tests_server_side=False,
                         cfg=_cfg,
                         db=db,
+                        progress_callback=_on_progress,
                     )
                 )
-                _KA_INTERVAL = 25.0  # seconds between keepalive frames
+
+                # 4. Poll every 0.5 s so progress events reach the client within
+                #    half a second of each stage starting.  Send a keepalive SSE
+                #    comment every 25 s so proxies don't drop the connection.
+                _POLL = 0.5
+                _KA_EVERY = 50   # 50 × 0.5 s = 25 s keepalive cadence
+                _ka_ctr = 0
+
+                def _drain_progress():
+                    """Yield all queued progress frames (sync helper)."""
+                    while True:
+                        try:
+                            ev = _prog_q.get_nowait()
+                            return ev
+                        except _queue.Empty:
+                            return None
+
                 while not _cg_task.done():
                     try:
                         await _asyncio.wait_for(
-                            _asyncio.shield(_cg_task), timeout=_KA_INTERVAL
+                            _asyncio.shield(_cg_task), timeout=_POLL
                         )
                     except _asyncio.TimeoutError:
-                        # Task still running — send a comment (no-op for client)
+                        pass
+                    # Drain every queued progress event and emit immediately
+                    while True:
+                        try:
+                            _ev = _prog_q.get_nowait()
+                            yield f"data: {json.dumps({'code_progress': _ev})}\n\n"
+                        except _queue.Empty:
+                            break
+                    _ka_ctr += 1
+                    if _ka_ctr >= _KA_EVERY:
+                        _ka_ctr = 0
                         yield ": keepalive\n\n"
+
+                # Drain any events that arrived after the final poll
+                while True:
+                    try:
+                        _ev = _prog_q.get_nowait()
+                        yield f"data: {json.dumps({'code_progress': _ev})}\n\n"
+                    except _queue.Empty:
+                        break
 
                 try:
                     _result = _cg_task.result()
@@ -973,11 +1014,10 @@ async def send_message(conv_id: str, body: MessageSend):
                     )
                     _cg_meta: dict = {"intent": "code_generate_failed"}
                 else:
-                    _tests_passed = (
-                        _result.test_result is not None
-                        and _result.test_result.passed
-                    )
-                    if _result.ok and _result.download_url and _tests_passed:
+                    # Tests are never run in this path (run_tests_server_side=False),
+                    # so test_result is always None here.  The card is shown whenever
+                    # packaging succeeded; truthfully omits any test-pass claim.
+                    if _result.ok and _result.download_url:
                         _fc = len(_result.files)
                         _flist = "\n".join(
                             f"- `{f.path}`" for f in _result.files[:12]
@@ -987,9 +1027,10 @@ async def send_message(conv_id: str, body: MessageSend):
                         _cg_reply = (
                             f"\U0001f5a5\ufe0f **{_result.title}**\n\n"
                             f"Generated a {_result.language} project with {_fc} "
-                            f"file{'s' if _fc != 1 else ''}. \u2705 All tests pass.\n\n"
+                            f"file{'s' if _fc != 1 else ''}.\n\n"
                             f"**Files included:**\n{_flist}\n\n"
-                            "Click **Download project** below to get the zip."
+                            "Click **Download project** to get the zip, then run "
+                            "the included tests locally to verify everything works."
                         )
                         _cg_meta = {
                             "intent": "code_generate",
@@ -997,31 +1038,8 @@ async def send_message(conv_id: str, body: MessageSend):
                             "title": _result.title,
                             "language": _result.language,
                             "file_count": _fc,
-                            "test_passed": True,
+                            "test_passed": None,  # not run server-side
                             "ok": True,
-                        }
-                    elif _result.download_url and not _tests_passed:
-                        # Tests were run but didn't pass after all fix retries.
-                        # Give the user actionable feedback — no card, no zip link.
-                        _test_out = ""
-                        if _result.test_result and _result.test_result.output:
-                            _test_out = (
-                                "\n\nTest output:\n```\n"
-                                + _result.test_result.output[:400]
-                                + "\n```"
-                            )
-                        _cg_reply = (
-                            f"I generated **{_result.title or 'the project'}** "
-                            "but the tests didn't fully pass after all fix attempts."
-                            f"{_test_out}\n\n"
-                            "Try again with a more detailed description, or use the "
-                            "**Studio** tab for a step-by-step generation flow where "
-                            "you can review and fix each file."
-                        )
-                        _cg_meta = {
-                            "intent": "code_generate_failed",
-                            "title": getattr(_result, "title", ""),
-                            "test_passed": False,
                         }
                     else:
                         _cg_reply = (

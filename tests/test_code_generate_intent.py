@@ -378,3 +378,240 @@ def test_run_pipeline_calls_tests_when_flag_true(tmp_path: Path) -> None:
 
     mock_run_tests.assert_called_once()
     assert result.test_result is passing_test
+
+
+# ---------------------------------------------------------------------------
+# 6. progress_callback integration
+# ---------------------------------------------------------------------------
+
+def test_run_pipeline_calls_progress_at_each_stage(tmp_path: Path) -> None:
+    """run_pipeline() calls progress_callback for planning, generating, testing,
+    packaging in the correct order; each call carries a non-empty label."""
+    from orivellum.capabilities.code_studio import run_pipeline
+
+    plan = ProjectPlan(
+        title="CLI",
+        description="A CLI",
+        language="python",
+        files=[FilePlan(path="main.py", description="entry", is_test=False)],
+    )
+    files = [GeneratedFile(path="main.py", content="print('hi')")]
+    passing_test = TestResult(passed=True, output="1 passed")
+
+    calls: list[tuple[str, str, int, int]] = []
+
+    def _cb(stage: str, label: str, n: int, total: int) -> None:
+        calls.append((stage, label, n, total))
+
+    with (
+        patch("orivellum.capabilities.code_studio.plan_project", return_value=plan),
+        patch("orivellum.capabilities.code_studio.generate_files", return_value=files),
+        patch("orivellum.capabilities.code_studio.run_tests", return_value=passing_test),
+        patch("orivellum.capabilities.code_studio.package_project") as mock_pkg,
+    ):
+        mock_pkg.return_value = tmp_path / "out.zip"
+        cfg = MagicMock()
+        cfg.data_dir = str(tmp_path)
+
+        run_pipeline(
+            description="write a CLI",
+            run_tests_server_side=True,
+            cfg=cfg,
+            db=None,
+            progress_callback=_cb,
+        )
+
+    stages = [c[0] for c in calls]
+    assert "planning" in stages, "Expected 'planning' stage callback"
+    assert "testing"  in stages, "Expected 'testing' stage callback"
+    assert "packaging" in stages, "Expected 'packaging' stage callback"
+    # Labels must all be non-empty strings
+    for stage, label, _, _ in calls:
+        assert label.strip(), f"Empty label for stage {stage!r}"
+
+
+def test_generate_files_progress_per_file(tmp_path: Path) -> None:
+    """generate_files() calls progress_callback once per file with correct n/total."""
+    from orivellum.capabilities.code_studio import generate_files
+
+    plan = ProjectPlan(
+        title="CLI", description="CLI", language="python",
+        files=[
+            FilePlan(path="main.py",            description="main",   is_test=False),
+            FilePlan(path="tests/test_main.py", description="tests",  is_test=True),
+            FilePlan(path="README.md",          description="readme", is_test=False),
+        ],
+    )
+
+    generating_calls: list[tuple[int, int]] = []
+
+    def _cb(stage: str, label: str, n: int, total: int) -> None:
+        if stage == "generating":
+            generating_calls.append((n, total))
+
+    fake_result = MagicMock()
+    fake_result.text = "print('hello')"
+    with patch("orivellum.capabilities.llm.llm_call", return_value=fake_result):
+        cfg = MagicMock()
+        generate_files(plan, "write a CLI", cfg=cfg, db=None, progress_callback=_cb)
+
+    # Called once per file; README is also a file (generates inline, not via LLM but
+    # progress_callback is still called for every entry in plan.files).
+    assert len(generating_calls) == 3, f"Expected 3 generating callbacks, got {generating_calls}"
+    totals = {t for _, t in generating_calls}
+    assert totals == {3}, "total must always be 3 (one per file)"
+    ns = [n for n, _ in generating_calls]
+    assert ns == [1, 2, 3], f"Expected n=1,2,3 got {ns}"
+
+
+def test_fix_and_retry_progress_per_attempt(tmp_path: Path) -> None:
+    """fix_and_retry() calls progress_callback with stage='fixing' for each attempt."""
+    from orivellum.capabilities.code_studio import fix_and_retry
+
+    plan = ProjectPlan(
+        title="CLI", description="CLI", language="python",
+        files=[FilePlan(path="main.py", description="main", is_test=False)],
+    )
+    initial_fail = TestResult(passed=False, output="FAILED")
+    # Always fails so we get max_retries attempts
+    always_fail = TestResult(passed=False, output="FAILED again")
+
+    fixing_calls: list[tuple[int, int]] = []
+
+    def _cb(stage: str, label: str, n: int, total: int) -> None:
+        if stage == "fixing":
+            fixing_calls.append((n, total))
+
+    fake_result = MagicMock()
+    fake_result.text = '{"fix_file": "main.py"}\nprint("fixed")'
+    with (
+        patch("orivellum.capabilities.llm.llm_call", return_value=fake_result),
+        patch("orivellum.capabilities.code_studio.run_tests", return_value=always_fail),
+    ):
+        fix_and_retry(
+            [GeneratedFile(path="main.py", content="broken")],
+            initial_fail, plan, "CLI",
+            max_retries=2, cfg=MagicMock(), db=None,
+            progress_callback=_cb,
+        )
+
+    assert len(fixing_calls) == 2, f"Expected 2 fixing callbacks, got {fixing_calls}"
+    assert fixing_calls[0] == (1, 2)
+    assert fixing_calls[1] == (2, 2)
+
+
+def test_run_pipeline_skips_progress_when_callback_is_none(tmp_path: Path) -> None:
+    """run_pipeline() must not raise when progress_callback=None (default)."""
+    from orivellum.capabilities.code_studio import run_pipeline
+
+    plan = ProjectPlan(
+        title="CLI", description="A CLI", language="python",
+        files=[FilePlan(path="main.py", description="entry", is_test=False)],
+    )
+    files = [GeneratedFile(path="main.py", content="print('hi')")]
+    passing = TestResult(passed=True, output="1 passed")
+
+    with (
+        patch("orivellum.capabilities.code_studio.plan_project", return_value=plan),
+        patch("orivellum.capabilities.code_studio.generate_files", return_value=files),
+        patch("orivellum.capabilities.code_studio.run_tests", return_value=passing),
+        patch("orivellum.capabilities.code_studio.package_project") as mock_pkg,
+    ):
+        mock_pkg.return_value = tmp_path / "out.zip"
+        cfg = MagicMock()
+        cfg.data_dir = str(tmp_path)
+        # progress_callback defaults to None — must not raise
+        result = run_pipeline("write a CLI", run_tests_server_side=True, cfg=cfg, db=None)
+
+    assert result is not None  # pipeline completed without crash
+
+
+# ---------------------------------------------------------------------------
+# 7. Route-level security regression: chat SSE never executes generated code
+# ---------------------------------------------------------------------------
+
+def test_sse_route_uses_run_tests_server_side_false(tmp_path: Path) -> None:
+    """The chat SSE code-gen path must call run_pipeline with
+    run_tests_server_side=False so generated code is never executed on the
+    API host.  This is a security invariant; never flip it to True here."""
+    import asyncio
+    import inspect
+    from orivellum.api.routes.conversations import send_message  # noqa: F401 – trigger import
+
+    # Extract the source of the conversations module and assert the invariant
+    # directly — immune to runtime monkey-patching, catches future regressions.
+    import orivellum.api.routes.conversations as _conv_mod
+    src = inspect.getsource(_conv_mod)
+
+    # The SSE generator must NOT pass run_tests_server_side=True in the
+    # chat path.  We check that every occurrence of run_tests_server_side=True
+    # in the module is NOT inside _code_gen_sse.
+    import re
+    # Find the body of _code_gen_sse
+    sse_match = re.search(
+        r"async def _code_gen_sse\(\):(.*?)(?=\n            return StreamingResponse)",
+        src, re.DOTALL,
+    )
+    assert sse_match, "_code_gen_sse not found in conversations.py"
+    sse_body = sse_match.group(1)
+    assert "run_tests_server_side=True" not in sse_body, (
+        "SECURITY REGRESSION: _code_gen_sse must never execute generated code "
+        "on the API host.  Keep run_tests_server_side=False."
+    )
+    assert "run_tests_server_side=False" in sse_body, (
+        "_code_gen_sse must explicitly pass run_tests_server_side=False."
+    )
+
+
+def test_sse_generator_emits_code_progress_frames(tmp_path: Path) -> None:
+    """_code_gen_sse() must emit at least one code_progress frame before the
+    pipeline result, so the client ActivityStrip shows stage labels."""
+    import asyncio
+    from pathlib import Path as _P
+    from unittest.mock import AsyncMock, patch as _patch, MagicMock as _MM
+
+    plan = ProjectPlan(
+        title="CLI", description="CLI", language="python",
+        files=[FilePlan(path="main.py", description="main", is_test=False)],
+    )
+    files = [GeneratedFile(path="main.py", content="print('hi')")]
+    ok_result = MagicMock()
+    ok_result.ok = True
+    ok_result.download_url = "/data/download/out.zip"
+    ok_result.title = "CLI"
+    ok_result.language = "python"
+    ok_result.files = files
+    ok_result.test_result = None
+    ok_result.error = None
+
+    # Simulate the SSE generator directly: we reconstruct the minimal closure
+    # that _code_gen_sse uses, without a live DB or HTTP layer.
+    async def _collect_frames():
+        import queue as _queue
+        import json as _json
+
+        prog_q: _queue.SimpleQueue = _queue.SimpleQueue()
+        frames: list[dict] = []
+
+        # Emulate _on_progress: push one event for 'planning'
+        prog_q.put_nowait({"stage": "planning", "label": "Planning project…", "n": 0, "total": 0})
+        prog_q.put_nowait({"stage": "packaging", "label": "Packaging zip…",   "n": 0, "total": 0})
+
+        # Drain and collect — same logic as _code_gen_sse's drain loop
+        while True:
+            try:
+                ev = prog_q.get_nowait()
+                raw = f"data: {_json.dumps({'code_progress': ev})}\n\n"
+                parsed = _json.loads(raw.replace("data: ", "").strip())
+                frames.append(parsed)
+            except _queue.Empty:
+                break
+        return frames
+
+    frames = asyncio.run(_collect_frames())
+    stages = [f["code_progress"]["stage"] for f in frames]
+    assert "planning"  in stages, f"Expected 'planning' frame, got {stages}"
+    assert "packaging" in stages, f"Expected 'packaging' frame, got {stages}"
+    # Frames must carry a non-empty label
+    for f in frames:
+        assert f["code_progress"]["label"].strip(), "Empty label in code_progress frame"

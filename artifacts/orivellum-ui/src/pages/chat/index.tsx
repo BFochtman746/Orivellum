@@ -131,6 +131,9 @@ const JOBID_PREFIX = "\x02JOBID\x02";
 /** Sentinel carrying the full code-generation result metadata so the card
  *  renders immediately — without waiting for the server-side refetch. */
 const CODE_META_PREFIX = "\x02CODEMETA\x02";
+/** Sentinel carrying a single pipeline-stage progress event so the activity
+ *  strip can show real-time stage labels (Planning → Generating → Testing). */
+const CODE_PROGRESS_PREFIX = "\x02CGPROG\x02";
 
 // ─── Voice-mode sentence chunking ─────────────────────────────────────────────
 // While a reply streams in voice mode, completed sentences are flushed to the
@@ -150,6 +153,13 @@ function lastSentenceBoundary(text: string): number {
     last = m.index + m[0].length;
   }
   return last;
+}
+
+/** Map a pipeline stage name to an ActivityStep icon. */
+function _cgStageIcon(stage: string): ActivityStep["icon"] {
+  if (stage === "planning") return "think";
+  if (stage === "generating") return "write";
+  return "read"; // testing, fixing, packaging
 }
 
 const INTENT_LABELS: Record<string, { icon: string; label: string }> = {
@@ -1000,6 +1010,11 @@ async function* streamChat(
         // server-side conversation refetch.
         if (parsed.code_meta) {
           yield `${CODE_META_PREFIX}${JSON.stringify(parsed.code_meta)}${CODE_META_PREFIX}`;
+        }
+        // Pipeline stage progress — each event names the current stage and a
+        // human-readable label so the ActivityStrip updates in real time.
+        if (parsed.code_progress) {
+          yield `${CODE_PROGRESS_PREFIX}${JSON.stringify(parsed.code_progress)}`;
         }
         // Thinking/reasoning tokens from <think> blocks or reasoning_content
         if (parsed.thinking) yield `${THINKING_PREFIX}${parsed.thinking as string}`;
@@ -2202,6 +2217,10 @@ export default function Chat() {
       // so the "Sending…" indicator disappears as soon as the server starts responding.
       let userAcknowledged = false;
       let firstTextToken = true; // used to advance activity step to "Writing response"
+      // Set to true when the server is running the code-generation pipeline.
+      // Suppresses the normal s2/s3 activity step advances so the pipeline's
+      // own stage labels (Planning → Generating → Testing) control the strip.
+      let codeGenMode = false;
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type, opId, capturedFile?.data, capturedFile?.name, capturedFile?.type)) {
           if (token.startsWith(JOBID_PREFIX)) {
@@ -2211,22 +2230,60 @@ export default function Chat() {
             setPendingGen({ jobId, convId, startedAt: Date.now() });
             continue;
           }
+          // ── Code-gen stage progress — handle BEFORE userAcknowledged so the
+          //    normal "Reading context" step never flashes for code-gen sessions.
+          if (token.startsWith(CODE_PROGRESS_PREFIX)) {
+            if (!userAcknowledged) {
+              userAcknowledged = true;
+              setLocalMessages((prev) => prev.map((m) =>
+                m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m
+              ));
+              // Do NOT advance to s2 — the progress event below owns the strip.
+            }
+            codeGenMode = true;
+            try {
+              const prog = JSON.parse(token.slice(CODE_PROGRESS_PREFIX.length)) as {
+                stage: string; label: string; n: number; total: number;
+              };
+              setActivitySteps(prev => {
+                // Mark every in-progress step done, then push/update the new stage.
+                const finished = prev.map(s => s.done ? s : { ...s, done: true, endMs: Date.now() });
+                const last = finished.at(-1);
+                // Same stage arriving again (e.g. file 2/5 after file 1/5):
+                // update label in place without adding another row.
+                if (last?.id === `cg_${prog.stage}`) {
+                  return [...finished.slice(0, -1), { ...last, done: false, label: prog.label }];
+                }
+                return [...finished, {
+                  id: `cg_${prog.stage}`,
+                  label: prog.label,
+                  icon: _cgStageIcon(prog.stage),
+                  startMs: Date.now(),
+                  done: false,
+                }];
+              });
+            } catch { /* malformed — ignore */ }
+            continue;
+          }
           if (!userAcknowledged) {
             userAcknowledged = true;
             setLocalMessages((prev) => prev.map((m) =>
               m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m
             ));
             // Activity: step 1 done → advance to "Reading context / Preparing answer"
-            setActivitySteps(prev => [
-              { ...prev[0], done: true, endMs: Date.now() },
-              {
-                id: "s2",
-                label: workIdForActivity ? "Reading context" : "Preparing answer",
-                icon: workIdForActivity ? "read" : "think" as const,
-                startMs: Date.now(),
-                done: false,
-              },
-            ]);
+            // (skipped for code-gen flows — codeGenMode controls the strip there)
+            if (!codeGenMode) {
+              setActivitySteps(prev => [
+                { ...prev[0], done: true, endMs: Date.now() },
+                {
+                  id: "s2",
+                  label: workIdForActivity ? "Reading context" : "Preparing answer",
+                  icon: workIdForActivity ? "read" : "think" as const,
+                  startMs: Date.now(),
+                  done: false,
+                },
+              ]);
+            }
           }
           if (token.startsWith(SOURCES_PREFIX) && token.endsWith(SOURCES_PREFIX) && token.length > SOURCES_PREFIX.length * 2) {
             try {
@@ -2301,7 +2358,8 @@ export default function Chat() {
               }
             }
             // Activity: first real text token → advance to "Writing response"
-            if (firstTextToken) {
+            // (skipped in code-gen mode — the pipeline stage labels own the strip)
+            if (firstTextToken && !codeGenMode) {
               firstTextToken = false;
               setActivitySteps(prev => [
                 ...prev.slice(0, -1).map(s => s.done ? s : { ...s, done: true, endMs: Date.now() }),

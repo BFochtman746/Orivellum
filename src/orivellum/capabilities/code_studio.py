@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -304,6 +305,7 @@ def generate_files(
     description: str,
     cfg: Any = None,
     db: Any = None,
+    progress_callback: Callable[[str, str, int, int], None] | None = None,
 ) -> list[GeneratedFile]:
     """Generate the content of each file in the plan, one at a time."""
     from orivellum.capabilities.llm import llm_call
@@ -322,7 +324,18 @@ def generate_files(
         f"Dependencies: {', '.join(plan.dependencies) or 'none'}"
     )
 
-    for file_plan in plan.files:
+    total_files = len(plan.files)
+    for file_idx, file_plan in enumerate(plan.files, 1):
+        if progress_callback:
+            try:
+                progress_callback(
+                    "generating",
+                    f"Writing {file_plan.path} ({file_idx}/{total_files})\u2026",
+                    file_idx,
+                    total_files,
+                )
+            except Exception:
+                pass
         ext = Path(file_plan.path).suffix.lower()
 
         # README is plain text — no code generation needed
@@ -514,6 +527,7 @@ def fix_and_retry(
     max_retries: int = 2,
     cfg: Any = None,
     db: Any = None,
+    progress_callback: Callable[[str, str, int, int], None] | None = None,
 ) -> tuple[list[GeneratedFile], TestResult]:
     """If tests fail, ask the LLM to fix the broken file and re-run tests."""
     from orivellum.capabilities.llm import llm_call
@@ -526,6 +540,16 @@ def fix_and_retry(
             break
 
         logger.info("Fix attempt %d/%d for '%s'", attempt + 1, max_retries, plan.title)
+        if progress_callback:
+            try:
+                progress_callback(
+                    "fixing",
+                    f"Fixing tests (attempt {attempt + 1}/{max_retries})\u2026",
+                    attempt + 1,
+                    max_retries,
+                )
+            except Exception:
+                pass
 
         # Build context for the fixer
         all_source = "\n\n".join(
@@ -730,6 +754,7 @@ def run_pipeline(
     run_tests_server_side: bool = True,
     cfg: Any = None,
     db: Any = None,
+    progress_callback: Callable[[str, str, int, int], None] | None = None,
 ) -> StudioResult:
     """Run the complete plan → generate → (optionally test →fix →) package pipeline.
 
@@ -752,7 +777,15 @@ def run_pipeline(
         out_dir = data_root / "outputs" / "code_studio"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    def _cb(stage: str, label: str, n: int = 0, total: int = 0) -> None:
+        if progress_callback:
+            try:
+                progress_callback(stage, label, n, total)
+            except Exception:
+                pass
+
     # ── Stage 1: Plan ─────────────────────────────────────────────────────────
+    _cb("planning", "Planning project\u2026")
     try:
         plan = plan_project(description, language=language, cfg=cfg, db=db)
     except Exception as exc:
@@ -761,24 +794,30 @@ def run_pipeline(
 
     # ── Stage 2: Generate files ───────────────────────────────────────────────
     try:
-        files = generate_files(plan, description, cfg=cfg, db=db)
+        files = generate_files(
+            plan, description, cfg=cfg, db=db,
+            progress_callback=progress_callback,
+        )
     except Exception as exc:
         logger.exception("generate_files failed")
         return StudioResult(ok=False, error=f"Code generation failed: {exc}", plan=plan)
 
     # ── Stages 3 & 4: Run tests + fix loop (only when server-side allowed) ────
     if run_tests_server_side:
+        _cb("testing", "Running tests\u2026")
         test_result = run_tests(files, plan.language)
         if not test_result.passed:
             files, test_result = fix_and_retry(
                 files, test_result, plan, description,
                 max_retries=max_fix_retries, cfg=cfg, db=db,
+                progress_callback=progress_callback,
             )
     else:
         # Tests skipped — caller is responsible for running them in their own env.
         test_result = None
 
     # ── Stage 5: Package ─────────────────────────────────────────────────────
+    _cb("packaging", "Packaging zip\u2026")
     try:
         zip_path = package_project(files, plan, out_dir)
     except Exception as exc:
