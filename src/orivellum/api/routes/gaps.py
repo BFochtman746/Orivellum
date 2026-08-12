@@ -90,3 +90,147 @@ def dismiss_hygiene(work_id: str, req: HygieneDismissRequest):
     # Cached hygiene results still contain the dismissed finding — drop them.
     db.invalidate_gap_cache(work_id)
     return {"ok": True, "finding_key": req.finding_key}
+
+
+# ── G-M3/G-M4: structural detectors + golden oracle + open-world harness ─────
+
+
+class GapScanRequest(BaseModel):
+    detectors: list[str] | None = None  # default: all emitting detectors
+
+
+@router.post("/works/{work_id}/research-gaps/scan")
+def run_gap_scan(work_id: str, req: GapScanRequest | None = None):
+    """Run the deterministic gap detectors for a Work (zero model calls)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities import gap_engine as ge
+
+    emitters = {
+        ge.DETECTOR_CITATION: ge.detect_citation_gaps,
+        ge.DETECTOR_TERM: ge.detect_never_explained,
+        ge.DETECTOR_DEADEND: ge.detect_dead_end_citations,
+        ge.DETECTOR_FAILURE: ge.detect_failure_clusters,
+    }
+    wanted = (req.detectors if req and req.detectors else None) or list(emitters)
+    unknown = [d for d in wanted if d not in emitters]
+    if unknown:
+        raise HTTPException(422, f"unknown detector(s): {unknown}")
+    results = {name: emitters[name](work_id, db) for name in wanted}
+    return {
+        "work_id": work_id,
+        "detectors": wanted,
+        "results": results,
+        "total_gaps": sum(len(r.get("gaps", [])) for r in results.values()),
+    }
+
+
+@router.get("/works/{work_id}/gap-oracle/candidates")
+def oracle_candidates(work_id: str, detector: str):
+    """Report-only detector candidates for annotation, with any existing label."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.gap_harness import DETECTOR_CANDIDATES
+
+    fn = DETECTOR_CANDIDATES.get(detector)
+    if fn is None:
+        raise HTTPException(422, f"unknown detector {detector!r}")
+    labels = {
+        lb["pair_key"]: lb for lb in db.list_oracle_labels(detector=detector, work_id=work_id)
+    }
+    candidates = fn(work_id, db)
+    for c in candidates:
+        existing = labels.get(c["pair_key"])
+        c["label"] = existing["label"] if existing else None
+        c["labeled_by"] = existing["signed_by"] if existing else None
+    # Labels whose pair the detector no longer flags still belong to the set —
+    # they are the detector's misses (potential false negatives).
+    flagged = {c["pair_key"] for c in candidates}
+    unflagged = [
+        {
+            "pair_key": lb["pair_key"],
+            "frequency": lb["frequency"],
+            "label": lb["label"],
+            "labeled_by": lb["signed_by"],
+            "flagged": False,
+        }
+        for lb in labels.values()
+        if lb["pair_key"] not in flagged
+    ]
+    return {
+        "work_id": work_id,
+        "detector": detector,
+        "candidates": candidates,
+        "unflagged_labels": unflagged,
+    }
+
+
+class OracleLabelRequest(BaseModel):
+    detector: str = Field(min_length=1)
+    pair_key: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    signed_by: str = Field(min_length=1)
+    frequency: int = 0
+    note: str = ""
+
+
+@router.post("/works/{work_id}/gap-oracle/labels")
+def upsert_oracle_label(work_id: str, req: OracleLabelRequest):
+    """Record one signed three-way golden-oracle label (upsert on revision)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    try:
+        row = db.upsert_oracle_label(
+            work_id,
+            req.detector,
+            req.pair_key,
+            req.label,
+            signed_by=req.signed_by,
+            frequency=req.frequency,
+            note=req.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return row
+
+
+@router.get("/gap-oracle/labels")
+def list_oracle_labels(detector: str | None = None, work_id: str | None = None):
+    db = get_db()
+    labels = db.list_oracle_labels(detector=detector, work_id=work_id)
+    return {"labels": labels, "total": len(labels)}
+
+
+class OracleEvaluateRequest(BaseModel):
+    detector: str = Field(min_length=1)
+
+
+@router.post("/gap-oracle/evaluate")
+def evaluate_oracle(req: OracleEvaluateRequest):
+    """Run the open-world harness for one detector and persist the measurement."""
+    db = get_db()
+    from orivellum.capabilities.gap_harness import evaluate_detector
+
+    try:
+        return evaluate_detector(db, req.detector)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/gap-oracle/measurements")
+def list_measurements():
+    """Every persisted harness measurement, plus the blocking floor."""
+    db = get_db()
+    import json as _json
+
+    rows = db.list_detector_measurements()
+    for r in rows:
+        try:
+            r["strata"] = _json.loads(r.get("strata") or "{}")
+        except Exception:
+            r["strata"] = {}
+        r["meets_blocking_floor"] = r["n_labeled"] >= db.MIN_ORACLE_LABELED
+    return {"measurements": rows, "min_labeled_for_blocking": db.MIN_ORACLE_LABELED}

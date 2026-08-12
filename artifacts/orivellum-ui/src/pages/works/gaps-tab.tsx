@@ -263,6 +263,12 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
             <span className="font-medium text-sm">Research coverage</span>
           </div>
           <div className="flex items-center gap-2">
+            <Link
+              href={`/works/${workId}/gap-oracle`}
+              className="text-[10px] font-mono text-muted-foreground hover:text-foreground"
+            >
+              oracle
+            </Link>
             <span className="text-lg font-mono font-bold">{data.coverage_pct}%</span>
             <button
               onClick={() => { setForceRefresh(true); refetch(); }}

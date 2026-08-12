@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import WorksList from '@/pages/works/index';
 import WorkDetail from '@/pages/works/detail';
 import WorkIntelligence from '@/pages/works/intelligence';
+import GapOraclePage from '@/pages/works/gap-oracle';
 import SeriesList from '@/pages/series/index';
 import SeriesDetail from '@/pages/series/detail';
 import { useParams, useLocation } from 'wouter';
@@ -133,6 +134,7 @@ function RoutedPages() {
         <Route path="/works">{() => <RouteWithBoundary component={WorksList} />}</Route>
         <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
         <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>
+        <Route path="/works/:workId/gap-oracle">{() => <RouteWithBoundary component={GapOraclePage} />}</Route>
         <Route path="/series">{() => <RouteWithBoundary component={SeriesList} />}</Route>
         <Route path="/series/:seriesId">{() => <RouteWithBoundary component={SeriesDetail} />}</Route>
         <Route path="/chat">{() => <RouteWithBoundary component={Chat} />}</Route>

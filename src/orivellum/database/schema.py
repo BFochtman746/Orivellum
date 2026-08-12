@@ -3199,4 +3199,48 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         )
     """,
     ),
+    # v135 — Gap Engine G-M3/G-M4: golden-oracle labels + detector measurements
+    #   gap_oracle_label        — hand-annotated three-way labels (is_gap /
+    #                             is_not_gap / unknown), author-signed; the
+    #                             golden oracle detectors are measured against.
+    #   gap_detector_measurement — persisted open-world harness runs (precision,
+    #                             recall, kappa, frequency strata); a detector
+    #                             may only produce blocking-severity gaps once a
+    #                             measurement with enough labels exists.
+    (
+        135,
+        "Golden oracle labels and open-world detector measurements",
+        """
+        CREATE TABLE IF NOT EXISTS gap_oracle_label (
+            id         TEXT PRIMARY KEY,
+            work_id    TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            detector   TEXT NOT NULL,
+            pair_key   TEXT NOT NULL,
+            label      TEXT NOT NULL CHECK (label IN
+                           ('is_gap','is_not_gap','unknown')),
+            frequency  INTEGER NOT NULL DEFAULT 0,
+            note       TEXT NOT NULL DEFAULT '',
+            signed_by  TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(work_id, detector, pair_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_gap_oracle_detector
+            ON gap_oracle_label(detector, label);
+        CREATE TABLE IF NOT EXISTS gap_detector_measurement (
+            id                 TEXT PRIMARY KEY,
+            detector           TEXT NOT NULL,
+            n_labeled          INTEGER NOT NULL,
+            n_unknown_excluded INTEGER NOT NULL DEFAULT 0,
+            precision_overall  REAL,
+            recall_overall     REAL,
+            f1_overall         REAL,
+            kappa              REAL,
+            strata             TEXT NOT NULL DEFAULT '{}',
+            measured_at        TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gap_measurement_detector
+            ON gap_detector_measurement(detector, measured_at)
+    """,
+    ),
 ]

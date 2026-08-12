@@ -5922,6 +5922,25 @@ class OrivellumDB:
             blocking_active_work=blocking_active_work,
         )
 
+        # ── Blocking-status gate (G-M4, enforced) ────────────────────────────
+        # A detector may only produce blocking-severity gaps once it carries a
+        # measured, stratified precision/recall figure from the open-world
+        # harness.  Unmeasured detectors have the blocking flag suppressed —
+        # the severity is recomputed without it and the suppression recorded.
+        meta = dict(meta or {})
+        if blocking_active_work and not self.has_measured_detector(force_check):
+            blocking_active_work = False
+            severity = compute_severity(
+                gap_class,
+                centrality=centrality,
+                dependent_count=dependent_count,
+                blocking_active_work=False,
+            )
+            meta["blocking_suppressed"] = (
+                f"detector {force_check!r} has no harness measurement — "
+                "blocking status requires measured, stratified figures"
+            )
+
         gap_id = (
             "gap-"
             + hashlib.sha256(
@@ -6083,6 +6102,150 @@ class OrivellumDB:
                 "SELECT finding_key FROM hygiene_dismissal WHERE work_id=?", (work_id,)
             ).fetchall()
         return {r["finding_key"] for r in rows}
+
+    # ── Golden oracle labels + detector measurements (G-M4) ──────────────────
+    # The golden oracle is the author's hand-annotated three-way-labelled pair
+    # set.  Labels are signed; ``unknown`` items are stored but excluded from
+    # scoring — an open-world harness never counts an unknown as an error.
+
+    _ORACLE_LABELS: ClassVar[frozenset] = frozenset({"is_gap", "is_not_gap", "unknown"})
+    # A detector reaches blocking status only after a harness measurement over
+    # at least this many scoreable (non-unknown) labels.
+    MIN_ORACLE_LABELED: ClassVar[int] = 20
+
+    def upsert_oracle_label(
+        self,
+        work_id: str,
+        detector: str,
+        pair_key: str,
+        label: str,
+        *,
+        signed_by: str,
+        frequency: int = 0,
+        note: str = "",
+    ) -> dict:
+        """Record (or revise) one golden-oracle label.  Signature required."""
+        if label not in self._ORACLE_LABELS:
+            raise ValueError(f"invalid label {label!r}: must be one of is_gap/is_not_gap/unknown")
+        if not (signed_by or "").strip():
+            raise ValueError(
+                "oracle label refused: signed_by is required — labels are the author's"
+            )
+        if not (pair_key or "").strip() or not (detector or "").strip():
+            raise ValueError("oracle label refused: detector and pair_key are required")
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO gap_oracle_label
+                       (id, work_id, detector, pair_key, label, frequency, note,
+                        signed_by, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(work_id, detector, pair_key) DO UPDATE SET
+                       label=excluded.label, frequency=excluded.frequency,
+                       note=excluded.note, signed_by=excluded.signed_by,
+                       updated_at=excluded.updated_at""",
+                (
+                    _uuid(),
+                    work_id,
+                    detector.strip(),
+                    pair_key.strip(),
+                    label,
+                    int(frequency),
+                    note,
+                    signed_by.strip(),
+                    now,
+                    now,
+                ),
+            )
+            self._maybe_commit()
+            row = self._conn.execute(
+                "SELECT * FROM gap_oracle_label WHERE work_id=? AND detector=? AND pair_key=?",
+                (work_id, detector.strip(), pair_key.strip()),
+            ).fetchone()
+        return dict(row)
+
+    def list_oracle_labels(
+        self, detector: str | None = None, work_id: str | None = None
+    ) -> list[dict]:
+        query = "SELECT * FROM gap_oracle_label WHERE 1=1"
+        params: list = []
+        if detector:
+            query += " AND detector=?"
+            params.append(detector)
+        if work_id:
+            query += " AND work_id=?"
+            params.append(work_id)
+        query += " ORDER BY updated_at DESC"
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_detector_measurement(
+        self,
+        detector: str,
+        *,
+        n_labeled: int,
+        n_unknown_excluded: int,
+        precision: float | None,
+        recall: float | None,
+        f1: float | None,
+        kappa: float | None,
+        strata: dict,
+    ) -> dict:
+        """Persist one open-world harness run for a detector."""
+        mid = _uuid()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO gap_detector_measurement
+                       (id, detector, n_labeled, n_unknown_excluded, precision_overall,
+                        recall_overall, f1_overall, kappa, strata, measured_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    mid,
+                    detector,
+                    int(n_labeled),
+                    int(n_unknown_excluded),
+                    precision,
+                    recall,
+                    f1,
+                    kappa,
+                    json.dumps(strata),
+                    _now(),
+                ),
+            )
+            self._maybe_commit()
+            row = self._conn.execute(
+                "SELECT * FROM gap_detector_measurement WHERE id=?", (mid,)
+            ).fetchone()
+        return dict(row)
+
+    def latest_detector_measurement(self, detector: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM gap_detector_measurement WHERE detector=? "
+                "ORDER BY measured_at DESC, rowid DESC LIMIT 1",
+                (detector,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_detector_measurements(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM gap_detector_measurement ORDER BY measured_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def has_measured_detector(self, detector: str) -> bool:
+        """True when the detector carries a harness measurement over enough labels.
+
+        This is the blocking-status gate: a gap may only carry
+        ``blocking_active_work`` severity weight when its detector has measured,
+        stratified figures from the open-world harness.
+        """
+        if not (detector or "").strip():
+            return False
+        row = self.latest_detector_measurement(detector.strip())
+        return bool(row and row["n_labeled"] >= self.MIN_ORACLE_LABELED)
 
     # -------------------------------------------------------------------------
     # Job state transitions (M0.2 — JOB_SM)
