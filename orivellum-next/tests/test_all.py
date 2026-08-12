@@ -930,6 +930,102 @@ class TestN5Chain(Base):
                             f"{item['label']!r} has empty waits_because")
 
 
+class TestEnqueueAPI(unittest.TestCase):
+    """N5 API-level regression: POST /api/next/enqueue must transition action state
+    correctly for both success and failure dispatch paths, without leaving actions
+    stranded in 'running'.
+    """
+
+    def setUp(self):
+        import tempfile
+        import app.api as _api
+        try:
+            from fastapi.testclient import TestClient  # type: ignore
+        except ImportError:
+            self.skipTest("fastapi not installed; skip HTTP-level test")
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        self._old_dbpath = _api.DBPATH
+        _api.DBPATH = Path(self._tmp.name)
+        self.client = TestClient(_api.build_fastapi(), raise_server_exceptions=True)
+        self._dbpath = Path(self._tmp.name)
+
+    def tearDown(self):
+        import os
+        import app.api as _api
+        _api.DBPATH = self._old_dbpath
+        try:
+            os.unlink(self._tmp.name)
+        except OSError:
+            pass
+
+    def _seed_action(self, thread="api-t", policy=None, recommended=True):
+        """Offer a two-action set in the test DB and return the first action id."""
+        p = policy if policy is not None else POLICY_AUTO
+        db = DB(self._dbpath)
+        try:
+            acts = [
+                {"kind": "act", "label": "api-step-a", "prompt": "do A",
+                 "anchor": "test anchor", "anchor_ref": "test.docs:a:5",
+                 "recommended": recommended,
+                 "rationale": "unblocks rest" if recommended else "",
+                 "confidence": 0.9, "cost_units": 5, "cost_minutes": 1,
+                 "reversible": True, "blocked_by": "", "needs_clarify": False},
+                {"kind": "act", "label": "api-step-b", "prompt": "do B",
+                 "anchor": "test anchor", "anchor_ref": "test.docs:b:5",
+                 "recommended": False, "rationale": "",
+                 "confidence": 0.9, "cost_units": 5, "cost_minutes": 1,
+                 "reversible": True, "blocked_by": "", "needs_clarify": False},
+            ]
+            sid = nextaction.offer(db, thread, "msg", acts, p,
+                                   no_recommendation_reason="")
+            return nextaction.read_set(db, sid)["actions"][0]["id"]
+        finally:
+            db.close()
+
+    def _state(self, action_id):
+        db = DB(self._dbpath)
+        try:
+            row = db.q1("SELECT state FROM next_action WHERE id=?", (action_id,))
+            return row["state"] if row else None
+        finally:
+            db.close()
+
+    def test_successful_auto_enqueue_marks_action_done(self):
+        """N5 API: auto-runnable action dispatched via /api/next/enqueue lands in 'done'."""
+        aid = self._seed_action()
+        r = self.client.post("/api/next/enqueue", json={
+            "thread_id": "api-t", "action_id": aid,
+        })
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertTrue(body.get("auto"), "auto-runnable action must take the auto path")
+        self.assertEqual(body.get("final_state"), "done",
+                         "enqueue response must report final_state=done on success")
+        self.assertEqual(self._state(aid), "done",
+                         "action must be in state='done' in the DB after successful dispatch")
+
+    def test_failed_dispatch_via_api_marks_action_failed(self):
+        """N5 API: a failed runner dispatch from /api/next/enqueue lands in 'failed', never 'done'."""
+        import unittest.mock
+        aid = self._seed_action(thread="api-fail-t")
+        with unittest.mock.patch.object(
+            runner_bridge, "_runner_dispatch",
+            return_value={"source": "test", "ok": False, "error": "simulated runner failure"},
+        ):
+            r = self.client.post("/api/next/enqueue", json={
+                "thread_id": "api-fail-t", "action_id": aid,
+            })
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual(body.get("final_state"), "failed",
+                         "enqueue response must report final_state=failed on dispatch failure")
+        self.assertNotEqual(self._state(aid), "done",
+                            "action must NOT be 'done' after a failed dispatch")
+        self.assertEqual(self._state(aid), "failed",
+                         "action must be 'failed' in the DB after a failed dispatch")
+
+
 class TestGateAPIRoundTrip(unittest.TestCase):
     """N4 API-level regression: gate/open → gate/resolve (with request_id) → gate/read
     must return updated count with no KeyError / HTTP error.

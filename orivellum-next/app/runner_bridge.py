@@ -237,8 +237,25 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None,
     db.event("queued", action_id=action_id, set_id=act["set_id"], kind=act["kind"],
              recommended=act["recommended"], detail="auto: " + act["auto_reason"])
     # Hand off to the orivellum-runner queue (or executor / stub fallback).
+    #
+    # Cost reconciliation: each action's cost_units / cost_minutes are forwarded
+    # to the runner as plan metadata.  The runner harness enforces its own CFG
+    # limits (max_units, max_minutes) as a per-run hard safety net.  The Chain
+    # budget (bridge level) caps the total session across all steps.  This
+    # two-tier model is intentional — the runner stops runaway units; the Chain
+    # stops runaway sessions.
     unit = _runner_dispatch(act, executor=executor)
-    return {"queued": True, "auto": True, "why": act["auto_reason"], "unit": unit}
+
+    # Gate state transition on what the runner actually reported.
+    # This is the SINGLE place finish() is called for auto-runnable actions —
+    # both the API (h_next_enqueue) and run_chain() reach here, so neither
+    # path can leave an action stranded in 'running'.
+    ok = unit.get("ok", False)
+    detail = unit.get("error") or ("executed successfully" if ok else "dispatch failed")
+    finish(db, action_id, ok=ok, detail=detail)
+
+    return {"queued": True, "auto": True, "why": act["auto_reason"],
+            "final_state": "done" if ok else "failed", "unit": unit}
 
 
 def finish(db: DB, action_id: str, ok: bool, detail: str = "") -> None:
@@ -268,17 +285,10 @@ def run_chain(db: DB, thread_id: str, action_ids: list[str],
 
     for aid in action_ids:
         try:
-            result = enqueue(db, aid, chain=chain, executor=executor)
-            if result.get("auto"):
-                # Gate completion on what the runner actually reported.
-                # Never mark an action done before execution proves success.
-                unit = result.get("unit", {})
-                ok = unit.get("ok", False)
-                detail = (
-                    unit.get("error")
-                    or ("chain step complete" if ok else "dispatch failed or runner unavailable")
-                )
-                finish(db, aid, ok=ok, detail=detail)
+            # enqueue() calls finish() internally for auto-runnable actions.
+            # Non-auto actions are queued with their reason and do not stop
+            # the chain; they appear in pending_for_you() afterward.
+            enqueue(db, aid, chain=chain, executor=executor)
         except ChainExhausted as exc:
             stopped_reason = str(exc)
             break
