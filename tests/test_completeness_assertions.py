@@ -211,6 +211,28 @@ def test_reassert_after_retraction_is_ledgered_not_duplicated(tmp_path):
     assert _gap(db, w["id"]) is None
 
 
+def test_resolved_gaps_survive_assert_and_retract(tmp_path):
+    """covered / mastered gaps are earned lifecycle states — an assertion says
+    'nothing more to find', not 'what was found never happened'."""
+    db = _make_db(tmp_path)
+    w = db.create_work(title="W")
+    covered = _gap(db, w["id"], scope="smith 1998")
+    for step in ("ratified", "assigned", "researched", "covered"):
+        db.transition_gap(covered["id"], step, reason="progress", signed_by="brian")
+    mastered = _gap(db, w["id"], scope="jones 2001")
+    for step in ("ratified", "assigned", "researched", "covered", "mastered"):
+        db.transition_gap(mastered["id"], step, reason="progress", signed_by="brian")
+
+    a = _assert(db, w["id"], scope="*")
+    assert a["closed_gap_ids"] == []
+    assert db.get_gap(covered["id"])["status"] == "covered"
+    assert db.get_gap(mastered["id"])["status"] == "mastered"
+
+    db.retract_completeness(a["id"], reason="changed my mind", signed_by="brian")
+    assert db.get_gap(covered["id"])["status"] == "covered"
+    assert db.get_gap(mastered["id"])["status"] == "mastered"
+
+
 # ── no-value polarity ─────────────────────────────────────────────────────────
 
 
@@ -313,12 +335,12 @@ def test_api_round_trip(tmp_path):
     assert r.json()["reopened_gap_ids"] == [g["id"]]
     assert db.get_gap(g["id"])["status"] == "proposed"
 
-    # Second retract refused.
+    # Second retract refused — state conflict, not a validation error.
     r = client.post(
         f"/api/completeness-assertions/{body['id']}/retract",
         json={"reason": "again", "signed_by": "brian"},
     )
-    assert r.status_code == 422
+    assert r.status_code == 409
 
 
 def test_api_assert_unknown_work_404(tmp_path):

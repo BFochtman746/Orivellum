@@ -5956,15 +5956,6 @@ class OrivellumDB:
         if not (gap_class or "").strip() or not (scope or "").strip():
             raise ValueError("gap refused: gap_class and scope are required")
 
-        # ── Completeness-assertion guard (review §4.1) ───────────────────────
-        # "I have all of X" is knowledge with the opposite sign of a gap.  A
-        # region under an active, signed completeness assertion is closed:
-        # the detector's finding is refused here, at the single write path,
-        # so no emitter can re-ask about it.
-        assertion = self.find_completeness_assertion(work_id, gap_class.strip(), scope.strip())
-        if assertion is not None:
-            return None
-
         from orivellum.capabilities.gap_engine import compute_severity
 
         severity = compute_severity(
@@ -6008,6 +5999,16 @@ class OrivellumDB:
         meta_json = json.dumps(meta or {})
 
         with self._lock:
+            # ── Completeness-assertion guard (review §4.1) ───────────────────
+            # "I have all of X" is knowledge with the opposite sign of a gap.
+            # A region under an active, signed completeness assertion is
+            # closed: the detector's finding is refused here, at the single
+            # write path, so no emitter can re-ask about it.  Checked INSIDE
+            # the lock (RLock) so guard + insert are one atomic step — an
+            # assertion activated concurrently can never lose to a gap write
+            # that already passed the check.
+            if self.find_completeness_assertion(work_id, gap_class.strip(), scope.strip()):
+                return None
             existing = self._conn.execute("SELECT * FROM gap WHERE id=?", (gap_id,)).fetchone()
             if existing is not None:
                 row = dict(existing)
@@ -6292,8 +6293,11 @@ class OrivellumDB:
                     (_uuid(), aid, "", "active", "asserted", signed_by, now),
                 )
 
-            # Close open gaps the assertion covers — dismissed with the
+            # Close UNRESOLVED gaps the assertion covers — dismissed with the
             # assertion cited so a later retraction can undo exactly these.
+            # Resolved lifecycle states (covered, mastered) are earned and
+            # stay untouched: the assertion says "nothing more to find", not
+            # "what was found never happened".
             scope_clause = "" if scope == "*" else "AND scope=? "
             params: tuple = (
                 (work_id, gap_class) if scope == "*" else (work_id, gap_class, scope)
@@ -6301,7 +6305,7 @@ class OrivellumDB:
             open_gaps = self._conn.execute(
                 "SELECT id, status, meta FROM gap WHERE work_id IS ? AND gap_class=? "
                 + scope_clause
-                + "AND status NOT IN ('dismissed','out_of_scope')",
+                + "AND status IN ('proposed','ratified','assigned','researched')",
                 params,
             ).fetchall()
             closed_ids: list[str] = []

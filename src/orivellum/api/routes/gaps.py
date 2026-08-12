@@ -152,7 +152,9 @@ def retract_completeness(assertion_id: str, req: CompletenessRetractRequest):
     try:
         row = db.retract_completeness(assertion_id, reason=req.reason, signed_by=req.signed_by)
     except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+        # State conflict (already retracted / unknown id) is 409; the request
+        # itself was well-formed.
+        raise HTTPException(409, str(exc)) from exc
     return row
 
 
