@@ -65,7 +65,16 @@ def _runner_dispatch(action: dict, *, executor=None) -> dict:
     if executor is not None:
         result = executor(action)
         d = result if isinstance(result, dict) else {}
-        return {"source": "executor", "ok": d.get("ok", True), **d}
+        # Require an explicit success signal — default to False so an executor
+        # that returns {status: "error"} or an empty dict is never treated as
+        # a success.  Accepted signals: ok=True, or status="done".
+        if "ok" in d:
+            ok = bool(d["ok"])
+        elif "status" in d:
+            ok = d["status"] == "done"
+        else:
+            ok = False
+        return {"source": "executor", "ok": ok, **d}
 
     if _HAS_RUNNER:
         try:
@@ -90,20 +99,27 @@ def _runner_dispatch(action: dict, *, executor=None) -> dict:
                 },
             }])
             # Execute synchronously.  The harness retries transient unit
-            # failures internally; we only see the final run status.
+            # failures internally; we read unit counts after completion.
             res = _runner_harness.execute(
                 run_id,
                 _next_action_job,
                 _next_action_job.unit_worker,
                 _next_action_job.final_pass,
             )
-            ok = res.get("status") == "done"
+            # A run can reach status='done' (all units dequeued) even when
+            # units FAILED — the harness marks exhausted-retry units as
+            # 'failed', not 'queued'.  Derive ok from unit outcomes, not the
+            # run-level status alone.
+            counts = _runner_store.unit_counts(run_id)
+            failed_units = counts.get("failed", 0)
+            ok = res.get("status") == "done" and failed_units == 0
             return {
                 "source": "runner",
                 "ok": ok,
                 "run_id": run_id,
                 "status": res.get("status"),
                 "stop_reason": res.get("stop_reason"),
+                "failed_units": failed_units,
                 "totals": res.get("totals"),
             }
         except Exception as exc:

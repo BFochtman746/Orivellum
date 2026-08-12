@@ -834,6 +834,48 @@ class TestN5Chain(Base):
             self.assertEqual(row["state"], "done",
                              f"action {aid} should be 'done' after real runner completes")
 
+    def test_llm_failure_marks_action_failed_via_real_runner(self):
+        """N5 integration: LLM returning None causes unit_worker to raise; harness
+        records unit as 'failed'; bridge propagates ok=False; action state='failed'."""
+        if not runner_bridge._HAS_RUNNER:
+            self.skipTest("runner package not installed — skipping real-runner path")
+        import tempfile
+        import unittest.mock
+        from pathlib import Path as _Path
+        from runner.config import CFG as _rcfg
+        acts = [
+            self._cheap_action("llm-fail-a", recommended=True),
+            self._cheap_action("llm-fail-b"),
+        ]
+        stored = self._offer(acts, thread="llm-fail-t")
+        ids = [a["id"] for a in stored]
+        with tempfile.TemporaryDirectory() as td:
+            old_db = _rcfg.db
+            old_mock = _rcfg.mock
+            old_retries = _rcfg.max_unit_retries
+            _rcfg.db = str(_Path(td) / "runner.db")
+            _rcfg.mock = False            # disable MOCK so unit_worker reaches the LLM path
+            _rcfg.max_unit_retries = 0    # fail on first attempt — no retry loop
+            try:
+                # Patch llm.chat to return None (simulates timeout / unavailable LLM)
+                with unittest.mock.patch("runner.llm.chat", return_value=None):
+                    report = runner_bridge.run_chain(
+                        self.db, "llm-fail-t", ids,
+                        budget={"max_steps": 8, "max_minutes": 60, "max_units": 9999},
+                        executor=None,  # real runner path
+                    )
+            finally:
+                _rcfg.db = old_db
+                _rcfg.mock = old_mock
+                _rcfg.max_unit_retries = old_retries
+        # Every action must be 'failed', never 'done'
+        for aid in ids:
+            row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+            self.assertNotEqual(row["state"], "done",
+                                f"action {aid} must not be 'done' after LLM failure")
+            self.assertEqual(row["state"], "failed",
+                             f"action {aid} should be 'failed' after LLM failure; got {row['state']!r}")
+
     def test_pending_for_you_shows_all_queued_items_with_reasons(self):
         """N5: pending_for_you() lists every non-auto item with waits_because filled."""
         acts = [

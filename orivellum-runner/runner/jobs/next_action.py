@@ -85,11 +85,19 @@ def unit_worker(run_id: int, unit: dict) -> dict:  # noqa: ARG001
         max_tokens=800,
         temperature=0.1,
     )
+    # Raise rather than return ok=False so the harness marks this unit as
+    # 'failed' in the store.  A non-raising digest with ok=False would still
+    # be persisted as unit status='done', which would let the bridge
+    # incorrectly conclude the run succeeded.
+    if reply is None:
+        raise RuntimeError(
+            "LLM returned no response; Next action could not be executed"
+        )
     return {
         "action_id": action_id,
         "anchor_ref": anchor_ref,
-        "result": reply or "",
-        "ok": reply is not None,
+        "result": reply,
+        "ok": True,
     }
 
 
