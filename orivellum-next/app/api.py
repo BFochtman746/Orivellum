@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .clarify import (GateError, cancel_gate, close_gate, open_gate, read_gate,
                       resolve, should_gate)
@@ -19,6 +20,21 @@ from .generate import EXAMPLE_PROBES, build_set
 from .nextaction import (ActionError, dismiss, latest_set, read_set, select,
                          stats)
 from .runner_bridge import Chain, ChainExhausted, enqueue, pending_for_you
+
+# FastAPI types imported at module level so that FastAPI's annotation resolver
+# can find them in __globals__.  With `from __future__ import annotations` all
+# annotations become strings; FastAPI evaluates those strings against the
+# function's __globals__ (the module globals), not the enclosing closure's
+# locals.  Importing inside build_fastapi() puts Request only in a local scope
+# that __globals__ cannot see, causing a 422 on every GET route.
+try:
+    from fastapi import FastAPI, HTTPException  # noqa: F401
+    from fastapi import Request                  # noqa: F401 — must be in globals
+    from fastapi.responses import FileResponse   # noqa: F401
+    from fastapi.staticfiles import StaticFiles  # noqa: F401
+    _FASTAPI_AVAILABLE = True
+except ImportError:
+    _FASTAPI_AVAILABLE = False
 
 ROOT = Path(__file__).resolve().parent.parent
 POLICY = load_policy(ROOT / "policy" / "next_policy.yaml")
@@ -180,10 +196,9 @@ ROUTES = {
 # ── FastAPI path ──────────────────────────────────────────────────────────
 
 def build_fastapi():
-    from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import FileResponse
-    from fastapi.staticfiles import StaticFiles
-
+    # All FastAPI symbols are already imported at module level (see top of file).
+    # Re-importing here is not needed and was the source of the annotation bug:
+    # Request in a local scope is invisible to FastAPI's __globals__-based resolver.
     app = FastAPI(title="Orivellum Next")
 
     def register(path, fn):
