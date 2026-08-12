@@ -1,11 +1,20 @@
 """CODE job — take a zip or directory, come back with a function-level map,
-scanner findings, and a list of what is missing.
+orchestrated scanner findings, doctrine findings, and a list of what is missing.
 
 DIVISION OF LABOUR, and it is the whole design:
-  deterministic tools FIND things   (AST, call graph, bandit, secret regexes)
+  deterministic tools FIND things   (AST, call graph, orchestrated scanners)
   the model EXPLAINS them           (what this function does, its failure modes)
 Never the reverse. LLM detection has weak inter-statement reasoning, so it is
 the wrong instrument for dataflow; the AST is right and it is checkable.
+
+Three layers of detection (see PROGRAMMING_DOCTRINE.md at repo root):
+  1. Orchestrated scanners (code_tools) — ruff/bandit/mypy/tsc/eslint find the
+     generic classes; a tool that cannot run is a TOOL-GAP finding, not clean.
+  2. Doctrine checks (code_doctrine) — the classes nothing off the shelf
+     checks: fail-open gates, percentage gates, zero-caller symbols,
+     off-by-default security, coverage-by-name, undocumented env vars.
+  3. Kept bespoke: secret patterns (no orchestrated tool does them) and the
+     injection shield screen.
 
 A unit is ONE FUNCTION. Its sub-agent sees that function plus its signature
 context and nothing else, so parent context stays flat across thousands of
@@ -13,17 +22,16 @@ units.
 """
 
 import ast
-import json
 import os
 import re
 import shutil
-import subprocess
 import zipfile
 from collections import defaultdict
 from pathlib import Path
 
 from .. import llm, shield, store
 from ..config import CFG
+from . import code_doctrine, code_tools
 
 SKIP_DIR_GLOBS = ("pytest-of-", "pytest-", ".tox", "htmlcov")
 SKIP_DIRS = {
@@ -104,28 +112,11 @@ SECRETS = [
     (r"(?i)\bBearer\s+[A-Za-z0-9\-_.]{20,}", "bearer token"),
     (r"gh[pousr]_[A-Za-z0-9]{30,}", "github token"),
 ]
-RISKY_PY = [
-    (r"\beval\s*\(", "HIGH", "CODE-EVAL", "eval() on possibly external input"),
-    (r"\bexec\s*\(", "HIGH", "CODE-EXEC", "exec() executes constructed code"),
-    (
-        r"subprocess\.[a-z_]+\([^)]*shell\s*=\s*True",
-        "HIGH",
-        "CODE-SHELL",
-        "subprocess with shell=True",
-    ),
-    (r"\bos\.system\s*\(", "HIGH", "CODE-OSSYS", "os.system() passes a string to a shell"),
-    (r"pickle\.loads?\s*\(", "HIGH", "CODE-PICKLE", "pickle deserialises arbitrary objects"),
-    (r"yaml\.load\s*\((?![^)]*Loader)", "MEDIUM", "CODE-YAML", "yaml.load without a safe Loader"),
-    (r"verify\s*=\s*False", "HIGH", "CODE-TLS", "TLS verification disabled"),
-    (r"except\s*:\s*(#.*)?$", "MEDIUM", "CODE-BAREEXC", "bare except swallows every error"),
-    (r"\bassert\b", "LOW", "CODE-ASSERT", "assert is stripped under python -O"),
-    (
-        r"(?i)\btodo\b|\bfixme\b|\bhack\b|\bxxx\b",
-        "INFO",
-        "CODE-TODO",
-        "unfinished marker in source",
-    ),
-]
+# The bespoke RISKY_PY pattern list is RETIRED (doctrine D7): eval/exec/shell/
+# pickle/yaml/TLS/bare-except are ruff (S*, BLE) and bandit territory, and
+# those tools do it better. When they cannot run, code_tools emits a TOOL-GAP
+# finding — the class is unexamined, never silently clean. SECRETS stays: no
+# orchestrated tool covers credential patterns.
 
 
 # ── discovery ───────────────────────────────────────────────────────────────
@@ -303,68 +294,6 @@ def other_units(path, rel, text):
     return out
 
 
-# ── scanners ────────────────────────────────────────────────────────────────
-def run_bandit(root, run_id):
-    if not CFG.use_bandit:
-        return False
-    if not shutil.which("bandit"):
-        return False
-    try:
-        p = subprocess.run(
-            ["bandit", "-r", str(root), "-f", "json", "-q"],
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
-        data = json.loads(p.stdout or "{}")
-        for r in data.get("results", []):
-            sev = {"HIGH": "HIGH", "MEDIUM": "MEDIUM", "LOW": "LOW"}.get(
-                r.get("issue_severity", "LOW"), "LOW"
-            )
-            store.add_finding(
-                run_id,
-                sev,
-                f"BANDIT-{r.get('test_id')}",
-                f"{Path(r.get('filename', '')).name}:{r.get('line_number')}",
-                r.get("issue_text", "")[:200],
-                detail=(r.get("code") or "")[:300],
-                fix="See bandit rule " + str(r.get("test_id")),
-                source="bandit",
-            )
-        return True
-    except Exception:
-        return False
-
-
-def run_semgrep(root, run_id):
-    if not CFG.use_semgrep or not shutil.which("semgrep"):
-        return False
-    try:
-        p = subprocess.run(
-            ["semgrep", "--config", "auto", "--json", "--quiet", str(root)],
-            capture_output=True,
-            text=True,
-            timeout=1800,
-        )
-        data = json.loads(p.stdout or "{}")
-        for r in data.get("results", []):
-            ex = r.get("extra", {})
-            sev = {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}.get(
-                ex.get("severity", "INFO"), "LOW"
-            )
-            store.add_finding(
-                run_id,
-                sev,
-                f"SEMGREP-{r.get('check_id', '')[:40]}",
-                f"{Path(r.get('path', '')).name}:{r.get('start', {}).get('line')}",
-                (ex.get("message") or "")[:200],
-                source="semgrep",
-            )
-        return True
-    except Exception:
-        return False
-
-
 # ── plan / unit worker / final pass ─────────────────────────────────────────
 def plan(target, run_dir):
     root = prepare(target, run_dir)
@@ -389,10 +318,7 @@ def plan(target, run_dir):
     unavailable = []
     if skipped:
         unavailable.append(f"{len(skipped)} archive member(s) could not be extracted")
-    if not shutil.which("bandit"):
-        unavailable.append("bandit (pip install bandit)")
-    if not shutil.which("semgrep"):
-        unavailable.append("semgrep (pip install semgrep)")
+    unavailable += code_tools.missing_tools()
     return {
         "root": str(root),
         "units": units,
@@ -433,19 +359,6 @@ def unit_worker(run_id, unit):
             fix="Treat this file's comments/strings as hostile input; "
             "do not let a digest of it drive any action.",
         )
-    if p.get("lang") == "python":
-        for rx, sev, code, title in RISKY_PY:
-            for m in re.finditer(rx, src, re.M):
-                line = p.get("lineno", 0) + src.count("\n", 0, m.start())
-                store.add_finding(
-                    run_id,
-                    sev,
-                    code,
-                    f"{p['file']}:{line}",
-                    title,
-                    detail=m.group(0)[:160],
-                    source="pattern",
-                )
     for rx, what in SECRETS:
         if re.search(rx, src):
             store.add_finding(
@@ -513,80 +426,7 @@ def final_pass(run_id):
     pl = run["plan"]
     root = Path(pl["root"])
     ds = store.digests(run_id, kind="function")
-    calls = pl.get("calls", {})
 
-    # entry points and dead code, from the call graph
-    called = set()
-    for callees in calls.values():
-        called |= set(callees)
-    defined = {d["digest"].get("name") for d in ds if d["digest"].get("name")}
-    leaf_names = {n.split(".")[-1] for n in defined if n}
-    orphans = sorted(
-        n
-        for n in leaf_names
-        if n and n not in called and not n.startswith("_") and n not in ("main", "app")
-    )
-    # tests
-    test_files = [p for p in walk_code(root) if "test" in p.name.lower()]
-    test_text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in test_files[:200])
-    untested = [
-        d["digest"]["name"]
-        for d in ds
-        if d["digest"].get("name") and d["digest"]["name"].split(".")[-1] not in test_text
-    ]
-    if not test_files:
-        store.add_finding(
-            run_id,
-            "HIGH",
-            "NOTESTS",
-            "(repository)",
-            "No test files found at all",
-            source="metric",
-            fix="One test per entry point is the minimum that makes refactoring safe.",
-            unique=True,
-        )
-    elif untested:
-        store.add_finding(
-            run_id,
-            "MEDIUM",
-            "UNTESTED",
-            "(repository)",
-            f"{len(untested)} of {len(ds)} functions are never named in a test",
-            detail=", ".join(untested[:25]),
-            source="metric",
-            unique=True,
-        )
-    # env vars read but undocumented
-    env_used = set()
-    for p in walk_code(root):
-        t = p.read_text(encoding="utf-8", errors="replace")
-        env_used |= set(
-            re.findall(
-                r"(?:os\.getenv|os\.environ(?:\.get)?\()\s*\(?\s*['\"]([A-Z0-9_]{3,})['\"]", t
-            )
-        )
-    documented = set()
-    for cand in ("README.md", ".env.example", "README.txt"):
-        f = root / cand
-        if f.exists():
-            documented |= set(
-                re.findall(
-                    r"\b([A-Z][A-Z0-9_]{2,})\b", f.read_text(encoding="utf-8", errors="replace")
-                )
-            )
-    undocumented = sorted(env_used - documented)
-    if undocumented:
-        store.add_finding(
-            run_id,
-            "MEDIUM",
-            "ENVDOC",
-            "(repository)",
-            f"{len(undocumented)} env vars read but not documented",
-            detail=", ".join(undocumented[:25]),
-            source="metric",
-            fix="Every variable the code reads belongs in .env.example.",
-            unique=True,
-        )
     for sm in (pl.get("skipped_members") or [])[:20]:
         store.add_finding(
             run_id,
@@ -601,9 +441,23 @@ def final_pass(run_id):
         store.add_finding(
             run_id, "HIGH", "PARSE", pe["file"], f"File would not parse: {pe['err']}", source="ast"
         )
-    bandit_ok = run_bandit(root, run_id)
-    semgrep_ok = run_semgrep(run_id and root, run_id) if CFG.use_semgrep else False
 
+    # layer 1: orchestrated scanners (each absence is a TOOL-GAP finding)
+    tool_status = code_tools.run_all(root, run_id)
+
+    # layer 2: doctrine checks — the classes nothing off the shelf looks for
+    fn_digests = [
+        {
+            "name": d["digest"].get("name"),
+            "file": d["digest"].get("file"),
+            "loc": d["digest"].get("loc"),
+        }
+        for d in ds
+        if d["digest"].get("name")
+    ]
+    doctrine = code_doctrine.audit(run_id, root, walk_code(root), fn_digests)
+
+    tg = doctrine["test_gap"]
     sections = [
         (
             "Structure",
@@ -611,33 +465,54 @@ def final_pass(run_id):
                 [
                     f"- Files scanned: **{pl['meta']['files']}**, ~{pl['meta']['loc']:,} lines",
                     f"- Functions mapped: **{len(ds)}**",
-                    f"- Never called inside this repo (entry points or dead code): "
-                    f"{len(orphans)} — {', '.join(orphans[:20]) or 'none'}",
-                    f"- Test files: {len(test_files)}",
-                    f"- Scanners: bandit {'ran' if bandit_ok else 'UNAVAILABLE'}, "
-                    f"semgrep {'ran' if semgrep_ok else 'not run'}",
                 ]
             ),
-        )
+        ),
+        (
+            "Scanner orchestration",
+            "\n".join(f"- {name}: {status}" for name, status in sorted(tool_status.items()))
+            + "\n- A tool that did not run leaves its defect class UNEXAMINED, not clean.",
+        ),
+        (
+            "Doctrine (PROGRAMMING_DOCTRINE.md)",
+            "\n".join(
+                [
+                    f"- D1 fail-open except handlers: {doctrine['fail_open']}",
+                    f"- D2 percentage-gated branches to trace: {doctrine['pct_gate']}",
+                    f"- D3 zero-caller public symbols: {doctrine['no_caller']}",
+                    f"- D4 security controls defaulting off: {doctrine['default_off']}",
+                    "- D5 functions never named in a test: "
+                    + (
+                        "no test files AT ALL"
+                        if tg["no_tests"]
+                        else f"{tg['untested']} of {tg['total']}"
+                    ),
+                    f"- D6 undocumented env vars: {doctrine['env_undoc']}",
+                ]
+            ),
+        ),
     ]
     return {
         "sections": sections,
         "functions": len(ds),
-        "orphans": orphans[:50],
-        "untested": untested[:100],
-        "undocumented_env": undocumented,
+        "tools": tool_status,
+        "doctrine": {k: v for k, v in doctrine.items() if k != "test_gap"},
+        "test_gap": tg,
     }
 
 
 def plan_items(run_id):
     f = store.findings(run_id)
-    codes = {x["code"].split("-")[0] for x in f}
+    codes = {x["code"] for x in f}
     items = []
 
-    def ev(prefix):
-        return [x["ref"] for x in f if x["code"].startswith(prefix)][:6]
+    def has(*prefixes):
+        return any(c.startswith(p) for c in codes for p in prefixes)
 
-    if "SECRET" in codes:
+    def ev(*prefixes):
+        return [x["ref"] for x in f if x["code"].startswith(prefixes)][:6]
+
+    if has("SECRET"):
         items.append(
             dict(
                 topic="Secrets handling",
@@ -648,18 +523,40 @@ def plan_items(run_id):
                 question="Where does every secret this program needs come from at runtime?",
             )
         )
-    if any(c in codes for c in ("CODE", "BANDIT")):
+    if has("BANDIT-", "RUFF-S", "SEMGREP-", "INJECT-SRC"):
         items.append(
             dict(
                 topic="Injection and unsafe execution",
                 why="Patterns that hand input to an interpreter or shell.",
-                evidence=ev("CODE"),
+                evidence=ev("BANDIT-", "RUFF-S", "SEMGREP-"),
                 read="OWASP command-injection cheat sheet",
                 check="For each flagged call, trace where its argument comes from.",
                 question="For each of these, can an outside value reach the interpreter?",
             )
         )
-    if "UNVALIDATED" in codes or "PARSE" in codes:
+    if has("DOCTRINE-FAILOPEN", "DOCTRINE-PCTGATE"):
+        items.append(
+            dict(
+                topic="Gates that fail closed",
+                why="Verification logic that passes when it breaks, or measures itself.",
+                evidence=ev("DOCTRINE-FAILOPEN", "DOCTRINE-PCTGATE"),
+                read="PROGRAMMING_DOCTRINE.md rules D1 and D2",
+                check="For each flagged gate, force the exception and watch what the caller does.",
+                question="If this check crashes at 3am, does anything downstream notice?",
+            )
+        )
+    if has("DOCTRINE-NOCALLER"):
+        items.append(
+            dict(
+                topic="Wiring — code that is claimed but not reachable",
+                why="Public functions or exports nothing references.",
+                evidence=ev("DOCTRINE-NOCALLER"),
+                read="PROGRAMMING_DOCTRINE.md rule D3",
+                check="Delete one flagged symbol and run the tests; nothing should change.",
+                question="For each feature this repo claims, what line calls into it?",
+            )
+        )
+    if has("UNVALIDATED", "PARSE"):
         items.append(
             dict(
                 topic="Input validation at boundaries",
@@ -670,26 +567,39 @@ def plan_items(run_id):
                 question="What is the boundary in this program, and what is validated at it?",
             )
         )
-    if "NOTESTS" in codes or "UNTESTED" in codes:
+    if has("MYPY-", "TSC-"):
+        items.append(
+            dict(
+                topic="Type contract violations",
+                why="The declared types and the code disagree; one of them is lying.",
+                evidence=ev("MYPY-", "TSC-"),
+                read="The first ten flagged locations, next to their type declarations",
+                check="Fix one violation by changing the code, one by changing the type; "
+                "decide which was right.",
+                question="Which of these mismatches hides a real runtime bug?",
+            )
+        )
+    if has("NOTESTS", "DOCTRINE-TESTGAP"):
         items.append(
             dict(
                 topic="A minimum test floor",
-                why="Most functions are never named in a test.",
-                evidence=ev("UNTESTED"),
+                why="Functions are never named in a test.",
+                evidence=ev("DOCTRINE-TESTGAP", "NOTESTS"),
                 read="Test pyramid; characterisation tests for legacy code",
                 check="Write one characterisation test for the largest untested function.",
                 question="Which change to this code would break silently today?",
             )
         )
-    if "ENVDOC" in codes:
+    if has("DOCTRINE-ENVDOC", "DOCTRINE-DEFAULTOFF"):
         items.append(
             dict(
                 topic="Configuration surface",
-                why="The code reads variables nobody documented.",
-                evidence=ev("ENVDOC"),
-                read="Your own §A.8 configuration reference",
+                why="The code reads variables nobody documented, or ships controls off.",
+                evidence=ev("DOCTRINE-ENVDOC", "DOCTRINE-DEFAULTOFF"),
+                read="PROGRAMMING_DOCTRINE.md rules D4 and D6",
                 check="Run it with an empty environment and see what breaks.",
-                question="What is the complete set of inputs this program takes from its environment?",
+                question="What is the complete set of inputs this program takes from its "
+                "environment, and which defaults are unsafe?",
             )
         )
     return items

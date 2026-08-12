@@ -1,5 +1,7 @@
 """The report. Its first duty is to say what the run could NOT do."""
 
+import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -97,6 +99,90 @@ def write(run_id):
     d.mkdir(parents=True, exist_ok=True)
     p = d / "REPORT.md"
     p.write_text(render(run_id), encoding="utf-8")
+    write_sarif(run_id)
+    return str(p)
+
+
+# ── SARIF (doctrine D8): findings render in editors/CI, not just here ───────
+SARIF_LEVEL = {
+    "CRITICAL": "error",
+    "HIGH": "error",
+    "MEDIUM": "warning",
+    "LOW": "note",
+    "INFO": "note",
+}
+# refs look like "path/to/file.py:123" or "path/to/file.py::func_name"
+_REF_LINE = re.compile(r"^(?P<file>.+?):(?P<line>\d+)$")
+_REF_SYM = re.compile(r"^(?P<file>.+?)::(?P<sym>.+)$")
+
+
+def _sarif_location(ref):
+    if not ref or ref.startswith("("):
+        return None
+    m = _REF_LINE.match(ref)
+    if m:
+        return {
+            "physicalLocation": {
+                "artifactLocation": {"uri": m.group("file").replace("\\", "/")},
+                "region": {"startLine": int(m.group("line"))},
+            }
+        }
+    m = _REF_SYM.match(ref)
+    if m:
+        return {
+            "physicalLocation": {"artifactLocation": {"uri": m.group("file").replace("\\", "/")}},
+            "logicalLocations": [{"name": m.group("sym")}],
+        }
+    return None
+
+
+def write_sarif(run_id):
+    """Emit runs/<id>/findings.sarif (SARIF 2.1.0) from the findings table."""
+    findings = store.findings(run_id)
+    rules, results = {}, []
+    for x in findings:
+        rid = x["code"]
+        if rid not in rules:
+            rule = {"id": rid, "shortDescription": {"text": (x["title"] or rid)[:120]}}
+            if x["fix"]:
+                rule["help"] = {"text": x["fix"][:300]}
+            rules[rid] = rule
+        msg = x["title"] or rid
+        if x["detail"]:
+            msg += f" — {x['detail']}"
+        if x["fix"]:
+            msg += f" Fix: {x['fix']}"
+        res = {
+            "ruleId": rid,
+            "level": SARIF_LEVEL.get(x["severity"], "note"),
+            "message": {"text": msg[:900]},
+            "properties": {"severity": x["severity"], "source": x["source"]},
+        }
+        loc = _sarif_location(x["ref"] or "")
+        if loc:
+            res["locations"] = [loc]
+        results.append(res)
+    sarif = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/"
+        "Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "orivellum-runner",
+                        "informationUri": "https://github.com/BFochtman746/Orivellum",
+                        "rules": sorted(rules.values(), key=lambda r: r["id"]),
+                    }
+                },
+                "results": results,
+            }
+        ],
+    }
+    d = Path(CFG.runs_dir) / str(run_id)
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "findings.sarif"
+    p.write_text(json.dumps(sarif, indent=1), encoding="utf-8")
     return str(p)
 
 
