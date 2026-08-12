@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 
 
 class KnowledgeReview(BaseModel):
-    review_status: str  # "approved" | "rejected" | "auto" | "ai_auto"
+    review_status: str  # "approved" | "rejected" | "auto" | "ai_auto" | "proposed"
     force: bool = False  # override an already-finalized decision (deliberate flip)
 
 
@@ -88,7 +88,10 @@ def review_knowledge(item_id: str, body: KnowledgeReview):
     finalized decision must pass ``force: true``.
     """
     db = get_db()
-    expected = None if body.force else ("auto", "ai_auto")
+    # 'proposed' (web-derived research claims) is awaiting-review too:
+    # ratifying it to 'approved' — or dismissing it — goes through the same
+    # claim-first CAS, and the transition is recorded by governed_write.
+    expected = None if body.force else ("auto", "ai_auto", "proposed")
     try:
         result = db.update_knowledge_review_status(
             item_id, body.review_status, expected_status=expected

@@ -704,6 +704,28 @@ def _process_document_reserved(
             url=f"/library/{doc_id}",
         )
 
+        # Re-seed learning concepts in the background: fresh material should
+        # appear on the Learn screen without a button press.  seed_concepts is
+        # incremental/idempotent, so a burst of ingests just converges.
+        if work_id:
+            try:
+                from orivellum.api._deps import get_config as _gcfg
+                from orivellum.api.executor import submit_bg as _sbg
+                from orivellum.capabilities.learning import seed_concepts as _seed
+
+                _scfg = _gcfg()
+                _sbg(
+                    _seed,
+                    db,
+                    work_id,
+                    _scfg.serving.base_url,
+                    _scfg.serving.workhorse_model,
+                    kind="learning.reseed",
+                    label=work_id,
+                )
+            except Exception as _seed_exc:
+                logger.debug("Concept re-seed kickoff non-fatal for %s: %s", doc_id, _seed_exc)
+
         # Record upload provenance so recall queries ("find everything I added
         # about X") can surface this document.  origin_id is the document's
         # sha256 — the most stable identifier for the physical file.

@@ -26,6 +26,18 @@ class AssessBody(BaseModel):
     session_mode: str = "blocked"  # "blocked" | "interleaved" — echoed from the session
 
 
+class ResearchImportBody(BaseModel):
+    """Parsed contents of a finished research run's output files.
+
+    The client posts the JSON files the runner wrote (no server-side path
+    reading — nothing to traverse).  Both parts are optional so a digests-only
+    or curriculum-only import works.
+    """
+
+    digests: dict | None = None  # research_digests.json content
+    curriculum: dict | None = None  # curriculum.json content
+
+
 # ─── Endpoints ─────────────────────────────────────────────────────────────────
 
 
@@ -64,6 +76,42 @@ async def learning_seed(work_id: str):
 
     concepts = await asyncio.to_thread(seed_concepts, db, work_id, base_url, model)
     return {"seeded": len(concepts), "concepts": concepts}
+
+
+@router.post("/works/{work_id}/learning/import-research")
+async def learning_import_research(work_id: str, body: ResearchImportBody):
+    """Import a finished research run: claims land as knowledge PROPOSALS
+    (review_status='proposed' — they cannot ground questions until ratified),
+    curriculum items become concepts with stored verification questions, and
+    a re-seed is scheduled so the Learn screen refreshes without a button
+    press.
+    """
+    import asyncio
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    if not body.digests and not body.curriculum:
+        raise HTTPException(422, "Provide digests and/or curriculum content")
+    from orivellum.capabilities.research_import import import_research_run
+
+    try:
+        result = await asyncio.to_thread(
+            import_research_run, db, work_id, body.digests, body.curriculum
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    # Re-seed in the background (LLM ordering can take ~25 s) — the response
+    # reports whether the kickoff was accepted, never silently.
+    base_url, model = _cfg()
+    from orivellum.api.executor import submit_bg
+    from orivellum.capabilities.learning import seed_concepts
+
+    result["reseed_scheduled"] = submit_bg(
+        seed_concepts, db, work_id, base_url, model, kind="learning.reseed", label=work_id
+    )
+    return result
 
 
 @router.get("/works/{work_id}/learning/question")

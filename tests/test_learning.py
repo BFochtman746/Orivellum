@@ -123,10 +123,12 @@ class _FakeDB:
         return cid
 
     # Stub methods the learning module calls on the DB object
-    def search_knowledge(self, query: str, work_id: str | None = None, limit: int = 8) -> list:
+    def search_knowledge(
+        self, query: str, work_id: str | None = None, limit: int = 8, **kw
+    ) -> list:
         return []
 
-    def list_knowledge(self, work_id: str | None = None, limit: int = 8) -> list:
+    def list_knowledge(self, work_id: str | None = None, limit: int = 8, **kw) -> list:
         return []
 
     def get_work(self, work_id: str):

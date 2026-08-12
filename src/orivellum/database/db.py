@@ -3269,8 +3269,19 @@ class OrivellumDB:
     # -------------------------------------------------------------------------
 
     def list_knowledge(
-        self, work_id: str | None = None, kind: str | None = None, limit: int = 200
+        self,
+        work_id: str | None = None,
+        kind: str | None = None,
+        limit: int = 200,
+        review_status_in: tuple[str, ...] | None = None,
     ) -> list[dict]:
+        """List knowledge items.
+
+        ``review_status_in`` is an allowlist filter: when given, only items
+        whose review_status is in the tuple are returned. Callers that ground
+        questions or answers MUST pass an allowlist that excludes 'proposed'
+        and 'rejected' (see learning._QUESTION_SAFE_REVIEW).
+        """
         q = "SELECT * FROM knowledge WHERE 1=1"
         args: list = []
         if work_id:
@@ -3279,6 +3290,9 @@ class OrivellumDB:
         if kind:
             q += " AND kind=?"
             args.append(kind)
+        if review_status_in:
+            q += f" AND review_status IN ({','.join('?' * len(review_status_in))})"
+            args.extend(review_status_in)
         q += " ORDER BY created_at DESC LIMIT ?"
         args.append(limit)
         with self._lock:
@@ -3286,7 +3300,12 @@ class OrivellumDB:
         return [self._k_dict(r) for r in rows]
 
     def search_knowledge(
-        self, query: str, work_id: str | None = None, doc_id: str | None = None, limit: int = 20
+        self,
+        query: str,
+        work_id: str | None = None,
+        doc_id: str | None = None,
+        limit: int = 20,
+        review_status_in: tuple[str, ...] | None = None,
     ) -> list[dict]:
         q = """SELECT k.* FROM knowledge_fts f
                JOIN knowledge k ON k.id = f.knowledge_id
@@ -3300,6 +3319,9 @@ class OrivellumDB:
         if doc_id:
             q += " AND k.source_doc_id=?"
             args.append(doc_id)
+        if review_status_in:
+            q += f" AND k.review_status IN ({','.join('?' * len(review_status_in))})"
+            args.extend(review_status_in)
         q += f" LIMIT {min(limit, 50)}"
         with self._lock:
             try:
@@ -4357,6 +4379,8 @@ class OrivellumDB:
         review_status:
           'auto'     — rule-based, unreviewed
           'ai_auto'  — LLM-extracted, unreviewed
+          'proposed' — external/web-derived claim awaiting ratification;
+                       may NOT ground learning questions or answer keys
           'approved' — human confirmed
           'rejected' — human dismissed
 
@@ -4434,7 +4458,7 @@ class OrivellumDB:
 
         Returns "updated", "not_found", or "conflict" (CAS failed).
         """
-        valid = {"auto", "ai_auto", "approved", "rejected"}
+        valid = {"auto", "ai_auto", "proposed", "approved", "rejected"}
         if status not in valid:
             raise ValueError(f"review_status must be one of {valid}")
         # Read before entering governed_write to support early-exit paths

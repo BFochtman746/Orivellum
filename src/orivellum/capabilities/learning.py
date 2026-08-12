@@ -25,8 +25,17 @@ logger = logging.getLogger("orivellum.learning")
 
 _GRAD_THRESHOLD = 0.75  # score at or above this counts as a pass
 _PASSES_TO_GRAD = 3  # consecutive passes needed to graduate
-_MAX_SEED_SUBJ = 20  # max subjects to seed from knowledge
+_MAX_SEED_SUBJ = 500  # max distinct subjects considered per re-seed sweep
+_SEED_KN_SCAN = 2000  # knowledge rows scanned per re-seed (whole-corpus, not top-20)
+_SEED_LLM_BATCH = 60  # max NEW subjects sent to the LLM for ordering/prereqs per seed
 _MAX_KN_CONTEXT = 5  # knowledge items to include in question/assess prompts
+
+# Review-status allowlist for anything that grounds a question or an answer
+# key.  'proposed' (web-derived research claims awaiting ratification) and
+# 'rejected' are excluded; unknown future statuses are excluded by default
+# (allowlist fails closed).  A web claim can only reach a question after a
+# human ratifies it to 'approved'.
+_QUESTION_SAFE_REVIEW = ("auto", "ai_auto", "approved")
 
 # ── HLR (Half-Life Regression) spaced-repetition constants ───────────────────
 _HLR_MIN_HALF_LIFE = 0.5  # floor: 12 h (never schedule sooner than this)
@@ -195,14 +204,29 @@ def _is_graduated(db: Any, concept_id: str) -> bool:
 
 
 def _knowledge_for_concept(db: Any, work_id: str, subject: str) -> list[dict]:
-    """Pull knowledge items most relevant to the subject (FTS + subject match)."""
+    """Pull knowledge items most relevant to the subject (FTS + subject match).
+
+    Review gate: only _QUESTION_SAFE_REVIEW items may ground a question or an
+    answer key.  Unratified research proposals must never become exam
+    material, so the filter is applied both in SQL and again here (defence in
+    depth for DB fakes/older signatures)."""
     try:
-        items = db.search_knowledge(subject, work_id=work_id, limit=_MAX_KN_CONTEXT)
+        items = db.search_knowledge(
+            subject,
+            work_id=work_id,
+            limit=_MAX_KN_CONTEXT,
+            review_status_in=_QUESTION_SAFE_REVIEW,
+        )
     except Exception:
         items = []
     if not items:
-        items = db.list_knowledge(work_id=work_id, limit=_MAX_KN_CONTEXT)
-    return items
+        try:
+            items = db.list_knowledge(
+                work_id=work_id, limit=_MAX_KN_CONTEXT, review_status_in=_QUESTION_SAFE_REVIEW
+            )
+        except TypeError:  # older DB fakes without the review filter
+            items = db.list_knowledge(work_id=work_id, limit=_MAX_KN_CONTEXT)
+    return [i for i in items if i.get("review_status", "auto") in _QUESTION_SAFE_REVIEW]
 
 
 # ─── Public API ────────────────────────────────────────────────────────────────
@@ -211,7 +235,12 @@ def _knowledge_for_concept(db: Any, work_id: str, subject: str) -> list[dict]:
 def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict]:
     """Auto-seed learning concepts from this Work's knowledge subjects.
 
-    Idempotent: existing concepts are NOT duplicated (subject uniqueness per work).
+    Incremental and idempotent over the whole corpus: existing concepts are
+    never duplicated (subject uniqueness per work), the scan covers up to
+    _SEED_KN_SCAN knowledge rows rather than a top-20 snapshot, and re-running
+    after new material lands adds only the new subjects.  Only question-safe
+    knowledge seeds concepts — unratified research proposals do not.
+    Every call ends with a prerequisite-graph cycle check.
     Returns the full list of concepts for the work after seeding.
     """
     # Check existing concepts
@@ -221,8 +250,14 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
         ).fetchall()
     existing_subjects = {r["subject"].lower() for r in existing}
 
-    # Pull knowledge items to extract subjects
-    items = db.list_knowledge(work_id=work_id, limit=_MAX_SEED_SUBJ)
+    # Pull knowledge items to extract subjects (question-safe statuses only)
+    try:
+        items = db.list_knowledge(
+            work_id=work_id, limit=_SEED_KN_SCAN, review_status_in=_QUESTION_SAFE_REVIEW
+        )
+    except TypeError:  # older DB fakes without the review filter
+        items = db.list_knowledge(work_id=work_id, limit=_SEED_KN_SCAN)
+        items = [i for i in items if i.get("review_status", "auto") in _QUESTION_SAFE_REVIEW]
     if not items:
         return list_concepts(db, work_id)
 
@@ -238,11 +273,16 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             s.lower() for s in seen_subjects
         }:
             seen_subjects.append(subj)
+        if len(seen_subjects) >= _MAX_SEED_SUBJ:
+            break
 
     # Ask AI to create a short description + ordering for new subjects.
     # Requests up to 3 prerequisites per concept (multi-prerequisite graph).
+    # Only the first _SEED_LLM_BATCH new subjects go to the model; the rest
+    # are still inserted (plain) so the curriculum is never capped by the
+    # prompt size.
     if seen_subjects and base_url:
-        subj_list = "\n".join(f"- {s}" for s in seen_subjects[:_MAX_SEED_SUBJ])
+        subj_list = "\n".join(f"- {s}" for s in seen_subjects[:_SEED_LLM_BATCH])
         prompt = (
             f"You are building a learning curriculum for the topic: {_get_work_title(db, work_id)}.\n"
             f"Order these subjects from most foundational to most advanced, give each a 1-sentence description,\n"
@@ -264,6 +304,12 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             try:
                 ordered = json.loads(_strip_fences(raw))
                 seen_subjects_ordered = [o["subject"] for o in ordered if isinstance(o, dict)]
+                # Anything the model omitted — or beyond the LLM batch — is
+                # still seeded, unordered and without description/prereqs.
+                _ordered_lower = {s.lower() for s in seen_subjects_ordered}
+                seen_subjects_ordered += [
+                    s for s in seen_subjects if s.lower() not in _ordered_lower
+                ]
                 descriptions = {
                     o["subject"]: o.get("description", "") for o in ordered if isinstance(o, dict)
                 }
@@ -356,7 +402,193 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
                     except Exception:
                         pass  # table absent (pre-v94 DB) — migration handles it
 
+    # Every re-seed ends with a graph validation: deterministic cycle guard.
+    validate_prereq_graph(db, work_id)
     return list_concepts(db, work_id)
+
+
+def validate_prereq_graph(db: Any, work_id: str) -> list[tuple[str, str]]:
+    """Cycle-check the prerequisite graph for a Work and break any cycles.
+
+    Deterministic: concepts are visited in (created_at, id) order and edges in
+    sorted order, so the same graph always drops the same back-edges.  A
+    back-edge (one that closes a cycle) is DELETEd from work_concept_prereqs
+    and audited.  Returns the list of removed (concept_id, prereq_id) edges.
+
+    A cycle would deadlock eligibility (each concept waiting on the other),
+    so removal — not refusal — is the right remedy here: the concepts stay,
+    only the impossible ordering constraint goes.
+    """
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT id FROM work_concepts WHERE work_id=? ORDER BY created_at ASC, id ASC",
+            (work_id,),
+        ).fetchall()
+        node_order = [r["id"] for r in rows]
+        if not node_order:
+            return []
+        ph = ",".join("?" * len(node_order))
+        try:
+            edge_rows = db._conn.execute(
+                f"SELECT concept_id, prereq_id FROM work_concept_prereqs "
+                f"WHERE concept_id IN ({ph})",
+                node_order,
+            ).fetchall()
+        except Exception:
+            return []  # pre-v94 DB: no join table, nothing to validate
+    edges: dict[str, list[str]] = {}
+    for r in edge_rows:
+        edges.setdefault(r["concept_id"], []).append(r["prereq_id"])
+    for k in edges:
+        edges[k].sort()
+
+    removed: list[tuple[str, str]] = []
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = dict.fromkeys(node_order, WHITE)
+
+    def _visit(node: str) -> None:
+        # Iterative DFS; a GRAY target means the edge closes a cycle.
+        stack: list[tuple[str, int]] = [(node, 0)]
+        color[node] = GRAY
+        while stack:
+            cur, idx = stack[-1]
+            targets = edges.get(cur, [])
+            if idx >= len(targets):
+                color[cur] = BLACK
+                stack.pop()
+                continue
+            stack[-1] = (cur, idx + 1)
+            nxt = targets[idx]
+            if color.get(nxt, BLACK) == GRAY:
+                removed.append((cur, nxt))
+            elif color.get(nxt) == WHITE:
+                color[nxt] = GRAY
+                stack.append((nxt, 0))
+
+    for n in node_order:
+        if color[n] == WHITE:
+            _visit(n)
+
+    for cid, pid in removed:
+        with db._lock:
+            db._conn.execute(
+                "DELETE FROM work_concept_prereqs WHERE concept_id=? AND prereq_id=?",
+                (cid, pid),
+            )
+            db._conn.commit()
+        try:
+            db.audit(
+                "learning.prereq_cycle_removed",
+                object_id=cid,
+                object_type="learning_concept",
+                actor="system",
+                detail=f"dropped back-edge {cid[:8]}→{pid[:8]}",
+            )
+        except Exception:
+            pass
+    return removed
+
+
+def import_training_plan(db: Any, work_id: str, plan_items: list[dict]) -> dict:
+    """Import training-plan/curriculum items into work_concepts (T-M3).
+
+    Preserves the six-field item shape (topic/why/evidence/read/check/
+    question) plus prereq + schedule.  Idempotent: an existing concept with
+    the same subject is reused; the verification question becomes the
+    concept's first stored item in work_concept_items (UNIQUE(concept_id,
+    question) makes re-import a no-op).  Prerequisite edges are created by
+    topic name within the imported set + existing concepts; the graph is
+    cycle-checked at the end.
+    """
+    now = _now()
+    created, reused, items_stored, edges_added = 0, 0, 0, 0
+
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT id, subject FROM work_concepts WHERE work_id=?", (work_id,)
+        ).fetchall()
+    subject_to_id = {r["subject"].lower(): r["id"] for r in rows}
+
+    valid_items = [
+        it
+        for it in plan_items
+        if isinstance(it, dict) and (it.get("topic") or "").strip() and it.get("question")
+    ]
+
+    # Pass 1: concepts
+    for it in valid_items:
+        topic = it["topic"].strip()[:200]
+        cid = subject_to_id.get(topic.lower())
+        if cid:
+            reused += 1
+        else:
+            cid = _uuid()
+            with db._lock:
+                db._conn.execute(
+                    "INSERT INTO work_concepts(id,work_id,subject,description,created_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (cid, work_id, topic, (it.get("why") or "")[:500], now),
+                )
+                db._conn.commit()
+            subject_to_id[topic.lower()] = cid
+            created += 1
+            try:
+                db.audit(
+                    "learning.concept_imported",
+                    object_id=cid,
+                    object_type="learning_concept",
+                    actor="system",
+                    detail=topic[:80],
+                )
+            except Exception:
+                pass
+        # The verification question becomes the concept's first stored item.
+        with db._lock:
+            cur = db._conn.execute(
+                """INSERT OR IGNORE INTO work_concept_items
+                   (id,concept_id,question,why,read_text,check_text,
+                    evidence_json,schedule_json,source,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    _uuid(),
+                    cid,
+                    str(it["question"])[:1000],
+                    (it.get("why") or "")[:1000],
+                    (it.get("read") or "")[:1000],
+                    (it.get("check") or "")[:1000],
+                    json.dumps(list(it.get("evidence") or [])[:10]),
+                    json.dumps(it.get("schedule") or {}),
+                    "training_plan",
+                    now,
+                ),
+            )
+            db._conn.commit()
+        items_stored += cur.rowcount
+
+    # Pass 2: prerequisite edges by topic name (within this Work only)
+    for it in valid_items:
+        cid = subject_to_id[it["topic"].strip()[:200].lower()]
+        for prereq_topic in it.get("prereq") or []:
+            pid = subject_to_id.get(str(prereq_topic).strip()[:200].lower())
+            if pid and pid != cid:
+                with db._lock:
+                    cur = db._conn.execute(
+                        "INSERT OR IGNORE INTO work_concept_prereqs(concept_id,prereq_id) "
+                        "VALUES(?,?)",
+                        (cid, pid),
+                    )
+                    db._conn.commit()
+                edges_added += cur.rowcount
+
+    removed = validate_prereq_graph(db, work_id)
+    return {
+        "concepts_created": created,
+        "concepts_reused": reused,
+        "items_stored": items_stored,
+        "prereq_edges_added": edges_added,
+        "cycle_edges_removed": len(removed),
+        "skipped": len(plan_items) - len(valid_items),
+    }
 
 
 def list_concepts(db: Any, work_id: str) -> list[dict]:

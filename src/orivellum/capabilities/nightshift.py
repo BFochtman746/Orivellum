@@ -1221,6 +1221,49 @@ def _pass_verify_audit_chain(db: OrivellumDB, report: list[str]) -> None:
         logger.warning("Nightshift audit-chain check error: %s", exc)
 
 
+def _pass_reseed_concepts(db: OrivellumDB, cfg: OrivellumConfig, report: list[str]) -> None:
+    """Incrementally re-seed learning concepts for Works with fresh knowledge.
+
+    A Work qualifies when its newest question-safe knowledge item is newer
+    than its newest concept (or it has knowledge but no concepts yet).
+    Bounded to a few Works per night; seed_concepts is idempotent and ends
+    with a prerequisite cycle check, so repeated runs converge.
+    """
+    _MAX_WORKS = 5
+    try:
+        with db._lock:
+            rows = db._conn.execute(
+                """SELECT k.work_id
+                   FROM knowledge k
+                   WHERE k.work_id IS NOT NULL
+                     AND k.review_status IN ('auto','ai_auto','approved')
+                   GROUP BY k.work_id
+                   HAVING MAX(k.created_at) > COALESCE(
+                       (SELECT MAX(c.created_at) FROM work_concepts c
+                        WHERE c.work_id = k.work_id), '')
+                   ORDER BY MAX(k.created_at) DESC
+                   LIMIT ?""",
+                (_MAX_WORKS,),
+            ).fetchall()
+        work_ids = [r["work_id"] for r in rows]
+        if not work_ids:
+            return
+        from orivellum.capabilities.learning import seed_concepts
+
+        seeded = 0
+        for wid in work_ids:
+            try:
+                seed_concepts(db, wid, cfg.serving.base_url, cfg.serving.workhorse_model)
+                seeded += 1
+            except Exception as exc:
+                logger.warning("Concept re-seed failed for work %s: %s", wid, exc)
+        if seeded:
+            report.append(f"Concept re-seed: {seeded} Work(s) refreshed")
+    except Exception as exc:
+        logger.warning("Concept re-seed pass failed (non-fatal): %s", exc)
+        report.append(f"Concept re-seed: failed — {exc}")
+
+
 def _pass_version_suggestions(db: OrivellumDB, report: list[str]) -> None:
     """Cross-check document pairs in every Work for similar filename stems and
     create version-relationship suggestions for any new matches found.
@@ -1877,6 +1920,10 @@ def _run_nightshift_passes(db: OrivellumDB, cfg: OrivellumConfig) -> None:
     # 16 — Topic clustering
     logger.info("Nightshift pass 16/17: topic clustering")
     _pass_clustering(db, report)
+
+    # 16b — Learning concept re-seed for Works with fresh knowledge
+    logger.info("Nightshift pass 16b: learning concept re-seed")
+    _pass_reseed_concepts(db, cfg, report)
 
     # 17 — Topic profiles (LLM-generated plain-English summaries per cluster)
     logger.info("Nightshift pass 17/19: topic profile generation")

@@ -3320,4 +3320,31 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON domain_node_transition(node_id, at)
     """,
     ),
+    # v138 — Concept item bank (T-M3, front half).  Stores per-concept study
+    # items imported from a research run's training plan: the verification
+    # question ("you know it when you can answer") plus the read/check/evidence
+    # /schedule fields, preserving the six-field plan-item shape.  Question
+    # generation may use these as grounded items later (depth ladder); today
+    # they make an imported curriculum self-contained.
+    (
+        138,
+        "Concept item bank: imported training-plan items per concept",
+        """
+        CREATE TABLE IF NOT EXISTS work_concept_items (
+            id            TEXT PRIMARY KEY,
+            concept_id    TEXT NOT NULL REFERENCES work_concepts(id) ON DELETE CASCADE,
+            question      TEXT NOT NULL,
+            why           TEXT NOT NULL DEFAULT '',
+            read_text     TEXT NOT NULL DEFAULT '',
+            check_text    TEXT NOT NULL DEFAULT '',
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            schedule_json TEXT NOT NULL DEFAULT '{}',
+            source        TEXT NOT NULL DEFAULT 'training_plan',
+            created_at    TEXT NOT NULL,
+            UNIQUE(concept_id, question)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wci_concept
+            ON work_concept_items(concept_id)
+    """,
+    ),
 ]
