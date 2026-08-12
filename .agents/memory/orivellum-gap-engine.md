@@ -1,6 +1,6 @@
 ---
-name: Gap Engine (G-M1 → G-M4)
-description: Hygiene/gap split, gap identity + lifecycle, structural detectors, golden oracle, open-world harness, enforced blocking gate.
+name: Gap Engine (G-M1 → G-M6)
+description: Hygiene/gap split, gap identity + lifecycle, structural detectors, golden oracle, open-world harness, enforced blocking gate, Domain Model interpretive layer.
 ---
 
 # Gap Engine decisions
@@ -17,3 +17,14 @@ description: Hygiene/gap split, gap identity + lifecycle, structural detectors, 
 - **Dead-end vs citation-closure**: same unheld work cited in chunks AND in a knowledge claim yields two gaps with different classes/identities — intentional (different remediation).
 - **Annotation UI**: `/works/:workId/gap-oracle` (linked "oracle" in the Hygiene tab). Must allow authoring pairs the detector never flagged — that's the recall side of the oracle.
 - Injected-hole/CWA hold-out evaluation was explicitly rejected by the brutal review; do not reintroduce it.
+
+# Domain Model (G-M5/G-M6, interpretive layer)
+
+- **Proposal-only discipline**: harvest upserts `domain_node` rows but NEVER flips a ratified/rejected status or a signed class (diverging class recorded as `meta.harvest_class`). Ratification = signed CAS on `status='proposed'` + one `domain_node_transition` ledger row; contested→required override is refused.
+- **Triangulation**: required core needs ≥3 independent structure sources agreeing on placement; placement disagreement INCLUDES top-level-vs-nested (empty parent counts as a distinct placement) → contested → G4 frontier.
+- **G4 frontier is never critical**: `compute_severity` hard-caps `domain_frontier` at medium before any blocking logic; frontier gaps carry `action="decide"`, `meta.queue="decision"`.
+- **Heading-numbering regex trap**: roman-numeral prefixes must only strip when a separator follows (`[ivxlcdm]+(?=\s*[.:)\-–—])`), else words like "Divine" lose their head ("Divi" is all roman letters).
+- **Object-scope authorization**: every `/works/{id}/domain/*` route checks the work exists, and source deletion is scoped `DELETE ... WHERE id=? AND work_id=?` — review caught a cross-work deletion hole here.
+- **Review inbox integration checklist**: new item type needs `_VALID_TYPES` + queue projection + resolver in `resolvers` dict + a `_PENDING_SQL` entry (deferral 500s without it).
+- Measured demand = user-role hits in `messages_fts` joined through `conversations.work_id`; it boosts G2 severity via the `demand` param of `compute_severity` (capped).
+- Relative recall is honest "vs peer reference" framing — bibliography peers via citation extraction + held-check, structure peers via heading evidence; never presented as absolute completeness.
