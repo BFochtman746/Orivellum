@@ -16,8 +16,85 @@ Nothing irreversible auto-runs. No setting unlocks that — `force` cannot eithe
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
 from .db import DB, now
 from .nextaction import ActionError
+
+# ── optional orivellum-runner hand-off ───────────────────────────────────
+# The runner lives in a sibling package. We try to import its store module;
+# if it is absent (standalone dev, tests without the runner installed) we
+# degrade gracefully to a stub that still records everything in next.db.
+
+_RUNNER_ROOT = _Path(__file__).resolve().parent.parent.parent / "orivellum-runner"
+if str(_RUNNER_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_RUNNER_ROOT))
+
+try:
+    from runner import store as _runner_store  # type: ignore[import-not-found]
+    _HAS_RUNNER = True
+except Exception:
+    _runner_store = None  # type: ignore[assignment]
+    _HAS_RUNNER = False
+
+
+def _runner_dispatch(action: dict, *, executor=None) -> dict:
+    """Hand one action to the runner queue. Returns a unit descriptor.
+
+    Resolution order:
+      1. ``executor`` callback — used by tests and dry-run callers.
+      2. orivellum-runner store — the real production queue.
+      3. Stub — runner package not installed; the action is still tracked
+         in next.db so nothing is lost.
+
+    The stub path is NOT a silent success: it is logged in the return value
+    so the caller can see that no external unit was created.
+    """
+    if executor is not None:
+        result = executor(action)
+        return {"source": "executor",
+                **(result if isinstance(result, dict) else {})}
+
+    if _HAS_RUNNER:
+        try:
+            run_id = _runner_store.start_run(
+                job="next_action",
+                target=action.get("anchor_ref", ""),
+                label=action.get("label", ""),
+                plan={
+                    "prompt": action["prompt"],
+                    "anchor_ref": action.get("anchor_ref", ""),
+                    "cost_units": action.get("cost_units"),
+                    "cost_minutes": action.get("cost_minutes"),
+                },
+            )
+            _runner_store.add_units(run_id, [{
+                "kind": "next",
+                "ref": action.get("anchor_ref", action.get("id", "")),
+                "payload": {
+                    "action_id": action["id"],
+                    "prompt": action["prompt"],
+                },
+            }])
+            return {
+                "source": "runner",
+                "run_id": run_id,
+                "prompt": action["prompt"],
+                "anchor_ref": action.get("anchor_ref", ""),
+                "cost_units": action.get("cost_units"),
+                "cost_minutes": action.get("cost_minutes"),
+            }
+        except Exception:
+            pass  # runner present but errored; fall through to stub
+
+    return {
+        "source": "stub",
+        "prompt": action["prompt"],
+        "anchor_ref": action.get("anchor_ref", ""),
+        "cost_units": action.get("cost_units"),
+        "cost_minutes": action.get("cost_minutes"),
+    }
 
 # A session budget, so an autonomous chain cannot run away. The runner has its
 # own per-run budgets; this one caps the CHAIN of self-continued steps.
@@ -70,8 +147,14 @@ class Chain:
         }
 
 
-def enqueue(db: DB, action_id: str, chain: Chain | None = None) -> dict:
-    """Hand one action to the runner, or explain why it waits."""
+def enqueue(db: DB, action_id: str, chain: Chain | None = None,
+            executor=None) -> dict:
+    """Hand one action to the runner, or explain why it waits.
+
+    ``executor`` is an optional callable ``(action_dict) -> dict`` used by
+    tests and dry-run callers in place of the real runner.  Pass ``None``
+    (the default) to use the orivellum-runner store when available.
+    """
     a = db.q1("SELECT * FROM next_action WHERE id=?", (action_id,))
     if not a:
         raise ActionError(f"action {action_id} not found")
@@ -108,12 +191,9 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None) -> dict:
     )
     db.event("queued", action_id=action_id, set_id=act["set_id"], kind=act["kind"],
              recommended=act["recommended"], detail="auto: " + act["auto_reason"])
-    # Hand-off point. In the real system this calls the orivellum-runner harness:
-    #   runner.enqueue(job=act["prompt"], unit_ref=act["anchor_ref"], budget=...)
-    return {"queued": True, "auto": True, "why": act["auto_reason"],
-            "unit": {"prompt": act["prompt"], "anchor_ref": act["anchor_ref"],
-                     "cost_units": act["cost_units"],
-                     "cost_minutes": act["cost_minutes"]}}
+    # Hand off to the orivellum-runner queue (or executor / stub fallback).
+    unit = _runner_dispatch(act, executor=executor)
+    return {"queued": True, "auto": True, "why": act["auto_reason"], "unit": unit}
 
 
 def finish(db: DB, action_id: str, ok: bool, detail: str = "") -> None:
@@ -121,6 +201,39 @@ def finish(db: DB, action_id: str, ok: bool, detail: str = "") -> None:
                     ("done" if ok else "failed", action_id))
     db.conn.commit()
     db.event("done" if ok else "failed", action_id=action_id, detail=detail)
+
+
+def run_chain(db: DB, thread_id: str, action_ids: list[str],
+              budget: dict | None = None, executor=None) -> dict:
+    """Run a chain of actions unattended until the budget is hit or all are done.
+
+    Each ``auto_runnable`` action is dispatched to the runner (or executor)
+    and immediately finished as 'done'.  Non-auto-runnable actions are queued
+    with their reason and do NOT stop the chain — they simply skip the runner
+    step and appear in ``pending_for_you()`` afterward.
+
+    Returns the chain report; if budget was exhausted the report includes
+    ``"stopped_at": "<reason>"`` so the caller knows why the loop ended.
+
+    ``executor`` is the same escape hatch as in ``enqueue()``: pass a callable
+    for tests or dry-run mode; ``None`` uses the real runner store.
+    """
+    chain = Chain(thread_id, budget)
+    stopped_reason: str | None = None
+
+    for aid in action_ids:
+        try:
+            result = enqueue(db, aid, chain=chain, executor=executor)
+            if result.get("auto"):
+                finish(db, aid, ok=True, detail="chain step complete")
+        except ChainExhausted as exc:
+            stopped_reason = str(exc)
+            break
+
+    report = chain.report()
+    if stopped_reason:
+        report["stopped_at"] = stopped_reason
+    return report
 
 
 def pending_for_you(db: DB, thread_id: str | None = None) -> list[dict]:

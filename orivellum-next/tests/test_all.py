@@ -649,6 +649,139 @@ class TestOrivellumProbes(Base):
         self.assertEqual(facts, [])
 
 
+# Policy that enables autonomous execution — used only in N5 tests.
+# The yaml file keeps auto_run_enabled: 0; tests override it explicitly so
+# the invariant is tested against real compute_auto_runnable logic.
+POLICY_AUTO = {**POLICY, "auto_run_enabled": 1}
+
+
+class TestN5Chain(Base):
+    """N5: runner bridge — the thing that actually removes 'continue'.
+
+    Invariants under test:
+      1. cheap+reversible+unblocked actions are auto_runnable when policy allows.
+      2. run_chain dispatches them all and returns an honest chain report.
+      3. Chain budget stops the loop; the stopped action lands in 'queued'.
+      4. Nothing irreversible ever auto-runs regardless of policy setting.
+      5. pending_for_you() exposes every queued action with its reason.
+    """
+
+    def _cheap_action(self, label, *, recommended=False, reversible=True,
+                      blocked_by=""):
+        """A cheap reversible action that is auto_runnable when policy allows."""
+        return {
+            "kind": "act",
+            "label": label,
+            "prompt": f"Execute: {label}",
+            "anchor": f"{label} anchor",
+            "anchor_ref": f"test.{label}:5",
+            "recommended": recommended,
+            "rationale": "Cheapest unblocked step." if recommended else "",
+            "confidence": 0.9,
+            "cost_units": 5,       # well within auto_run_max_units=200
+            "cost_minutes": 1,     # well within auto_run_max_minutes=10
+            "reversible": reversible,
+            "blocked_by": blocked_by,
+            "needs_clarify": False,
+        }
+
+    def _offer(self, actions, thread="chain-t", policy=None):
+        """Offer a set and return the stored action dicts (with IDs assigned)."""
+        p = policy if policy is not None else POLICY_AUTO
+        sid = nextaction.offer(self.db, thread, "msg", actions, p,
+                               no_recommendation_reason="")
+        return nextaction.read_set(self.db, sid)["actions"]
+
+    def test_cheap_reversible_action_is_auto_runnable(self):
+        """N5 precondition: compute_auto_runnable marks cheap+reversible+unblocked."""
+        auto, why = nextaction.compute_auto_runnable(
+            self._cheap_action("step-0"), POLICY_AUTO)
+        self.assertEqual(auto, 1, f"should be auto_runnable: {why}")
+
+    def test_three_cheap_reversible_actions_run_unattended(self):
+        """N5 core: run_chain dispatches three auto_runnable steps; report shows 3."""
+        acts = [
+            self._cheap_action("classify-docs", recommended=True),
+            self._cheap_action("review-chapters"),
+            self._cheap_action("update-index"),
+        ]
+        stored = self._offer(acts)
+        for a in stored:
+            self.assertEqual(a["auto_runnable"], 1,
+                             f"{a['label']} should be auto_runnable")
+        ids = [a["id"] for a in stored]
+        mock_exec = lambda act: {"status": "done", "anchor_ref": act["anchor_ref"]}
+        report = runner_bridge.run_chain(
+            self.db, "chain-t", ids,
+            budget={"max_steps": 8, "max_minutes": 60, "max_units": 9999},
+            executor=mock_exec,
+        )
+        self.assertEqual(report["steps_run"], 3)
+        self.assertEqual(len(report["ran"]), 3)
+        self.assertGreater(report["units_spent"], 0)
+        self.assertNotIn("stopped_at", report,
+                         "chain must complete cleanly without hitting budget")
+
+    def test_chain_stops_at_budget_and_produces_report(self):
+        """N5: max_steps=2 stops after 2 steps; stopped action queued; report records why."""
+        acts = [
+            self._cheap_action("step-a", recommended=True),
+            self._cheap_action("step-b"),
+            self._cheap_action("step-c"),
+        ]
+        stored = self._offer(acts, thread="budget-t")
+        ids = [a["id"] for a in stored]
+        mock_exec = lambda act: {"status": "done"}
+        report = runner_bridge.run_chain(
+            self.db, "budget-t", ids,
+            budget={"max_steps": 2, "max_minutes": 60, "max_units": 9999},
+            executor=mock_exec,
+        )
+        self.assertEqual(report["steps_run"], 2, "exactly 2 steps before budget")
+        self.assertIn("stopped_at", report,
+                      "budget exhaustion must be recorded in the report")
+        self.assertIn("2 steps", report["stopped_at"])
+        # Third action must be queued (not running or done)
+        third_id = ids[2]
+        row = self.db.q1("SELECT state FROM next_action WHERE id=?", (third_id,))
+        self.assertEqual(row["state"], "queued",
+                         "budget-stopped action must land in 'queued' state")
+
+    def test_irreversible_action_refuses_to_auto_run_regardless_of_policy(self):
+        """N5: Rule 6 — nothing irreversible ever auto-runs, even under permissive policy."""
+        auto, why = nextaction.compute_auto_runnable(
+            self._cheap_action("step-irr", reversible=False), POLICY_AUTO)
+        self.assertEqual(auto, 0, f"irreversible must be 0; reason: {why}")
+        self.assertIn("not reversible", why)
+        # Confirm enqueue queues it for human, never dispatches it
+        acts = [
+            self._cheap_action("step-rev", recommended=True),
+            self._cheap_action("step-irr", reversible=False),
+        ]
+        stored = self._offer(acts, thread="irr-t")
+        irr = next(a for a in stored if not a["reversible"])
+        result = runner_bridge.enqueue(self.db, irr["id"])
+        self.assertFalse(result["auto"],
+                         "irreversible action must not auto-run under any policy")
+        self.assertIn("reversible", result["why"])
+
+    def test_pending_for_you_shows_all_queued_items_with_reasons(self):
+        """N5: pending_for_you() lists every non-auto item with waits_because filled."""
+        acts = [
+            self._cheap_action("step-irr", reversible=False, recommended=True),
+            self._cheap_action("step-blk", blocked_by="step-irr must finish first"),
+        ]
+        stored = self._offer(acts, thread="pend-t")
+        for a in stored:
+            runner_bridge.enqueue(self.db, a["id"])
+        queue = runner_bridge.pending_for_you(self.db, "pend-t")
+        self.assertEqual(len(queue), 2,
+                         "both non-auto-runnable actions must appear in the queue")
+        for item in queue:
+            self.assertTrue(item["waits_because"].strip(),
+                            f"{item['label']!r} has empty waits_because")
+
+
 class TestGateAPIRoundTrip(unittest.TestCase):
     """N4 API-level regression: gate/open → gate/resolve (with request_id) → gate/read
     must return updated count with no KeyError / HTTP error.
