@@ -15,3 +15,5 @@ description: Durable invariants for the B5 drafting loop — character agents, c
 - **Entropy NULL = not measured, never certain.** Absent logprobs are reported `available:false`; hot spans get temp-0 verification against canon+state before storing; failures become findings.
 - **The run row is the claim** and startup recovery must release orphaned running rows, or one crash permanently blocks drafting for that work.
 - **Personas are review-gated authority**: drafting refuses unapproved cast personas; approval needs an author signature via an atomic conditional update.
+
+- Drafting cockpit routes: chapter readiness must MIRROR the engine refusals (contract fields, approved/inherited personas, approved-chapter guard) — never invent looser rules; meta read-merge-write must happen under one db._lock transaction or concurrent pipeline meta writes get clobbered.
