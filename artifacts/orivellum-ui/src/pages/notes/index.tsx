@@ -93,6 +93,19 @@ export default function NotesPage() {
     staleTime: 60_000,
   });
 
+  // Filing category policy — server-owned; shown as a legend so users know
+  // where processed notes can land in the vault.
+  const { data: policy } = useQuery({
+    queryKey: ["notes", "policy"],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/notes/policy`);
+      if (!r.ok) throw new Error("Failed to load note policy");
+      return r.json() as Promise<{ categories: { id: string; label: string }[] }>;
+    },
+    staleTime: 5 * 60_000,
+  });
+  const categories = policy?.categories ?? [];
+
   const capture = useMutation({
     mutationFn: async (text: string) => {
       const r = await apiFetch(`${BASE}/notes`, {
@@ -203,6 +216,21 @@ export default function NotesPage() {
           </Button>
         </div>
       </div>
+
+      {/* Filing categories — where processed notes end up in the vault */}
+      {categories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="legend-note-categories">
+          <span className="text-[10px] font-mono text-muted-foreground mr-0.5">
+            Notes are filed under:
+          </span>
+          {categories.map((c) => (
+            <span key={c.id}
+                  className="text-[10px] px-1.5 py-0.5 rounded-full border border-border text-muted-foreground">
+              {c.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Day switcher */}
       <div className="flex items-center justify-between">

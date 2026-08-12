@@ -18,8 +18,11 @@ import {
   Mail, MailOpen, RefreshCw, Settings, Plug, Loader2,
   Shield, ShieldAlert, ShieldCheck, AlertTriangle,
   MoveRight, Reply, MoveLeft, Clock, CheckCircle2,
-  Inbox, ArrowRightCircle, RotateCcw, BookOpen, Globe,
+  Inbox, ArrowRightCircle, RotateCcw, BookOpen, Globe, History,
 } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -232,8 +235,124 @@ function MessageReader({ detail }: { detail: DecisionDetail | null; loading: boo
           <Clock size={12} />
           <span>State: {record.lifecycle_state}</span>
         </div>
+
+        {/* Audit timeline — every decision and action taken on this message */}
+        {(detail.audit_trail?.length ?? 0) > 0 && (
+          <div className="glass-card rounded-lg p-4" data-testid="section-audit-trail">
+            <div className="flex items-center gap-1.5 mb-3">
+              <History size={13} className="text-muted-foreground" />
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Audit trail
+              </span>
+            </div>
+            <div className="space-y-2.5">
+              {detail.audit_trail.map((e: AuditEvent, i: number) => (
+                <AuditEventRow key={e.id ?? i} event={e} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+// ── Audit events ──────────────────────────────────────────────────────────────
+
+interface AuditEvent {
+  id: string | null;
+  at: string | null;
+  actor: string | null;
+  event_type: string | null;
+  policy_version: string | null;
+  model_id: string | null;
+  signals: string[];
+  result: string | null;
+}
+
+function auditEventLabel(t: string | null): string {
+  if (!t) return "event";
+  return t.replace(/_/g, " ").toLowerCase();
+}
+
+function AuditEventRow({ event, showSubject }: { event: AuditEvent & { subject?: string | null }; showSubject?: boolean }) {
+  return (
+    <div className="flex items-start gap-2.5 text-xs" data-testid="row-audit-event">
+      <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "var(--gilt)" }} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium capitalize">{auditEventLabel(event.event_type)}</span>
+          {event.result && (
+            <Badge variant="outline" className="text-[9px] px-1 py-0">{event.result}</Badge>
+          )}
+          <span className="text-muted-foreground ml-auto shrink-0">
+            {event.at ? new Date(event.at).toLocaleString() : ""}
+          </span>
+        </div>
+        <div className="text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+          {event.actor && <span>by {event.actor}</span>}
+          {event.model_id && <span className="font-mono text-[10px]">{event.model_id}</span>}
+          {event.policy_version && <span className="font-mono text-[10px]">policy {event.policy_version}</span>}
+        </div>
+        {showSubject && event.subject && (
+          <p className="text-muted-foreground truncate mt-0.5">Re: {event.subject}</p>
+        )}
+        {event.signals?.length > 0 && (
+          <p className="text-muted-foreground mt-0.5">{event.signals.join(" · ")}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MailAuditDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ["mail", "audit"],
+    enabled: open,
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/mail/audit?limit=200`);
+      if (!r.ok) throw new Error("Failed to load audit history");
+      return r.json() as Promise<{ events: AuditEvent[]; total: number }>;
+    },
+    staleTime: 15_000,
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <History size={15} style={{ color: "var(--gilt)" }} />
+            Mail audit history
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            Every assessment, move, draft, and send the steward has recorded — newest first.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto pr-1 -mr-1">
+          {isLoading ? (
+            <div className="space-y-2 py-2">
+              {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          ) : isError ? (
+            <div className="py-6 text-center space-y-2">
+              <p className="text-sm text-muted-foreground">Couldn't load the audit history.</p>
+              <Button variant="outline" size="sm" onClick={() => refetch()} data-testid="button-audit-retry">
+                <RefreshCw size={12} className="mr-1.5" /> Retry
+              </Button>
+            </div>
+          ) : (data?.events?.length ?? 0) === 0 ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">No audit events yet.</p>
+          ) : (
+            <div className="space-y-3 py-1">
+              {data!.events.map((e, i) => (
+                <AuditEventRow key={e.id ?? i} event={e} />
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -441,6 +560,7 @@ export default function MailPage() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   // Works list — for the "Save to Knowledge" work selector
   const { data: worksResp } = useQuery<{ works: WorkOption[] }>({
@@ -648,6 +768,9 @@ export default function MailPage() {
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleSync} title="Sync now">
             <RefreshCw size={13} />
           </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setAuditOpen(true)} title="Audit history" data-testid="button-mail-audit">
+            <History size={13} />
+          </Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate("/mail/settings")} title="Settings">
             <Settings size={13} />
           </Button>
@@ -718,6 +841,8 @@ export default function MailPage() {
           />
         </div>
       </div>
+
+      <MailAuditDialog open={auditOpen} onOpenChange={setAuditOpen} />
     </div>
   );
 }

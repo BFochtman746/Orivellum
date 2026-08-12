@@ -93,9 +93,10 @@ export const APPS: AppDef[] = [
     routes: [
       { name: "Studio", href: "/studio" },
       { name: "Pressworks", href: "/forge" },
+      { name: "Workbench", href: "/workbench" },
       { name: "Graph", href: "/graph" },
     ],
-    own: ["/studio", "/forge", "/graph"],
+    own: ["/studio", "/forge", "/workbench", "/graph"],
   },
   {
     id: "command",

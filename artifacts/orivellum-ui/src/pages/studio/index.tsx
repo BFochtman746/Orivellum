@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation, useSearch } from "wouter";
-import { Globe2, Network, ChevronLeft, Wrench } from "lucide-react";
+import { Globe2, Network, ChevronLeft, Wrench, ScanText, Library, Upload } from "lucide-react";
 import { useGdDark } from "@/lib/useGdDark";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -57,7 +57,7 @@ type StudioStatus = {
     sample_available: boolean;
   };
   image_gen: { available: boolean; backends: ImgBackend[] };
-  ocr: { available: boolean; engine: string | null; missing: string[] };
+  ocr: { available: boolean; engine: string | null; missing: string[]; tesseract_available?: boolean; vlm_active?: boolean };
   asr?: {
     available: boolean;
     active_engine: string | null;
@@ -1414,7 +1414,7 @@ function DocumentWorkshopPanel() {
                 )}
               </div>
               <a
-                href={`${BASE}${result.download_url}`}
+                href={`${BASE}${(result.download_url ?? "").replace(/^\/api/, "")}`}
                 download={result.filename}
                 className="shrink-0"
               >
@@ -2227,6 +2227,266 @@ function TranscribePanel() {
 }
 
 // ── Studio hub — GD tool grid + recent-outputs shelf ─────────────────────────
+// ── Text extraction (OCR) panel ───────────────────────────────────────────────
+
+const _OCR_ACCEPT = ".png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff";
+const _OCR_MAX_MB = 20;
+
+function OcrPanel() {
+  const { data: status } = useStudioStatus();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const ocr = status?.ocr;
+  // The manual OCR endpoint runs Tesseract only — the VLM path is used during
+  // Library extraction, not here — so gate this tool on Tesseract specifically.
+  const tesseractOk = ocr?.tesseract_available ?? ocr?.available ?? true;
+
+  async function handleFile(file: File) {
+    if (file.size > _OCR_MAX_MB * 1024 * 1024) {
+      toast.error(`Image is too large — keep it under ${_OCR_MAX_MB} MB`);
+      return;
+    }
+    setFileName(file.name);
+    setText(null);
+    setRunning(true);
+    try {
+      const b64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const s = String(reader.result || "");
+          resolve(s.includes(",") ? s.split(",", 2)[1] : s);
+        };
+        reader.onerror = () => reject(new Error("Could not read the file"));
+        reader.readAsDataURL(file);
+      });
+      const resp = await apiFetch(`${BASE}/studio/ocr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content_b64: b64, filename: file.name }),
+      });
+      if (!resp.ok) {
+        let detail = `OCR failed (${resp.status})`;
+        try { detail = (await resp.json()).detail || detail; } catch { /* keep default */ }
+        throw new Error(detail);
+      }
+      const data = await resp.json();
+      setText(data.text ?? "");
+      if (!(data.text ?? "").trim()) {
+        toast.info("No readable text found in this image");
+      }
+    } catch (err: any) {
+      toast.error(err?.message || "OCR failed");
+      setText(null);
+    } finally {
+      setRunning(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function handleCopy() {
+    if (text == null) return;
+    try {
+      await copyToClipboard(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Copy failed");
+    }
+  }
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 font-serif text-lg">
+          <ScanText className="w-5 h-5" style={{ color: "var(--gilt)" }} />
+          Text extraction
+          {ocr && (
+            <Badge variant={tesseractOk ? "secondary" : "outline"} className="text-[10px] font-mono">
+              {tesseractOk ? "Tesseract" : "unavailable"}
+            </Badge>
+          )}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Pull the text out of a screenshot, photo, or scanned page. For PDFs, import them
+          in the <Link href="/library" className="underline underline-offset-2">Library</Link> —
+          scanned pages are OCR'd automatically during extraction.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {ocr && !tesseractOk && (
+          <div className="rounded-lg border p-3 text-xs"
+            style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }}>
+            The Tesseract OCR engine this tool uses isn't available right now
+            {ocr.missing?.length ? <> — missing: {ocr.missing.join(", ")}</> : null}.
+            {ocr.vlm_active ? " AI-vision OCR still runs automatically on Library imports." : ""}
+          </div>
+        )}
+
+        <input
+          ref={fileRef}
+          type="file"
+          accept={_OCR_ACCEPT}
+          className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
+          data-testid="input-ocr-file"
+        />
+        <Button
+          variant="outline"
+          className="w-full gap-2"
+          disabled={running || !tesseractOk}
+          onClick={() => fileRef.current?.click()}
+          data-testid="button-ocr-upload"
+        >
+          {running
+            ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading {fileName ?? "image"}…</>
+            : <><Upload className="w-4 h-4" /> Choose an image…</>}
+        </Button>
+
+        {text != null && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Extracted text{fileName ? ` — ${fileName}` : ""}
+              </p>
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleCopy} data-testid="button-ocr-copy">
+                {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </div>
+            <pre className="text-sm whitespace-pre-wrap rounded-lg border border-border/50 bg-muted/20 p-3 max-h-96 overflow-y-auto font-sans leading-relaxed"
+              data-testid="text-ocr-result">
+              {text.trim() || "(no text found)"}
+            </pre>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Quick generate (prompt → document) ────────────────────────────────────────
+
+function QuickGeneratePanel() {
+  const { data: worksResp } = useListWorks({});
+  const works: any[] = (worksResp as any)?.works ?? [];
+
+  const [prompt, setPrompt] = useState("");
+  const [format, setFormat] = useState("docx");
+  const [workId, setWorkId] = useState("__none__");
+  const [generating, setGenerating] = useState(false);
+  const [result, setResult] = useState<{ doc_id: string; filename: string; download_url: string } | null>(null);
+
+  async function handleGenerate() {
+    if (!prompt.trim()) return;
+    setGenerating(true);
+    setResult(null);
+    try {
+      const resp = await apiFetch(`${BASE}/generate/from-prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: prompt.trim(),
+          format,
+          work_id: workId === "__none__" ? null : workId,
+        }),
+      });
+      if (!resp.ok) {
+        let detail = `Generation failed (${resp.status})`;
+        try { detail = (await resp.json()).detail || detail; } catch { /* keep default */ }
+        throw new Error(detail);
+      }
+      const data = await resp.json();
+      setResult({ doc_id: data.doc_id, filename: data.filename, download_url: data.download_url });
+      toast.success(`${data.filename} generated and saved to the Library`);
+    } catch (err: any) {
+      toast.error(err?.message || "Generation failed");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return (
+    <Card className="border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 font-serif text-lg">
+          <FileText className="w-5 h-5" style={{ color: "var(--gilt)" }} />
+          Quick generate
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          One prompt, one document — no questions asked. The file lands in your Library.
+          For richer results with clarifying questions and a quality critique, use the
+          Scriptorium below.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Textarea
+          value={prompt}
+          onChange={e => setPrompt(e.target.value)}
+          placeholder="e.g. A one-page project brief for a community garden fundraiser…"
+          className="min-h-[80px] text-sm"
+          data-testid="input-quickgen-prompt"
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={format} onValueChange={setFormat}>
+            <SelectTrigger className="h-9 w-44 text-sm" data-testid="select-quickgen-format">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(FORMAT_LABELS).map(([k, label]) => (
+                <SelectItem key={k} value={k}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={workId} onValueChange={setWorkId}>
+            <SelectTrigger className="h-9 w-48 text-sm" data-testid="select-quickgen-work">
+              <SelectValue placeholder="No Work" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">No Work</SelectItem>
+              {works.map(w => (
+                <SelectItem key={w.id} value={w.id}>{w.title || w.id}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            className="gap-2 ml-auto"
+            disabled={generating || !prompt.trim()}
+            onClick={handleGenerate}
+            data-testid="button-quickgen-generate"
+          >
+            {generating
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+              : <><Sparkles className="w-4 h-4" /> Generate</>}
+          </Button>
+        </div>
+
+        {result && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/50 bg-muted/20 p-3">
+            <CheckCircle2 className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />
+            <span className="text-sm font-medium truncate">{result.filename}</span>
+            <div className="flex items-center gap-2 ml-auto">
+              <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+                <a href={`${BASE}${result.download_url.replace(/^\/api/, "")}`} download data-testid="link-quickgen-download">
+                  <Download className="w-3 h-3" /> Download
+                </a>
+              </Button>
+              <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+                <Link href={`/library/${result.doc_id}`} data-testid="link-quickgen-library">
+                  <Library className="w-3 h-3" /> View in Library
+                </Link>
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // Entry screen of the Studio app: pick a tool, do the job, collect the output.
 // Tools deep-link into the existing tabbed tool view via /studio?tool=…, and
 // Forge / Graph keep their own routes inside the Studio frame.
@@ -2236,6 +2496,7 @@ const HUB_TOOLS = [
   { key: "workshop", href: "/studio?tool=workshop", icon: Wand2,    title: "Scriptorium",        desc: "Generate Word, PDF, Excel & slide documents" },
   { key: "image",    href: "/studio?tool=image",    icon: ImageIcon, title: "Image generation",  desc: "Create images from text prompts" },
   { key: "transcribe", href: "/studio?tool=transcribe", icon: FileAudio, title: "Transcription",  desc: "Turn audio recordings into text" },
+  { key: "ocr",      href: "/studio?tool=ocr",      icon: ScanText, title: "Text extraction",   desc: "Pull text out of screenshots, photos & scans" },
   { key: "forge",    href: "/forge",                icon: Globe2,   title: "Pressworks",         desc: "Plan, build & release websites under quality gates" },
   { key: "workbench", href: "/workbench",           icon: Wrench,   title: "Workbench",          desc: "Build, refine & archive Excel and code projects version by version" },
   { key: "graph",    href: "/graph",                icon: Network,  title: "Knowledge graph",   desc: "Explore how your knowledge connects" },
@@ -2359,7 +2620,7 @@ function StudioHub() {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const TOOL_TABS = ["voice", "image", "workshop", "transcribe", "outputs"] as const;
+const TOOL_TABS = ["voice", "image", "workshop", "transcribe", "ocr", "outputs"] as const;
 type ToolTab = (typeof TOOL_TABS)[number];
 
 export default function Studio() {
@@ -2380,6 +2641,7 @@ export default function Studio() {
     { id: "image",    label: "Image Generation",   icon: ImageIcon },
     { id: "workshop", label: "Scriptorium",        icon: Wand2 },
     { id: "transcribe", label: "Transcription",    icon: FileAudio },
+    { id: "ocr",      label: "Text Extraction",    icon: ScanText },
     { id: "outputs",  label: "Recent Outputs",     icon: Video },
   ] as const;
 
@@ -2464,6 +2726,7 @@ export default function Studio() {
         {mainTab === "workshop" && (
           <ScrollArea className="h-full">
             <div className="p-6 max-w-3xl mx-auto space-y-6">
+              <ErrorBoundary label="quick generate"><QuickGeneratePanel /></ErrorBoundary>
               <ErrorBoundary label="scriptorium"><DocumentWorkshopPanel /></ErrorBoundary>
             </div>
           </ScrollArea>
@@ -2473,6 +2736,14 @@ export default function Studio() {
           <ScrollArea className="h-full">
             <div className="p-6 max-w-3xl mx-auto space-y-6">
               <ErrorBoundary label="transcription panel"><TranscribePanel /></ErrorBoundary>
+            </div>
+          </ScrollArea>
+        )}
+
+        {mainTab === "ocr" && (
+          <ScrollArea className="h-full">
+            <div className="p-6 max-w-3xl mx-auto space-y-6">
+              <ErrorBoundary label="text extraction panel"><OcrPanel /></ErrorBoundary>
             </div>
           </ScrollArea>
         )}
