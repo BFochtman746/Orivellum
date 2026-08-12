@@ -49,14 +49,22 @@ from pathlib import Path
 
 from .. import llm, shield, store
 from . import xlsx_engine as engine
+from . import xlsx_formula as fx
+from . import xlsx_graph as depgraph
 from . import xlsx_surgery as surgery
 
-CELL = re.compile(r"(?<![A-Z0-9_!$])(\$?)([A-Z]{1,3})(\$?)(\d{1,7})(?![A-Z0-9(])")
-RANGE = re.compile(r"(\$?[A-Z]{1,3}\$?\d{1,7})\s*:\s*(\$?[A-Z]{1,3}\$?\d{1,7})")
-SHEETREF = re.compile(r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_.]*))\s*!")
-FUNC = re.compile(r"\b([A-Za-z][A-Za-z0-9._]{1,30})\s*\(")
-NUMLIT = re.compile(r"(?<![A-Z0-9_.$:!])(\d+\.?\d*)(?![0-9A-Z_(])")
+# Formula parsing is TOKENIZED (openpyxl.formula.tokenizer via xlsx_formula) —
+# the old regexes produced phantom references from string literals and were
+# blind to table references and defined names. An audit tool that emits false
+# findings stops being read; the tokenizer removes that entire class.
 ERRVALS = ("#REF!", "#VALUE!", "#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#SPILL!", "#CALC!")
+
+# Aggregations whose ranges silently mis-total over merged cells (only the
+# top-left cell of a merge holds the value; the rest read as empty).
+AGG_FUNCS = {"SUM", "AVERAGE", "AVERAGEA", "COUNT", "COUNTA", "MAX", "MIN", "MEDIAN", "PRODUCT", "SUBTOTAL", "SUMPRODUCT"}
+
+# Text that LOOKS like a date, sitting in a column of real date serials.
+TEXT_DATE = re.compile(r"^\s*(?:\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4})\s*$")
 
 VOLATILE = {"NOW", "TODAY", "RAND", "RANDBETWEEN", "OFFSET", "INDIRECT", "CELL", "INFO", "AREAS"}
 # Ruled out for iOS-bound workbooks by doctrine
@@ -116,6 +124,30 @@ def _drop_cache():
         except Exception:
             pass  # noqa: BLE001
     _WB_CACHE.clear()
+    _GRAPH_CACHE.clear()
+
+
+# One dependency graph per (path, mtime) — shared by every sheet unit and the
+# workbook unit so tracing and cycle detection never re-parse the formulas.
+_GRAPH_CACHE = {}
+
+
+def _graph(target):
+    p = Path(target)
+    key = (str(p), p.stat().st_mtime_ns)
+    if key not in _GRAPH_CACHE:
+        wbf, wbv = _load(target)
+        _GRAPH_CACHE.clear()
+        g = depgraph.WorkbookGraph.build(wbf, wbv)
+        # workbook-wide error map, for tracing an error chain to its root
+        g.error_cells = {}
+        for ws in wbv.worksheets:
+            for row in ws.iter_rows():
+                for c in row:
+                    if isinstance(c.value, str) and c.value.strip() in ERRVALS:
+                        g.error_cells[f"{ws.title}!{c.coordinate}"] = c.value.strip()
+        _GRAPH_CACHE[key] = g
+    return _GRAPH_CACHE[key]
 
 
 def _cols_to_num(col):
@@ -127,15 +159,9 @@ def _cols_to_num(col):
 
 def normalize(formula, row, col):
     """Turn A1 references into offsets so sibling formulas can be compared.
-    =B2+C2 in row 2 and =B3+C3 in row 3 normalise to the same shape."""
-
-    def sub(m):
-        abs_c, c, abs_r, r = m.group(1), m.group(2), m.group(3), int(m.group(4))
-        dc = _cols_to_num(c) - col if not abs_c else _cols_to_num(c)
-        dr = r - row if not abs_r else r
-        return f"R[{dr}]C[{dc}]" if not (abs_c or abs_r) else f"R{abs_r}{dr}C{abs_c}{dc}"
-
-    return CELL.sub(sub, formula or "")
+    =B2+C2 in row 2 and =B3+C3 in row 3 normalise to the same shape.
+    Tokenized: cell-like text inside string literals is never rewritten."""
+    return fx.normalize(formula or "", row, col)
 
 
 def plan(target, run_dir):
@@ -170,8 +196,10 @@ def sheet_unit(run_id, payload):
     name = payload["sheet"]
     target = payload["target"]
     wbf, wbv = _load(target)
+    graph = _graph(target)
     sf, sv = wbf[name], wbv[name]
     formulas, blocks, funcs = {}, defaultdict(list), Counter()
+    skeletons = defaultdict(list)  # structural identity for anchor checks
     errors, hardcoded, ext_refs = [], [], []
     inputs = 0
 
@@ -182,19 +210,26 @@ def sheet_unit(run_id, payload):
                 continue
             if isinstance(v, str) and v.startswith("="):
                 formulas[c.coordinate] = v
-                for fn in FUNC.findall(v):
-                    funcs[fn.upper()] += 1
-                if "[" in v:
+                facts = graph.facts.get(f"{name}!{c.coordinate}") or fx.analyze(
+                    v, name, graph.names, graph.tables, cell=(c.column, c.row)
+                )
+                for fn in facts["functions"]:
+                    funcs[fn] += 1
+                if facts["external"]:
                     ext_refs.append(c.coordinate)
-                # numeric literals inside a formula (excluding 0/1 and row refs)
-                lits = [
-                    x for x in NUMLIT.findall(v.split("(", 1)[-1]) if float(x) not in (0, 1, 2, 100)
-                ]
+                # numeric literals used as operands — tokenized, so numbers in
+                # string text or array constants never count as "magic"
+                lits = [x for x in facts["literals"] if float(x) not in (0, 1, 2, 100)]
                 if lits:
                     hardcoded.append((c.coordinate, lits[:3]))
                 shape = normalize(v, c.row, c.column)
                 blocks[("row", c.row, shape)].append(c.coordinate)
                 blocks[("col", c.column, shape)].append(c.coordinate)
+                sig = fx.anchor_signature(v)
+                if sig:
+                    skel = fx.skeleton(v)
+                    skeletons[("row", c.row, skel)].append((c.coordinate, sig))
+                    skeletons[("col", c.column, skel)].append((c.coordinate, sig))
             else:
                 inputs += 1
     # cached values: errors and SUM consistency
@@ -220,6 +255,68 @@ def sheet_unit(run_id, payload):
             if len(coords) == 1 and coords[0] not in seen_suspect:
                 seen_suspect.add(coords[0])
                 suspects.append((coords[0], len(dom_coords), axis))
+
+    # anchor drift: structurally identical formulas in one row/col whose
+    # $-anchoring differs — the classic fill-without-anchoring slip
+    anchor_drift, seen_drift = [], set()
+    for (axis, _idx, _skel), members in skeletons.items():
+        if len(members) < 3:
+            continue
+        by_sig = Counter(sig for _, sig in members)
+        if len(by_sig) < 2:
+            continue
+        dom_sig, dom_n = by_sig.most_common(1)[0]
+        if dom_n < 3:
+            continue
+        for coord, sig in members:
+            if sig != dom_sig and by_sig[sig] == 1 and coord not in seen_drift:
+                seen_drift.add(coord)
+                anchor_drift.append((coord, dom_n, axis))
+
+    # merged cells inside an aggregated range: only the top-left of a merge
+    # holds the value, the rest read as empty — a silent wrong total
+    merged_in_range, seen_merge = [], set()
+    merged_ranges = list(getattr(sf, "merged_cells", None) and sf.merged_cells.ranges or [])
+    if merged_ranges:
+        for coord, f in formulas.items():
+            facts = graph.facts.get(f"{name}!{coord}")
+            if not facts or not (facts["functions"] & AGG_FUNCS):
+                continue
+            for asheet, c1, r1, c2, r2 in facts["areas"]:
+                if str(asheet).upper() != name.upper():
+                    continue
+                if (c2 - c1 + 1) * (r2 - r1 + 1) < 2:
+                    continue
+                for m in merged_ranges:
+                    # any merge overlapping the area beyond its own top-left
+                    if m.min_col > c2 or m.max_col < c1 or m.min_row > r2 or m.max_row < r1:
+                        continue
+                    span = (m.max_col - m.min_col + 1) * (m.max_row - m.min_row + 1)
+                    if span > 1 and coord not in seen_merge:
+                        seen_merge.add(coord)
+                        merged_in_range.append((coord, f, str(m)))
+                        break
+
+    # date-serial vs text-date mixing within one column: half the column
+    # compares as numbers, half as strings — sorts and lookups silently split
+    date_mix = []
+    col_kinds = defaultdict(lambda: [0, 0, None, None])  # [dates, textdates, ex_date, ex_text]
+    import datetime as _dt
+
+    for row in sv.iter_rows():
+        for c in row:
+            v = c.value
+            if isinstance(v, (_dt.datetime, _dt.date)):
+                k = col_kinds[c.column_letter]
+                k[0] += 1
+                k[2] = k[2] or c.coordinate
+            elif isinstance(v, str) and TEXT_DATE.match(v):
+                k = col_kinds[c.column_letter]
+                k[1] += 1
+                k[3] = k[3] or c.coordinate
+    for col, (n_date, n_text, ex_date, ex_text) in sorted(col_kinds.items()):
+        if n_date >= 2 and n_text >= 1:
+            date_mix.append((col, n_date, n_text, ex_date, ex_text))
 
     # SUM consistency using cached values
     sum_checks = []
@@ -296,24 +393,42 @@ def sheet_unit(run_id, payload):
 
     # findings
     for coord, err in errors[:200]:
+        key = f"{name}!{coord}"
+        chain = graph.trace_error_root(key, getattr(graph, "error_cells", {}))
+        trace = graph.trace_precedents(key, depth=3)
+        detail_parts = []
+        if len(chain) > 1:
+            detail_parts.append(
+                "error chain: " + " ← ".join(chain) + f" (root: {chain[-1]})"
+            )
+        if trace:
+            detail_parts.append("precedents: " + " ".join(trace))
         store.add_finding(
             run_id,
             "CRITICAL",
             "XL-ERRCELL",
-            f"{name}!{coord}",
+            key,
             f"Error value baked into the file: {err}",
+            detail=" | ".join(detail_parts)[:800],
             source="cached-value",
-            fix="Fix the precedent. The prove pass refreshes the cache only "
+            fix=(
+                f"Fix the root precedent ({chain[-1]})."
+                if len(chain) > 1
+                else "Fix the precedent."
+            )
+            + " The prove pass refreshes the cache only "
             "when the recalculated cell no longer errors.",
         )
     for s in sum_checks[:100]:
+        trace = graph.trace_precedents(f"{name}!{s['cell']}", depth=2)
         store.add_finding(
             run_id,
             "CRITICAL",
             "XL-SUMMISMATCH",
             f"{name}!{s['cell']}",
             f"SUM says {s['cached']} but its own range totals {s['computed']}",
-            detail=f"{s['formula']} over {s['cells']} numeric cells",
+            detail=f"{s['formula']} over {s['cells']} numeric cells"
+            + (f" | precedents: {' '.join(trace)}"[:400] if trace else ""),
             source="value-check",
             fix="Stale cache or a typed-over cell. The prove pass recomputes "
             "it and repairs the cached value by XML surgery.",
@@ -328,6 +443,44 @@ def sheet_unit(run_id, payload):
             detail=f"{n} sibling cells along that {axis} share one shape; this cell differs",
             source="shape-analysis",
             fix="Confirm it is deliberate. Semantic — never auto-applied.",
+        )
+    for coord, n, axis in anchor_drift[:60]:
+        store.add_finding(
+            run_id,
+            "MEDIUM",
+            "XL-ANCHOR-DRIFT",
+            f"{name}!{coord}",
+            f"$-anchoring differs from {n} structurally identical formulas in the same {axis}",
+            detail=f"formula: {formulas.get(coord, '')[:150]}",
+            source="shape-analysis",
+            fix="A fill that should have used (or dropped) $ anchors. Confirm "
+            "which target the formula is meant to track. Semantic — never auto-applied.",
+        )
+    for coord, f, merge in merged_in_range[:60]:
+        store.add_finding(
+            run_id,
+            "HIGH",
+            "XL-MERGED-RANGE",
+            f"{name}!{coord}",
+            f"Aggregation over a range containing merged cells ({merge})",
+            detail=f"{f[:150]} — only the top-left cell of a merge holds a value; "
+            "the rest read as empty",
+            source="graph-analysis",
+            fix="Unmerge the cells inside the summed range, or exclude the "
+            "merged block. A silent wrong total that no value check catches.",
+        )
+    for col, n_date, n_text, ex_date, ex_text in date_mix[:40]:
+        store.add_finding(
+            run_id,
+            "MEDIUM",
+            "XL-DATE-MIX",
+            f"{name}!{col}:{col}",
+            f"Column {col} mixes {n_date} real date(s) with {n_text} text date(s)",
+            detail=f"date serial at {ex_date}, text at {ex_text} — sorts, lookups "
+            "and comparisons treat the two as different types",
+            source="type-analysis",
+            fix="Convert the text dates to real dates (Data → Text to Columns, "
+            "or DATEVALUE). Semantic — never auto-applied.",
         )
     if vol:
         store.add_finding(
@@ -388,6 +541,9 @@ def sheet_unit(run_id, payload):
         "error_cells": len(errors),
         "sum_mismatches": len(sum_checks),
         "inconsistent": len(suspects),
+        "anchor_drift": len(anchor_drift),
+        "merged_in_range": len(merged_in_range),
+        "date_mix_columns": len(date_mix),
         "volatile": vol,
         "dynamic": dyn,
         "external_refs": len(ext_refs),
@@ -435,10 +591,119 @@ def sheet_unit(run_id, payload):
     return digest
 
 
+def _graph_audit(run_id, target):
+    """Workbook-level dependency-graph checks. One graph, four audits:
+    cycles, orphan formulas, unread numeric inputs, defined-name hygiene."""
+    graph = _graph(target)
+    _wbf, wbv = _load(target)
+    digest = {"graph": graph.stats()}
+
+    # circular references — detected as SCCs, every member named
+    cycles = graph.cycles()
+    digest["circular"] = len(cycles)
+    for cyc in cycles[:20]:
+        loop = " → ".join(cyc + [cyc[0]])
+        store.add_finding(
+            run_id,
+            "CRITICAL",
+            "XL-CIRCULAR",
+            cyc[0],
+            f"Circular reference — {len(cyc)} cell(s) depend on themselves",
+            detail=f"cycle: {loop}"[:800],
+            source="graph-analysis",
+            fix="Break the loop: one of these formulas must take its input "
+            "from a cell outside the cycle. With iterative calculation off, "
+            "Excel shows 0; with it on, a plausible wrong number — forever.",
+        )
+
+    # honesty note: dynamic references and unresolvable names mean the graph
+    # is a lower bound — say so instead of pretending completeness
+    partial_bits = []
+    if graph.computed_ref_cells:
+        digest["computed_ref_cells"] = graph.computed_ref_cells[:20]
+        partial_bits.append(
+            f"{len(graph.computed_ref_cells)} formula(s) compute references at "
+            "run time (INDIRECT/OFFSET): " + ", ".join(graph.computed_ref_cells[:10])
+        )
+    if graph.unresolved_names:
+        digest["unresolved_names"] = sorted(graph.unresolved_names)[:20]
+        partial_bits.append(
+            f"{len(graph.unresolved_names)} name(s)/ref(s) with no resolvable "
+            "cell destination (constants, formula-defined names): "
+            + ", ".join(sorted(graph.unresolved_names)[:10])
+        )
+    if partial_bits:
+        store.add_finding(
+            run_id,
+            "INFO",
+            "XL-GRAPH-PARTIAL",
+            "(workbook)",
+            "The dependency graph is a lower bound — some references are not "
+            "statically resolvable",
+            detail=" | ".join(partial_bits)[:800],
+            source="graph-analysis",
+            fix="Cycle and orphan results cover only statically visible edges. "
+            "Replace INDIRECT with CHOOSE-based names to make the graph complete.",
+        )
+
+    # orphans: formulas nothing depends on (terminal outputs land here too —
+    # an observation to review, not a defect) and numeric inputs nothing reads
+    orphans = graph.orphan_formulas()
+    digest["orphan_formulas"] = len(orphans)
+    unread = graph.unread_inputs(wbv)
+    total_unread = sum(len(v) for v in unread.values())
+    digest["unread_inputs"] = total_unread
+    if total_unread:
+        sample = [c for cells in unread.values() for c in cells][:12]
+        store.add_finding(
+            run_id,
+            "INFO",
+            "XL-UNREAD-INPUT",
+            "(workbook)",
+            f"{total_unread} numeric input cell(s) that no formula reads",
+            detail="e.g. " + ", ".join(sample),
+            source="graph-analysis",
+            fix="Dead data, or a range that should include them and does not "
+            "— cross-check against any XL-SHORTRANGE findings.",
+        )
+
+    # defined-name hygiene
+    orphan_names, shadow_names = graph.name_audit()
+    if orphan_names:
+        store.add_finding(
+            run_id,
+            "LOW",
+            "XL-NAME-ORPHAN",
+            "(workbook)",
+            f"{len(orphan_names)} defined name(s) never referenced by any formula",
+            detail=", ".join(
+                f"{n} (sheet: {s})" if s else n for n, s in orphan_names[:15]
+            ),
+            source="graph-analysis",
+            fix="Delete unused names, or wire them in — a stale name that "
+            "points at moved data is a latent wrong reference.",
+        )
+    for n, s in shadow_names[:15]:
+        store.add_finding(
+            run_id,
+            "MEDIUM",
+            "XL-NAME-SHADOW",
+            f"{s}!{n}",
+            f"Sheet-scoped name '{n}' shadows a workbook-scoped name",
+            detail=f"formulas on '{s}' resolve {n} differently from every other sheet",
+            source="graph-analysis",
+            fix="Rename one of the two. Same spelling, different target, "
+            "per-sheet resolution — a classic silent divergence.",
+        )
+    return digest
+
+
 def workbook_unit(run_id, payload):
-    """Raw OOXML checks — element ordering is invisible to openpyxl."""
+    """Raw OOXML checks (element ordering is invisible to openpyxl) plus the
+    workbook-level graph audit: circular references, orphans, name hygiene."""
     target = payload["target"]
     digest = {"ooxml": {}, "order_violations": []}
+    digest.update(_graph_audit(run_id, target))
     try:
         with zipfile.ZipFile(target) as z:
             names = z.namelist()
@@ -642,13 +907,24 @@ def prove_unit(run_id, payload):
         if cmp2.get("uncovered"):
             detail.append(f"uncovered: {cmp2['uncovered'][:5]}")
         if cmp2.get("mismatches"):
-            detail.append(
-                "mismatches: "
-                + "; ".join(
-                    f"{m['ref']} cached={m['cached']} computed={m['computed']}"
-                    for m in cmp2["mismatches"][:5]
+            try:
+                g = _graph(target)
+                traced = []
+                for m in cmp2["mismatches"][:5]:
+                    lines = g.trace_precedents(m["ref"], depth=2, width=4)
+                    traced.append(
+                        f"{m['ref']} cached={m['cached']} computed={m['computed']}"
+                        + (f" [{' '.join(lines)}]" if lines else "")
+                    )
+                detail.append("mismatches: " + "; ".join(traced))
+            except Exception:  # noqa: BLE001 — tracing never blocks the verdict
+                detail.append(
+                    "mismatches: "
+                    + "; ".join(
+                        f"{m['ref']} cached={m['cached']} computed={m['computed']}"
+                        for m in cmp2["mismatches"][:5]
+                    )
                 )
-            )
         if err_cells:
             detail.append(f"error cells: {err_cells[:5]}")
         if order_bad:
@@ -699,7 +975,13 @@ def final_pass(run_id):
             f"{s.get('short_ranges', 0)} | {s['inconsistent']} | "
             f"{', '.join(s['volatile']) or '—'} |"
         )
+    wbs = [d["digest"] for d in ds if d["kind"] == "workbook"]
     verdict = []
+    if wbs and wbs[0].get("circular"):
+        verdict.append(
+            f"**{wbs[0]['circular']} circular reference chain(s)** — the one defect "
+            "that produces a plausible wrong number forever."
+        )
     if tot("error_cells"):
         verdict.append(f"**{tot('error_cells')} error cells** are saved in the file.")
     if tot("sum_mismatches"):
@@ -711,8 +993,40 @@ def final_pass(run_id):
         verdict.append(f"{tot('short_ranges')} total(s) stop one row short of live data.")
     if tot("inconsistent"):
         verdict.append(f"{tot('inconsistent')} lone formulas sit inside rows of identical ones.")
+    if tot("merged_in_range"):
+        verdict.append(
+            f"{tot('merged_in_range')} aggregation(s) run over merged cells — silent under-totals."
+        )
+    if tot("anchor_drift"):
+        verdict.append(f"{tot('anchor_drift')} formula(s) anchored differently from their siblings.")
+    if tot("date_mix_columns"):
+        verdict.append(f"{tot('date_mix_columns')} column(s) mix real dates with text dates.")
     if not verdict:
         verdict.append("No error cells, no total mismatches, no odd formulas found.")
+
+    graph_lines = []
+    if wbs:
+        gs = wbs[0].get("graph") or {}
+        if gs:
+            graph_lines.append(
+                f"- {gs.get('formula_cells', 0)} formula cells, "
+                f"{gs.get('edges', 0)} dependency edges, "
+                f"{gs.get('referenced_cells', 0)} cells read by formulas"
+            )
+            graph_lines.append(
+                f"- {gs.get('defined_names', 0)} defined name(s), "
+                f"{gs.get('tables', 0)} table(s) resolved into the graph"
+            )
+            graph_lines.append(
+                f"- {wbs[0].get('circular', 0)} circular chain(s), "
+                f"{wbs[0].get('orphan_formulas', 0)} formula(s) nothing depends on, "
+                f"{wbs[0].get('unread_inputs', 0)} numeric input(s) no formula reads"
+            )
+            if gs.get("computed_ref_cells"):
+                graph_lines.append(
+                    f"- {gs['computed_ref_cells']} cell(s) compute references at run "
+                    "time (INDIRECT/OFFSET) — the graph is a lower bound there"
+                )
 
     proof_lines = []
     if proofs:
@@ -753,6 +1067,10 @@ def final_pass(run_id):
     sections = [
         ("Workbook teardown", "\n".join(rows)),
         ("Findings verdict", "\n".join(f"- {v}" for v in verdict)),
+    ]
+    if graph_lines:
+        sections.append(("Dependency graph", "\n".join(graph_lines)))
+    sections += [
         ("Proof", "\n".join(proof_lines)),
         (
             "What this could not check",
@@ -802,8 +1120,21 @@ def plan_items(run_id):
                 why="#REF!/#VALUE! are saved, not transient.",
                 evidence=ev("XL-ERRCELL"),
                 read="Excel error types and what each one means",
-                check="Trace one error cell to its precedent.",
-                question="Which precedent broke, and when?",
+                check="The finding names the error chain and its root — open "
+                "the root cell and confirm the diagnosis.",
+                question="Why did the break propagate exactly as far as it did?",
+            )
+        )
+    if "XL-CIRCULAR" in codes:
+        items.append(
+            dict(
+                topic="Circular references",
+                why="A cell depends, directly or through a chain, on itself.",
+                evidence=ev("XL-CIRCULAR"),
+                read="Iterative calculation and why 'it shows a number' is not 'it works'",
+                check="Follow the named cycle in the finding; pick the one cell "
+                "that should take an outside input.",
+                question="With iteration on, what number does Excel converge to — and why is it wrong?",
             )
         )
     if "XL-SHORTRANGE" in codes:
