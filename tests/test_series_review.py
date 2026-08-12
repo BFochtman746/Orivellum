@@ -525,6 +525,39 @@ class ApiTests(_Base):
         self._node(b2["id"], c2, "TimePoint", "The Fall", description="in 200")
         return b1, b2
 
+    def test_start_failure_fails_both_run_and_operation(self):
+        from unittest import mock
+
+        b1, _b2 = self._seed()
+        with mock.patch(
+            "orivellum.capabilities.operations.runner.start_operation_run",
+            return_value=False,
+        ):
+            r = self.client.post(
+                "/api/review-runs",
+                json={"mode": "full_series", "work_id": b1["id"]},
+                headers=AUTH_HEADERS,
+            )
+        self.assertEqual(r.status_code, 409)
+        runs = sr.list_runs(self.db, work_id=b1["id"])
+        self.assertEqual(runs[0]["status"], "failed")
+        from orivellum.capabilities.operations import store as op_store
+        op = op_store.get_operation(self.db, runs[0]["operation_id"])
+        self.assertEqual(op["state"], "failed")
+
+    def test_chapter_mode_rejects_foreign_chapter_via_api(self):
+        b1, b2 = self._seed()
+        row = self.db.read_conn().execute(
+            "SELECT id FROM book_chapters WHERE work_id=?", (b2["id"],)
+        ).fetchone()
+        r = self.client.post(
+            "/api/review-runs",
+            json={"mode": "chapter_vs_book", "work_id": b1["id"],
+                  "chapter_id": row["id"]},
+            headers=AUTH_HEADERS,
+        )
+        self.assertEqual(r.status_code, 422)
+
     def test_auth_required(self):
         self.assertIn(self.client.get("/api/review-runs").status_code, (401, 403))
         self.assertIn(self.client.get("/api/review-runs/modes").status_code,
@@ -679,6 +712,47 @@ class ReviewHardeningTests(_Base):
         for e in canon_spans:
             self.assertTrue(e["source_ref"])
             self.assertIsNone(e["chapter_id"])
+
+    def test_chapter_id_must_exist_and_belong_to_the_work(self):
+        b1, b2, _, c2 = self._two_book_series()
+        with self.assertRaises(sr.SeriesReviewError):
+            sr.create_run(self.db, mode="chapter_vs_book", work_id=b1["id"],
+                          series_id=None, chapter_id="no-such-chapter")
+        # chapter belongs to book two, not book one
+        with self.assertRaises(sr.SeriesReviewError):
+            sr.create_run(self.db, mode="change_impact", work_id=b1["id"],
+                          series_id=None, chapter_id=c2)
+
+    def test_nonexistent_or_empty_series_is_refused(self):
+        with self.assertRaises(sr.SeriesReviewError):
+            sr.resolve_scope(self.db, mode="full_series",
+                             work_id=None, series_id="no-such-series")
+        empty = self.series_store.create_series(title="Empty Shelf")
+        with self.assertRaises(sr.SeriesReviewError):
+            sr.resolve_scope(self.db, mode="full_series",
+                             work_id=None, series_id=empty["id"])
+
+    def test_finalized_run_is_never_clobbered_back_to_running(self):
+        """The route's running-transition is a CAS on status='pending'."""
+        b1, _, _, _ = self._two_book_series()
+        run = sr.create_run(self.db, mode="full_series",
+                            work_id=b1["id"], series_id=None)
+        sr.build_book_ledger(self.db, b1["id"])
+        scope = (run["params"] or {}).get("scope") or run["scope"]
+        findings = sr.reconcile(self.db, mode="full_series", scope=scope)
+        manifest = sr.build_manifest(self.db, mode="full_series", scope=scope)
+        sr.finalize_run(self.db, run["id"], findings=findings, manifest=manifest)
+        # Simulate the route's post-create transition arriving late: the CAS
+        # guard must leave the finalized run untouched.
+        from datetime import UTC, datetime
+        with self.db._lock:
+            self.db._conn.execute(
+                "UPDATE review_run SET status='running', updated_at=? "
+                "WHERE id=? AND status='pending'",
+                (datetime.now(UTC).isoformat(), run["id"]),
+            )
+            self.db._conn.commit()
+        self.assertEqual(sr.get_run(self.db, run["id"])["status"], "done")
 
 
 if __name__ == "__main__":

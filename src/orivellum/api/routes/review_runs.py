@@ -123,28 +123,30 @@ def create_review_run(body: CreateRunBody):
     )
     from datetime import UTC, datetime
 
+    # Transition to 'running' BEFORE handing the operation to the runner:
+    # a short review can finalize to 'done' almost immediately, and a
+    # post-submit unconditional write would overwrite 'done' with 'running'
+    # forever.  The guard on status='pending' makes this a CAS so nothing
+    # the reconcile step wrote can be clobbered.
     with db._lock:
         db._conn.execute(
-            "UPDATE review_run SET operation_id=?, updated_at=? WHERE id=?",
+            "UPDATE review_run SET operation_id=?, status='running', updated_at=? "
+            "WHERE id=? AND status='pending'",
             (op_id, datetime.now(UTC).isoformat(), run["id"]),
         )
         db._conn.commit()
     if not start_operation_run(db, get_config(), op_id):
-        # Keep both records honest: the run never started, so it is failed —
-        # never left 'running' with a pending operation behind it.
+        # Keep BOTH records honest: fail the run AND the pending operation —
+        # a lingering pending op would block scheduler admission forever.
+        store.fail_pending_operation(db, op_id, "review run admission rejected")
         with db._lock:
             db._conn.execute(
-                "UPDATE review_run SET status='failed', updated_at=? WHERE id=?",
+                "UPDATE review_run SET status='failed', updated_at=? "
+                "WHERE id=? AND status='running'",
                 (datetime.now(UTC).isoformat(), run["id"]),
             )
             db._conn.commit()
         raise HTTPException(409, "Could not start the review operation.")
-    with db._lock:
-        db._conn.execute(
-            "UPDATE review_run SET status='running', updated_at=? WHERE id=?",
-            (datetime.now(UTC).isoformat(), run["id"]),
-        )
-        db._conn.commit()
     return {"run": _with_effective(db, sr.get_run(db, run["id"])), "scope": scope}
 
 

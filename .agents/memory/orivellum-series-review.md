@@ -1,24 +1,16 @@
 ---
 name: Series continuity review
-description: Evidence-backed whole-series continuity review pipeline — ledgers, comparators, coverage manifests, durable runs.
+description: Durable-run and coverage-honesty rules for whole-series continuity reviews.
 ---
 
-# Series continuity review (capabilities/series_review.py)
+# Series continuity review — durable lessons
 
-- **Scope is snapshotted at run creation** (stored in `review_run.params["scope"]`). Reconcile and the coverage manifest consume ONLY that snapshot — never live series membership.
-  **Why:** a membership change while a durable run is paused could otherwise let the manifest claim coverage of books the run never built ledgers for.
-  **How to apply:** any new step or report that needs the run's book list must read the snapshot, not `resolve_scope()`.
+- **Durable jobs must snapshot their inputs at creation.** The review scope (book list) is stored on the run; reconciliation and the coverage manifest consume only that snapshot.
+  **Why:** series membership can change while a durable run is paused — resolving live membership at reconcile time let a manifest claim coverage of books the run never checked.
+  **How to apply:** any new long-running job whose result claims "what was checked" must persist its input set up front and never re-resolve it.
 
-- **Span verification at ledger build:** any passage-cited item whose quote is not found in the chapter text is flagged `span_unverified`, excluded from all comparators, named in the manifest's unreviewed regions, and forces `partial=true`. Test fixtures must seed quotes that actually appear in the chapter text (helper appends them).
+- **Evidence must be verified where it is consumed, not just where it is created.** Even though ATLAS grounds quotes at extraction (LAW 3), text can change afterwards — the ledger re-verifies every quote against current chapter text; unverifiable spans are excluded from comparators AND force a partial-coverage label. Non-passage evidence (canon facts) is explicitly labeled as such, never presented with an empty quote as if it were a manuscript span.
 
-- **Canon-fact evidence is never presented as a passage span** — spans with `chapter_id=None` carry `source:"canon"` + `source_ref` instead of an empty quote.
+- **Route-side lifecycle transitions around background submission must be CAS.** Set the "running" state BEFORE handing the operation to the runner (guarded on the prior state); a post-submit unconditional write can overwrite a fast job's "done" and leave the record spinning forever. On admission failure, fail BOTH the domain record and the pending operation (`fail_pending_operation`) — a lingering pending op blocks scheduler admission.
 
-- **Coverage honesty rule:** ANY exclusion (skipped/failed/stale chapter, missing ledger, unverified span) forces the partial label. There is no code path that upgrades a run to "full" after the fact.
-
-- Findings identity = `dedupe_key` stable across runs; author dispositions (intentional/dismissed/resolved/deferred) are inherited on re-run and never resurrected as open. Ledger rebuilds carry approved/rejected forward by `item_key`; rejected items never feed comparators.
-
-- Runs execute as operations-runner steps (`series_review.ledger` per book + `series_review.reconcile`); route creates the operation directly via `store.create_operation` (per-step `work_id` params are legitimate here). If `start_operation_run` returns False, the run must be marked `failed` — never left `running`.
-
-- `chapter_vs_book` and `change_impact` REQUIRE a `chapter_id` (422 otherwise); UI shows a chapter picker fed by `GET /works/{id}/chapters`.
-
-- Terminology comparator groups by a space-squashed key ("Black-water Keep" vs "Blackwater Keep" is exactly the rename to catch); canon subjects strip years so year-only differences collide in the timeline comparator; HISTORICAL canon raises severity to critical.
+- Coverage honesty rule: ANY exclusion (skipped/failed/stale chapter, missing ledger, unverified span) forces the partial label; there is no path that upgrades a run to "full" after the fact. Scope inputs are validated up front — nonexistent series, empty series, and chapters not belonging to the requested work are refused rather than producing an honest-looking zero-finding "full review".

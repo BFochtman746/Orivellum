@@ -515,11 +515,17 @@ def resolve_scope(db: OrivellumDB, *, mode: str, work_id: str | None,
             raise SeriesReviewError(f"Work {work_id!r} not found")
         return [{"work_id": work_id, "title": w["title"], "order": 1}]
     sid = series_id
+    if sid and not store.get_series(sid):
+        raise SeriesReviewError(f"Series {sid!r} not found")
     if not sid and work_id:
         sfw = store.series_for_work(work_id)
         sid = sfw["series_id"] if sfw else None
     if sid:
         members = store.list_members(sid)
+        if not members:
+            raise SeriesReviewError(
+                f"Series {sid!r} has no member volumes — nothing to review"
+            )
         scope = [
             {"work_id": m["work_id"], "title": m.get("work_title") or m["work_id"],
              "order": int(m["volume"])}
@@ -970,8 +976,20 @@ def create_run(db: OrivellumDB, *, mode: str, work_id: str | None,
                params: dict | None = None) -> dict:
     if mode not in MODES:
         raise SeriesReviewError(f"mode must be one of {MODES}")
-    if mode in ("chapter_vs_book", "change_impact") and not chapter_id:
-        raise SeriesReviewError(f"{mode} requires a chapter_id")
+    if mode in ("chapter_vs_book", "change_impact"):
+        if not chapter_id:
+            raise SeriesReviewError(f"{mode} requires a chapter_id")
+        if not work_id:
+            raise SeriesReviewError(f"{mode} requires a work_id")
+        row = db.read_conn().execute(
+            "SELECT work_id FROM book_chapters WHERE id=?", (chapter_id,)
+        ).fetchone()
+        if row is None:
+            raise SeriesReviewError(f"Chapter {chapter_id!r} not found")
+        if row["work_id"] != work_id:
+            raise SeriesReviewError(
+                f"Chapter {chapter_id!r} does not belong to work {work_id!r}"
+            )
     scope = resolve_scope(db, mode=mode, work_id=work_id, series_id=series_id)
     # Snapshot the scope on the run: a durable job must review exactly the
     # books it was started for, even if series membership changes while it
