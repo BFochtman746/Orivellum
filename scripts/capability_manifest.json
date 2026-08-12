@@ -24,8 +24,6 @@
  ],
  "contract_backlog": [
   "DELETE /api/backups/restore/pending",
-  "DELETE /api/bench/goldens/{golden_id}",
-  "DELETE /api/forge/projects/{project_id}",
   "DELETE /api/library/{doc_id}/read-position",
   "DELETE /api/notes/{block_id}",
   "DELETE /api/operations/playbooks/{playbook_id}",
@@ -42,7 +40,6 @@
   "DELETE /api/workbench/projects/{project_id}",
   "DELETE /api/works/{work_id}/cover",
   "DELETE /api/works/{work_id}/domain/sources/{source_id}",
-  "GET /api/assay/instruments",
   "GET /api/assay/promotion/dashboard",
   "GET /api/auth/me",
   "GET /api/backups/restore/pending",
@@ -60,7 +57,6 @@
   "GET /api/conversations/{conv_id}/summary",
   "GET /api/diagnostics",
   "GET /api/finishing/atelier/books",
-  "GET /api/finishing/atelier/books/{slug}",
   "GET /api/finishing/atelier/series",
   "GET /api/finishing/atelier/series/{slug}",
   "GET /api/finishing/atelier/series/{slug}/books",
@@ -75,11 +71,9 @@
   "GET /api/forge/projects/{project_id}/jobs/{job_id}",
   "GET /api/forge/projects/{project_id}/jobs/{job_id}/artifact/{artifact_type}",
   "GET /api/forge/projects/{project_id}/jobs/{job_id}/events",
-  "GET /api/gap-oracle/labels",
   "GET /api/gap-oracle/measurements",
   "GET /api/governance/conflicts",
   "GET /api/governance/findings",
-  "GET /api/governance/findings/{finding_id}",
   "GET /api/governance/pending",
   "GET /api/governance/stats",
   "GET /api/intake/{doc_id}/research-status",
@@ -124,7 +118,6 @@
   "GET /api/system/auto-dedup/stats",
   "GET /api/system/diagnostics",
   "GET /api/system/extraction-templates",
-  "GET /api/system/extraction-templates/{template_id}",
   "GET /api/system/jobs",
   "GET /api/system/lemonade",
   "GET /api/system/notifications",
@@ -147,7 +140,6 @@
   "GET /api/workbench/projects/{project_id}/rundown",
   "GET /api/workbench/projects/{project_id}/versions/{version_no}/download",
   "GET /api/workbench/projects/{project_id}/versions/{version_no}/report",
-  "GET /api/works/proposals",
   "GET /api/works/{work_id}/chapters/{chapter_id}/knowledge",
   "GET /api/works/{work_id}/collections",
   "GET /api/works/{work_id}/completeness-assertions",
@@ -176,14 +168,12 @@
   "GET /api/works/{work_id}/trailers/{trailer_id}/export",
   "PATCH /api/finishing/atelier/books/{slug}/print",
   "PATCH /api/finishing/atelier/series/{slug}/brand",
-  "PATCH /api/finishing/press/books/{slug}/style",
   "PATCH /api/governance/findings/{finding_id}/resolve",
   "PATCH /api/mail/drafts/{action_request_id}",
   "PATCH /api/mail/settings",
   "PATCH /api/operations/schedules/{schedule_id}",
   "PATCH /api/profile",
   "PATCH /api/series/{series_id}",
-  "PATCH /api/series/{series_id}/members/{work_id}",
   "PATCH /api/system/settings/models",
   "PATCH /api/system/user-memory/{memory_id}",
   "PATCH /api/wa/canon-proposals/{proposal_id}",
@@ -228,7 +218,6 @@
   "POST /api/generate/workshop/plan",
   "POST /api/governance/batch-review",
   "POST /api/governance/conflicts/{conflict_id}/resolve",
-  "POST /api/governance/findings",
   "POST /api/library/scan-duplicates",
   "POST /api/library/{doc_id}/restore-file",
   "POST /api/mail/actions/{action_id}/undo",
@@ -323,9 +312,8 @@
    "ui_route": "/backups"
   },
   "DELETE /api/bench/goldens/{golden_id}": {
-   "status": "pwa",
-   "module": "bench",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "bench"
   },
   "DELETE /api/claims/{claim_id}": {
    "status": "experimental",
@@ -337,9 +325,8 @@
    "ui_route": "/chat"
   },
   "DELETE /api/forge/projects/{project_id}": {
-   "status": "pwa",
-   "module": "forge",
-   "ui_route": "/forge/:projectId"
+   "status": "experimental",
+   "module": "forge"
   },
   "DELETE /api/knowledge/{item_id}": {
    "status": "pwa",
@@ -480,9 +467,8 @@
    "module": "actions"
   },
   "GET /api/assay/instruments": {
-   "status": "pwa",
-   "module": "assay",
-   "ui_route": "/assay"
+   "status": "experimental",
+   "module": "assay"
   },
   "GET /api/assay/instruments/{key}/parity": {
    "status": "experimental",
@@ -685,9 +671,8 @@
    "ui_route": "/finishing"
   },
   "GET /api/finishing/atelier/books/{slug}": {
-   "status": "pwa",
-   "module": "finishing",
-   "ui_route": "/finishing"
+   "status": "experimental",
+   "module": "finishing"
   },
   "GET /api/finishing/atelier/books/{slug}/hardcover": {
    "status": "experimental",
@@ -788,9 +773,8 @@
    "module": "forge"
   },
   "GET /api/gap-oracle/labels": {
-   "status": "pwa",
-   "module": "gaps",
-   "ui_route": "/works/:workId/gap-oracle"
+   "status": "experimental",
+   "module": "gaps"
   },
   "GET /api/gap-oracle/measurements": {
    "status": "pwa",
@@ -822,9 +806,8 @@
    "ui_route": "/governance"
   },
   "GET /api/governance/findings/{finding_id}": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/governance"
+   "status": "experimental",
+   "module": "system"
   },
   "GET /api/governance/outbox": {
    "status": "pwa",
@@ -1304,9 +1287,8 @@
    "ui_route": "/system"
   },
   "GET /api/system/extraction-templates/{template_id}": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "GET /api/system/hardware": {
    "status": "pwa",
@@ -1324,9 +1306,8 @@
    "ui_route": "/system"
   },
   "GET /api/system/jobs/{job_id}": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "GET /api/system/lemonade": {
    "status": "pwa",
@@ -1515,9 +1496,8 @@
    "ui_route": "/chat"
   },
   "GET /api/works/proposals": {
-   "status": "pwa",
-   "module": "works",
-   "ui_route": "/review"
+   "status": "experimental",
+   "module": "works"
   },
   "GET /api/works/types": {
    "status": "pwa",
@@ -1544,9 +1524,8 @@
    "ui_route": "/works/:workId"
   },
   "GET /api/works/{work_id}/brainstorm/{session_id}": {
-   "status": "pwa",
-   "module": "works",
-   "ui_route": "/works/:workId"
+   "status": "experimental",
+   "module": "works"
   },
   "GET /api/works/{work_id}/chapters": {
    "status": "pwa",
@@ -1842,9 +1821,8 @@
    "ui_route": "/finishing"
   },
   "PATCH /api/finishing/press/books/{slug}/style": {
-   "status": "pwa",
-   "module": "finishing",
-   "ui_route": "/finishing"
+   "status": "experimental",
+   "module": "finishing"
   },
   "PATCH /api/governance/findings/{finding_id}/resolve": {
    "status": "pwa",
@@ -1897,9 +1875,8 @@
    "ui_route": "/series"
   },
   "PATCH /api/series/{series_id}/members/{work_id}": {
-   "status": "pwa",
-   "module": "series",
-   "ui_route": "/series/:seriesId"
+   "status": "experimental",
+   "module": "series"
   },
   "PATCH /api/system/jobs/{job_id}/state": {
    "status": "experimental",
@@ -1930,9 +1907,8 @@
    "ui_route": "/chat"
   },
   "PATCH /api/works/{work_id}/compass": {
-   "status": "pwa",
-   "module": "works",
-   "ui_route": "/chat"
+   "status": "experimental",
+   "module": "works"
   },
   "PATCH /api/works/{work_id}/findings/{finding_id}": {
    "status": "pwa",
@@ -2268,9 +2244,8 @@
    "ui_route": "/governance"
   },
   "POST /api/governance/findings": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/governance"
+   "status": "experimental",
+   "module": "system"
   },
   "POST /api/governance/rescore": {
    "status": "admin_tooling",

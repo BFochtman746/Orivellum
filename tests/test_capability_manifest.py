@@ -257,6 +257,52 @@ class TestUiConsumerScan:
         src = {"b.tsx": "const { data } = useGetWorkStats(workId);"}
         assert self._has("GET", "/api/works/{work_id}/stats", src, hooks)
 
+    def test_get_call_does_not_satisfy_post_on_same_path(self):
+        """Regression: a UI GET to a shared path must NOT count as evidence
+        for the POST/PATCH/DELETE operations on that same path."""
+        src = {"a.tsx": "const r = await apiFetch(`${BASE}/works`);"}
+        assert self._has("GET", "/api/works", src)
+        assert not self._has("POST", "/api/works", src)
+        assert not self._has("DELETE", "/api/works", src)
+
+    def test_method_option_evidence(self):
+        src = {"a.tsx": 'apiFetch(`${BASE}/works`, { method: "POST", body })'}
+        assert self._has("POST", "/api/works", src)
+        assert not self._has("GET", "/api/works", src)
+
+    def test_method_option_of_next_request_not_attributed(self):
+        src = {"a.tsx": 'apiFetch(`${BASE}/works`); apiFetch(`${BASE}/other`, { method: "POST" })'}
+        assert not self._has("POST", "/api/works", src)
+
+    def test_xhr_open_evidence(self):
+        src = {"u.tsx": 'xhr.open("POST", `${BASE}/library/upload`);'}
+        assert self._has("POST", "/api/library/upload", src)
+        assert not self._has("GET", "/api/library/upload", src)
+
+    def test_verb_named_helper_evidence(self):
+        src = {"w.tsx": "await apiPatch(`/write/documents/${doc.id}`, { title })"}
+        assert self._has("PATCH", "/api/write/documents/{doc_id}", src)
+        assert not self._has("DELETE", "/api/write/documents/{doc_id}", src)
+
+    def test_ternary_url_shares_the_request_verb(self):
+        # const url = cond ? urlA : urlB; apiFetch(url, { method: "POST" })
+        src = {
+            "t.tsx": "const url = isPdf ? `${API}/transcribe` : `${API}/projects/import`;\n"
+            'const r = await apiFetch(url, { method: "POST", body: form });',
+            "base.tsx": "const API = `${p}api/workbench`;",
+        }
+        merged = {"t.tsx": src["base.tsx"] + src["t.tsx"]}
+        assert self._has("POST", "/api/workbench/transcribe", merged)
+        assert self._has("POST", "/api/workbench/projects/import", merged)
+
+    def test_method_expression_ternary_counts_both_verbs(self):
+        src = {
+            "s.tsx": "apiFetch(`${API}/api/system/extraction-templates/${id}`, "
+            '{ method: editing ? "PUT" : "POST" })'
+        }
+        assert self._has("PUT", "/api/system/extraction-templates/{template_id}", src)
+        assert not self._has("GET", "/api/system/extraction-templates/{template_id}", src)
+
     def test_no_evidence(self):
         src = {"a.tsx": "nothing relevant here", "b.tsx": 'fetch("/api/other/thing")'}
         assert not self._has("POST", "/api/system/nightshift/run", src)
