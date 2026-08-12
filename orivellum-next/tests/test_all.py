@@ -649,6 +649,88 @@ class TestOrivellumProbes(Base):
         self.assertEqual(facts, [])
 
 
+class TestGateAPIRoundTrip(unittest.TestCase):
+    """N4 API-level regression: gate/open → gate/resolve (with request_id) → gate/read
+    must return updated count with no KeyError / HTTP error.
+    """
+
+    def setUp(self):
+        import tempfile
+        import app.api as _api
+        try:
+            from fastapi.testclient import TestClient  # type: ignore
+        except ImportError:
+            self.skipTest("fastapi not installed; skip HTTP-level test")
+        # Redirect the handler DB to a fresh temp file so tests are isolated.
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self._tmp.close()
+        self._old_dbpath = _api.DBPATH
+        _api.DBPATH = Path(self._tmp.name)
+        self.client = TestClient(_api.build_fastapi(), raise_server_exceptions=True)
+
+    def tearDown(self):
+        import os
+        import app.api as _api
+        _api.DBPATH = self._old_dbpath
+        try:
+            os.unlink(self._tmp.name)
+        except OSError:
+            pass
+
+    def _open_gate(self):
+        r = self.client.post("/api/gate/open", json={
+            "thread_id": "rt-test",
+            "target": "T",
+            "cost_units": 10,
+            "facets": [{
+                "name": "scope",
+                "question": "Q?",
+                "why": "W.",
+                "default_value": "a",
+                "default_source": "src",
+                "options": [{"label": "A", "value": "a"}],
+            }],
+        })
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()["id"]
+
+    def test_resolve_with_request_id_updates_answered_count(self):
+        """N4 regression: resolve must include request_id; response must show answered=1."""
+        rid = self._open_gate()
+
+        # Read initial state
+        r2 = self.client.post("/api/gate/read", json={"request_id": rid})
+        self.assertEqual(r2.status_code, 200, r2.text)
+        self.assertEqual(r2.json()["answered"], 0)
+        fid = r2.json()["facets"][0]["id"]
+
+        # Resolve — request_id is required by h_gate_resolve; must be present
+        r3 = self.client.post("/api/gate/resolve", json={
+            "request_id": rid,
+            "facet_id": fid,
+            "value": "a",
+            "kind": "option",
+        })
+        self.assertEqual(r3.status_code, 200, r3.text)
+        self.assertEqual(r3.json()["answered"], 1,
+                         "resolve response must return the updated gate state")
+
+    def test_resolve_without_request_id_is_rejected(self):
+        """Confirm the handler raises KeyError (→ 422/500) when request_id is missing —
+        this is why the JS must always send it."""
+        rid = self._open_gate()
+        r2 = self.client.post("/api/gate/read", json={"request_id": rid})
+        fid = r2.json()["facets"][0]["id"]
+        # Missing request_id should cause a server error, not a silent 200
+        r3 = self.client.post("/api/gate/resolve", json={
+            "facet_id": fid,
+            "value": "a",
+            "kind": "option",
+        })
+        self.assertNotEqual(r3.status_code, 200,
+                            "missing request_id must not silently succeed")
+
+
 def main() -> int:
     suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
     return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1

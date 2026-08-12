@@ -58,6 +58,27 @@ def _orivellum_db_path() -> Path | None:
     return None
 
 
+class _ReadOnlyDB:
+    """Minimal read-only probe connection against the main Orivellum DB.
+
+    Uses SQLite URI mode with mode=ro so the connection cannot write or
+    create tables.  Does NOT execute orivellum-next's schema.sql — this
+    is intentional: the production DB must not be mutated by a probe.
+    """
+
+    def __init__(self, path: Path) -> None:
+        import sqlite3 as _sqlite3
+        uri = f"file:{path}?mode=ro"
+        self.conn = _sqlite3.connect(uri, uri=True)
+        self.conn.row_factory = _sqlite3.Row
+
+    def q1(self, sql: str, p: tuple = ()):
+        return self.conn.execute(sql, p).fetchone()
+
+    def close(self) -> None:
+        self.conn.close()
+
+
 def _db() -> DB:
     return DB(DBPATH)
 
@@ -127,7 +148,9 @@ def h_next_build(body):
     db = _db()
     # Open the main Orivellum DB for probes tagged "db": "orivellum", if it exists.
     orivellum_path = _orivellum_db_path()
-    orivellum_db = DB(orivellum_path) if orivellum_path else None
+    # Use the read-only wrapper — probes must not initialize orivellum-next's
+    # schema inside the production content DB.
+    orivellum_db = _ReadOnlyDB(orivellum_path) if orivellum_path else None
     try:
         probes = body.get("probes")
         if probes is None:

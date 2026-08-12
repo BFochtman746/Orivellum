@@ -743,6 +743,7 @@
             if (isOther && freeformDiv) { freeformDiv.querySelector('textarea').focus(); return; }
             if (!wasOn && !chip.classList.contains('other')) {
               apiPost('/api/gate/resolve', {
+                request_id: _rid,           // required by h_gate_resolve handler
                 facet_id: f.id,
                 value: chip.getAttribute('data-value'),
                 kind: 'option',
@@ -761,6 +762,7 @@
             var val = textarea.value.trim();
             if (!val) return;
             apiPost('/api/gate/resolve', {
+              request_id: _rid,             // required by h_gate_resolve handler
               facet_id: f.id,
               value: val,
               kind: 'freeform',
