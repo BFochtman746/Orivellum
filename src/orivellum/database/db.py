@@ -6180,36 +6180,74 @@ class OrivellumDB:
             rows = self._conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
+    def oracle_fingerprint(self, detector: str) -> str:
+        """Fingerprint of the detector's current scoreable label set.
+
+        Measurements store the fingerprint they were computed over; the
+        blocking gate only honours a measurement whose fingerprint still
+        matches — any relabel re-locks the gate until re-evaluated.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT work_id, pair_key, label, frequency FROM gap_oracle_label "
+                "WHERE detector=? AND label != 'unknown' "
+                "ORDER BY work_id, pair_key",
+                (detector,),
+            ).fetchall()
+        blob = "\n".join(
+            f"{r['work_id']}|{r['pair_key']}|{r['label']}|{r['frequency']}" for r in rows
+        )
+        return hashlib.sha256(blob.encode()).hexdigest()
+
     def record_detector_measurement(
         self,
         detector: str,
         *,
-        n_labeled: int,
-        n_unknown_excluded: int,
         precision: float | None,
         recall: float | None,
         f1: float | None,
         kappa: float | None,
         strata: dict,
     ) -> dict:
-        """Persist one open-world harness run for a detector."""
+        """Persist one open-world harness run for a detector.
+
+        The label counts and fingerprint are DERIVED HERE from the oracle
+        table — callers cannot inject inflated counts to unlock the blocking
+        gate.  A well-formed stratified figure (rare + common bands) is
+        required.
+        """
+        if not isinstance(strata, dict) or not {"rare", "common"} <= set(strata):
+            raise ValueError(
+                "measurement refused: strata must carry both 'rare' and 'common' bands"
+            )
         mid = _uuid()
+        fingerprint = self.oracle_fingerprint(detector)
         with self._lock:
+            counts = self._conn.execute(
+                "SELECT SUM(label != 'unknown') AS scoreable, "
+                "SUM(label = 'unknown') AS unknown "
+                "FROM gap_oracle_label WHERE detector=?",
+                (detector,),
+            ).fetchone()
+            n_labeled = counts["scoreable"] or 0
+            n_unknown = counts["unknown"] or 0
             self._conn.execute(
                 """INSERT INTO gap_detector_measurement
                        (id, detector, n_labeled, n_unknown_excluded, precision_overall,
-                        recall_overall, f1_overall, kappa, strata, measured_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                        recall_overall, f1_overall, kappa, strata, labels_fingerprint,
+                        measured_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     mid,
                     detector,
                     int(n_labeled),
-                    int(n_unknown_excluded),
+                    int(n_unknown),
                     precision,
                     recall,
                     f1,
                     kappa,
                     json.dumps(strata),
+                    fingerprint,
                     _now(),
                 ),
             )
@@ -6236,16 +6274,21 @@ class OrivellumDB:
         return [dict(r) for r in rows]
 
     def has_measured_detector(self, detector: str) -> bool:
-        """True when the detector carries a harness measurement over enough labels.
+        """True when the detector carries a CURRENT harness measurement over
+        enough labels.
 
         This is the blocking-status gate: a gap may only carry
-        ``blocking_active_work`` severity weight when its detector has measured,
-        stratified figures from the open-world harness.
+        ``blocking_active_work`` severity weight when its detector has
+        measured, stratified figures from the open-world harness — computed
+        over the oracle as it stands now.  A stale measurement (any label
+        added, revised, or removed since) does not count.
         """
         if not (detector or "").strip():
             return False
         row = self.latest_detector_measurement(detector.strip())
-        return bool(row and row["n_labeled"] >= self.MIN_ORACLE_LABELED)
+        if not row or row["n_labeled"] < self.MIN_ORACLE_LABELED:
+            return False
+        return row["labels_fingerprint"] == self.oracle_fingerprint(detector.strip())
 
     # -------------------------------------------------------------------------
     # Job state transitions (M0.2 — JOB_SM)

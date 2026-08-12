@@ -142,6 +142,7 @@ def test_harness_open_world_scoring_and_stratification(tmp_path):
     # persisted measurement
     m = db.latest_detector_measurement(DET)
     assert m is not None and m["n_labeled"] == 4
+    assert m["labels_fingerprint"] == db.oracle_fingerprint(DET)
     # 4 labels is below the blocking floor
     assert result["meets_blocking_floor"] is False
     assert db.has_measured_detector(DET) is False
@@ -191,22 +192,24 @@ def test_unmeasured_detector_cannot_reach_blocking_severity(tmp_path):
     assert DET in meta["blocking_suppressed"]
 
 
+def _label_floor(db, wid, n, *, prefix="pair"):
+    """Author n scoreable labels (arbitrary pairs — misses are labels too)."""
+    for i in range(n):
+        db.upsert_oracle_label(
+            wid, DET, f"{prefix}{i} 1990", "is_not_gap", signed_by="ben", frequency=1
+        )
+
+
 def test_measured_detector_over_floor_can_reach_blocking_severity(tmp_path):
     import json
 
+    from orivellum.capabilities.gap_harness import evaluate_detector
+
     db = _make_db(tmp_path)
     work = db.create_work("W")
-    # a persisted measurement over the label floor unlocks blocking status
-    db.record_detector_measurement(
-        DET,
-        n_labeled=db.MIN_ORACLE_LABELED,
-        n_unknown_excluded=3,
-        precision=0.9,
-        recall=0.8,
-        f1=0.85,
-        kappa=0.7,
-        strata={"rare": {"n": 10}, "common": {"n": 10}},
-    )
+    # a real harness run over >= floor CURRENT labels unlocks blocking
+    _label_floor(db, work["id"], db.MIN_ORACLE_LABELED)
+    evaluate_detector(db, DET)
     assert db.has_measured_detector(DET) is True
     gap = _blocking_gap(db, work["id"], DET)
     assert gap["severity"] == "critical"
@@ -214,20 +217,56 @@ def test_measured_detector_over_floor_can_reach_blocking_severity(tmp_path):
 
 
 def test_measurement_below_floor_does_not_unlock_blocking(tmp_path):
+    from orivellum.capabilities.gap_harness import evaluate_detector
+
     db = _make_db(tmp_path)
     work = db.create_work("W")
-    db.record_detector_measurement(
+    _label_floor(db, work["id"], db.MIN_ORACLE_LABELED - 1)
+    evaluate_detector(db, DET)
+    gap = _blocking_gap(db, work["id"], DET)
+    assert gap["severity"] != "critical"
+
+
+def test_measurement_counts_cannot_be_injected(tmp_path):
+    """record_detector_measurement derives counts from the oracle table —
+    a caller cannot inflate n_labeled to unlock blocking, and malformed
+    (unstratified) figures are refused."""
+    db = _make_db(tmp_path)
+    db.create_work("W")
+    with pytest.raises(ValueError, match="strata"):
+        db.record_detector_measurement(DET, precision=1.0, recall=1.0, f1=1.0, kappa=1.0, strata={})
+    row = db.record_detector_measurement(
         DET,
-        n_labeled=db.MIN_ORACLE_LABELED - 1,
-        n_unknown_excluded=0,
         precision=1.0,
         recall=1.0,
         f1=1.0,
         kappa=1.0,
-        strata={},
+        strata={"rare": {"n": 50}, "common": {"n": 50}},
     )
+    assert row["n_labeled"] == 0  # derived: no labels exist
+    assert db.has_measured_detector(DET) is False
+
+
+def test_relabeling_relocks_the_blocking_gate(tmp_path):
+    """A measurement is bound to the oracle it was computed over: any label
+    change after measuring makes it stale, and blocking re-locks until the
+    detector is re-evaluated."""
+    from orivellum.capabilities.gap_harness import evaluate_detector
+
+    db = _make_db(tmp_path)
+    work = db.create_work("W")
+    _label_floor(db, work["id"], db.MIN_ORACLE_LABELED)
+    evaluate_detector(db, DET)
+    assert db.has_measured_detector(DET) is True
+    # the author revises one label — the measured figure no longer describes
+    # this oracle
+    db.upsert_oracle_label(work["id"], DET, "pair0 1990", "is_gap", signed_by="ben", frequency=1)
+    assert db.has_measured_detector(DET) is False
     gap = _blocking_gap(db, work["id"], DET)
     assert gap["severity"] != "critical"
+    # re-evaluating over the revised oracle unlocks it again
+    evaluate_detector(db, DET)
+    assert db.has_measured_detector(DET) is True
 
 
 # ── routes ────────────────────────────────────────────────────────────────────

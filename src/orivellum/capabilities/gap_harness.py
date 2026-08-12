@@ -175,8 +175,6 @@ def evaluate_detector(db: OrivellumDB, detector: str, *, persist: bool = True) -
     if persist:
         row = db.record_detector_measurement(
             detector,
-            n_labeled=len(scoreable),
-            n_unknown_excluded=n_unknown,
             precision=precision,
             recall=recall,
             f1=f1,

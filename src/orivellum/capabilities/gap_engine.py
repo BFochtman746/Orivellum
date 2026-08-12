@@ -215,7 +215,7 @@ def detect_citation_gaps(work_id: str, db: OrivellumDB, *, emit: bool = True) ->
         if _is_held(entry["author"], entry["year"], haystack):
             held += 1
             continue
-        citing = sorted(entry["docs"].items(), key=lambda kv: -kv[1])
+        citing = sorted(entry["docs"].items(), key=lambda kv: (-kv[1], kv[0]))
         top_doc_id = citing[0][0]
         candidates.append(
             {
@@ -260,7 +260,7 @@ def detect_citation_gaps(work_id: str, db: OrivellumDB, *, emit: bool = True) ->
     # Rank by citation frequency — the works most demanded by the corpus first.
     freq = {f"citation:{k}": v["count"] for k, v in cited.items()}
     gaps.sort(key=lambda g: -freq.get(g["frame_node_id"], 0))
-    candidates.sort(key=lambda c: -c["frequency"])
+    candidates.sort(key=lambda c: (-c["frequency"], c["pair_key"]))
 
     return {
         "work_id": work_id,
@@ -380,7 +380,7 @@ def candidates_never_explained(work_id: str, db: OrivellumDB) -> list[dict]:
                 by_doc[doc_id] += n
         if mentions < _MIN_TERM_MENTIONS:
             continue
-        top_doc = max(by_doc, key=by_doc.get)  # type: ignore[arg-type]
+        top_doc = max(sorted(by_doc), key=by_doc.get)  # type: ignore[arg-type]
         candidates.append(
             {
                 "pair_key": norm,
@@ -392,7 +392,7 @@ def candidates_never_explained(work_id: str, db: OrivellumDB) -> list[dict]:
                 "mentioning_docs": dict(by_doc),
             }
         )
-    candidates.sort(key=lambda c: -c["frequency"])
+    candidates.sort(key=lambda c: (-c["frequency"], c["pair_key"]))
     return candidates
 
 
@@ -446,7 +446,7 @@ def candidates_dead_end(work_id: str, db: OrivellumDB) -> list[dict]:
     with db._lock:
         rows = db._conn.execute(
             "SELECT id, text, source_doc_id FROM knowledge "
-            "WHERE work_id=? AND review_status != 'rejected'",
+            "WHERE work_id=? AND review_status != 'rejected' ORDER BY id",
             (work_id,),
         ).fetchall()
     haystack = _library_haystack(db)
@@ -475,7 +475,7 @@ def candidates_dead_end(work_id: str, db: OrivellumDB) -> list[dict]:
                 "source_doc_ids": sorted(entry["docs"]),
             }
         )
-    candidates.sort(key=lambda c: -c["frequency"])
+    candidates.sort(key=lambda c: (-c["frequency"], c["pair_key"]))
     return candidates
 
 
@@ -588,7 +588,7 @@ def candidates_failure_clusters(work_id: str, db: OrivellumDB) -> list[dict]:
                 "graph_dependents": prereq_dependents[prereq_id],
             }
         )
-    candidates.sort(key=lambda c: -c["frequency"])
+    candidates.sort(key=lambda c: (-c["frequency"], c["pair_key"]))
     return candidates
 
 

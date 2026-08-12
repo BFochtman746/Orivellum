@@ -3243,4 +3243,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON gap_detector_measurement(detector, measured_at)
     """,
     ),
+    # v136 — measurements are bound to the oracle they were computed over: a
+    # fingerprint of the scoreable label set at measurement time.  Relabeling
+    # changes the fingerprint, so stale measurements stop unlocking blocking
+    # status automatically.
+    (
+        136,
+        "Bind detector measurements to an oracle-label fingerprint",
+        """
+        ALTER TABLE gap_detector_measurement
+            ADD COLUMN labels_fingerprint TEXT NOT NULL DEFAULT ''
+    """,
+    ),
 ]

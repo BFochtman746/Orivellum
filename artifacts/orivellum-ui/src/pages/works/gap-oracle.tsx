@@ -86,6 +86,8 @@ export default function GapOraclePage() {
   const [signature, setSignature] = useState(
     () => localStorage.getItem("gap-oracle-signature") || ""
   );
+  const [missKey, setMissKey] = useState("");
+  const [missFreq, setMissFreq] = useState("1");
 
   const { data, isLoading, error } = useQuery<{
     candidates: Candidate[];
@@ -315,10 +317,56 @@ export default function GapOraclePage() {
                 This detector found no candidates for this Work.
               </p>
             )}
+            <div className="pt-2">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Known gaps the detector missed
+              </p>
+              <p className="mb-2 text-xs text-muted-foreground">
+                Add a pair you know is a gap even though the detector never
+                flagged it — these misses are what recall is measured against.
+              </p>
+              <form
+                className="flex flex-wrap gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!missKey.trim()) return;
+                  submitLabel(
+                    missKey.trim().toLowerCase(),
+                    "is_gap",
+                    Math.max(0, parseInt(missFreq, 10) || 0)
+                  );
+                  setMissKey("");
+                }}
+              >
+                <Input
+                  value={missKey}
+                  onChange={(e) => setMissKey(e.target.value)}
+                  placeholder={
+                    detector === "failure_clustering"
+                      ? "concept id"
+                      : detector === "mentioned_never_explained"
+                        ? "term (e.g. lmlk seals)"
+                        : "author year (e.g. smith 1998)"
+                  }
+                  className="w-56"
+                />
+                <Input
+                  value={missFreq}
+                  onChange={(e) => setMissFreq(e.target.value)}
+                  type="number"
+                  min="0"
+                  aria-label="Frequency"
+                  className="w-20"
+                />
+                <Button type="submit" size="sm" variant="outline" disabled={label.isPending}>
+                  <Check className="mr-1 h-3.5 w-3.5" /> Add as gap
+                </Button>
+              </form>
+            </div>
             {data && data.unflagged_labels.length > 0 && (
               <div className="pt-2">
                 <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Labeled but no longer flagged (detector misses)
+                  Labeled but not flagged (detector misses)
                 </p>
                 {data.unflagged_labels.map((u) => (
                   <div
