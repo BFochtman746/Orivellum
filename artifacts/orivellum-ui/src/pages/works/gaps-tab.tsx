@@ -246,6 +246,22 @@ function CompletenessAssertions({ workId }: { workId: string }) {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const pcwaScanMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${WORK_API_BASE}/works/${workId}/pcwa/scan`, { method: "POST" });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail || "scan failed");
+      return r.json();
+    },
+    onSuccess: (d: { total_gaps: number; total_proposed_assertions: number; relations_mined: number }) => {
+      toast.success(
+        `Graph scan done — ${d.total_proposed_assertions} closure proposal${d.total_proposed_assertions === 1 ? "" : "s"}, ` +
+        `${d.total_gaps} absence gap${d.total_gaps === 1 ? "" : "s"} (${d.relations_mined} relations mined)`
+      );
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const ratifyMutation = useMutation({
     mutationFn: async ({ id, signed_by }: { id: string; signed_by: string }) => {
       const r = await apiFetch(`${WORK_API_BASE}/completeness-assertions/${id}/ratify`, {
@@ -299,12 +315,23 @@ function CompletenessAssertions({ workId }: { workId: string }) {
             signed “I have all of X” assertions — detectors stop asking
           </span>
         </div>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="text-[10px] font-mono text-muted-foreground hover:text-foreground"
-        >
-          {showForm ? "cancel" : "+ assert complete"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => pcwaScanMutation.mutate()}
+            disabled={pcwaScanMutation.isPending}
+            className="text-[10px] font-mono text-primary/80 hover:text-primary border border-primary/25 rounded px-2 py-0.5 hover:bg-primary/5 transition-colors disabled:opacity-40"
+            title="Mine the world graph's relation statistics and run the four absence detectors — proposes closures for you to sign, emits gaps for real absences"
+            data-testid="button-pcwa-scan"
+          >
+            {pcwaScanMutation.isPending ? "scanning…" : "Scan graph absences →"}
+          </button>
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            className="text-[10px] font-mono text-muted-foreground hover:text-foreground"
+          >
+            {showForm ? "cancel" : "+ assert complete"}
+          </button>
+        </div>
       </div>
 
       {assertions.length === 0 && proposals.length === 0 && !showForm && (

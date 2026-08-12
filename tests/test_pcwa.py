@@ -519,6 +519,41 @@ def test_pcwa_gap_detectors_are_measurable():
     assert DETECTOR_PEER in DETECTOR_CANDIDATES
 
 
+def test_normal_scan_path_never_uses_stale_relation_stats(tmp_path):
+    """The general research-gaps scan re-mines relation metadata every run —
+    graph changes after an earlier scan must change the verdicts, or absence
+    detection silently rots as the world graph grows."""
+    client, db = _make_app(tmp_path)
+    wid = db.create_work("W")["id"]
+    chars, sword, shield = _cardinality_fixture(db, wid)
+
+    r = client.post(
+        f"/api/works/{wid}/research-gaps/scan", json={"detectors": ["mined_cardinality"]}
+    )
+    assert r.status_code == 200
+    first = r.json()["results"]["mined_cardinality"]
+    assert first["candidates"] == 1  # Bearer5 below the mined max of 2
+
+    # The graph grows: Bearer5 picks up the second possession, and a new
+    # under-carrier appears.  Stored metadata from the first scan is now stale.
+    _edge(db, wid, chars[5], shield, "possesses")
+    late = _node(db, wid, "Character", "Latecomer")
+    _edge(db, wid, late, sword, "possesses")
+
+    r = client.post(
+        f"/api/works/{wid}/research-gaps/scan", json={"detectors": ["mined_cardinality"]}
+    )
+    assert r.status_code == 200
+    second = r.json()["results"]["mined_cardinality"]
+    names = {g["meta"] and json.loads(g["meta"])["entity"] for g in second["gaps"]}
+    assert "Latecomer" in names  # judged against freshly mined statistics
+    assert all(json.loads(g["meta"])["entity"] != "Bearer5" for g in second["gaps"])
+
+    # And the stored snapshot reflects the latest mining pass.
+    meta = {(m["node_type"], m["edge_type"]): m for m in db.list_relation_meta(wid)}
+    assert meta[("Character", "possesses")]["n_subjects"] == 7
+
+
 # ── API round-trip ────────────────────────────────────────────────────────────
 
 

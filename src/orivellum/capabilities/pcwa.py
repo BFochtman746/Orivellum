@@ -169,11 +169,16 @@ def mine_relation_metadata(work_id: str, db: OrivellumDB, *, store: bool = True)
 
 
 def _meta_by_pair(work_id: str, db: OrivellumDB) -> dict[tuple[str, str], dict]:
-    stored = db.list_relation_meta(work_id)
-    if not stored:  # never mined yet — derive (and store) now
-        stored_rows = mine_relation_metadata(work_id, db, store=True)
-        return {(r["node_type"], r["edge_type"]): r for r in stored_rows}
-    return {(r["node_type"], r["edge_type"]): r for r in stored}
+    """ALWAYS re-mine before judging — never trust stored statistics.
+
+    The stored ``graph_relation_meta`` rows are a re-derivable snapshot for
+    inspection (GET /pcwa/relations); detection decisions must reflect the
+    graph as it stands NOW, or scans run after new extraction would emit from
+    stale functionality/cardinality statistics.  Mining is one grouped query,
+    so freshness is cheap.
+    """
+    rows = mine_relation_metadata(work_id, db, store=True)
+    return {(r["node_type"], r["edge_type"]): r for r in rows}
 
 
 # ── Mechanisms 1 + 2: completeness inference (positive polarity) ──────────────
