@@ -29,6 +29,32 @@ export function isNetworkError(err: unknown): boolean {
   return /failed to fetch|networkerror|load failed|network request failed|connection/i.test(msg);
 }
 
+/** Error carrying the HTTP status of a failed request, so callers can
+ *  distinguish transient server trouble from a real rejection. */
+export class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** True when a failed HTTP response is TRANSIENT — the same statuses the
+ *  outbox flusher retries (408/409/429/5xx). A send that hits one of these
+ *  must stay queued for the flusher, never be marked permanently failed:
+ *  a 503 during a server restart is exactly the continuity case the outbox
+ *  exists for. */
+export function isTransientHttpError(err: unknown): boolean {
+  const status =
+    err instanceof HttpError
+      ? err.status
+      : typeof (err as { status?: unknown })?.status === "number"
+        ? (err as { status: number }).status
+        : null;
+  if (status === null) return false;
+  return status === 408 || status === 409 || status === 429 || status >= 500;
+}
+
 export interface ChatMessagePayload {
   convId: string;
   text: string;

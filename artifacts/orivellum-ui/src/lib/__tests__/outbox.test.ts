@@ -29,6 +29,27 @@ const chatPayload = (text: string) => ({
   scope: "all" as const,
 });
 
+describe("isTransientHttpError", () => {
+  it("treats the flusher's retry statuses (408/409/429/5xx) as transient", () => {
+    for (const status of [408, 409, 429, 500, 502, 503, 504]) {
+      expect(outbox.isTransientHttpError(new outbox.HttpError(status, "x"))).toBe(true);
+    }
+  });
+
+  it("treats real rejections and unknown errors as non-transient", () => {
+    for (const status of [400, 401, 403, 404, 422]) {
+      expect(outbox.isTransientHttpError(new outbox.HttpError(status, "x"))).toBe(false);
+    }
+    expect(outbox.isTransientHttpError(new Error("AI service error: 503"))).toBe(false); // no status
+    expect(outbox.isTransientHttpError(undefined)).toBe(false);
+  });
+
+  it("accepts any error object carrying a numeric status", () => {
+    expect(outbox.isTransientHttpError({ status: 503 })).toBe(true);
+    expect(outbox.isTransientHttpError({ status: 404 })).toBe(false);
+  });
+});
+
 describe("enqueueOp", () => {
   it("persists before network with a stable caller-provided op id", async () => {
     const opId = await outbox.enqueueOp("chat_message", chatPayload("hi"), {

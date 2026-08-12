@@ -147,6 +147,81 @@ test.describe('continuity core (mobile 390×844)', () => {
       .toBe(1); // exactly once — client_msg_id idempotency
   });
 
+  test('503 on the initial send → queued (not failed) → delivers when the server is back', async ({ page, context }) => {
+    const convId = await createConversation(page, 'E2E continuity — 503 send');
+    await openConversation(page, convId);
+    await page.setViewportSize(MOBILE);
+
+    // The server answers but is temporarily broken (restart window).
+    await context.route('**/api/conversations/*/messages', (route) =>
+      route.fulfill({ status: 503, contentType: 'text/plain', body: 'restarting' }),
+    );
+
+    const text = `restart-survivor ${Date.now()}`;
+    await page.locator('textarea').fill(text);
+    await page.keyboard.press('Enter');
+
+    // Transient server error must land in queued — NOT the terminal failed
+    // state — so the flusher retries without user action.
+    await expect(page.getByTestId('status-queued').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Not delivered')).toHaveCount(0);
+
+    // Server comes back → flush delivers exactly once.
+    await context.unroute('**/api/conversations/*/messages');
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+
+    await expect
+      .poll(
+        async () => {
+          const r = await page.request.get(`${API_ORIGIN}/api/conversations/${convId}`, {
+            headers: apiHeaders(),
+          });
+          const body = await r.json();
+          const msgs = (body.messages ?? []) as Array<{ role: string; text: string }>;
+          return msgs.filter((m) => m.role === 'user' && m.text === text).length;
+        },
+        { timeout: 45_000 },
+      )
+      .toBe(1);
+  });
+
+  test('IndexedDB write failure while offline → honest failure, never a fake "queued"', async ({ page, context }) => {
+    const convId = await createConversation(page, 'E2E continuity — storage failure');
+
+    // Break IndexedDB before the app boots (private-mode / storage-eviction
+    // simulation): every open() request errors out.
+    await page.addInitScript(() => {
+      const broken = {
+        open() {
+          const req: Record<string, unknown> = { error: new DOMException('QuotaExceededError') };
+          setTimeout(() => {
+            (req.onerror as ((ev: unknown) => void) | undefined)?.({ target: req });
+          }, 0);
+          return req;
+        },
+        deleteDatabase() {
+          return { onsuccess: null, onerror: null };
+        },
+      };
+      Object.defineProperty(window, 'indexedDB', { value: broken, configurable: true });
+    });
+
+    await page.goto(`${WEB_ORIGIN}${BASE_PATH}/`);
+    await ensureLoggedIn(page);
+    await openConversation(page, convId);
+    await page.setViewportSize(MOBILE);
+
+    await context.setOffline(true);
+    const text = `unsaveable ${Date.now()}`;
+    await page.locator('textarea').fill(text);
+    await page.keyboard.press('Enter');
+
+    // Nothing durable exists — the UI must say so, not claim it is queued.
+    await expect(page.getByText('Not delivered')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('status-queued')).toHaveCount(0);
+    await context.setOffline(false);
+  });
+
   test('pending generation replays from the journal as a "Recovered response"', async ({ page }) => {
     const convId = await createConversation(page, 'E2E continuity — replay');
     const jobId = `e2e-job-${Date.now()}`;

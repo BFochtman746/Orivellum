@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { toast } from "sonner";
 import { apiFetch, buildAuthHeaders } from "@/lib/auth";
-import { enqueueOp, markOpState, removeOp, listOps, subscribeOutbox, isNetworkError, type ChatMessagePayload } from "@/lib/outbox";
+import { enqueueOp, markOpState, removeOp, listOps, subscribeOutbox, isNetworkError, isTransientHttpError, HttpError, type ChatMessagePayload } from "@/lib/outbox";
 import {
   setPendingGen, clearPendingGen, getPendingGen, fetchJobEvents,
   foldEvents, emptyReplay, markRecovered, isRecovered,
@@ -791,10 +791,10 @@ async function* streamChat(
   });
 
   if (!resp.ok || !resp.body) {
-    // Throw so sendText's catch path fires and marks both bubbles as failed,
-    // showing the "Not delivered · Retry" control on the user bubble.
-    // The user message is already saved on the backend at this point.
-    throw new Error(`AI service error: ${resp.status} ${resp.statusText}`);
+    // Throw with the status preserved so sendText can classify: transient
+    // statuses (503 server restart, 429, ...) keep the persisted op queued
+    // for the flusher; only real rejections mark the bubble failed.
+    throw new HttpError(resp.status, `AI service error: ${resp.status} ${resp.statusText}`);
   }
 
   const reader = resp.body.getReader();
@@ -1981,17 +1981,28 @@ export default function Chat() {
       // opId doubles as the server-side client_msg_id, so a later outbox
       // flush of this exact op is idempotent (exactly-once delivery).
       const opId = randomUUID();
+      // Whether the op actually made it into durable storage. When IndexedDB
+      // is unavailable (private mode, storage failure) nothing survives a
+      // reload — the UI must NEVER claim "queued" in that case.
+      let opPersisted = true;
       try {
         await enqueueOp("chat_message", {
           convId, text, deep: deepMode, scope: scopeAll ? "all" : "work",
           image_b64: capturedImage?.data, image_media_type: capturedImage?.type,
         }, { opId });
-      } catch { /* IndexedDB unavailable (private mode) — proceed unpersisted */ }
+      } catch {
+        opPersisted = false; // proceed with a live attempt only
+      }
 
       if (!navigator.onLine) {
-        // Device offline — skip the network entirely; the message is saved on
-        // this device and the app-level flusher delivers it on reconnect.
-        setLocalMessages([...serverMsgs, { ...userMsg, status: "queued" }]);
+        if (!opPersisted) {
+          // Offline AND not saved anywhere — an honest failure, not "queued".
+          setLocalMessages([...serverMsgs, { ...userMsg, status: "failed" }]);
+        } else {
+          // Device offline — skip the network entirely; the message is saved
+          // on this device and the app-level flusher delivers it on reconnect.
+          setLocalMessages([...serverMsgs, { ...userMsg, status: "queued" }]);
+        }
         sendingRef.current = false;
         abortRef.current = null;
         setSending(false);
@@ -2156,9 +2167,11 @@ export default function Chat() {
             .filter((m) => m.id !== assistantId)
             .map((m) => (m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m)));
           setTimeout(() => { void recoverPendingGenRef.current?.(); }, 50);
-        } else if (isNetworkError(err)) {
-          // Never reached the server — honest queued state; the app-level
-          // flusher will deliver the persisted op exactly once on reconnect.
+        } else if (opPersisted && (isNetworkError(err) || isTransientHttpError(err))) {
+          // Never reached the server, or the server answered with a TRANSIENT
+          // status (503 restart, 429, 409 in-progress) — the same statuses the
+          // flusher retries. Honest queued state; the app-level flusher will
+          // deliver the persisted op exactly once when the server is back.
           setLocalMessages((prev) => prev
             .filter((m) => m.id !== assistantId)
             .map((m) => (m.id === userMsgId ? { ...m, status: "queued" as const } : m)));
