@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orivellum — Clarify Gate & Next Steps</title>
+<style>
+  :root{
+    --paper:#F6F4EE;
+    --card:#FFFDF9;
+    --ink:#22271F;
+    --muted:#74776D;
+    --faint:#9A9C92;
+    --rule:#E4E0D5;
+    --rule-soft:#EFEBE1;
+    --green:#2F4234;
+    --green-ink:#24352A;
+    --green-soft:#ECF0EA;
+    --amber:#8C6115;
+    --amber-soft:#FAF2E0;
+    --amber-rule:#E8D9B4;
+    --display:'Iowan Old Style','Palatino Linotype',Constantia,Georgia,serif;
+    --mono:ui-monospace,'Cascadia Mono',Consolas,'SF Mono',Menlo,monospace;
+    --sans:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:var(--sans);font-size:15px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:820px;margin:0 auto;padding:48px 22px 96px}
+
+  /* ── type utilities ───────────────────────────── */
+  .eyebrow{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--faint);
+  }
+  h1{
+    font-family:var(--display);font-weight:400;
+    font-size:clamp(34px,7vw,52px);line-height:1.04;
+    margin:10px 0 14px;letter-spacing:-.01em;
+  }
+  h2{
+    font-family:var(--display);font-weight:400;
+    font-size:26px;line-height:1.15;margin:0 0 6px;
+  }
+  .deck{color:var(--muted);max-width:56ch;margin:0}
+  .scene{margin-top:64px}
+  .scene-head{margin-bottom:18px}
+  .scene-head .eyebrow{display:block;margin-bottom:8px}
+  .note{font-size:13.5px;color:var(--muted);margin:10px 0 0;max-width:60ch}
+
+  /* ── thread frame ─────────────────────────────── */
+  .thread{
+    border:1px solid var(--rule);border-radius:14px;
+    background:var(--card);padding:22px 20px;
+  }
+  .turn{display:flex;gap:12px;margin-bottom:18px}
+  .who{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;
+    color:var(--faint);text-transform:uppercase;
+    padding-top:3px;min-width:34px;flex-shrink:0;
+  }
+  .said{font-size:15px;margin:0}
+  .said.assistant{max-width:62ch}
+  .said.assistant p{margin:0 0 10px}
+  .said.assistant p:last-child{margin-bottom:0}
+
+  /* ── the clarify gate ─────────────────────────── */
+  .gate{
+    border:1px solid var(--rule);border-left:3px solid var(--green);
+    border-radius:10px;background:#fff;overflow:hidden;
+  }
+  .gate-top{
+    display:flex;justify-content:space-between;align-items:baseline;
+    gap:14px;flex-wrap:wrap;
+    padding:14px 18px 12px;border-bottom:1px solid var(--rule-soft);
+  }
+  .gate-title{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--green-ink)}
+  .progress{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--faint);white-space:nowrap}
+  .progress b{color:var(--green-ink);font-weight:600}
+
+  .cost{
+    font-family:var(--mono);font-size:11px;color:var(--muted);
+    padding:10px 18px;background:#FBFAF5;border-bottom:1px solid var(--rule-soft);
+    display:flex;gap:8px;flex-wrap:wrap;
+  }
+  .cost span{white-space:nowrap}
+  .cost .sep{color:var(--rule)}
+  .cost .hard{color:var(--amber)}
+
+  .facet{padding:16px 18px;border-bottom:1px solid var(--rule-soft)}
+  .facet:last-of-type{border-bottom:0}
+  .facet-n{
+    font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+    color:var(--faint);display:block;margin-bottom:5px;
+  }
+  .q{font-family:var(--display);font-size:19px;line-height:1.3;margin:0 0 4px}
+  .why{font-size:13px;color:var(--muted);margin:0 0 12px;max-width:58ch}
+
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{
+    font-family:var(--sans);font-size:13.5px;line-height:1.3;
+    background:#fff;color:var(--ink);
+    border:1px solid var(--rule);border-radius:999px;
+    padding:7px 14px;cursor:pointer;
+    transition:border-color .12s ease,background .12s ease;
+    display:inline-flex;align-items:center;gap:7px;
+  }
+  .chip:hover{border-color:#C9C4B4;background:#FBFAF6}
+  .chip[aria-pressed="true"]{
+    background:var(--green-soft);border-color:var(--green);color:var(--green-ink);
+  }
+  .chip .tier{
+    font-family:var(--mono);font-size:9px;letter-spacing:.1em;
+    color:var(--faint);text-transform:uppercase;
+  }
+  .chip[aria-pressed="true"] .tier{color:var(--green)}
+  .chip.other{border-style:dashed;color:var(--muted)}
+
+  .freeform{margin-top:10px;display:none}
+  .freeform.open{display:block}
+  .freeform label{
+    display:block;font-family:var(--mono);font-size:10px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:6px;
+  }
+  .freeform textarea{
+    width:100%;min-height:62px;resize:vertical;
+    font-family:var(--sans);font-size:14px;color:var(--ink);
+    background:#FCFBF7;border:1px solid var(--rule);border-radius:8px;
+    padding:10px 12px;
+  }
+  .freeform textarea:focus{outline:2px solid var(--green);outline-offset:1px;border-color:var(--green)}
+
+  /* the signature: what gets assumed if you skip */
+  .assume{
+    margin:12px 0 0;padding:11px 13px;
+    background:var(--amber-soft);border:1px solid var(--amber-rule);border-radius:8px;
+  }
+  .assume .lab{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--amber);display:block;margin-bottom:4px;
+  }
+  .assume p{margin:0;font-size:13.5px;color:#5E4A1C}
+  .assume code{font-family:var(--mono);font-size:12.5px;background:#fff;border:1px solid var(--amber-rule);border-radius:4px;padding:1px 5px}
+
+  .gate-foot{
+    display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    padding:14px 18px;background:#FBFAF5;border-top:1px solid var(--rule-soft);
+  }
+  .btn{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;
+    border-radius:8px;padding:10px 16px;cursor:pointer;border:1px solid transparent;
+  }
+  .btn-go{background:var(--green);color:#F4F2EA;border-color:var(--green)}
+  .btn-go:hover{background:#26362B}
+  .btn-quiet{background:#fff;color:var(--ink);border-color:var(--rule)}
+  .btn-quiet:hover{border-color:#C9C4B4}
+  .btn-text{background:none;color:var(--muted);border:0;padding-left:4px}
+  .btn-text:hover{color:var(--ink)}
+  .foot-spacer{flex:1}
+
+  /* ── next steps ───────────────────────────────── */
+  .next{
+    margin-top:16px;padding-top:15px;border-top:1px solid var(--rule);
+  }
+  .next-lab{
+    font-family:var(--mono);font-size:10px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--faint);display:block;margin-bottom:11px;
+  }
+  .stack{display:flex;flex-direction:column;gap:8px}
+  .step{
+    display:flex;align-items:flex-start;gap:11px;text-align:left;
+    background:#fff;border:1px solid var(--rule);border-radius:10px;
+    padding:11px 13px;cursor:pointer;width:100%;
+    font-family:var(--sans);font-size:14.5px;color:var(--ink);line-height:1.4;
+    transition:border-color .12s ease,background .12s ease;
+  }
+  .step:hover{border-color:#C9C4B4;background:#FCFBF7}
+  .kind{
+    font-family:var(--mono);font-size:9px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--faint);border:1px solid var(--rule);border-radius:4px;
+    padding:2px 5px;margin-top:2px;flex-shrink:0;white-space:nowrap;
+  }
+  .step-body{flex:1}
+  .step-body .anchor{
+    display:block;font-size:12.5px;color:var(--muted);margin-top:3px;
+  }
+  .pencil{
+    font-family:var(--mono);font-size:10px;color:var(--faint);
+    opacity:0;transition:opacity .12s ease;margin-top:3px;white-space:nowrap;
+  }
+  .step:hover .pencil,.step:focus-visible .pencil{opacity:1}
+
+  .own{
+    display:flex;align-items:center;gap:10px;margin-top:9px;
+    border:1px dashed var(--rule);border-radius:10px;padding:10px 13px;background:none;
+  }
+  .own input{
+    flex:1;border:0;background:none;font-family:var(--sans);font-size:14.5px;color:var(--ink);
+  }
+  .own input:focus{outline:none}
+  .own input::placeholder{color:var(--faint)}
+  .own .send{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
+
+  /* ── rules ────────────────────────────────────── */
+  .rules{margin-top:72px;border-top:1px solid var(--rule);padding-top:32px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:34px;margin-top:22px}
+  .col h3{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--green-ink);margin:0 0 12px;padding-bottom:8px;border-bottom:1px solid var(--rule);
+  }
+  .col ul{margin:0;padding-left:0;list-style:none}
+  .col li{
+    font-size:13.5px;line-height:1.5;color:var(--ink);
+    padding:8px 0 8px 0;border-bottom:1px solid var(--rule-soft);
+  }
+  .col li:last-child{border-bottom:0}
+  .col li b{font-weight:600}
+  .col li span{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
+  .never{
+    margin-top:26px;background:#fff;border:1px solid var(--rule);border-radius:10px;padding:16px 18px;
+  }
+  .never h3{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--amber);margin:0 0 10px;
+  }
+  .never ul{margin:0;padding-left:18px}
+  .never li{font-size:13.5px;line-height:1.5;margin-bottom:6px}
+  .never li:last-child{margin-bottom:0}
+
+  footer{margin-top:56px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
+
+  /* recommended step */
+  .step.is-rec{border-color:var(--green);background:var(--green-soft)}
+  .step.is-rec:hover{background:#E6ECE4}
+  .step.is-rec .kind{border-color:var(--green);color:var(--green-ink)}
+  .rec-why{
+    display:block;margin-top:6px;padding-top:6px;border-top:1px solid #D6DFD4;
+    font-size:12.5px;color:var(--green-ink);line-height:1.45;
+  }
+  .rec-why b{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;
+    text-transform:uppercase;margin-right:4px;
+  }
+
+  /* autonomy strip */
+  .autonomy{
+    margin-top:13px;border:1px solid var(--rule);border-radius:10px;
+    background:#FBFAF5;padding:13px 14px;
+  }
+  .auto-lab{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--faint);display:block;margin-bottom:6px;
+  }
+  .autonomy p{margin:0 0 11px;font-size:13.5px;color:var(--muted);max-width:60ch}
+  .autonomy p b{color:var(--ink);font-weight:600}
+  .auto-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .btn-auto{
+    font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+    background:#fff;color:var(--green-ink);border:1px solid var(--green);
+    border-radius:8px;padding:9px 14px;cursor:pointer;
+  }
+  .btn-auto:hover{background:var(--green-soft)}
+  .auto-note{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.04em}
+  .auto-note b{color:var(--amber)}
+
+  @media (max-width:640px){
+    .cols{grid-template-columns:1fr;gap:26px}
+    .wrap{padding:32px 16px 72px}
+    .kind{display:none}
+    .pencil{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important}
+    .pencil{opacity:1}
+  }
+  :focus-visible{outline:2px solid var(--green);outline-offset:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow">Orivellum · interaction patterns</span>
+    <h1>Ask before you act.<br>Point after you answer.</h1>
+    <p class="deck">Two components. The first stands in front of expensive or irreversible
+    work and refuses to guess. The second turns a finished answer into one tap.</p>
+  </header>
+
+  <!-- ══ SCENE A ══════════════════════════════════ -->
+  <section class="scene">
+    <div class="scene-head">
+      <span class="eyebrow">Component 01 — the clarify gate</span>
+      <h2>Before the run</h2>
+      <p class="note">Shown only when the request is underspecified <em>and</em> the work is
+      costly or hard to undo. Never for a question it could just answer.</p>
+    </div>
+
+    <div class="thread">
+      <div class="turn">
+        <span class="who">You</span>
+        <p class="said">Re-harvest the knowledge for the Excel domain.</p>
+      </div>
+
+      <div class="gate">
+        <div class="gate-top">
+          <span class="gate-title">Three things would change the result</span>
+          <span class="progress"><b id="pcount">0</b> of 3 answered</span>
+        </div>
+
+        <div class="cost">
+          <span>1,948 documents</span><span class="sep">·</span>
+          <span>~34 min</span><span class="sep">·</span>
+          <span>replaces 1,701 items</span><span class="sep">·</span>
+          <span class="hard">not reversible without a restore</span>
+        </div>
+
+        <!-- facet 1 -->
+        <div class="facet" data-facet="1">
+          <span class="facet-n">01 / ontology</span>
+          <p class="q">Which ontology should this harvest use?</p>
+          <p class="why">The last harvest read Excel documentation with the narrative
+          ontology, which is how <em>Power&nbsp;Automate</em> became a Concept.</p>
+          <div class="chips">
+            <button class="chip" aria-pressed="false">Technical <span class="tier">function · platform · testcase</span></button>
+            <button class="chip" aria-pressed="false">Domain reference <span class="tier">entity · term · source</span></button>
+            <button class="chip other" aria-pressed="false">Something else</button>
+          </div>
+          <div class="freeform">
+            <label for="ff1">In your own words</label>
+            <textarea id="ff1" placeholder="Describe the ontology you want, or name the Work to copy it from."></textarea>
+          </div>
+          <div class="assume">
+            <span class="lab">If you skip this</span>
+            <p>I use the Work's recorded domain. It is currently <code>unset</code>, which
+            falls back to <code>narrative</code> — the setting that produced the last bad harvest.</p>
+          </div>
+        </div>
+
+        <!-- facet 2 -->
+        <div class="facet" data-facet="2">
+          <span class="facet-n">02 / scope</span>
+          <p class="q">Which document types are in scope?</p>
+          <p class="why">1,204 of these documents are still typed <code>unknown</code>.</p>
+          <div class="chips">
+            <button class="chip" aria-pressed="false">Reference only</button>
+            <button class="chip" aria-pressed="false">Reference + test catalogs</button>
+            <button class="chip" aria-pressed="false">Everything classified</button>
+            <button class="chip other" aria-pressed="false">Something else</button>
+          </div>
+          <div class="freeform">
+            <label for="ff2">In your own words</label>
+            <textarea id="ff2" placeholder="Name the types to include or exclude."></textarea>
+          </div>
+          <div class="assume">
+            <span class="lab">If you skip this</span>
+            <p>I include only <code>reference</code> and skip all 1,204 unclassified
+            documents rather than harvesting material nobody has typed.</p>
+          </div>
+        </div>
+
+        <!-- facet 3 -->
+        <div class="facet" data-facet="3">
+          <span class="facet-n">03 / authority</span>
+          <p class="q">What authority may extracted claims carry?</p>
+          <p class="why">Anything above <code>proposed</code> can ground a question and
+          become its own answer key.</p>
+          <div class="chips">
+            <button class="chip" aria-pressed="false">Proposed <span class="tier">review each</span></button>
+            <button class="chip" aria-pressed="false">Proposed, auto-approve ≥ 90%</button>
+            <button class="chip other" aria-pressed="false">Something else</button>
+          </div>
+          <div class="freeform">
+            <label for="ff3">In your own words</label>
+            <textarea id="ff3" placeholder="State the rule you want applied."></textarea>
+          </div>
+          <div class="assume">
+            <span class="lab">If you skip this</span>
+            <p>Everything lands as <code>proposed</code> and waits for you. Nothing
+            unreviewed reaches a question or a grade.</p>
+          </div>
+        </div>
+
+        <div class="gate-foot">
+          <button class="btn btn-go">Run with these answers</button>
+          <button class="btn btn-quiet">Run on the assumptions above</button>
+          <span class="foot-spacer"></span>
+          <button class="btn btn-text">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="note"><strong>The signature.</strong> Every question shows the exact default
+    it would apply if you say nothing — so skipping is an informed choice, not a silent one.
+    That is the abstain contract with a face on it.</p>
+  </section>
+
+  <!-- ══ SCENE B ══════════════════════════════════ -->
+  <section class="scene">
+    <div class="scene-head">
+      <span class="eyebrow">Component 02 — next steps</span>
+      <h2>After the answer</h2>
+      <p class="note">Three at most, each naming a real next task from what was just said.
+      Outside the answer, above the composer, never in the way of it.</p>
+    </div>
+
+    <div class="thread">
+      <div class="turn">
+        <span class="who">You</span>
+        <p class="said">What is blocking the re-projection?</p>
+      </div>
+      <div class="turn">
+        <span class="who">O</span>
+        <div class="said assistant">
+          <p>Two things. The <code>collection</code> table does not exist yet, so the four
+          import batches are still Works — and <code>classify.py</code> has no callers, so
+          all 9,142 documents are still labelled <code>source</code> by default.</p>
+          <p>Everything else in the plan waits on those two.</p>
+        </div>
+      </div>
+
+      <div class="next">
+        <span class="next-lab">Next</span>
+        <div class="stack">
+          <button class="step">
+            <span class="kind">narrow</span>
+            <span class="step-body">Show me every document <code>classify.py</code> would retype
+              <span class="anchor">from the 9,142 still labelled <code>source</code></span>
+            </span>
+            <span class="pencil">tap to edit</span>
+          </button>
+          <button class="step">
+            <span class="kind">widen</span>
+            <span class="step-body">What else is built but never called?
+              <span class="anchor">five found so far</span>
+            </span>
+            <span class="pencil">tap to edit</span>
+          </button>
+          <button class="step is-rec">
+            <span class="kind">act</span>
+            <span class="step-body">Draft the <code>collection</code> migration
+              <span class="anchor">schema v112 · reversible · ~6 min</span>
+              <span class="rec-why"><b>Recommended</b> — one reversible migration
+                removes the whole class of fake books, and the other two steps
+                read better once it lands.</span>
+            </span>
+            <span class="pencil">tap to edit</span>
+          </button>
+        </div>
+        <div class="own">
+          <input type="text" placeholder="or ask your own" aria-label="Ask your own follow-up">
+          <span class="send">enter</span>
+        </div>
+        <div class="autonomy">
+          <span class="auto-lab">Unattended</span>
+          <p>The recommended step is <b>reversible</b>, costs <b>~6&nbsp;min</b> and has
+          nothing blocking it — so it can run on its own. Two of these three cannot:
+          they wait in your queue with the reason attached.</p>
+          <div class="auto-row">
+            <button class="btn-auto">Run the recommendation now</button>
+            <span class="auto-note">auto-run is <b>off</b> in policy · 8 steps / 45 min per chain</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">One narrows, one widens, one acts — and each cites the number it came
+    from, so the suggestion is visibly earned rather than generated.</p>
+  </section>
+
+  <!-- ══ RULES ════════════════════════════════════ -->
+  <section class="rules">
+    <span class="eyebrow">The rules, so it stays good</span>
+    <h2>What makes these work</h2>
+
+    <div class="cols">
+      <div class="col">
+        <h3>Clarify gate</h3>
+        <ul>
+          <li><b>Three questions, hard ceiling.</b><span>Trained clarifiers match the best general models with 41% fewer questions by ranking on relevance and answerability.</span></li>
+          <li><b>One question per ambiguous facet.</b><span>Not one per turn. Facets in parallel is what keeps the count down.</span></li>
+          <li><b>Ask what would change the output.</b><span>Reason over candidate results first, then ask the question that splits them.</span></li>
+          <li><b>Always give options, never a bare question.</b><span>A bare question needs expertise the person may not have yet.</span></li>
+          <li><b>Always give a free-text slot.</b><span>Options are a shortcut, not a cage.</span></li>
+          <li><b>Show progress.</b><span>Named facets and a count, so it never feels like an interrogation with no end.</span></li>
+          <li><b>Disclose the default.</b><span>Every question states what happens if you skip it.</span></li>
+          <li><b>Answer in-place.</b><span>Selections become a single clean turn — not three chat messages.</span></li>
+        </ul>
+      </div>
+      <div class="col">
+        <h3>Next steps</h3>
+        <ul>
+          <li><b>Two to four. Three is right.</b><span>Six or more rebuilds the decision paralysis you were removing.</span></li>
+          <li><b>Anchor in the last answer.</b><span>Quote its number, its name, its finding. Generic chips train people to ignore chips.</span></li>
+          <li><b>One narrow, one wide, one act.</b><span>Directional control without a menu.</span></li>
+          <li><b>Editable before it sends.</b><span>A tap that fires an unwanted side quest is worse than a blank composer.</span></li>
+          <li><b>Regenerate on every new answer.</b><span>A repeated chip is a dead chip.</span></li>
+          <li><b>Outside the answer.</b><span>A hairline above them; never mixed into generated text.</span></li>
+          <li><b>Never block the composer.</b><span>Ignoring them must cost nothing.</span></li>
+          <li><b>Exactly one recommendation, or none.</b><span>Two recommendations is no recommendation. When nothing earns it, say why instead of promoting a weak option.</span></li>
+          <li><b>A recommendation states its reason.</b><span>Cheapest unblocked step, or what it unlocks. No reason, no badge.</span></li>
+          <li><b>Auto-run is computed, never claimed.</b><span>Reversible, inside budget, unblocked, no open clarification. Irreversible never runs on its own.</span></li>
+          <li><b>Measure the lift.</b><span>If the recommendation is taken no more often than any other chip, the recommender is decoration.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="never">
+      <h3>Do not show either one when</h3>
+      <ul>
+        <li>The request is clear enough to act on. A gate on an unambiguous ask is friction wearing a governance costume.</li>
+        <li>The work is cheap and reversible — just do it and offer an undo.</li>
+        <li>A run is already mid-flight. Chips interrupt a plan the person is watching.</li>
+        <li>The answer already ends in a checklist. Do not restate it as chips.</li>
+        <li>You would be asking something the corpus, the settings, or memory already answers. Look first, ask second.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Orivellum · orivellum-next · patterns + autonomy · 11 Aug 2026</footer>
+</div>
+
+<script>
+  // Facet chips: single-select per facet, "Something else" opens the free-text slot.
+  document.querySelectorAll('.facet').forEach(function (facet) {
+    var chips = facet.querySelectorAll('.chip');
+    var free = facet.querySelector('.freeform');
+    chips.forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        var wasOn = chip.getAttribute('aria-pressed') === 'true';
+        chips.forEach(function (c) { c.setAttribute('aria-pressed', 'false'); });
+        chip.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
+        var isOther = chip.classList.contains('other') && !wasOn;
+        free.classList.toggle('open', isOther);
+        if (isOther) { free.querySelector('textarea').focus(); }
+        count();
+      });
+    });
+  });
+
+  function count() {
+    var n = 0;
+    document.querySelectorAll('.facet').forEach(function (f) {
+      if (f.querySelector('.chip[aria-pressed="true"]')) { n++; }
+    });
+    document.getElementById('pcount').textContent = n;
+  }
+
+  // Next-step chips: demonstrate edit-before-send.
+  document.querySelectorAll('.step').forEach(function (step) {
+    step.addEventListener('click', function () {
+      var input = document.querySelector('.own input');
+      input.value = step.querySelector('.step-body').childNodes[0].textContent.trim();
+      input.focus();
+    });
+  });
+</script>
+</body>
+</html>

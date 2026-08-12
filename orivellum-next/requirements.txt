@@ -1,0 +1,4 @@
+# Optional. The package runs on the stdlib alone; install these only if you
+# want the FastAPI surface instead of the built-in http.server fallback.
+fastapi>=0.110
+uvicorn>=0.29
