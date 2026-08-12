@@ -195,49 +195,126 @@ def build_set(db: DB, thread_id: str, from_message: str, answer: str,
             "no_recommendation_reason": no_reason}
 
 
-# ── example probes, written against the re-projection work ────────────────
-# These are the shape, not the list. Each one is a query you can rerun.
+# ── Orivellum schema probes (N3) ──────────────────────────────────────────
+# Six real queries against actual Orivellum tables. Each returns a COUNT(*)
+# that becomes both the anchor number and the cost estimate — so the number the
+# person reads and the number the budget checks are the same one.
+#
+# A probe whose table is missing or returns 0 drops silently (gather_facts
+# catches all exceptions). No probe may supply a hardcoded number.
 
 EXAMPLE_PROBES = [
+    # ── A: documents still on the default tier ─────────────────────────────
     {
         "kind": "narrow",
-        "subject": "the documents classify.py would retype",
-        "label": "Show me every document classify.py would retype",
-        "prompt": "List the documents classify.py would retype, grouped by proposed tier.",
+        "subject": "documents still classified as source tier",
+        "label": "Show me every document still on the source tier",
+        "prompt": (
+            "List every document whose tier is still 'source', grouped by kind, "
+            "so I can see what classification work remains."
+        ),
         "sql": "SELECT COUNT(*) FROM documents WHERE tier='source'",
-        "anchor_template": "from the {n} still labelled source",
+        "anchor_template": "{n} documents still on the source tier",
         "ref_template": "documents.tier=source:{n}",
         "cost_units_from_count": True,
         "cost_minutes": 2,
         "reversible": True,
-        "weight": 1.4,
-        "rationale": "Typing the corpus is what every later phase depends on.",
+        "weight": 1.5,
+        "rationale": "Every later pipeline phase depends on correct tier classification.",
     },
+    # ── B: Works whose name matches a migration batch ──────────────────────
     {
         "kind": "act",
-        "subject": "the collection migration",
-        "label": "Draft the collection migration",
-        "prompt": "Draft the schema v112 migration adding the collection table.",
+        "subject": "Works still shaped as migration batches",
+        "label": "Collapse Works still shaped as migration batches",
+        "prompt": (
+            "List Works whose names match the BATCH pattern and propose a migration "
+            "to reassign their documents to the correct collection."
+        ),
         "sql": "SELECT COUNT(*) FROM works WHERE name LIKE '%BATCH%'",
-        "anchor_template": "{n} batches still shaped as Works",
+        "anchor_template": "{n} batch-named Works that should be collections",
         "ref_template": "works.name~BATCH:{n}",
         "cost_units": 1,
         "cost_minutes": 6,
         "reversible": True,
         "weight": 1.2,
-        "rationale": "One reversible migration removes the whole class of fake books.",
+        "rationale": "Batch-named Works pollute the Work list with structural noise.",
     },
+    # ── C: open critical findings ──────────────────────────────────────────
     {
-        "kind": "widen",
-        "subject": "else is built but never called",
-        "label": "What else is built but never called?",
-        "prompt": "Audit the codebase for public entry points with no external caller.",
-        "sql": "SELECT COUNT(*) FROM meta WHERE key LIKE 'unwired:%'",
-        "anchor_template": "{n} found so far",
-        "ref_template": "meta.unwired:{n}",
+        "kind": "narrow",
+        "subject": "open critical findings",
+        "label": "Review the open critical findings",
+        "prompt": (
+            "Show me every finding with severity='critical' and status='open', "
+            "with its detector and explanation."
+        ),
+        "sql": (
+            "SELECT COUNT(*) FROM pacing_findings "
+            "WHERE severity='critical' AND status='open'"
+        ),
+        "anchor_template": "{n} critical findings still open",
+        "ref_template": "pacing_findings.severity=critical,status=open:{n}",
         "cost_units": 1,
-        "cost_minutes": 20,
+        "cost_minutes": 5,
         "reversible": True,
-        "weight": 0.8,
+        "weight": 1.8,
+        "rationale": "Critical findings block downstream quality gates.",
+    },
+    # ── D: knowledge items awaiting author review ──────────────────────────
+    {
+        "kind": "act",
+        "subject": "AI-extracted knowledge awaiting author review",
+        "label": "Review AI-extracted knowledge items",
+        "prompt": (
+            "Show me every knowledge item with review_status='auto', grouped by Work, "
+            "so I can approve or reject them."
+        ),
+        "sql": "SELECT COUNT(*) FROM knowledge_items WHERE review_status='auto'",
+        "anchor_template": "{n} AI-extracted items awaiting review",
+        "ref_template": "knowledge_items.review_status=auto:{n}",
+        "cost_units_from_count": True,
+        "cost_minutes": 10,
+        "reversible": True,
+        "weight": 1.3,
+        "rationale": "Unreviewed AI extraction degrades chat context quality.",
+    },
+    # ── E: chapters with no extracted text ────────────────────────────────
+    {
+        "kind": "narrow",
+        "subject": "chapters with no extracted text",
+        "label": "Find chapters with no extracted text",
+        "prompt": (
+            "List every chapter that has no extracted text, with its Work title and "
+            "source document, so I can decide whether to reprocess or mark as empty."
+        ),
+        "sql": (
+            "SELECT COUNT(*) FROM book_chapters "
+            "WHERE (text IS NULL OR TRIM(text)='') AND work_id IS NOT NULL"
+        ),
+        "anchor_template": "{n} chapters with no extracted text",
+        "ref_template": "book_chapters.text=empty:{n}",
+        "cost_units": 1,
+        "cost_minutes": 3,
+        "reversible": True,
+        "weight": 1.1,
+        "rationale": "Empty chapters silently degrade pacing analysis and chat context.",
+    },
+    # ── F: clarify gates still open ───────────────────────────────────────
+    {
+        "kind": "clarify",
+        "subject": "clarify gates still open",
+        "label": "Close orphaned clarify gates",
+        "prompt": (
+            "List every clarify gate still in state='open' with its thread and target, "
+            "so I can decide whether to skip or close each one."
+        ),
+        "sql": "SELECT COUNT(*) FROM clarify_request WHERE state='open'",
+        "anchor_template": "{n} clarify gates still open",
+        "ref_template": "clarify_request.state=open:{n}",
+        "cost_units": 1,
+        "cost_minutes": 2,
+        "reversible": True,
+        "weight": 0.9,
     },
 ]
