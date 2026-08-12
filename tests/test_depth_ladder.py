@@ -434,6 +434,31 @@ class TestIssuedQuestionBinding:
         assert r1.status_code == 200
         assert r2.status_code == 409, "issued questions are single-use"
 
+    def test_expired_issued_question_rejected(self):
+        """An issued question past its TTL must be refused — stale prompts earn no credit."""
+        db = _make_db()
+        work_id, (cid,) = _seed(db)
+        client = _make_test_client(db)
+        qr = client.get(f"/api/works/{work_id}/learning/question", params={"concept_id": cid})
+        question = qr.json()["question"]
+        # Age the issuance beyond the TTL
+        with db._lock:
+            db._conn.execute(
+                "UPDATE learning_issued_questions SET created_at=? WHERE concept_id=?",
+                ("2020-01-01T00:00:00+00:00", cid),
+            )
+            db._conn.commit()
+        r = client.post(
+            f"/api/works/{work_id}/learning/assess",
+            json={"concept_id": cid, "question": question, "answer": "an answer"},
+        )
+        assert r.status_code == 409, "expired issued questions must be rejected"
+        with db._lock:
+            left = db._conn.execute(
+                "SELECT COUNT(*) FROM learning_issued_questions WHERE concept_id=?", (cid,)
+            ).fetchone()[0]
+        assert left == 0, "expired issuance must be purged, not left claimable"
+
     def test_nonrecall_level_fails_closed_without_rubric(self):
         """Above recall, a bare model float must never grant ladder credit."""
         from orivellum.capabilities.learning import _get_mastery, assess_answer
@@ -484,6 +509,36 @@ class TestReverseLoop:
         second = triage_failure(db, cid)
         assert first["request_id"] == second["request_id"]
         assert len(list_research_requests(db, work_id)) == 1
+
+    def test_recall_only_streak_then_failure_is_never_learned(self):
+        """Three recall-only passes never graduated the concept (T-M4), so a
+        later failure must be diagnosed never_learned — not learned_and_decayed."""
+        from orivellum.capabilities.learning import _record_mastery, triage_failure
+
+        db = _make_db()
+        _, (cid,) = _seed(db)  # rich corpus
+        for _ in range(3):
+            _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="recall")
+        self._fail_n(db, cid, 3)
+        # The gate requires zero passes in the window; force diagnosis directly too
+        from orivellum.capabilities.learning import diagnose_concept
+
+        assert diagnose_concept(db, cid) == "never_learned", (
+            "a streak without the depth ladder was never graduated — its failure is not decay"
+        )
+        result = triage_failure(db, cid, cold_check=True)
+        assert result["diagnosis"] == "never_learned"
+
+    def test_ladder_complete_streak_then_failure_is_decayed(self):
+        """The same streak WITH the ladder complete diagnoses learned_and_decayed."""
+        from orivellum.capabilities.learning import _record_mastery, diagnose_concept
+
+        db = _make_db()
+        _, (cid,) = _seed(db)
+        for qt in ("recall", "self_explanation", "transfer"):
+            _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type=qt)
+        _record_mastery(db, cid, 0.2, "STAY_HERE", "cold fail", question_type="recall")
+        assert diagnose_concept(db, cid) == "learned_and_decayed"
 
     def test_rich_corpus_diagnoses_never_learned_no_request(self):
         from orivellum.capabilities.learning import list_research_requests, triage_failure

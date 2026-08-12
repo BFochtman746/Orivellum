@@ -25,6 +25,7 @@ logger = logging.getLogger("orivellum.learning")
 
 _GRAD_THRESHOLD = 0.75  # score at or above this counts as a pass
 _PASSES_TO_GRAD = 3  # consecutive passes needed to graduate
+_ISSUED_QUESTION_TTL_SECONDS = 6 * 3600  # issued questions expire; stale prompts earn no credit
 _MAX_SEED_SUBJ = 500  # max distinct subjects considered per re-seed sweep
 _SEED_KN_SCAN = 2000  # knowledge rows scanned per re-seed (whole-corpus, not top-20)
 _SEED_LLM_BATCH = 60  # max NEW subjects sent to the LLM for ordering/prereqs per seed
@@ -1239,18 +1240,34 @@ def consume_issued_question(
     """Atomically claim (delete) the issued question for a concept.
 
     Returns the level it was issued at, or None when there is no issued
-    question, the submitted question text does not match, or (when ``level``
-    is given, e.g. teach_back) the issued level differs.  Single-use: a
+    question, the submitted question text does not match, the issuance has
+    expired (older than _ISSUED_QUESTION_TTL_SECONDS), or (when ``level`` is
+    given, e.g. teach_back) the issued level differs.  Single-use: a
     successful claim deletes the row, so replays and concurrent double-submits
     of the same question are rejected.
     """
     try:
         with db._lock:
             row = db._conn.execute(
-                "SELECT level, question FROM learning_issued_questions WHERE concept_id=?",
+                "SELECT level, question, created_at FROM learning_issued_questions "
+                "WHERE concept_id=?",
                 (concept_id,),
             ).fetchone()
             if not row:
+                return None
+            try:
+                issued_at = datetime.fromisoformat(row["created_at"])
+                expired = (
+                    datetime.now(UTC) - issued_at
+                ).total_seconds() > _ISSUED_QUESTION_TTL_SECONDS
+            except Exception:
+                expired = True  # unparseable timestamp → fail closed
+            if expired:
+                # Stale prompts must never receive current ladder credit.
+                db._conn.execute(
+                    "DELETE FROM learning_issued_questions WHERE concept_id=?", (concept_id,)
+                )
+                db._conn.commit()
                 return None
             if question is not None and row["question"] != question:
                 return None
@@ -1810,9 +1827,14 @@ def diagnose_concept(db: Any, concept_id: str) -> str | None:
 
     - corpus_insufficient — the question-safe corpus is too thin to learn from;
       the ONLY diagnosis that emits a research request.
-    - learned_and_decayed — the concept has graduated before (streak reached
-      _PASSES_TO_GRAD at some point) but is failing now.
+    - learned_and_decayed — the concept was EVER graduated (the streak reached
+      _PASSES_TO_GRAD at some point AND every required ladder level has a
+      passing record) but is failing now.
     - never_learned      — corpus is adequate but the learner never got there.
+
+    "Ever graduated" must use the same two-axis definition as _is_graduated —
+    streak alone is not learning: three recall-only passes never graduated the
+    concept, so their later failure is never_learned, not decay.
     """
     concept = _get_concept(db, concept_id)
     if not concept:
@@ -1829,7 +1851,12 @@ def diagnose_concept(db: Any, concept_id: str) -> str | None:
         ever_max = int(row[0] or 0)
     except Exception:
         ever_max = 0
-    return "learned_and_decayed" if ever_max >= _PASSES_TO_GRAD else "never_learned"
+    # Level passes are historical (a later failure never erases them), so a
+    # historical streak + all required levels passed ⇔ graduated at some point.
+    ever_graduated = ever_max >= _PASSES_TO_GRAD and set(_required_levels(db, concept_id)) <= (
+        _levels_passed(db, concept_id)
+    )
+    return "learned_and_decayed" if ever_graduated else "never_learned"
 
 
 def triage_failure(db: Any, concept_id: str, *, cold_check: bool = False) -> dict:
