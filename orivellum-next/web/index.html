@@ -194,6 +194,33 @@
   }
   .step:hover .pencil,.step:focus-visible .pencil{opacity:1}
 
+  /* ── is-rec: the one recommended chip ────────────── */
+  .step.is-rec{border-color:var(--green);background:var(--green-soft)}
+  .step.is-rec .kind{border-color:var(--green);color:var(--green-ink)}
+  .rec-why{
+    display:block;font-size:12.5px;color:var(--green-ink);margin-top:5px;
+  }
+
+  /* ── defaults applied banner ──────────────────────── */
+  #defaults-banner{
+    display:none;margin-top:10px;padding:11px 18px;
+    background:var(--amber-soft);border:1px solid var(--amber-rule);border-radius:8px;
+    font-size:13.5px;color:#5E4A1C;
+  }
+  #defaults-banner b{color:var(--amber)}
+
+  /* ── api-fetch button ─────────────────────────────── */
+  #btn-build-api{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    background:#fff;color:var(--muted);border:1px dashed var(--rule);border-radius:8px;
+    padding:8px 14px;cursor:pointer;margin-bottom:12px;
+  }
+  #btn-build-api:hover{border-color:#C9C4B4;color:var(--ink)}
+  #api-status{
+    font-family:var(--mono);font-size:10.5px;color:var(--faint);
+    display:none;margin-bottom:10px;
+  }
+
   .own{
     display:flex;align-items:center;gap:10px;margin-top:9px;
     border:1px dashed var(--rule);border-radius:10px;padding:10px 13px;background:none;
@@ -385,11 +412,12 @@
         </div>
 
         <div class="gate-foot">
-          <button class="btn btn-go">Run with these answers</button>
-          <button class="btn btn-quiet">Run on the assumptions above</button>
+          <button id="btn-run" class="btn btn-go">Run with these answers</button>
+          <button id="btn-skip" class="btn btn-quiet">Run on the assumptions above</button>
           <span class="foot-spacer"></span>
-          <button class="btn btn-text">Cancel</button>
+          <button id="btn-cancel" class="btn btn-text">Cancel</button>
         </div>
+        <div id="defaults-banner"></div>
       </div>
     </div>
 
@@ -424,7 +452,10 @@
 
       <div class="next">
         <span class="next-lab">Next</span>
-        <div class="stack">
+        <button id="btn-build-api">↺ Build from live API</button>
+        <span id="api-status"></span>
+        <div id="api-stack" class="stack" style="display:none"></div>
+        <div class="stack" id="static-stack">
           <button class="step">
             <span class="kind">narrow</span>
             <span class="step-body">Show me every document <code>classify.py</code> would retype
@@ -524,39 +555,291 @@
 </div>
 
 <script>
-  // Facet chips: single-select per facet, "Something else" opens the free-text slot.
-  document.querySelectorAll('.facet').forEach(function (facet) {
-    var chips = facet.querySelectorAll('.chip');
-    var free = facet.querySelector('.freeform');
-    chips.forEach(function (chip) {
-      chip.addEventListener('click', function () {
-        var wasOn = chip.getAttribute('aria-pressed') === 'true';
-        chips.forEach(function (c) { c.setAttribute('aria-pressed', 'false'); });
-        chip.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
-        var isOther = chip.classList.contains('other') && !wasOn;
-        free.classList.toggle('open', isOther);
-        if (isOther) { free.querySelector('textarea').focus(); }
-        count();
+  // ══════════════════════════════════════════════════════════════════════
+  // N4 WIRING: connects the pattern study to the live API.
+  // All state is in-memory (no browser storage per milestone requirement).
+  // The static mockup is the fallback; the API layer overlays it.
+  // ══════════════════════════════════════════════════════════════════════
+  (function () {
+    'use strict';
+
+    // ── in-memory state (one page-load lifetime only) ───────────────────
+    var THREAD = 'demo-' + Math.random().toString(36).slice(2, 9);
+    var _rid = null;        // current gate request_id
+    var _actions = [];      // action rows from the last /api/next/build call
+
+    // ── API helpers ─────────────────────────────────────────────────────
+    function apiPost(path, body) {
+      return fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      }).then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || e.error || r.status); });
+        return r.json();
+      });
+    }
+
+    function esc(s) {
+      return String(s || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ── Scene A: clarify gate ───────────────────────────────────────────
+
+    /** Open a demo gate that mirrors the three static facets. */
+    function bootGate() {
+      return apiPost('/api/gate/open', {
+        thread_id: THREAD,
+        target: 'Re-harvest the knowledge for the Excel domain',
+        cost_units: 1948,
+        cost_minutes: 34,
+        cost_replaces: '1,701 items',
+        reversible: false,
+        facets: [
+          {
+            name: 'ontology',
+            question: 'Which ontology should this harvest use?',
+            why: 'The last harvest used the narrative ontology, which mislabelled Power Automate as a Concept.',
+            default_value: 'narrative',
+            default_source: 'work.domain is unset',
+            default_risk: 'the setting that produced the last bad harvest',
+            options: [
+              { label: 'Technical',        value: 'technical', hint: 'function · platform · testcase' },
+              { label: 'Domain reference', value: 'domain',    hint: 'entity · term · source' },
+            ],
+          },
+          {
+            name: 'scope',
+            question: 'Which document types are in scope?',
+            why: '1,204 of these documents are still typed unknown.',
+            default_value: 'Reference only',
+            default_source: 'last run used Reference only',
+            default_risk: 'skips 1,204 unknowns',
+            options: [
+              { label: 'Reference only',            value: 'reference' },
+              { label: 'Reference + test catalogs', value: 'reference+test' },
+            ],
+          },
+          {
+            name: 'depth',
+            question: 'How deep should the harvest go?',
+            why: 'Deeper extraction finds nested concepts but costs more.',
+            default_value: 'standard',
+            default_source: 'policy default',
+            default_risk: 'may miss concepts in complex nested tables',
+            options: [
+              { label: 'Standard', value: 'standard' },
+              { label: 'Deep',     value: 'deep' },
+            ],
+          },
+        ],
+      });
+    }
+
+    /** Re-read the gate from the API and update the progress counter. */
+    function syncProgress() {
+      if (!_rid) return;
+      apiPost('/api/gate/read', { request_id: _rid }).then(function (g) {
+        var el = document.getElementById('pcount');
+        if (el) el.textContent = g.answered || 0;
+      }).catch(function () { /* API may not be running; static counter stays */ });
+    }
+
+    /** Show defaults-applied banner after gate is closed with skip=true. */
+    function showDefaultsBanner(defaults) {
+      var el = document.getElementById('defaults-banner');
+      if (!el) return;
+      if (!defaults || !defaults.length) { el.style.display = 'none'; return; }
+      el.innerHTML =
+        '<b>Defaults applied:</b> ' +
+        defaults.map(function (d) {
+          return esc(d.facet) + ' = <code>' + esc(d.value) + '</code>'
+               + ' <em>(' + esc(d.source) + ')</em>';
+        }).join(' &nbsp;·&nbsp; ');
+      el.style.display = 'block';
+    }
+
+    function initGate() {
+      bootGate().then(function (gate) {
+        _rid = gate.id;
+        syncProgress();
+
+        // "Run on the assumptions above" — skip all unanswered facets, record defaults
+        var skipBtn = document.getElementById('btn-skip');
+        if (skipBtn) {
+          skipBtn.addEventListener('click', function () {
+            apiPost('/api/gate/close', { request_id: _rid, skip: true })
+              .then(function (res) {
+                showDefaultsBanner(res.defaults_applied || []);
+                syncProgress();
+              })
+              .catch(function (err) { console.warn('gate/close:', err); });
+          });
+        }
+
+        // "Run with these answers" — close without skip; all facets must be answered
+        var runBtn = document.getElementById('btn-run');
+        if (runBtn) {
+          runBtn.addEventListener('click', function () {
+            apiPost('/api/gate/close', { request_id: _rid, skip: false })
+              .then(function () { showDefaultsBanner([]); })
+              .catch(function () {
+                alert('Answer every facet first, or use "Run on the assumptions above".');
+              });
+          });
+        }
+
+        // "Cancel"
+        var cancelBtn = document.getElementById('btn-cancel');
+        if (cancelBtn) {
+          cancelBtn.addEventListener('click', function () {
+            apiPost('/api/gate/cancel', { request_id: _rid }).catch(function () {});
+          });
+        }
+      }).catch(function () {
+        /* API not reachable — static demo continues working unchanged. */
+      });
+    }
+
+    // ── Scene B: next-action set ────────────────────────────────────────
+
+    function renderApiStack(set) {
+      var stack = document.getElementById('api-stack');
+      if (!stack || !set || !set.actions) return;
+      _actions = set.actions;
+      stack.innerHTML = '';
+      set.actions.forEach(function (a) {
+        var isRec = !!a.recommended;
+        var btn = document.createElement('button');
+        btn.className = 'step' + (isRec ? ' is-rec' : '');
+        btn.dataset.actionId = a.id;
+        btn.innerHTML =
+          '<span class="kind">' + esc(a.kind) + '</span>' +
+          '<span class="step-body">' + esc(a.label) +
+            '<span class="anchor">' + esc(a.anchor) + '</span>' +
+            (isRec && a.rationale
+              ? '<span class="rec-why"><b>Recommended</b> — ' + esc(a.rationale) + '</span>'
+              : '') +
+          '</span>' +
+          '<span class="pencil">tap to edit</span>';
+
+        btn.addEventListener('click', function () {
+          // Put the (editable) prompt in the composer
+          var input = document.querySelector('.own input');
+          if (input) { input.value = a.prompt || a.label; input.focus(); }
+          // Tell the API which action was selected
+          apiPost('/api/next/select', { action_id: a.id })
+            .catch(function (err) { console.warn('next/select:', err); });
+        });
+        stack.appendChild(btn);
+      });
+
+      // Wire dismiss on static chips once API stack is live (fallback)
+      document.querySelectorAll('#static-stack .step').forEach(function (step) {
+        step.addEventListener('dblclick', function () {
+          console.log('[demo] dismiss: no action_id on static chip');
+        });
+      });
+
+      document.getElementById('api-stack').style.display = 'flex';
+      document.getElementById('static-stack').style.display = 'none';
+    }
+
+    function buildNextSteps() {
+      var statusEl = document.getElementById('api-status');
+      if (statusEl) { statusEl.textContent = 'fetching…'; statusEl.style.display = 'block'; }
+
+      apiPost('/api/next/build', {
+        thread_id: THREAD,
+        from_message: 'demo-page-load',
+        answer: 'What is blocking the re-projection?',
+      }).then(function (res) {
+        if (statusEl) statusEl.style.display = 'none';
+        if (res.set && res.set.actions && res.set.actions.length) {
+          renderApiStack(res.set);
+        } else if (!res.set_id) {
+          if (statusEl) {
+            statusEl.textContent = res.reason || 'no chips — no real data yet';
+            statusEl.style.display = 'block';
+          }
+        }
+      }).catch(function (err) {
+        if (statusEl) { statusEl.textContent = 'API not available — static demo'; statusEl.style.display = 'block'; }
+        console.warn('next/build:', err);
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Static UI (unchanged from original; runs regardless of API state)
+    // ══════════════════════════════════════════════════════════════════
+
+    // Facet chips: single-select per facet, "Something else" opens the free-text slot.
+    document.querySelectorAll('.facet').forEach(function (facet) {
+      var chips = facet.querySelectorAll('.chip');
+      var free = facet.querySelector('.freeform');
+      chips.forEach(function (chip) {
+        chip.addEventListener('click', function () {
+          var wasOn = chip.getAttribute('aria-pressed') === 'true';
+          chips.forEach(function (c) { c.setAttribute('aria-pressed', 'false'); });
+          chip.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
+          var isOther = chip.classList.contains('other') && !wasOn;
+          free.classList.toggle('open', isOther);
+          if (isOther) { free.querySelector('textarea').focus(); }
+          countAnswered();
+          // If a facet chip is answered and we have a live gate, resolve it via API.
+          if (!wasOn && !chip.classList.contains('other') && _rid) {
+            var facetSeq = parseInt(facet.getAttribute('data-facet'), 10);
+            apiPost('/api/gate/read', { request_id: _rid }).then(function (g) {
+              var f = g.facets[facetSeq - 1];
+              if (f) {
+                var val = chip.textContent.trim();
+                // Match offered option labels to find the value
+                var matched = (f.options || []).find(function (o) {
+                  return o.label === val || val.startsWith(o.label);
+                });
+                if (matched) {
+                  apiPost('/api/gate/resolve', {
+                    facet_id: f.id,
+                    value: matched.value,
+                    kind: 'option',
+                  }).then(syncProgress).catch(function () {});
+                }
+              }
+            }).catch(function () {});
+          }
+        });
       });
     });
-  });
 
-  function count() {
-    var n = 0;
-    document.querySelectorAll('.facet').forEach(function (f) {
-      if (f.querySelector('.chip[aria-pressed="true"]')) { n++; }
-    });
-    document.getElementById('pcount').textContent = n;
-  }
+    function countAnswered() {
+      var n = 0;
+      document.querySelectorAll('.facet').forEach(function (f) {
+        if (f.querySelector('.chip[aria-pressed="true"]')) { n++; }
+      });
+      document.getElementById('pcount').textContent = n;
+    }
 
-  // Next-step chips: demonstrate edit-before-send.
-  document.querySelectorAll('.step').forEach(function (step) {
-    step.addEventListener('click', function () {
-      var input = document.querySelector('.own input');
-      input.value = step.querySelector('.step-body').childNodes[0].textContent.trim();
-      input.focus();
+    // Static next-step chips: edit-before-send into composer.
+    document.querySelectorAll('#static-stack .step').forEach(function (step) {
+      step.addEventListener('click', function () {
+        var input = document.querySelector('.own input');
+        if (input) {
+          input.value = step.querySelector('.step-body').childNodes[0].textContent.trim();
+          input.focus();
+        }
+      });
     });
-  });
+
+    // ── init ────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', function () {
+      initGate();
+
+      var buildBtn = document.getElementById('btn-build-api');
+      if (buildBtn) { buildBtn.addEventListener('click', buildNextSteps); }
+    });
+
+  })();
 </script>
 </body>
 </html>
