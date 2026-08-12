@@ -326,6 +326,46 @@ def test_reharvest_run_claim_blocks_concurrent(db, client):
         claim_run(db, wid)
 
 
+def test_stale_reclaimed_worker_cannot_touch_newer_runs_knowledge(db, client, monkeypatch):
+    """A worker whose >2h claim was reclaimed must NOT delete or overwrite the
+    newer run's knowledge, and its report/status must be discarded."""
+    from orivellum.capabilities.reharvest import (
+        _STATUS_KEY,
+        claim_run,
+        get_report,
+        get_run_status,
+        reharvest_work,
+    )
+
+    wid = _work(db, domain="narrative")
+    doc_id = _doc(db, work_id=wid, doc_type="manuscript")
+    db.add_chunk(doc_id, "Chapter text about Captain Vane.")
+
+    # Old worker claims, then stalls past the stale window.
+    old_token = claim_run(db, wid)
+    stale = json.loads(db.get_setting(_STATUS_KEY.format(work_id=wid)))
+    stale["started_at"] = "2026-08-12T00:00:00+00:00"  # hours ago
+    db.set_setting(_STATUS_KEY.format(work_id=wid), json.dumps(stale))
+
+    # New worker reclaims and completes, writing fresh knowledge + report.
+    new_token = claim_run(db, wid)
+    _mock_llm(monkeypatch, [{"kind": "character", "text": "Fresh Vane item."}])
+    new_report = reharvest_work(db, wid, claimed=True, token=new_token)
+    assert new_report["state"] == "done" and new_report["items_created"] == 1
+    fresh = db.list_knowledge(work_id=wid, review_status_in=("ai_auto",))
+    assert [i["text"] for i in fresh] == ["Fresh Vane item."]
+
+    # The stale worker resumes with its dead token: it must write NOTHING.
+    _mock_llm(monkeypatch, [{"kind": "character", "text": "STALE poison item."}])
+    stale_report = reharvest_work(db, wid, claimed=True, token=old_token)
+    assert stale_report["state"] == "superseded"
+    survivors = db.list_knowledge(work_id=wid, review_status_in=("ai_auto",))
+    assert [i["text"] for i in survivors] == ["Fresh Vane item."]
+    # Persisted report + status are still the newer run's.
+    assert get_report(db, wid)["items_created"] == 1
+    assert get_run_status(db, wid)["state"] == "done"
+
+
 # ── routes: ontology + pilot gate ─────────────────────────────────────────────
 
 

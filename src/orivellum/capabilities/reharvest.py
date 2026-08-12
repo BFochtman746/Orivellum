@@ -71,6 +71,10 @@ _DOMAIN_PROMPT = (
 )
 
 
+class ReharvestClaimLost(RuntimeError):
+    """This run's claim was reclaimed by a newer run — abort without writing."""
+
+
 class ReharvestBusy(RuntimeError):
     """Another re-harvest run currently owns this Work."""
 
@@ -194,8 +198,15 @@ def _reharvest_doc(
     base_url: str,
     model: str,
     timeout: int,
+    token: str | None,
 ) -> None:
-    """Re-harvest one permitted document into *report* (mutated in place)."""
+    """Re-harvest one permitted document into *report* (mutated in place).
+
+    All LLM output for the document is collected FIRST (no writes), then the
+    delete-and-replace happens as ONE token-fenced transaction.  A worker
+    whose claim was reclaimed mid-run therefore cannot delete or overwrite a
+    newer run's knowledge — it raises :class:`ReharvestClaimLost` instead.
+    """
     doc_id = doc["id"]
     with db._lock:
         chunk_rows = db._conn.execute(
@@ -207,14 +218,12 @@ def _reharvest_doc(
         report["docs_skipped_no_chunks"] += 1
         return
 
-    # Stale machine items must go first — text-hash dedup would keep
-    # them alive otherwise.  Approved + quarantined survive (default).
-    report["prior_items_deleted"] += db.delete_document_knowledge(doc_id)
-
+    # Phase 1 — read-only: collect and validate every item for this doc.
     title = doc.get("title") or doc_id
     groups = [texts[i : i + _CHUNKS_PER_CALL] for i in range(0, len(texts), _CHUNKS_PER_CALL)][
         :_MAX_CALLS_PER_DOC
     ]
+    new_items: list[dict] = []
     for group in groups:
         fenced = shield_wrap("\n\n".join(group), source=f"document \u201c{title}\u201d")
         prompt = _DOMAIN_PROMPT.format(
@@ -241,14 +250,33 @@ def _reharvest_doc(
                 conf = max(0.0, min(1.0, float(item.get("confidence", 0.7))))
             except Exception:
                 conf = 0.7
+            new_items.append(
+                {
+                    "kind": kind,
+                    "text": text[:2000],
+                    "subject": (item.get("subject") or "").strip()[:300] or None,
+                    "confidence": conf,
+                }
+            )
+
+    # Phase 2 — one token-fenced transaction: delete prior machine items
+    # (text-hash dedup would keep them alive otherwise; approved + quarantined
+    # survive by default) and insert the replacements atomically.
+    with db.atomic():
+        if not _token_current(db, work_id, token):
+            raise ReharvestClaimLost(
+                f"reharvest claim for work {work_id} was reclaimed by a newer run"
+            )
+        report["prior_items_deleted"] += db.delete_document_knowledge(doc_id)
+        for it in new_items:
             db.create_knowledge_item(
                 work_id=work_id,
-                kind=kind,
-                text=text[:2000],
-                subject=(item.get("subject") or "").strip()[:300] or None,
+                kind=it["kind"],
+                text=it["text"],
+                subject=it["subject"],
                 predicate=None,
                 obj=None,
-                confidence=conf,
+                confidence=it["confidence"],
                 source_doc_id=doc_id,
                 review_status="ai_auto",
                 meta={"source": "reharvest", "domain": domain},
@@ -331,9 +359,14 @@ def reharvest_work(
                 base_url=base_url,
                 model=model,
                 timeout=timeout,
+                token=token,
             )
 
         report["state"] = "done"
+    except ReharvestClaimLost:
+        # A newer run owns the Work — this run made no further writes and its
+        # report/status will be discarded by the fenced finalization below.
+        report["state"] = "superseded"
     except BaseException as exc:
         report["state"] = "error"
         report["error"] = str(exc)[:500]
