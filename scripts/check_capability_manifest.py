@@ -16,10 +16,15 @@ Failure conditions:
   3. a manifest entry's module contradicts the live router module (moved code)
   4. an invalid status, or a pwa entry without a ui_route
   5. a pwa entry's ui_route does not exist in the UI route table
+  5b. a pwa operation has no machine-detectable UI consumer (path literal,
+     BASE-relative path, or typed-client hook — scripts/ui_consumer_scan.py):
+     a declared route is not enough, the UI must actually call it
   6. a pwa operation is absent from the typed contract AND not grandfathered
-     in contract_backlog (backlog is SHRINK-ONLY: stale/specced entries fail)
-  7. a typed-contract operation whose manifest status is not pwa/external_api
-     (a public contract op classified internal/experimental is a contradiction)
+     in contract_backlog (backlog is SHRINK-ONLY against the frozen baseline
+     in capability_contract_backlog_baseline.json: any new key fails)
+  7. a typed-contract operation classified internal/admin_tooling/archived
+     (such ops have no business in the public contract; experimental is
+     allowed — staged in the contract before the UI wires it up)
 
 Usage: python scripts/check_capability_manifest.py
 Exit 0 = manifest consistent, 1 = violations.
@@ -47,8 +52,12 @@ BACKLOG_BASELINE = ROOT / "scripts" / "capability_contract_backlog_baseline.json
 SPEC = ROOT / "lib" / "api-spec" / "openapi.yaml"
 APP_TSX = ROOT / "artifacts" / "orivellum-ui" / "src" / "App.tsx"
 SPEC_METHODS = {"get", "post", "put", "patch", "delete"}
-# Statuses whose operations are allowed (and expected) in the public contract.
-CONTRACT_STATUSES = {"pwa", "external_api"}
+# Statuses whose operations are allowed in the public contract: shipped ones,
+# plus "experimental" — an op may be staged in the typed contract (so its
+# generated hook exists) before any UI calls it; the UI-consumer rule is what
+# decides whether it counts as shipped. internal/admin_tooling/archived ops
+# have no business in the public contract at all.
+CONTRACT_STATUSES = {"pwa", "external_api", "experimental"}
 
 
 def load_spec_ops() -> set[tuple[str, str]]:
@@ -78,6 +87,7 @@ def _check_entry(
     spec_ops: set[tuple[str, str]],
     ui_routes: set[str],
     seen_backlog: set[str],
+    ui_consumers: set[str] | None,
 ) -> list[str]:
     """Rules 3-6b for one manifest entry that matches a live operation."""
     problems: list[str] = []
@@ -95,6 +105,13 @@ def _check_entry(
     ui_route = entry.get("ui_route")
     if status == "pwa" and not ui_route:
         problems.append(f"NO UI OWNER: {key} is 'pwa' but names no ui_route")
+    # 5b. shipped ⇒ the UI must actually call it, not just declare a route
+    if status == "pwa" and ui_consumers is not None and key not in ui_consumers:
+        problems.append(
+            f"UNWIRED: {key} is 'pwa' but no UI source references it "
+            "(no path literal, BASE-relative path, or typed-client hook) — "
+            "wire it into the owning page or reclassify it"
+        )
     # 5. the named UI owner must actually exist
     if ui_route and ui_route not in ui_routes:
         problems.append(
@@ -119,6 +136,22 @@ def _check_entry(
         if status != "pwa":
             problems.append(f"BACKLOG STALE: {key} is not 'pwa' — remove it from contract_backlog")
     return problems
+
+
+def _scan_ui_consumers(entries: dict[str, dict]) -> set[str]:
+    """Op keys with machine-detectable UI consumers (pwa entries only scanned)."""
+    from ui_consumer_scan import has_ui_consumer, load_spec_hook_names, load_ui_sources
+
+    sources = load_ui_sources()
+    hook_names = load_spec_hook_names()
+    consumers: set[str] = set()
+    for key, entry in entries.items():
+        if entry.get("status") != "pwa":
+            continue
+        method, path = key.split(" ", 1)
+        if has_ui_consumer(method, path, sources, hook_names):
+            consumers.add(key)
+    return consumers
 
 
 def _load_defaults(manifest, live, spec_ops, ui_routes, backlog_baseline):
@@ -146,6 +179,7 @@ def check(
     ui_routes: set[str] | None = None,
     registered_ops: set[tuple[str, str]] | None = None,
     backlog_baseline: set[str] | None = None,
+    ui_consumers: set[str] | None = None,
 ) -> list[str]:
     """Return all violations. Args exist for tests; production passes none."""
     fixture_mode = live is not None  # unit tests inject a synthetic router table
@@ -155,6 +189,8 @@ def check(
     statuses = set(manifest["statuses"])
     entries: dict[str, dict] = manifest["operations"]
     backlog = manifest.get("contract_backlog", [])
+    if ui_consumers is None and not fixture_mode:
+        ui_consumers = _scan_ui_consumers(entries)
 
     problems: list[str] = []
     # 0. the module walk must match the app's REAL registered router table —
@@ -184,7 +220,9 @@ def check(
         if live_op is None:
             continue  # already reported as STALE
         problems.extend(
-            _check_entry(key, entry, live_op, statuses, spec_ops, ui_routes, seen_backlog)
+            _check_entry(
+                key, entry, live_op, statuses, spec_ops, ui_routes, seen_backlog, ui_consumers
+            )
         )
 
     # 6c. backlog entries must reference real manifest operations

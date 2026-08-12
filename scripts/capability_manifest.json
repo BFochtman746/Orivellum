@@ -1,7 +1,8 @@
 {
  "_doc": [
   "Capability manifest \u2014 every live API operation's declared product fate.",
-  "Statuses: pwa (shipped in the PWA; ui_route names the owning page),",
+  "Statuses: pwa (shipped in the PWA; ui_route names the owning page and the",
+  "UI must have a machine-detectable call to the operation),",
   "external_api (for outside consumers, e.g. MCP), admin_tooling (operator/",
   "diagnostic surfaces), internal (machine-to-machine infrastructure),",
   "experimental (built but not wired to any UI \u2014 awaiting a product decision),",
@@ -327,9 +328,8 @@
    "ui_route": "/system"
   },
   "DELETE /api/claims/{claim_id}": {
-   "status": "pwa",
-   "module": "claims",
-   "ui_route": "/review"
+   "status": "experimental",
+   "module": "claims"
   },
   "DELETE /api/conversations/{conv_id}": {
    "status": "pwa",
@@ -472,9 +472,8 @@
    "ui_route": "/system"
   },
   "GET /api/actions/runs/{run_id}": {
-   "status": "pwa",
-   "module": "actions",
-   "ui_route": "/actions"
+   "status": "experimental",
+   "module": "actions"
   },
   "GET /api/actions/runs/{run_id}/log": {
    "status": "experimental",
@@ -539,9 +538,8 @@
    "ui_route": "/backups"
   },
   "GET /api/backups/{name}/verify": {
-   "status": "pwa",
-   "module": "backups",
-   "ui_route": "/backups"
+   "status": "experimental",
+   "module": "backups"
   },
   "GET /api/band/chapters/{chapter_id}": {
    "status": "pwa",
@@ -584,9 +582,8 @@
    "ui_route": "/books"
   },
   "GET /api/briefing": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "GET /api/canon/counts": {
    "status": "pwa",
@@ -609,19 +606,16 @@
    "ui_route": "/canon"
   },
   "GET /api/claims": {
-   "status": "pwa",
-   "module": "claims",
-   "ui_route": "/review"
+   "status": "experimental",
+   "module": "claims"
   },
   "GET /api/claims/subject/{subject}": {
-   "status": "pwa",
-   "module": "claims",
-   "ui_route": "/review"
+   "status": "experimental",
+   "module": "claims"
   },
   "GET /api/claims/{claim_id}": {
-   "status": "pwa",
-   "module": "claims",
-   "ui_route": "/review"
+   "status": "experimental",
+   "module": "claims"
   },
   "GET /api/completeness-assertions/{assertion_id}/history": {
    "status": "experimental",
@@ -652,19 +646,16 @@
    "ui_route": "/chat"
   },
   "GET /api/dashboard/activity": {
-   "status": "pwa",
-   "module": "dashboard",
-   "ui_route": "/command"
+   "status": "experimental",
+   "module": "dashboard"
   },
   "GET /api/dashboard/nudges": {
-   "status": "pwa",
-   "module": "dashboard",
-   "ui_route": "/command"
+   "status": "experimental",
+   "module": "dashboard"
   },
   "GET /api/dashboard/summary": {
-   "status": "pwa",
-   "module": "dashboard",
-   "ui_route": "/command"
+   "status": "experimental",
+   "module": "dashboard"
   },
   "GET /api/diagnostics": {
    "status": "pwa",
@@ -672,19 +663,16 @@
    "ui_route": "/system"
   },
   "GET /api/download/{path:path}": {
-   "status": "pwa",
-   "module": "files",
-   "ui_route": "/library"
+   "status": "experimental",
+   "module": "files"
   },
   "GET /api/entities": {
-   "status": "pwa",
-   "module": "works",
-   "ui_route": "/works/:workId"
+   "status": "experimental",
+   "module": "works"
   },
   "GET /api/entities/{entity_id}": {
-   "status": "pwa",
-   "module": "works",
-   "ui_route": "/works/:workId"
+   "status": "experimental",
+   "module": "works"
   },
   "GET /api/files": {
    "status": "pwa",
@@ -810,9 +798,8 @@
    "ui_route": "/works/:workId/gap-oracle"
   },
   "GET /api/gaps/top": {
-   "status": "pwa",
-   "module": "works",
-   "ui_route": "/works/:workId"
+   "status": "experimental",
+   "module": "works"
   },
   "GET /api/generate/download": {
    "status": "pwa",
@@ -860,9 +847,8 @@
    "ui_route": "/graph"
   },
   "GET /api/healthz": {
-   "status": "pwa",
-   "module": "health",
-   "ui_route": "/"
+   "status": "experimental",
+   "module": "health"
   },
   "GET /api/intake/{doc_id}": {
    "status": "pwa",
@@ -909,9 +895,8 @@
    "ui_route": "/"
   },
   "GET /api/library/active-work": {
-   "status": "pwa",
-   "module": "library",
-   "ui_route": "/library"
+   "status": "experimental",
+   "module": "library"
   },
   "GET /api/library/collections": {
    "status": "pwa",
@@ -1136,14 +1121,12 @@
    "ui_route": "/operations"
   },
   "GET /api/pklos/inventory": {
-   "status": "pwa",
-   "module": "pklos",
-   "ui_route": "/governance"
+   "status": "experimental",
+   "module": "pklos"
   },
   "GET /api/pklos/status": {
-   "status": "pwa",
-   "module": "pklos",
-   "ui_route": "/governance"
+   "status": "experimental",
+   "module": "pklos"
   },
   "GET /api/position/audits/{audit_id}": {
    "status": "experimental",
@@ -1279,9 +1262,8 @@
    "ui_route": "/studio"
   },
   "GET /api/suggestions": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "GET /api/system/access-log": {
    "status": "admin_tooling",
@@ -1308,9 +1290,8 @@
    "ui_route": "/system"
   },
   "GET /api/system/document-queue": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "GET /api/system/embeddings/status": {
    "status": "pwa",
@@ -1402,9 +1383,8 @@
    "ui_route": "/system"
   },
   "GET /api/system/settings/context-window": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "GET /api/system/settings/docling": {
    "status": "pwa",
@@ -1441,9 +1421,8 @@
    "ui_route": "/system"
   },
   "GET /api/system/tools": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "GET /api/system/user-memory": {
    "status": "pwa",
@@ -1844,9 +1823,8 @@
    "module": "autonomy"
   },
   "PATCH /api/claims/{claim_id}/status": {
-   "status": "pwa",
-   "module": "claims",
-   "ui_route": "/review"
+   "status": "experimental",
+   "module": "claims"
   },
   "PATCH /api/conversations/{conv_id}": {
    "status": "pwa",
@@ -1924,9 +1902,8 @@
    "ui_route": "/series/:seriesId"
   },
   "PATCH /api/system/jobs/{job_id}/state": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "PATCH /api/system/settings/asr": {
    "status": "experimental",
@@ -2090,14 +2067,12 @@
    "ui_route": "/architect"
   },
   "POST /api/claims": {
-   "status": "pwa",
-   "module": "claims",
-   "ui_route": "/review"
+   "status": "experimental",
+   "module": "claims"
   },
   "POST /api/claims/search": {
-   "status": "pwa",
-   "module": "claims",
-   "ui_route": "/review"
+   "status": "experimental",
+   "module": "claims"
   },
   "POST /api/completeness-assertions/{assertion_id}/ratify": {
    "status": "pwa",
@@ -2130,14 +2105,12 @@
    "ui_route": "/chat"
   },
   "POST /api/dashboard/nudges/rebuild": {
-   "status": "pwa",
-   "module": "dashboard",
-   "ui_route": "/command"
+   "status": "experimental",
+   "module": "dashboard"
   },
   "POST /api/dashboard/nudges/resolve": {
-   "status": "pwa",
-   "module": "dashboard",
-   "ui_route": "/command"
+   "status": "experimental",
+   "module": "dashboard"
   },
   "POST /api/extract-file": {
    "status": "admin_tooling",
@@ -2314,9 +2287,8 @@
    "ui_route": "/intake"
   },
   "POST /api/library/active-work": {
-   "status": "pwa",
-   "module": "library",
-   "ui_route": "/library"
+   "status": "experimental",
+   "module": "library"
   },
   "POST /api/library/classify-backfill": {
    "status": "admin_tooling",
@@ -2358,9 +2330,8 @@
    "ui_route": "/library"
   },
   "POST /api/library/{doc_id}/extract": {
-   "status": "pwa",
-   "module": "library",
-   "ui_route": "/library"
+   "status": "experimental",
+   "module": "library"
   },
   "POST /api/library/{doc_id}/reprocess": {
    "status": "pwa",
@@ -2533,14 +2504,12 @@
    "module": "operations"
   },
   "POST /api/pklos/enforcement/check": {
-   "status": "pwa",
-   "module": "pklos",
-   "ui_route": "/governance"
+   "status": "experimental",
+   "module": "pklos"
   },
   "POST /api/pklos/inventory": {
-   "status": "pwa",
-   "module": "pklos",
-   "ui_route": "/governance"
+   "status": "experimental",
+   "module": "pklos"
   },
   "POST /api/projects": {
    "status": "pwa",
@@ -2671,9 +2640,8 @@
    "ui_route": "/studio"
   },
   "POST /api/suggestions/generate": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "POST /api/system/audio-enhance/probe": {
    "status": "pwa",
@@ -2711,9 +2679,8 @@
    "ui_route": "/system"
   },
   "POST /api/system/nightshift/run": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "POST /api/system/nightshift/run-now": {
    "status": "pwa",
@@ -3073,9 +3040,8 @@
    "ui_route": "/system"
   },
   "PUT /api/system/settings/context-window": {
-   "status": "pwa",
-   "module": "system",
-   "ui_route": "/system"
+   "status": "experimental",
+   "module": "system"
   },
   "PUT /api/system/settings/docling": {
    "status": "pwa",

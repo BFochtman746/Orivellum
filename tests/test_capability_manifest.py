@@ -37,16 +37,28 @@ def _live(*ops: tuple[str, str, str]) -> list[dict]:
 UI_ROUTES = {"/", "/canon", "/works/:workId"}
 
 
-def _run(manifest, live, spec_ops=frozenset(), ui_routes=frozenset(UI_ROUTES), baseline=None):
+def _run(
+    manifest,
+    live,
+    spec_ops=frozenset(),
+    ui_routes=frozenset(UI_ROUTES),
+    baseline=None,
+    ui_consumers=None,
+):
     if baseline is None:
         # by default, treat the fixture's own backlog as the frozen baseline
         baseline = set(manifest.get("contract_backlog", []))
+    if ui_consumers is None:
+        # by default, assume every fixture pwa op is wired (tests for the
+        # UNWIRED rule pass an explicit set)
+        ui_consumers = {k for k, v in manifest["operations"].items() if v.get("status") == "pwa"}
     return check(
         manifest=manifest,
         live=live,
         spec_ops=set(spec_ops),
         ui_routes=set(ui_routes),
         backlog_baseline=set(baseline),
+        ui_consumers=set(ui_consumers),
     )
 
 
@@ -150,6 +162,21 @@ class TestGateRules:
         problems = _run(manifest, live)
         assert any("duplicate" in p for p in problems)
 
+    def test_pwa_without_ui_consumer_fails(self):
+        """A pwa op whose endpoint no UI source calls must fail — a declared
+        route alone is not 'wired'."""
+        live = _live(("POST", "/api/x/run", "m"))
+        manifest = _manifest(
+            {"POST /api/x/run": {"status": "pwa", "module": "m", "ui_route": "/canon"}}
+        )
+        problems = _run(manifest, live, spec_ops={("POST", "/api/x/run")}, ui_consumers=set())
+        assert any("UNWIRED" in p and "POST /api/x/run" in p for p in problems)
+
+    def test_non_pwa_statuses_do_not_require_ui_consumer(self):
+        live = _live(("POST", "/api/x/run", "m"))
+        manifest = _manifest({"POST /api/x/run": {"status": "experimental", "module": "m"}})
+        assert _run(manifest, live, ui_consumers=set()) == []
+
     def test_backlog_growth_beyond_frozen_baseline_fails(self):
         live = _live(("GET", "/api/x", "m"))
         manifest = _manifest(
@@ -202,6 +229,42 @@ class TestGateRules:
         live = _live(("POST", "/api/mcp", "mcp"))
         manifest = _manifest({"POST /api/mcp": {"status": "external_api", "module": "mcp"}})
         assert _run(manifest, live, spec_ops={("POST", "/api/mcp")}) == []
+
+
+class TestUiConsumerScan:
+    """The evidence scanner that backs the UNWIRED rule."""
+
+    def _has(self, method, path, sources, hooks=None):
+        from ui_consumer_scan import has_ui_consumer
+
+        return has_ui_consumer(method, path, sources, hooks or {})
+
+    def test_literal_path_evidence(self):
+        src = {"pages/canon/index.tsx": "apiFetch(`${BASE}/canon/facts`)"}
+        assert self._has("GET", "/api/canon/facts", src)
+
+    def test_template_param_evidence(self):
+        src = {"a.tsx": "fetch(`${BASE}/works/${workId}/stats`)"}
+        assert self._has("GET", "/api/works/{work_id}/stats", src)
+
+    def test_base_constant_evidence(self):
+        # page builds URLs from BASE = `...api/finishing` + relative path
+        src = {"f.tsx": "const BASE = `${p}api/finishing`; apiFetch(`${BASE}/atelier/books`)"}
+        assert self._has("GET", "/api/finishing/atelier/books", src)
+
+    def test_typed_hook_evidence(self):
+        hooks = {("GET", "/api/works/{}/stats"): "useGetWorkStats"}
+        src = {"b.tsx": "const { data } = useGetWorkStats(workId);"}
+        assert self._has("GET", "/api/works/{work_id}/stats", src, hooks)
+
+    def test_no_evidence(self):
+        src = {"a.tsx": "nothing relevant here", "b.tsx": 'fetch("/api/other/thing")'}
+        assert not self._has("POST", "/api/system/nightshift/run", src)
+
+    def test_similar_sibling_path_is_not_evidence(self):
+        # /nightshift/run-now must NOT count as a consumer of /nightshift/run
+        src = {"s.tsx": 'apiFetch(`${BASE}/nightshift/run-now`, { method: "POST" })'}
+        assert not self._has("POST", "/api/system/nightshift/run", src)
 
 
 class TestRealRepository:
