@@ -113,4 +113,5 @@
 - [Real book outputs](orivellum-real-outputs.md) — print PDF/DOCX/accessible EPUB packaging + compliance gates for the finished manuscript.
 - [AUTONOMY unattended runs](orivellum-autonomy.md) — never signs gates; allowlist blocker verdicts; quote-grounded BAND edits; full battery re-run after revise; run row is the claim; halts queue one suggestion.
 - [Runner research job](orivellum-research-job.md) — topic-target job; per-source quote verification, injection containment (exclude, not log), crash-reconcilable digests, GAP-UNRESEARCHED accounting.
+- [Research writeback & review gate](orivellum-research-writeback.md) — web claims land as 'proposed', question-safe allowlist gates all question/grading grounding; whole-corpus reseed + cycle guard + durable nightly cursor.
 - [Gap Engine](orivellum-gap-engine.md) — work-scoped identity, derived severity, never-resurrect; open-world oracle; blocking gate = fingerprint-current measurement ≥20 labels; Domain Model = proposal-only triangulated frame, frontier never critical.
