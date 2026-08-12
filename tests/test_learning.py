@@ -67,7 +67,9 @@ def _make_db():
             -- v96 transfer-question tracking
             question_type TEXT NOT NULL DEFAULT 'recall',
             -- v97 interleaved practice mode
-            session_mode TEXT NOT NULL DEFAULT 'blocked'
+            session_mode TEXT NOT NULL DEFAULT 'blocked',
+            -- v139 depth-ladder rubric record
+            rubric_json TEXT
         );
         -- v94 multi-prerequisite graph
         CREATE TABLE IF NOT EXISTS work_concept_prereqs (
@@ -294,6 +296,21 @@ class TestStreakAndRouting:
         assert concepts[0]["consecutive_passes"] == 0
 
     def test_three_passes_marks_graduated(self):
+        """Graduation requires the streak AND the depth ladder (recall alone never suffices)."""
+        from orivellum.capabilities.learning import _record_mastery, list_concepts
+
+        db = _FakeDB()
+        wid = db._insert_work()
+        cid = db._insert_concept(wid)
+
+        # Single-concept Work → contrast skipped; ladder = recall/self_explanation/transfer
+        for qt in ("recall", "self_explanation", "transfer"):
+            _record_mastery(db, cid, 0.8, "STEP_FORWARD", "Pass", question_type=qt)
+
+        concepts = list_concepts(db, wid)
+        assert concepts[0]["graduated"] is True
+
+    def test_recall_only_passes_do_not_graduate(self):
         from orivellum.capabilities.learning import _record_mastery, list_concepts
 
         db = _FakeDB()
@@ -304,7 +321,7 @@ class TestStreakAndRouting:
             _record_mastery(db, cid, 0.8, "STEP_FORWARD", "Pass")
 
         concepts = list_concepts(db, wid)
-        assert concepts[0]["graduated"] is True
+        assert concepts[0]["graduated"] is False, "recall-only streak must not graduate"
 
 
 # ─── Offline-fallback tests ────────────────────────────────────────────────────
@@ -611,8 +628,9 @@ class TestPrereqGraph:
         finally:
             db._conn = real_conn  # restore
 
-        # Expect at most 3 queries regardless of N (mastery CTE + prereqs + blocking)
-        assert query_count <= 3, (
+        # Expect at most 4 queries regardless of N
+        # (mastery CTE + prereqs + blocking + depth-ladder levels)
+        assert query_count <= 4, (
             f"list_concepts must be O(1) queries; got {query_count} queries for 10 concepts"
         )
 

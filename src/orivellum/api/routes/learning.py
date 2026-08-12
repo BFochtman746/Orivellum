@@ -315,10 +315,10 @@ async def learning_assess(work_id: str, body: AssessBody):
         next_concept_id,
     )
 
-    # Re-derive question_type server-side from the concept's current streak using
+    # Re-derive question_type server-side from the concept's depth ladder using
     # the same "auto" logic as get_question.  This prevents clients from forging a
-    # transfer question_type to obtain +2 mastery bonus on a recall question.
-    # A concept at streak ≥ _TRANSFER_STREAK_THRESHOLD gets "transfer"; below → "recall".
+    # transfer question_type to obtain +2 mastery bonus on a recall question:
+    # the ladder returns the lowest level not yet passed.
     qt = _resolve_question_type(db, body.concept_id, "auto")
     smode = body.session_mode if body.session_mode in _VALID_SESSION_MODES else "blocked"
     result = await asyncio.to_thread(
@@ -383,3 +383,93 @@ async def learning_assess(work_id: str, body: AssessBody):
         result["suggested_prereq_id"] = None
         result["suggested_prereq_subject"] = None
     return result
+
+
+# ─── Teach-back (T-M5) ─────────────────────────────────────────────────────────
+
+
+class TeachBackBody(BaseModel):
+    concept_id: str
+    explanation: str
+
+
+def _require_work_concept(db, work_id: str, concept_id: str) -> None:
+    """404 unless the concept exists and belongs to the given Work."""
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT work_id FROM work_concepts WHERE id=?", (concept_id,)
+        ).fetchone()
+    if not row or row["work_id"] != work_id:
+        raise HTTPException(404, f"Concept {concept_id!r} not found in work {work_id!r}")
+
+
+@router.get("/works/{work_id}/learning/teach-back")
+def learning_teach_back(work_id: str, concept_id: str):
+    """Return the teach-back prompt for a concept (no hints, no source excerpts)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    _require_work_concept(db, work_id, concept_id)
+    from orivellum.capabilities.learning import get_teach_back
+
+    result = get_teach_back(db, concept_id)
+    if result is None:
+        raise HTTPException(404, f"Concept {concept_id!r} not found")
+    return result
+
+
+@router.post("/works/{work_id}/learning/teach-back/assess")
+async def learning_teach_back_assess(work_id: str, body: TeachBackBody):
+    """Grade a teach-back explanation criterion-by-criterion with extractive quotes."""
+    import asyncio
+
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    if not body.explanation.strip():
+        raise HTTPException(422, "Explanation cannot be empty")
+    _require_work_concept(db, work_id, body.concept_id)
+    base_url, model = _cfg()
+    from orivellum.capabilities.learning import assess_teach_back, get_mastery_summary
+
+    result = await asyncio.to_thread(
+        assess_teach_back, db, body.concept_id, body.explanation, base_url, model
+    )
+    result["summary"] = get_mastery_summary(db, work_id)
+    return result
+
+
+# ─── Reverse research loop (T-M6) ──────────────────────────────────────────────
+
+
+@router.get("/works/{work_id}/learning/research-requests")
+def learning_research_requests(work_id: str, status: str = "open"):
+    """List research requests emitted by the reverse loop (default: open only)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    if status not in ("open", "resolved", "all"):
+        raise HTTPException(422, "status must be 'open', 'resolved', or 'all'")
+    from orivellum.capabilities.learning import list_research_requests
+
+    requests = list_research_requests(db, work_id, None if status == "all" else status)
+    return {"requests": requests}
+
+
+@router.post("/works/{work_id}/learning/research-requests/{request_id}/resolve")
+def learning_research_request_resolve(work_id: str, request_id: str):
+    """Mark an open research request resolved (e.g. after a research run covered it)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT work_id, status FROM research_requests WHERE id=?", (request_id,)
+        ).fetchone()
+    if not row or row["work_id"] != work_id:
+        raise HTTPException(404, f"Research request {request_id!r} not found")
+    from orivellum.capabilities.learning import resolve_research_request
+
+    if not resolve_research_request(db, request_id):
+        raise HTTPException(409, "Research request is not open")
+    return {"resolved": True, "id": request_id}

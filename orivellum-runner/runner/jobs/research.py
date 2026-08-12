@@ -150,6 +150,20 @@ def inventory(topic):
     return inv
 
 
+def _gaps_from_research_requests(c, topic, toks, gaps, notes):
+    """Open learner research requests (depth-ladder triage) — highest authority:
+    a learner is actively blocked on these, so they lead the queue."""
+    try:
+        for r in c.execute(
+            "SELECT id, need FROM research_requests WHERE status='open' ORDER BY created_at"
+        ):
+            need = (r["need"] or "").strip()
+            if need and _overlaps(need, toks):
+                gaps.append({"query": need, "origin": "research_request", "request_id": r["id"]})
+    except sqlite3.Error as e:
+        notes.append(f"research_requests unavailable: {e}")
+
+
 def _gaps_from_gap_table(c, topic, toks, gaps, notes):
     try:
         for r in c.execute(
@@ -186,6 +200,7 @@ def intake_gaps(topic):
     gaps, notes = [], []
     c = _corpus_conn()
     if c is not None:
+        _gaps_from_research_requests(c, topic, toks, gaps, notes)
         _gaps_from_gap_table(c, topic, toks, gaps, notes)
         _gaps_from_json_column(
             c,
@@ -472,6 +487,7 @@ def _worker_gap(run_id, unit):
         "query": query,
         "origin": p.get("origin"),
         "gap_id": p.get("gap_id"),
+        "request_id": p.get("request_id"),
         "sources": sources,
         "excluded_sources": excluded,
         "claims": [],

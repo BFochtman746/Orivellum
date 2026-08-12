@@ -106,13 +106,25 @@ class TestRecordMastery:
         assert m["consecutive_passes"] == 0, "failure must reset consecutive pass streak"
 
     def test_three_passes_graduates(self):
+        """Graduation needs the streak AND the depth ladder (recall alone is not enough)."""
         db = _make_db()
         _, cid = _seed(db)
         from orivellum.capabilities.learning import _is_graduated, _record_mastery
 
-        for _ in range(3):
-            _record_mastery(db, cid, score=0.9, route="STEP_FORWARD", feedback="")
+        # Single-concept Work → contrast is skipped; ladder = recall/self_explanation/transfer
+        for qt in ("recall", "self_explanation", "transfer"):
+            _record_mastery(db, cid, score=0.9, route="STEP_FORWARD", feedback="", question_type=qt)
         assert _is_graduated(db, cid)
+
+    def test_recall_only_streak_never_graduates(self):
+        """A concept cannot graduate on recall alone, no matter how long the streak (T-M4)."""
+        db = _make_db()
+        _, cid = _seed(db)
+        from orivellum.capabilities.learning import _is_graduated, _record_mastery
+
+        for _ in range(6):
+            _record_mastery(db, cid, score=0.95, route="STAY_HERE", feedback="")
+        assert not _is_graduated(db, cid), "recall-only streak must never graduate"
 
 
 # ── L2: assess_answer (LLM mocked) ────────────────────────────────────────────
@@ -197,13 +209,27 @@ class TestAssessAnswer:
         assert result["score"] == pytest.approx(0.5)
 
     def test_three_correct_answers_graduate_concept(self):
+        """Three passes graduate only when they climb the depth ladder."""
         db = _make_db()
         _, cid = _seed(db)
-        for _ in range(3):
-            self._assess(db, cid, '{"score":0.9,"feedback":"Correct!"}')
-        from orivellum.capabilities.learning import _is_graduated
+        from orivellum.capabilities.learning import _is_graduated, assess_answer
 
-        assert _is_graduated(db, cid), "concept must be graduated after 3 consecutive passes"
+        # Single-concept Work → ladder is recall → self_explanation → transfer
+        for qt in ("recall", "self_explanation", "transfer"):
+            with patch(
+                "orivellum.capabilities.learning._call",
+                return_value='{"score":0.9,"feedback":"Correct!"}',
+            ):
+                assess_answer(
+                    db,
+                    cid,
+                    question="Q?",
+                    answer="A",
+                    base_url=DUMMY_URL,
+                    model="test-model",
+                    question_type=qt,
+                )
+        assert _is_graduated(db, cid), "concept must graduate after the ladder is climbed"
 
     def test_fail_then_pass_resets_streak(self):
         db = _make_db()
@@ -454,24 +480,34 @@ class TestTransferQuestions:
         assert result["question_type"] == "recall"
         assert "question" in result
 
-    def test_get_question_switches_to_transfer_at_threshold(self):
-        """After _TRANSFER_STREAK_THRESHOLD consecutive passes, auto → transfer."""
+    def test_get_question_climbs_ladder_to_self_explanation(self):
+        """After a recall pass, auto must climb to self_explanation (not jump to transfer)."""
         db = _make_db()
         _, cid = _seed(db)
-        # Seed 2 passing mastery records so streak = 2
-        from orivellum.capabilities.learning import _TRANSFER_STREAK_THRESHOLD, _record_mastery
+        from orivellum.capabilities.learning import _record_mastery, get_question
 
-        for _ in range(_TRANSFER_STREAK_THRESHOLD):
-            _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
-        from orivellum.capabilities.learning import get_question
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="recall")
+        result = get_question(db, cid, base_url="http://x", model="t", question_type="auto")
+        assert result["question_type"] == "self_explanation", (
+            f"Expected self_explanation after recall pass, got {result['question_type']}"
+        )
 
+    def test_get_question_reaches_transfer_after_lower_levels(self):
+        """Auto resolves to transfer once recall and self_explanation are passed."""
+        db = _make_db()
+        _, cid = _seed(db)
+        from orivellum.capabilities.learning import _record_mastery, get_question
+
+        # Single-concept Work → contrast is skipped in the ladder
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="recall")
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="self_explanation")
         with patch(
             "orivellum.capabilities.learning._call",
             return_value='{"question":"Novel scenario?","context_snippet":"concept x"}',
         ):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="auto")
         assert result["question_type"] == "transfer", (
-            f"Expected transfer at streak={_TRANSFER_STREAK_THRESHOLD}, got {result['question_type']}"
+            f"Expected transfer after lower levels passed, got {result['question_type']}"
         )
 
     def test_get_question_explicit_transfer_ignores_streak(self):
@@ -491,13 +527,9 @@ class TestTransferQuestions:
         """Explicit type='recall' must stay recall even when streak >= threshold."""
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import (
-            _TRANSFER_STREAK_THRESHOLD,
-            _record_mastery,
-            get_question,
-        )
+        from orivellum.capabilities.learning import _record_mastery, get_question
 
-        for _ in range(_TRANSFER_STREAK_THRESHOLD + 1):
+        for _ in range(3):
             _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
         with patch(
             "orivellum.capabilities.learning._call",
@@ -582,20 +614,38 @@ class TestTransferQuestions:
         )
 
     def test_transfer_can_graduate_in_fewer_attempts(self):
-        """Two correct transfer answers should graduate a concept that needs 3 normal passes."""
+        """+2 transfer credit graduates faster once the depth ladder is otherwise complete."""
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import _PASSES_TO_GRAD, _is_graduated
+        from orivellum.capabilities.learning import _is_graduated, _record_mastery
 
-        # With +2 per correct transfer, 2 correct transfer answers = 4 passes ≥ _PASSES_TO_GRAD (3)
+        # Climb the lower ladder first (single-concept Work → contrast skipped)
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="self_explanation")
+        # One correct transfer (+2) → streak 3 AND ladder complete → graduated
+        self._assess_transfer(
+            db,
+            cid,
+            '{"score":0.9,"feedback":"Excellent.","error_type":"null","remediation_hint":""}',
+        )
+        assert _is_graduated(db, cid), (
+            "Should be graduated: streak 3 (1 + transfer +2) with self_explanation and "
+            "transfer both passed"
+        )
+
+    def test_transfer_streak_alone_does_not_graduate(self):
+        """Transfer-only passes reach the streak but not the ladder — no graduation (T-M4)."""
+        db = _make_db()
+        _, cid = _seed(db)
+        from orivellum.capabilities.learning import _is_graduated
+
         for _ in range(2):
             self._assess_transfer(
                 db,
                 cid,
                 '{"score":0.9,"feedback":"Excellent.","error_type":"null","remediation_hint":""}',
             )
-        assert _is_graduated(db, cid), (
-            f"Should be graduated after 2 correct transfer answers (4 streak ≥ {_PASSES_TO_GRAD})"
+        assert not _is_graduated(db, cid), (
+            "4-streak of transfer-only passes must NOT graduate without self_explanation"
         )
 
     def test_assess_answer_echoes_question_type(self):
@@ -617,19 +667,33 @@ class TestTransferQuestions:
         assert "question_type" in cols, "v96: question_type must exist on work_mastery"
 
     def test_transfer_route_forward_fires_correctly(self):
-        """After two correct transfer answers, route must be STEP_FORWARD (graduated)."""
+        """STEP_FORWARD fires when the streak completes AND the ladder is complete."""
         db = _make_db()
         _, cid = _seed(db)
+        from orivellum.capabilities.learning import _record_mastery
+
+        # Climb the lower ladder (single-concept Work → contrast skipped)
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="self_explanation")
+        # Transfer pass: streak 1+2=3 ≥ 3 and ladder complete → STEP_FORWARD
         result = self._assess_transfer(
             db, cid, '{"score":0.9,"feedback":"A.","error_type":"null","remediation_hint":""}'
         )
-        # First: 2 passes accumulated, but need ≥ 3 → STAY_HERE
+        assert result["route"] == "STEP_FORWARD", (
+            f"Expected STEP_FORWARD once streak and ladder complete, got {result['route']}"
+        )
+
+    def test_transfer_route_stays_when_ladder_incomplete(self):
+        """Transfer-only streak must NOT route STEP_FORWARD while the ladder is incomplete."""
+        db = _make_db()
+        _, cid = _seed(db)
+        self._assess_transfer(
+            db, cid, '{"score":0.9,"feedback":"A.","error_type":"null","remediation_hint":""}'
+        )
         result2 = self._assess_transfer(
             db, cid, '{"score":0.9,"feedback":"B.","error_type":"null","remediation_hint":""}'
         )
-        # Second: 4 passes total ≥ _PASSES_TO_GRAD → STEP_FORWARD
-        assert result2["route"] == "STEP_FORWARD", (
-            f"Expected STEP_FORWARD after 4 transfer streak, got {result2['route']}"
+        assert result2["route"] == "STAY_HERE", (
+            f"Expected STAY_HERE with self_explanation unpassed, got {result2['route']}"
         )
 
     # ── Fallback integrity ────────────────────────────────────────────────────
@@ -638,15 +702,11 @@ class TestTransferQuestions:
         """get_question without a base_url must return question_type='recall', never 'transfer'."""
         db = _make_db()
         _, cid = _seed(db)
-        # Seed streak so auto would resolve to transfer if it could
-        from orivellum.capabilities.learning import (
-            _TRANSFER_STREAK_THRESHOLD,
-            _record_mastery,
-            get_question,
-        )
+        # Pass the lower levels so auto would resolve to transfer if it could
+        from orivellum.capabilities.learning import _record_mastery, get_question
 
-        for _ in range(_TRANSFER_STREAK_THRESHOLD):
-            _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="recall")
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="self_explanation")
         result = get_question(db, cid, base_url="", model="t", question_type="auto")
         assert result["question_type"] == "recall", (
             "Offline fallback must be 'recall', never 'transfer'"
@@ -656,14 +716,10 @@ class TestTransferQuestions:
         """When the LLM returns None (network failure), get_question must return 'recall'."""
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import (
-            _TRANSFER_STREAK_THRESHOLD,
-            _record_mastery,
-            get_question,
-        )
+        from orivellum.capabilities.learning import _record_mastery, get_question
 
-        for _ in range(_TRANSFER_STREAK_THRESHOLD):
-            _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="recall")
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="self_explanation")
         with patch("orivellum.capabilities.learning._call", return_value=None):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="auto")
         assert result["question_type"] == "recall", (
@@ -674,14 +730,10 @@ class TestTransferQuestions:
         """When LLM returns unparseable JSON, get_question must return 'recall'."""
         db = _make_db()
         _, cid = _seed(db)
-        from orivellum.capabilities.learning import (
-            _TRANSFER_STREAK_THRESHOLD,
-            _record_mastery,
-            get_question,
-        )
+        from orivellum.capabilities.learning import _record_mastery, get_question
 
-        for _ in range(_TRANSFER_STREAK_THRESHOLD):
-            _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="recall")
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="self_explanation")
         with patch("orivellum.capabilities.learning._call", return_value="not json at all {{{"):
             result = get_question(db, cid, base_url="http://x", model="t", question_type="auto")
         assert result["question_type"] == "recall", (
@@ -693,8 +745,8 @@ class TestTransferQuestions:
     def test_forged_transfer_type_yields_recall_credit_when_streak_below_threshold(self):
         """assess_answer must re-derive question_type from streak, not trust the caller's value.
 
-        A forged question_type='transfer' when streak < _TRANSFER_STREAK_THRESHOLD must
-        not award the +2 bonus — the server should re-derive to 'recall' independently.
+        A forged question_type='transfer' while the ladder is still at recall must
+        not award the +2 bonus — the server should re-derive the level independently.
 
         Note: the route-level test (TestTransferRouteSecurity) covers the HTTP path.
         This test verifies the capability layer itself does not have a bypass.
@@ -703,13 +755,12 @@ class TestTransferQuestions:
         """
         db = _make_db()
         _, cid = _seed(db)
-        # Streak is 0 — well below threshold
-        from orivellum.capabilities.learning import _TRANSFER_STREAK_THRESHOLD, assess_answer
+        # Streak is 0 — the ladder would resolve 'auto' to recall
+        from orivellum.capabilities.learning import assess_answer
 
-        assert _TRANSFER_STREAK_THRESHOLD > 0, "pre-condition: threshold must be > 0"
         # The route re-derives before calling assess_answer, so at the route level
-        # a forged 'transfer' body yields 'recall'.  At the capability level the function
-        # still honours the passed type for flexibility; the route is the enforcement point.
+        # a forged 'transfer' body yields the ladder's level.  At the capability level
+        # the function still honours the passed type; the route is the enforcement point.
         # This test just confirms that the route correctly re-derives (tested below in
         # TestTransferRouteSecurity) and that the capability function documents its contract.
         result = assess_answer(db, cid, "Q?", "A", base_url="", model="t", question_type="transfer")
@@ -900,13 +951,14 @@ class TestTransferRouteSecurity:
         )
 
     def test_route_grants_transfer_bonus_when_streak_at_threshold(self):
-        """Route must correctly use 'transfer' (and award +2) when streak ≥ threshold."""
+        """Route must correctly use 'transfer' (and award +2) when the ladder reaches it."""
         db = _make_db()
         work_id, cid = _seed(db)
-        from orivellum.capabilities.learning import _TRANSFER_STREAK_THRESHOLD, _record_mastery
+        from orivellum.capabilities.learning import _record_mastery
 
-        for _ in range(_TRANSFER_STREAK_THRESHOLD):
-            _record_mastery(db, cid, 0.9, "STAY_HERE", "Good")
+        # Pass the lower levels so the ladder resolves 'auto' → transfer
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="recall")
+        _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="self_explanation")
         client = _make_test_client(db)
         # Client sends question_type='recall' — route should IGNORE it and re-derive 'transfer'
         with patch(
@@ -925,7 +977,7 @@ class TestTransferRouteSecurity:
         assert r.status_code == 200, r.text
         body = r.json()
         assert body.get("question_type") == "transfer", (
-            f"Route must re-derive to 'transfer' at streak={_TRANSFER_STREAK_THRESHOLD}; got {body.get('question_type')!r}"
+            f"Route must re-derive to 'transfer' once lower levels passed; got {body.get('question_type')!r}"
         )
         with db._lock:
             row = db._conn.execute(
@@ -933,8 +985,8 @@ class TestTransferRouteSecurity:
                 "WHERE concept_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 (cid,),
             ).fetchone()
-        # Previous streak was _TRANSFER_STREAK_THRESHOLD, +2 bonus applied
-        expected = _TRANSFER_STREAK_THRESHOLD + 2
+        # Previous streak was 2 (recall + self_explanation), +2 transfer bonus applied
+        expected = 4
         assert row["consecutive_passes"] == expected, (
             f"Transfer bonus must add 2; expected {expected}, got {row['consecutive_passes']}"
         )

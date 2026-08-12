@@ -45,14 +45,40 @@ const LEARN_API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").rep
 type LearnPhase = "loading" | "seeding" | "question" | "assessing" | "feedback" | "all_done";
 type RouteAction = "STEP_FORWARD" | "STEP_BACKWARD" | "STAY_HERE";
 
+type QuestionLevel = "recall" | "self_explanation" | "contrast" | "transfer";
+
 interface LearningSession {
   concept_id: string;
   subject: string;
   description: string;
   question: string;
   context_snippet: string;
-  question_type: "recall" | "transfer";
+  question_type: QuestionLevel;
+  contrast_subject: string | null;           // neighbour concept for contrast questions
   session_mode: "blocked" | "interleaved";   // mode that produced this question
+}
+
+interface RubricCriterion {
+  criterion: string;
+  met: boolean;
+  quote: string;
+}
+
+interface TeachBackSession {
+  concept_id: string;
+  subject: string;
+  prompt: string;
+}
+
+interface TeachBackResult {
+  score: number;
+  passed: boolean;
+  graduated: boolean;
+  feedback: string;
+  student_followup: string | null;
+  rubric: RubricCriterion[] | null;
+  diagnosis: string | null;
+  research_request_id: string | null;
 }
 
 type ErrorType = "careless_slip" | "procedural_gap" | "conceptual_misconception" | "knowledge_gap" | null;
@@ -71,7 +97,11 @@ interface AssessResult {
   socratic_followup: string | null;
   suggested_prereq_id: string | null;
   suggested_prereq_subject: string | null;
-  question_type: "recall" | "transfer";
+  question_type: QuestionLevel;
+  // Depth ladder (v139)
+  rubric: RubricCriterion[] | null;
+  diagnosis: "never_learned" | "learned_and_decayed" | "corpus_insufficient" | null;
+  research_request_id: string | null;
 }
 
 // ─── Shared GD styling helpers ────────────────────────────────────────────────
@@ -779,6 +809,7 @@ export function LearnTab({ workId }: { workId: string }) {
         question:        data.question,
         context_snippet: data.context_snippet ?? "",
         question_type:   data.question_type ?? "recall",
+        contrast_subject: data.contrast_subject ?? null,
         session_mode:    (data.session_mode === "interleaved" ? "interleaved" : "blocked"),
       });
     } catch (e: any) {
@@ -884,6 +915,63 @@ export function LearnTab({ workId }: { workId: string }) {
       setError(e.message ?? "Could not assess answer");
       setPhase("feedback");
     }
+  };
+
+  // ── Teach-back mode (graduated concepts) ────────────────────────────────────
+  const [teachBack, setTeachBack]               = useState<TeachBackSession | null>(null);
+  const [teachExplanation, setTeachExplanation] = useState("");
+  const [teachResult, setTeachResult]           = useState<TeachBackResult | null>(null);
+  const [teachPhase, setTeachPhase]             = useState<"writing" | "grading" | "feedback">("writing");
+
+  const startTeachBack = async (conceptId: string) => {
+    setError(null);
+    setTeachResult(null);
+    setTeachExplanation("");
+    try {
+      const params = new URLSearchParams({ concept_id: conceptId });
+      const r = await apiFetch(`${apiBase}/works/${workId}/learning/teach-back?${params}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setTeachBack({
+        concept_id: data.concept_id,
+        subject:    data.subject ?? "Concept",
+        prompt:     data.prompt,
+      });
+      setTeachPhase("writing");
+    } catch (e: any) {
+      setError(e.message ?? "Could not start teach-back");
+    }
+  };
+
+  const submitTeachBack = async () => {
+    if (!teachBack || !teachExplanation.trim()) return;
+    setTeachPhase("grading");
+    setError(null);
+    try {
+      const r = await apiFetch(`${apiBase}/works/${workId}/learning/teach-back/assess`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          concept_id:  teachBack.concept_id,
+          explanation: teachExplanation.trim(),
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setTeachResult(data);
+      if (data.summary) setSummary(data.summary);
+      setTeachPhase("feedback");
+    } catch (e: any) {
+      setError(e.message ?? "Could not grade teach-back");
+      setTeachPhase("writing");
+    }
+  };
+
+  const closeTeachBack = () => {
+    setTeachBack(null);
+    setTeachResult(null);
+    setTeachExplanation("");
+    setTeachPhase("writing");
   };
 
   const next = async () => {
@@ -1194,29 +1282,184 @@ export function LearnTab({ workId }: { workId: string }) {
         )
       )}
 
-      {/* Question */}
-      {(phase === "question" || phase === "assessing" || phase === "feedback") && session && (
-        <div className="gd-panel space-y-4">
-          {/* Transfer question badge */}
-          {session.question_type === "transfer" && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
-                style={{
-                  fontFamily: "var(--gd-data)",
-                  color: "var(--gd-caution)",
-                  background: "var(--gd-caution-soft)",
-                  border: "1px solid var(--gd-caution)",
-                }}
-                title="Transfer questions test whether you can apply the concept to a novel situation — not just recall what you read."
-              >
-                <Zap className="w-3 h-3" aria-hidden /> Application question
-              </span>
-              <span className="text-[10px]" style={{ fontFamily: "var(--gd-data)", color: "var(--gd-dim)" }}>
-                Novel scenario — apply what you know
-              </span>
+      {/* Teach-back panel — replaces the question panel while active */}
+      {teachBack && (
+        <div className="gd-panel space-y-4" data-testid="panel-teach-back">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+              style={{
+                fontFamily: "var(--gd-data)",
+                color: "var(--gd-accent)",
+                background: "var(--gd-accent-soft)",
+                border: "1px solid var(--gd-accent)",
+              }}
+              title="Teach-back: explain the concept to a curious student who has never heard of it. Graded criterion by criterion against your own words."
+            >
+              <BookOpen className="w-3 h-3" aria-hidden /> Teach-back · {teachBack.subject}
+            </span>
+          </div>
+          <p className="font-medium leading-relaxed text-base">{teachBack.prompt}</p>
+
+          {teachPhase !== "feedback" ? (
+            <>
+              <textarea
+                className="w-full rounded-[8px] p-3 text-sm leading-relaxed resize-none focus:outline-none min-h-[140px]"
+                style={{ background: "var(--gd-card)", border: "1px solid var(--gd-line)", color: "var(--gd-text)" }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "var(--gd-accent)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "var(--gd-line)"; }}
+                placeholder="Teach it in your own words…"
+                value={teachExplanation}
+                onChange={(e) => setTeachExplanation(e.target.value)}
+                disabled={teachPhase === "grading"}
+                data-testid="input-teach-back"
+              />
+              <div className="flex justify-between gap-2">
+                <GdOutlineButton onClick={closeTeachBack} testId="button-teach-back-cancel">
+                  Cancel
+                </GdOutlineButton>
+                <GdPrimaryButton
+                  onClick={submitTeachBack}
+                  disabled={!teachExplanation.trim() || teachPhase === "grading"}
+                  testId="button-teach-back-submit"
+                >
+                  {teachPhase === "grading"
+                    ? <><Loader2 className="w-4 h-4 animate-spin" aria-hidden /> Grading…</>
+                    : <><ChevronRight className="w-4 h-4" aria-hidden /> Submit Lesson</>}
+                </GdPrimaryButton>
+              </div>
+            </>
+          ) : teachResult ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl font-bold"
+                  style={{ fontFamily: "var(--gd-data)", color: scoreColor(teachResult.score) }}
+                  data-testid="text-teach-back-score">
+                  {Math.round(teachResult.score * 100)}%
+                </span>
+                <span className="px-2 py-1 rounded-full text-xs font-semibold"
+                  style={{
+                    fontFamily: "var(--gd-data)",
+                    color: teachResult.passed ? "var(--gd-success)" : "var(--gd-danger)",
+                    border: `1px solid ${teachResult.passed ? "var(--gd-success)" : "var(--gd-danger)"}`,
+                    background: "var(--gd-card-hi)",
+                  }}>
+                  {teachResult.passed ? "Your student got it" : "Your student is confused"}
+                </span>
+                {!teachResult.graduated && !teachResult.passed && (
+                  <span className="text-[10px]" style={{ fontFamily: "var(--gd-data)", color: "var(--gd-danger)" }}>
+                    Graduation revoked — back to practice
+                  </span>
+                )}
+              </div>
+
+              {teachResult.rubric && teachResult.rubric.length > 0 && (
+                <div className="space-y-1.5 p-3 rounded-[10px]"
+                  style={{ border: "1px solid var(--gd-line)", background: "var(--gd-card)" }}>
+                  <p className="text-[10px] uppercase tracking-wider font-semibold"
+                    style={{ fontFamily: "var(--gd-data)", color: "var(--gd-dim)" }}>
+                    Teaching rubric
+                  </p>
+                  {teachResult.rubric.map((c, i) => (
+                    <div key={i} className="flex items-start gap-2 text-sm">
+                      <span className="shrink-0 mt-0.5 font-bold"
+                        style={{ color: c.met ? "var(--gd-success)" : "var(--gd-danger)" }}>
+                        {c.met ? "✓" : "✗"}
+                      </span>
+                      <div className="min-w-0">
+                        <span>{c.criterion}</span>
+                        {c.met && c.quote && (
+                          <span className="block text-xs italic truncate" style={{ color: "var(--gd-muted)" }}>
+                            “{c.quote}”
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {teachResult.student_followup && (
+                <div className="flex items-start gap-2 px-3 py-2 rounded-[8px] text-sm"
+                  style={{ background: "var(--gd-accent-soft)", border: "1px solid var(--gd-accent)" }}
+                  data-testid="text-student-followup">
+                  <span className="shrink-0 mt-0.5" aria-hidden>🙋</span>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider font-semibold"
+                      style={{ fontFamily: "var(--gd-data)", color: "var(--gd-dim)" }}>
+                      Your student asks
+                    </p>
+                    <p className="italic">{teachResult.student_followup}</p>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-sm leading-relaxed">{teachResult.feedback}</p>
+
+              <div className="flex justify-end gap-2">
+                {!teachResult.passed && (
+                  <GdOutlineButton
+                    tone="accent"
+                    onClick={() => { const cid = teachBack.concept_id; closeTeachBack(); void startOrContinue(cid); }}
+                    testId="button-teach-back-practice"
+                  >
+                    <RefreshCw className="w-4 h-4" aria-hidden /> Practise Again
+                  </GdOutlineButton>
+                )}
+                <GdPrimaryButton onClick={closeTeachBack} testId="button-teach-back-done">
+                  Done
+                </GdPrimaryButton>
+              </div>
             </div>
-          )}
+          ) : null}
+        </div>
+      )}
+
+      {/* Question */}
+      {(phase === "question" || phase === "assessing" || phase === "feedback") && session && !teachBack && (
+        <div className="gd-panel space-y-4">
+          {/* Depth-ladder level badge (recall gets no badge — it is the baseline) */}
+          {session.question_type !== "recall" && (() => {
+            const meta = {
+              self_explanation: {
+                label: "Explain it yourself",
+                hint: "From memory, in your own words — no notes shown",
+                title: "Self-explanation questions ask you to reconstruct the idea in your own words. The source material is deliberately withheld.",
+              },
+              contrast: {
+                label: session.contrast_subject
+                  ? `Contrast vs ${session.contrast_subject}`
+                  : "Contrast question",
+                hint: "How does this differ from its neighbour concept?",
+                title: "Contrast questions test whether you can tell this concept apart from a related one.",
+              },
+              transfer: {
+                label: "Application question",
+                hint: "Novel scenario — apply what you know",
+                title: "Transfer questions test whether you can apply the concept to a novel situation — not just recall what you read.",
+              },
+            }[session.question_type];
+            return meta ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                  style={{
+                    fontFamily: "var(--gd-data)",
+                    color: "var(--gd-caution)",
+                    background: "var(--gd-caution-soft)",
+                    border: "1px solid var(--gd-caution)",
+                  }}
+                  title={meta.title}
+                  data-testid="badge-question-level"
+                >
+                  <Zap className="w-3 h-3" aria-hidden /> {meta.label}
+                </span>
+                <span className="text-[10px]" style={{ fontFamily: "var(--gd-data)", color: "var(--gd-dim)" }}>
+                  {meta.hint}
+                </span>
+              </div>
+            ) : null;
+          })()}
           {session.context_snippet && (
             <div className="text-xs pl-3 italic leading-relaxed"
               style={{ fontFamily: "var(--gd-data)", color: "var(--gd-muted)", borderLeft: "2px solid var(--gd-line)" }}>
@@ -1341,6 +1584,76 @@ export function LearnTab({ workId }: { workId: string }) {
                 </div>
               )}
 
+              {/* Rubric breakdown — criterion-by-criterion grading with extractive quotes */}
+              {result.rubric && result.rubric.length > 0 && (
+                <div className="space-y-1.5 p-3 rounded-[10px]"
+                  style={{ border: "1px solid var(--gd-line)", background: "var(--gd-card)" }}
+                  data-testid="panel-rubric">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold"
+                    style={{ fontFamily: "var(--gd-data)", color: "var(--gd-dim)" }}>
+                    Grading rubric
+                  </p>
+                  {result.rubric.map((c, i) => (
+                    <div key={i} className="flex items-start gap-2 text-sm">
+                      <span className="shrink-0 mt-0.5 font-bold"
+                        style={{ color: c.met ? "var(--gd-success)" : "var(--gd-danger)" }}
+                        aria-label={c.met ? "met" : "not met"}>
+                        {c.met ? "✓" : "✗"}
+                      </span>
+                      <div className="min-w-0">
+                        <span>{c.criterion}</span>
+                        {c.met && c.quote && (
+                          <span className="block text-xs italic truncate" style={{ color: "var(--gd-muted)" }}>
+                            “{c.quote}”
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Failure diagnosis / research-request notice */}
+              {result.diagnosis && (
+                <div className="flex items-start gap-2 px-3 py-2 rounded-[8px] text-sm"
+                  style={{
+                    border: "1px solid var(--gd-caution)",
+                    background: "var(--gd-caution-soft)",
+                  }}
+                  data-testid="panel-diagnosis">
+                  <BookOpen className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--gd-caution)" }} aria-hidden />
+                  <div>
+                    <p className="font-medium">
+                      {result.diagnosis === "corpus_insufficient"
+                        ? "Your library is thin on this topic."
+                        : result.diagnosis === "learned_and_decayed"
+                        ? "You knew this once — it has faded."
+                        : "This concept hasn't stuck yet."}
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--gd-muted)" }}>
+                      {result.research_request_id
+                        ? "A research request was queued — the next research run will gather more material on this."
+                        : result.diagnosis === "learned_and_decayed"
+                        ? "A refresher pass through the ladder will bring it back."
+                        : "Keep practising — the material is there, it just needs more passes."}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Teach-back invitation for graduated concepts */}
+              {result.graduated && session && (
+                <div className="flex justify-end">
+                  <GdOutlineButton
+                    tone="accent"
+                    onClick={() => void startTeachBack(session.concept_id)}
+                    testId="button-teach-back"
+                  >
+                    <BookOpen className="w-4 h-4" aria-hidden /> Teach it back
+                  </GdOutlineButton>
+                </div>
+              )}
+
               {/* Routing hint (for non-careless-slip errors) */}
               {result.error_type !== "careless_slip" && (
                 <p className="text-xs" style={{ fontFamily: "var(--gd-data)", color: "var(--gd-muted)" }}>
@@ -1452,6 +1765,26 @@ export function LearnTab({ workId }: { workId: string }) {
                             Requires: {prereqLabels.join(", ")}
                           </p>
                         )}
+                        {/* Depth-ladder progress chips */}
+                        {!isLocked && !c.graduated && c.consecutive_passes > 0 && (
+                          <div className="flex gap-1 mt-0.5 flex-wrap">
+                            {(["recall", "self_explanation", "contrast", "transfer"] as const).map((lvl) => {
+                              const passed = (c.levels_passed ?? []).includes(lvl);
+                              const label = { recall: "recall", self_explanation: "explain", contrast: "contrast", transfer: "apply" }[lvl];
+                              return (
+                                <span key={lvl}
+                                  className="text-[9px] px-1 py-px rounded"
+                                  style={{
+                                    fontFamily: "var(--gd-data)",
+                                    color: passed ? "var(--gd-success)" : "var(--gd-dim)",
+                                    border: `1px solid ${passed ? "var(--gd-success)" : "var(--gd-line)"}`,
+                                  }}>
+                                  {passed ? "✓ " : ""}{label}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-2">
@@ -1480,6 +1813,17 @@ export function LearnTab({ workId }: { workId: string }) {
                             ? (c.half_life_days > 7 ? "✓ durable" : `HL ${c.half_life_days?.toFixed(1)}d`)
                             : c.consecutive_passes > 0 ? `${c.consecutive_passes}/3` : "—"}
                         </span>
+                      )}
+                      {c.graduated && !isDue && (
+                        <button
+                          onClick={() => void startTeachBack(c.id)}
+                          title="Teach this concept back to a curious student"
+                          className="text-[10px] min-h-9 transition-colors hover:underline"
+                          style={{ fontFamily: "var(--gd-data)", color: "var(--gd-accent)" }}
+                          data-testid={`button-teach-back-${c.id}`}
+                        >
+                          teach back
+                        </button>
                       )}
                       {hasProgress && (
                         <button

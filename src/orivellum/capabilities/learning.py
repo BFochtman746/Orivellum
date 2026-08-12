@@ -42,10 +42,21 @@ _HLR_MIN_HALF_LIFE = 0.5  # floor: 12 h (never schedule sooner than this)
 _HLR_DURABLE_HALF_LIFE = 7.0  # a concept is "durably mastered" only when HL > 7 days
 _HLR_DURABLE_SESSIONS = 3  # …AND reviewed on ≥ 3 distinct calendar days
 
-# ── Transfer question routing ─────────────────────────────────────────────────
-_TRANSFER_STREAK_THRESHOLD = 2  # consecutive passes before "auto" mode switches to transfer
+# ── Depth ladder (T-M4) ───────────────────────────────────────────────────────
+# Four levels, each rubric-scored separately.  "auto" climbs the ladder: the
+# next question is asked at the lowest level the learner has not yet passed.
+# A concept cannot graduate on recall alone — the higher levels are required.
+_LEVELS = ("recall", "self_explanation", "contrast", "transfer")
+_TEACH_BACK = "teach_back"  # long-form mode outside the ladder; can fail a graduate
 _MAX_TRANSFER_STREAK_CREDIT = 2  # max consecutive_passes increment for a correct transfer answer
-_VALID_QUESTION_TYPES = frozenset({"recall", "transfer", "auto"})
+_VALID_QUESTION_TYPES = frozenset({*_LEVELS, "auto"})
+_MIN_RUBRIC_CRITERIA = 1  # fewer valid criteria than this → neutral fallback
+_MAX_RUBRIC_CRITERIA = 6  # criteria beyond this are dropped (prompt asks for 3-6)
+
+# ── Reverse research loop (T-M6) ──────────────────────────────────────────────
+_RESEARCH_FAIL_WINDOW_DAYS = 7  # window for "repeated failure"
+_RESEARCH_FAIL_THRESHOLD = 3  # fails in window (no pass) that trigger triage
+_CORPUS_MIN_ITEMS = 3  # fewer question-safe items than this → corpus_insufficient
 
 # ── Interleaved practice mode ─────────────────────────────────────────────────
 _INTERLEAVED_MIN_CONCEPTS = 3  # min in-progress concepts to activate interleaved mode
@@ -190,17 +201,68 @@ def _get_mastery(db: Any, concept_id: str) -> dict:
     return m
 
 
+def _levels_passed(db: Any, concept_id: str) -> set[str]:
+    """Distinct depth-ladder levels at which the concept has a recorded pass.
+
+    Fails closed: on any DB error the set is empty (never graduated by accident).
+    """
+    try:
+        with db._lock:
+            rows = db._conn.execute(
+                "SELECT DISTINCT question_type FROM work_mastery WHERE concept_id=? AND score>=?",
+                (concept_id, _GRAD_THRESHOLD),
+            ).fetchall()
+        return {(r["question_type"] or "recall") for r in rows}
+    except Exception:
+        return set()
+
+
+def _has_sibling_concepts(db: Any, concept_id: str) -> bool:
+    """True when the concept's Work has at least one OTHER concept.
+
+    Contrast questions need a neighbour to contrast against; a single-concept
+    Work skips the contrast level (and it is not required for graduation).
+    """
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                """SELECT COUNT(*) FROM work_concepts
+                   WHERE work_id=(SELECT work_id FROM work_concepts WHERE id=?) AND id != ?""",
+                (concept_id, concept_id),
+            ).fetchone()
+        return int(row[0]) > 0
+    except Exception:
+        return False
+
+
+def _required_levels(db: Any, concept_id: str) -> tuple[str, ...]:
+    """Depth levels (beyond recall) a concept must pass before it can graduate.
+
+    Contrast is required only when a neighbour concept exists to contrast
+    against.  Recall alone is NEVER sufficient.
+    """
+    if _has_sibling_concepts(db, concept_id):
+        return ("self_explanation", "contrast", "transfer")
+    return ("self_explanation", "transfer")
+
+
 def _is_graduated(db: Any, concept_id: str) -> bool:
-    """A concept is graduated when it reaches _PASSES_TO_GRAD consecutive passes.
+    """Graduation = consecutive-pass streak AND the depth ladder climbed.
+
+    A concept graduates only when consecutive_passes >= _PASSES_TO_GRAD AND it
+    has a recorded pass at every required higher level (self-explanation,
+    contrast when a neighbour exists, transfer).  Recall-only streaks never
+    graduate (T-M4).
 
     The HLR system tracks half_life_days and review_session_count separately.
-    Graduated concepts re-enter the queue via ``is_due`` (spaced-repetition reviews)
-    until they reach durable mastery (half_life_days > _HLR_DURABLE_HALF_LIFE AND
-    review_session_count >= _HLR_DURABLE_SESSIONS), at which point they stop being
-    marked due.  Graduation itself is simply the consecutive-pass gate.
+    Graduated concepts re-enter the queue via ``is_due`` (spaced-repetition
+    reviews) until they reach durable mastery.
     """
     m = _get_mastery(db, concept_id)
-    return m["consecutive_passes"] >= _PASSES_TO_GRAD
+    if m["consecutive_passes"] < _PASSES_TO_GRAD:
+        return False
+    passed = _levels_passed(db, concept_id)
+    return all(lvl in passed for lvl in _required_levels(db, concept_id))
 
 
 def _knowledge_for_concept(db: Any, work_id: str, subject: str) -> list[dict]:
@@ -733,6 +795,14 @@ def list_concepts(db: Any, work_id: str) -> list[dict]:
             (work_id, *concept_ids),
         ).fetchall()
 
+        # 4. Bulk-load depth-ladder levels passed per concept (T-M4): graduation
+        #    requires passes at the higher levels, not just a recall streak.
+        level_rows = db._conn.execute(
+            f"""SELECT DISTINCT concept_id, question_type FROM work_mastery
+                WHERE concept_id IN ({ph}) AND score >= ?""",
+            (*concept_ids, _GRAD_THRESHOLD),
+        ).fetchall()
+
     # Build in-memory maps — all annotations computed from these; zero extra DB calls
     mastery_map: dict[str, dict] = {dict(r)["concept_id"]: dict(r) for r in mastery_rows}
 
@@ -746,13 +816,25 @@ def list_concepts(db: Any, work_id: str) -> list[dict]:
     for r in blocking_rows:
         blocking_count_map[r["prereq_id"]] = blocking_count_map.get(r["prereq_id"], 0) + 1
 
+    levels_map: dict[str, set[str]] = {}
+    for r in level_rows:
+        levels_map.setdefault(r["concept_id"], set()).add(r["question_type"] or "recall")
+
+    # Contrast is required for graduation only when a neighbour concept exists.
+    _req_levels = (
+        ("self_explanation", "contrast", "transfer")
+        if len(concepts) >= 2
+        else ("self_explanation", "transfer")
+    )
+
     result = []
     for c in concepts:
         m = mastery_map.get(c["id"]) or {}
         cons = int(m.get("consecutive_passes") or 0)
         half_life = float(m.get("half_life_days") or 1.0)
         nxt_review = m.get("next_review_at")
-        graduated = cons >= _PASSES_TO_GRAD
+        _passed = levels_map.get(c["id"], set())
+        graduated = cons >= _PASSES_TO_GRAD and all(lvl in _passed for lvl in _req_levels)
         is_due = bool(nxt_review and nxt_review <= now)
 
         prereqs = prereq_map.get(c["id"], [])
@@ -769,6 +851,7 @@ def list_concepts(db: Any, work_id: str) -> list[dict]:
         c["score"] = float(m.get("score") or 0.0)
         c["consecutive_passes"] = cons
         c["graduated"] = graduated
+        c["levels_passed"] = sorted(_passed & set(_LEVELS))
         c["last_practised"] = m.get("last_practised")
         c["half_life_days"] = half_life
         c["next_review_at"] = nxt_review
@@ -861,17 +944,96 @@ def select_interleaved_concept(db: Any, work_id: str) -> str | None:
 
 
 def _resolve_question_type(db: Any, concept_id: str, question_type: str) -> str:
-    """Resolve 'auto' to 'recall' or 'transfer' based on the concept's current streak.
+    """Resolve 'auto' to the next depth-ladder level the concept has not passed.
 
-    - 'auto': switch to 'transfer' when consecutive_passes >= _TRANSFER_STREAK_THRESHOLD.
-    - 'recall' / 'transfer': returned unchanged.
+    Ladder order: recall → self_explanation → contrast → transfer.  Contrast is
+    skipped when the Work has no other concept to contrast against.  Once every
+    level is passed, reviews are asked at transfer (the hardest level).
+    Explicit levels are returned unchanged.
     """
     if question_type != "auto":
-        return question_type if question_type in _VALID_QUESTION_TYPES else "recall"
-    m = _get_mastery(db, concept_id)
-    if m["consecutive_passes"] >= _TRANSFER_STREAK_THRESHOLD:
-        return "transfer"
-    return "recall"
+        return (
+            question_type
+            if question_type in _VALID_QUESTION_TYPES and question_type != "auto"
+            else "recall"
+        )
+    passed = _levels_passed(db, concept_id)
+    has_neighbour = _has_sibling_concepts(db, concept_id)
+    for lvl in _LEVELS:
+        if lvl == "contrast" and not has_neighbour:
+            continue
+        if lvl not in passed:
+            return lvl
+    return "transfer"
+
+
+def _contrast_neighbour(db: Any, concept_id: str) -> dict | None:
+    """Pick the nearest-confusable neighbour concept for a contrast question.
+
+    Deterministic preference order, all within the same Work:
+      1. Siblings — concepts sharing at least one prerequisite (most confusable).
+      2. Direct prerequisites.
+      3. Dependents — concepts that list this one as a prerequisite.
+      4. Highest subject-token overlap; tie-break oldest-first.
+    Returns {"id","subject","description"} or None when the Work has no other
+    concept.
+    """
+    concept = _get_concept(db, concept_id)
+    if not concept:
+        return None
+    work_id = concept["work_id"]
+    try:
+        with db._lock:
+            # 1. Siblings sharing a prerequisite
+            row = db._conn.execute(
+                """SELECT c.id, c.subject, c.description
+                   FROM work_concept_prereqs cp
+                   JOIN work_concepts c ON c.id = cp.concept_id
+                   WHERE cp.prereq_id IN (
+                         SELECT prereq_id FROM work_concept_prereqs WHERE concept_id=?)
+                     AND cp.concept_id != ? AND c.work_id = ?
+                   ORDER BY c.created_at ASC, c.id ASC LIMIT 1""",
+                (concept_id, concept_id, work_id),
+            ).fetchone()
+            # 2. Direct prerequisites
+            if not row:
+                row = db._conn.execute(
+                    """SELECT c.id, c.subject, c.description
+                       FROM work_concept_prereqs cp
+                       JOIN work_concepts c ON c.id = cp.prereq_id
+                       WHERE cp.concept_id=? AND c.work_id=?
+                       ORDER BY c.created_at ASC, c.id ASC LIMIT 1""",
+                    (concept_id, work_id),
+                ).fetchone()
+            # 3. Dependents
+            if not row:
+                row = db._conn.execute(
+                    """SELECT c.id, c.subject, c.description
+                       FROM work_concept_prereqs cp
+                       JOIN work_concepts c ON c.id = cp.concept_id
+                       WHERE cp.prereq_id=? AND c.work_id=?
+                       ORDER BY c.created_at ASC, c.id ASC LIMIT 1""",
+                    (concept_id, work_id),
+                ).fetchone()
+            if row:
+                return dict(row)
+            # 4. Token-overlap fallback across the Work
+            others = db._conn.execute(
+                "SELECT id, subject, description, created_at FROM work_concepts "
+                "WHERE work_id=? AND id != ? ORDER BY created_at ASC, id ASC",
+                (work_id, concept_id),
+            ).fetchall()
+    except Exception:
+        return None
+    if not others:
+        return None
+    my_tokens = {t for t in concept["subject"].lower().split() if len(t) > 2}
+    best, best_overlap = others[0], -1
+    for o in others:
+        overlap = len(my_tokens & {t for t in o["subject"].lower().split() if len(t) > 2})
+        if overlap > best_overlap:
+            best, best_overlap = o, overlap
+    return {"id": best["id"], "subject": best["subject"], "description": best["description"]}
 
 
 def get_question(
@@ -883,15 +1045,21 @@ def get_question(
 ) -> dict:
     """Generate a Socratic question for the concept, grounded in knowledge.
 
-    question_type: 'recall' (default), 'transfer', or 'auto'.
-      - 'recall' — asks the student to explain or apply what they read (current behaviour).
-      - 'transfer' — asks the student to apply the concept to a NOVEL scenario that is
-        NOT stated in the source material; explicitly instructs the LLM not to quote or
-        paraphrase the source.
-      - 'auto' — uses 'recall' until consecutive_passes >= _TRANSFER_STREAK_THRESHOLD,
-        then switches to 'transfer' automatically.
+    question_type: one of the depth-ladder levels, or 'auto'.
+      - 'recall'           — state it, grounded in the source material.
+      - 'self_explanation' — the learner explains in their OWN words and makes their
+        own connection to prior knowledge.  Deterministic prompt; the system never
+        supplies the connection, and no source excerpt is shown before the attempt.
+      - 'contrast'         — distinguish the concept from its nearest-confusable
+        neighbour (picked automatically from the prerequisite graph).
+      - 'transfer'         — apply it to a novel scenario not in the notes.
+      - 'auto'             — climbs the ladder: the lowest level not yet passed.
 
-    Returns {"question": "...", "context_snippet": "...", "question_type": "recall|transfer"}
+    Hint-withholding rule (T-M4): this function NEVER returns hints, remediation,
+    or answer material.  For self_explanation the source excerpt itself is
+    withheld so the learner's explanation is self-generated, not paraphrased.
+
+    Returns {"question", "context_snippet", "question_type", "level", ...}.
     Falls back to a generic recall question when AI is unavailable.
     """
     concept = _get_concept(db, concept_id)
@@ -900,6 +1068,7 @@ def get_question(
             "question": "What do you understand about this concept so far?",
             "context_snippet": "",
             "question_type": "recall",
+            "level": "recall",
         }
 
     subject = concept["subject"]
@@ -909,6 +1078,69 @@ def get_question(
 
     resolved_type = _resolve_question_type(db, concept_id, question_type)
 
+    # ── Self-explanation: deterministic, works offline, source withheld ──────
+    if resolved_type == "self_explanation":
+        return {
+            "question": (
+                f"In your own words: what does '{subject}' mean, why is it true or why does "
+                "it work the way it does, and how does it connect to something YOU already "
+                "know or have experienced? Make the connection yourself — it will not be "
+                "given to you."
+            ),
+            "context_snippet": "",  # withheld: the explanation must be self-generated
+            "question_type": "self_explanation",
+            "level": "self_explanation",
+        }
+
+    # ── Contrast: distinguish from the nearest-confusable neighbour ──────────
+    if resolved_type == "contrast":
+        neighbour = _contrast_neighbour(db, concept_id)
+        if neighbour is None:
+            # Single-concept Work — ladder should have skipped contrast; recall fallback.
+            resolved_type = "recall"
+        else:
+            fallback_q = (
+                f"How is '{subject}' different from '{neighbour['subject']}'? Name one "
+                "situation where confusing the two would lead you to the wrong conclusion."
+            )
+            question = fallback_q
+            if base_url and ctx:
+                prompt = (
+                    f"You are a discrimination-testing tutor. The student is studying "
+                    f"'{subject}' and often confuses it with '{neighbour['subject']}'.\n\n"
+                    f"Notes on '{subject}':\n{ctx}\n\n"
+                    "Generate ONE question that forces the student to DISTINGUISH the two "
+                    "concepts: where they differ, when each applies, or what goes wrong if "
+                    "they are swapped. Do NOT explain the difference yourself — the question "
+                    "must demand that the student articulate it. Answerable in 2-4 sentences.\n\n"
+                    "Respond ONLY with valid JSON, no fences:\n"
+                    '{"question":"..."}'
+                )
+                raw = _call(
+                    [{"role": "user", "content": prompt}],
+                    base_url,
+                    model,
+                    timeout=20,
+                    purpose="learning.contrast_question",
+                    db=db,
+                )
+                if raw:
+                    try:
+                        parsed = json.loads(_strip_fences(raw))
+                        question = str(parsed.get("question") or "").strip() or fallback_q
+                    except Exception:
+                        question = fallback_q
+            return {
+                "question": question,
+                # Only the neighbour's NAME is shown — never source excerpts or the
+                # difference itself (that would be the answer).
+                "context_snippet": f"Contrast with: {neighbour['subject']}",
+                "question_type": "contrast",
+                "level": "contrast",
+                "contrast_concept_id": neighbour["id"],
+                "contrast_subject": neighbour["subject"],
+            }
+
     if not base_url or not ctx:
         # No LLM or no source material — always recall; never label a generic
         # "explain in your own words" question as a transfer application question.
@@ -916,6 +1148,7 @@ def get_question(
             "question": f"In your own words, explain the key idea behind '{subject}' and give a concrete example.",
             "context_snippet": ctx,
             "question_type": "recall",
+            "level": "recall",
         }
 
     if resolved_type == "transfer":
@@ -955,6 +1188,7 @@ def get_question(
                 "question": parsed.get("question", ""),
                 "context_snippet": parsed.get("context_snippet", ""),
                 "question_type": resolved_type,
+                "level": resolved_type,
             }
         except Exception:
             pass
@@ -966,6 +1200,7 @@ def get_question(
         "question": f"In your own words, explain the key idea behind '{subject}' and give a concrete example.",
         "context_snippet": ctx[:120] if ctx else "",
         "question_type": "recall",
+        "level": "recall",
     }
 
 
@@ -1011,6 +1246,42 @@ def _generate_socratic_followup(
     return None
 
 
+def _enforce_rubric(criteria: Any, answer: str) -> list[dict] | None:
+    """Validate and enforce a rubric returned by the critic model.
+
+    Returns a cleaned list of {criterion, met, quote} or None when no usable
+    criteria list was supplied (legacy / malformed output).
+
+    Extractive-quote enforcement (in CODE, never trusted from the model): a
+    criterion may only count as met when its quote is a real substring of the
+    student's answer (case/whitespace-normalised).  Unverifiable quotes demote
+    the criterion to unmet.
+    """
+    if not isinstance(criteria, list):
+        return None
+
+    def _norm(s: str) -> str:
+        return " ".join(s.lower().split())
+
+    answer_norm = _norm(answer)
+    cleaned: list[dict] = []
+    for entry in criteria[:_MAX_RUBRIC_CRITERIA]:
+        if not isinstance(entry, dict):
+            continue
+        criterion = str(entry.get("criterion") or "").strip()
+        if not criterion:
+            continue
+        met = bool(entry.get("met"))
+        quote = str(entry.get("quote") or "").strip()
+        if met and (not quote or _norm(quote) not in answer_norm):
+            met = False  # no verifiable extractive evidence → not met
+            quote = ""
+        cleaned.append({"criterion": criterion, "met": met, "quote": quote if met else quote})
+    if len(cleaned) < _MIN_RUBRIC_CRITERIA:
+        return None
+    return cleaned
+
+
 def assess_answer(
     db: Any,
     concept_id: str,
@@ -1023,28 +1294,40 @@ def assess_answer(
 ) -> dict:
     """Score the user's answer, classify the error type, and return targeted remediation.
 
-    question_type: the mode the question was generated in ('recall' or 'transfer').
-      When 'transfer' and score ≥ _GRAD_THRESHOLD, the consecutive_passes streak is
-      incremented by 2 (capped at _MAX_TRANSFER_STREAK_CREDIT) to reward genuine
-      deep understanding on a harder question.
+    question_type: the depth-ladder level the question was generated at
+      (recall / self_explanation / contrast / transfer).  When 'transfer' and
+      score ≥ _GRAD_THRESHOLD, the consecutive_passes streak is incremented by 2
+      (capped at _MAX_TRANSFER_STREAK_CREDIT).
+
+    Rubric grading (T-M4): every answer is graded against 3-6 atomic binary
+    criteria.  A criterion only counts as met when the critic supplies an EXACT
+    extractive quote from the student's answer — enforced in code, not trusted
+    from the model.  The score is the fraction of criteria met, computed here.
+
+    Attempt-before-hint invariant: the mastery row (the attempt) is ALWAYS
+    recorded before any remediation/follow-up is generated or returned.
 
     Returns:
-        score             — float 0–1
+        score             — float 0–1 (fraction of rubric criteria met)
+        rubric            — list of {criterion, met, quote} or None (legacy/offline)
         feedback          — 1–2 sentence constructive feedback
         route             — STEP_FORWARD / STEP_BACKWARD / STAY_HERE
-        graduated         — True when consecutive_passes reached _PASSES_TO_GRAD
+        graduated         — True when streak AND depth ladder are both complete
         error_type        — None (correct) or one of _VALID_ERROR_TYPES
         remediation_hint  — 1-sentence targeted suggestion, or None
         deep_review_needed— True when same misconception appears ≥ _DEEP_REVIEW_THRESHOLD
         socratic_followup — Socratic follow-up question for conceptual_misconception, else None
-        question_type     — echoes the question_type that was assessed
+        question_type     — echoes the level that was assessed
+        diagnosis         — never_learned / learned_and_decayed / corpus_insufficient / None
+        research_request_id — id of the emitted research request, or None
 
     Falls back to score=0.5, route=STAY_HERE, error_type=None when AI unavailable.
     """
-    resolved_qt = question_type if question_type in ("recall", "transfer") else "recall"
+    resolved_qt = question_type if question_type in _LEVELS else "recall"
 
     _empty = {
         "score": 0.5,
+        "rubric": None,
         "feedback": "Could not assess.",
         "route": "STAY_HERE",
         "graduated": False,
@@ -1053,6 +1336,8 @@ def assess_answer(
         "deep_review_needed": False,
         "socratic_followup": None,
         "question_type": resolved_qt,
+        "diagnosis": None,
+        "research_request_id": None,
     }
 
     concept = _get_concept(db, concept_id)
@@ -1066,6 +1351,11 @@ def assess_answer(
 
     offline_result = {**_empty, "feedback": "AI unavailable — keeping score neutral."}
 
+    # Streak BEFORE this attempt — needed to detect a "cold check" failure
+    # (a graduated concept failing), which feeds the reverse research loop.
+    prev_cons = _get_mastery(db, concept_id)["consecutive_passes"]
+    was_graduated = _is_graduated(db, concept_id)
+
     if not base_url:
         _record_mastery(
             db,
@@ -1078,13 +1368,28 @@ def assess_answer(
         )
         return offline_result
 
-    # Transfer questions get a richer critic preamble so the LLM knows it is
-    # evaluating an application question (no direct recall expected).
+    # Level-specific critic preamble so the rubric criteria match the depth
+    # being tested — each level is rubric-scored separately (T-M4).
     if resolved_qt == "transfer":
         critic_preamble = (
             f"You are an Assessment Critic for an APPLICATION question on '{subject}'.\n"
             "The student was asked to apply the concept to a NOVEL scenario — not to recall the source material.\n"
-            "Evaluate whether they demonstrate genuine understanding of the underlying principle.\n"
+            "Criteria must test whether the underlying principle was correctly applied to the new situation.\n"
+        )
+    elif resolved_qt == "self_explanation":
+        critic_preamble = (
+            f"You are an Assessment Critic for a SELF-EXPLANATION on '{subject}'.\n"
+            "The student was asked to explain the concept in their OWN words, say WHY it is "
+            "true or works, and connect it to something THEY already know.\n"
+            "Criteria must include: (a) accurate own-words explanation (not verbatim source), "
+            "(b) a correct mechanism/why, (c) a self-generated connection to prior knowledge.\n"
+        )
+    elif resolved_qt == "contrast":
+        critic_preamble = (
+            f"You are an Assessment Critic for a CONTRAST question on '{subject}'.\n"
+            "The student was asked to distinguish this concept from a confusable neighbour.\n"
+            "Criteria must test whether the student articulated a REAL difference and when "
+            "each concept applies — not merely defined one of them.\n"
         )
     else:
         critic_preamble = f"You are an Assessment Critic for the topic '{subject}'.\n"
@@ -1094,18 +1399,21 @@ def assess_answer(
         f"Knowledge context:\n{ctx}\n\n"
         f"Question: {question}\n"
         f"Student answer: {answer}\n\n"
-        "Evaluate strictly. Score 0.0–1.0:\n"
-        "  ≥0.75 = genuine understanding with accurate detail\n"
-        "  0.5–0.74 = partially correct; misses key nuance\n"
-        "  <0.5 = incorrect, circular, or too vague\n\n"
-        "Identify WHY the answer was wrong (error_type):\n"
-        '  "null"                     — score ≥ 0.75 (correct answer)\n'
+        "Grade with an atomic rubric: derive 3-6 BINARY criteria a correct answer at this "
+        "depth must satisfy. For EACH criterion report:\n"
+        '  "criterion" — one atomic requirement\n'
+        '  "met"       — true only when the student answer clearly satisfies it\n'
+        '  "quote"     — an EXACT substring copied verbatim from the student answer that '
+        "proves it (empty string when unmet). Never paraphrase the quote.\n\n"
+        "Identify WHY the answer fell short (error_type):\n"
+        '  "null"                     — all or nearly all criteria met\n'
         '  "careless_slip"            — mostly correct but a minor slip\n'
         '  "procedural_gap"           — understands the concept but cannot execute a step\n'
         '  "conceptual_misconception" — holds a false belief about the underlying concept\n'
         '  "knowledge_gap"            — shows no prior knowledge or cannot apply it at all\n\n'
         "Respond ONLY with valid JSON, no markdown fences:\n"
-        '{"score":0.0,"feedback":"1-2 sentence constructive feedback",'
+        '{"criteria":[{"criterion":"...","met":true,"quote":"..."}],'
+        '"feedback":"1-2 sentence constructive feedback",'
         '"error_type":"null","remediation_hint":"1 sentence on what to review or do next"}'
     )
     raw = _call(
@@ -1130,7 +1438,14 @@ def assess_answer(
 
     try:
         parsed = json.loads(_strip_fences(raw))
-        score = max(0.0, min(1.0, float(parsed.get("score", 0.5))))
+        rubric = _enforce_rubric(parsed.get("criteria"), answer)
+        if rubric is not None:
+            # Score is computed HERE from the fraction of criteria met — never
+            # trusted as a bare float from the model.
+            score = sum(1 for c in rubric if c["met"]) / len(rubric)
+        else:
+            # Legacy shape (no criteria list) — accept a clamped float score.
+            score = max(0.0, min(1.0, float(parsed.get("score", 0.5))))
         feedback = str(parsed.get("feedback", ""))
         raw_et = parsed.get("error_type") or "null"
         error_type: str | None = raw_et if raw_et in _VALID_ERROR_TYPES else None
@@ -1156,7 +1471,7 @@ def assess_answer(
         if (resolved_qt == "transfer" and score >= _GRAD_THRESHOLD)
         else 1
     )
-    route = _compute_route(db, concept_id, score, streak_increment=_streak_inc)
+    route = _compute_route(db, concept_id, score, streak_increment=_streak_inc, level=resolved_qt)
 
     # Knowledge-gap consistency guard: if the critic identified a knowledge gap
     # but _compute_route chose STAY_HERE, check if there are unstarted prereqs
@@ -1166,11 +1481,9 @@ def assess_answer(
         if any(_get_mastery(db, pid)["consecutive_passes"] == 0 for pid in prereq_ids):
             route = "STEP_BACKWARD"
 
-    # ── Transfer streak bonus ─────────────────────────────────────────────────
-    # When the student correctly answers a transfer question (harder, novel scenario),
-    # _record_mastery will award +2 consecutive passes instead of +1.
-    # We pass this intent via the question_type; _record_mastery reads consecutive_passes
-    # from the prev record and applies the multiplier internally.
+    # ── Attempt recorded FIRST ────────────────────────────────────────────────
+    # The mastery row (the attempt) is stored before any remediation or
+    # follow-up is generated — hints are never available pre-attempt.
     _record_mastery(
         db,
         concept_id,
@@ -1181,9 +1494,25 @@ def assess_answer(
         remediation_hint=remediation_hint,
         question_type=resolved_qt,
         session_mode=session_mode,
+        rubric_json=json.dumps(rubric) if rubric is not None else None,
     )
 
     graduated = _is_graduated(db, concept_id)
+
+    # ── Reverse research loop (T-M6) ─────────────────────────────────────────
+    # On failure, triage: repeated failure or a graduated concept failing a
+    # cold check gets one of three diagnoses; only corpus_insufficient emits a
+    # research request.
+    diagnosis: str | None = None
+    research_request_id: str | None = None
+    if score < _GRAD_THRESHOLD:
+        triage = triage_failure(
+            db,
+            concept_id,
+            cold_check=was_graduated and prev_cons >= _PASSES_TO_GRAD,
+        )
+        diagnosis = triage.get("diagnosis")
+        research_request_id = triage.get("request_id")
 
     # ── Deep review flag ─────────────────────────────────────────────────────
     deep_review_needed = False
@@ -1211,6 +1540,7 @@ def assess_answer(
 
     return {
         "score": score,
+        "rubric": rubric,
         "feedback": feedback,
         "route": route,
         "graduated": graduated,
@@ -1219,7 +1549,353 @@ def assess_answer(
         "deep_review_needed": deep_review_needed,
         "socratic_followup": socratic_followup,
         "question_type": resolved_qt,
+        "diagnosis": diagnosis,
+        "research_request_id": research_request_id,
     }
+
+
+# ─── Teach-back (T-M5) ────────────────────────────────────────────────────────
+
+
+def get_teach_back(db: Any, concept_id: str) -> dict | None:
+    """Return the teach-back prompt for a concept.
+
+    Deterministic and hint-free: no source excerpts, no criteria preview — the
+    learner must produce the explanation from their own understanding before
+    any grading material exists.
+    """
+    concept = _get_concept(db, concept_id)
+    if not concept:
+        return None
+    subject = concept["subject"]
+    return {
+        "concept_id": concept_id,
+        "subject": subject,
+        "level": _TEACH_BACK,
+        "prompt": (
+            f"Teach '{subject}' to someone who has never heard of it. In your own words: "
+            "what is it, why does it work or matter, and what is one concrete example? "
+            "Write it the way you would actually say it to a curious beginner."
+        ),
+    }
+
+
+def assess_teach_back(
+    db: Any,
+    concept_id: str,
+    explanation: str,
+    base_url: str,
+    model: str,
+) -> dict:
+    """Grade a teach-back explanation criterion-by-criterion with extractive quotes.
+
+    The system plays the naive student: alongside the rubric it returns ONE
+    follow-up question a beginner would ask about the weakest part.
+
+    A failed teach-back resets the streak via _record_mastery — a graduated
+    concept CAN fail a teach-back and lose graduation (T-M5).  Failures feed
+    the reverse research loop like any other failure.
+    """
+    _empty = {
+        "score": 0.5,
+        "passed": False,
+        "rubric": None,
+        "student_followup": None,
+        "feedback": "Could not assess.",
+        "route": "STAY_HERE",
+        "graduated": False,
+        "question_type": _TEACH_BACK,
+        "diagnosis": None,
+        "research_request_id": None,
+    }
+    concept = _get_concept(db, concept_id)
+    if not concept:
+        return {**_empty, "feedback": "Could not assess — concept not found."}
+
+    subject = concept["subject"]
+    items = _knowledge_for_concept(db, concept["work_id"], subject)
+    ctx = "\n".join(f"- {it.get('text', '')[:200]}" for it in items[:_MAX_KN_CONTEXT])
+
+    prev_cons = _get_mastery(db, concept_id)["consecutive_passes"]
+    was_graduated = _is_graduated(db, concept_id)
+
+    offline = {**_empty, "feedback": "AI unavailable — keeping score neutral."}
+    if not base_url:
+        _record_mastery(
+            db,
+            concept_id,
+            0.5,
+            "STAY_HERE",
+            "AI unavailable",
+            question_type=_TEACH_BACK,
+        )
+        return offline
+
+    prompt = (
+        f"You are grading a TEACH-BACK: a student explained '{subject}' as if teaching a "
+        "complete beginner.\n\n"
+        f"Source material:\n{ctx}\n\n"
+        f"Student's teaching explanation:\n{explanation}\n\n"
+        "1. Derive 3-6 atomic BINARY criteria a correct teaching explanation of this "
+        "concept must contain, based ONLY on the source material.\n"
+        "2. For EACH criterion report:\n"
+        '   "criterion" — the atomic requirement\n'
+        '   "met"       — true only when the explanation clearly satisfies it\n'
+        '   "quote"     — an EXACT substring copied verbatim from the student\'s '
+        "explanation that proves it (empty string when unmet). Never paraphrase.\n"
+        "3. Play the naive student: write ONE short follow-up question a beginner would "
+        "ask, aimed at the weakest or vaguest part of the explanation.\n\n"
+        "Respond ONLY with valid JSON, no markdown fences:\n"
+        '{"criteria":[{"criterion":"...","met":true,"quote":"..."}],'
+        '"student_followup":"...","feedback":"1-2 sentences"}'
+    )
+    raw = _call(
+        [{"role": "user", "content": prompt}],
+        base_url,
+        model,
+        timeout=35,
+        purpose="learning.teach_back",
+        db=db,
+    )
+    if not raw:
+        _record_mastery(
+            db, concept_id, 0.5, "STAY_HERE", "AI unavailable", question_type=_TEACH_BACK
+        )
+        return offline
+
+    try:
+        parsed = json.loads(_strip_fences(raw))
+    except Exception:
+        _record_mastery(
+            db,
+            concept_id,
+            0.5,
+            "STAY_HERE",
+            "Could not parse teach-back assessment",
+            question_type=_TEACH_BACK,
+        )
+        return offline
+
+    rubric = _enforce_rubric(parsed.get("criteria"), explanation)
+    if rubric is None:
+        _record_mastery(
+            db,
+            concept_id,
+            0.5,
+            "STAY_HERE",
+            "Teach-back critic returned no usable rubric",
+            question_type=_TEACH_BACK,
+        )
+        return offline
+
+    score = sum(1 for c in rubric if c["met"]) / len(rubric)
+    feedback = str(parsed.get("feedback", ""))
+    student_followup = str(parsed.get("student_followup", "")).strip() or None
+
+    route = _compute_route(db, concept_id, score, level=_TEACH_BACK)
+
+    # Attempt recorded before any follow-up material is returned.
+    _record_mastery(
+        db,
+        concept_id,
+        score,
+        route,
+        feedback,
+        question_type=_TEACH_BACK,
+        rubric_json=json.dumps(rubric),
+    )
+
+    diagnosis: str | None = None
+    research_request_id: str | None = None
+    if score < _GRAD_THRESHOLD:
+        triage = triage_failure(
+            db,
+            concept_id,
+            cold_check=was_graduated and prev_cons >= _PASSES_TO_GRAD,
+        )
+        diagnosis = triage.get("diagnosis")
+        research_request_id = triage.get("request_id")
+
+    return {
+        "score": score,
+        "passed": score >= _GRAD_THRESHOLD,
+        "rubric": rubric,
+        "student_followup": student_followup,
+        "feedback": feedback,
+        "route": route,
+        "graduated": _is_graduated(db, concept_id),
+        "question_type": _TEACH_BACK,
+        "diagnosis": diagnosis,
+        "research_request_id": research_request_id,
+    }
+
+
+# ─── Reverse research loop (T-M6) ─────────────────────────────────────────────
+
+
+def diagnose_concept(db: Any, concept_id: str) -> str | None:
+    """Three-way diagnosis of a struggling concept.
+
+    - corpus_insufficient — the question-safe corpus is too thin to learn from;
+      the ONLY diagnosis that emits a research request.
+    - learned_and_decayed — the concept has graduated before (streak reached
+      _PASSES_TO_GRAD at some point) but is failing now.
+    - never_learned      — corpus is adequate but the learner never got there.
+    """
+    concept = _get_concept(db, concept_id)
+    if not concept:
+        return None
+    items = _knowledge_for_concept(db, concept["work_id"], concept["subject"])
+    if len(items) < _CORPUS_MIN_ITEMS:
+        return "corpus_insufficient"
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT MAX(consecutive_passes) FROM work_mastery WHERE concept_id=?",
+                (concept_id,),
+            ).fetchone()
+        ever_max = int(row[0] or 0)
+    except Exception:
+        ever_max = 0
+    return "learned_and_decayed" if ever_max >= _PASSES_TO_GRAD else "never_learned"
+
+
+def triage_failure(db: Any, concept_id: str, *, cold_check: bool = False) -> dict:
+    """Decide whether a recorded failure warrants a diagnosis and research request.
+
+    Trigger gate: ≥ _RESEARCH_FAIL_THRESHOLD failures in the last
+    _RESEARCH_FAIL_WINDOW_DAYS with no pass (the existing "stuck" definition),
+    OR cold_check=True (a graduated concept just failed a review/teach-back).
+
+    Only a corpus_insufficient diagnosis emits a research request; the other
+    two diagnoses are remediation problems, not research problems.
+    Returns {"diagnosis": str|None, "request_id": str|None}.
+    """
+    none = {"diagnosis": None, "request_id": None}
+    concept = _get_concept(db, concept_id)
+    if not concept:
+        return none
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                f"""SELECT
+                        SUM(CASE WHEN score <  ? THEN 1 ELSE 0 END) AS fails,
+                        SUM(CASE WHEN score >= ? THEN 1 ELSE 0 END) AS passes
+                    FROM work_mastery
+                    WHERE concept_id=?
+                      AND created_at >= datetime('now','-{_RESEARCH_FAIL_WINDOW_DAYS} days')""",
+                (_GRAD_THRESHOLD, _GRAD_THRESHOLD, concept_id),
+            ).fetchone()
+        fails = int(row["fails"] or 0)
+        passes = int(row["passes"] or 0)
+    except Exception:
+        fails, passes = 0, 0
+
+    repeated = fails >= _RESEARCH_FAIL_THRESHOLD and passes == 0
+    if not (repeated or cold_check):
+        return none
+
+    diagnosis = diagnose_concept(db, concept_id)
+    if diagnosis != "corpus_insufficient":
+        return {"diagnosis": diagnosis, "request_id": None}
+
+    request_id = _emit_research_request(
+        db,
+        concept,
+        diagnosis,
+        evidence={
+            "recent_fails": fails,
+            "recent_passes": passes,
+            "cold_check": cold_check,
+            "corpus_items": len(_knowledge_for_concept(db, concept["work_id"], concept["subject"])),
+        },
+    )
+    return {"diagnosis": diagnosis, "request_id": request_id}
+
+
+def _emit_research_request(db: Any, concept: dict, diagnosis: str, evidence: dict) -> str | None:
+    """Insert an open research request for the concept (at most one open per concept).
+
+    The request names what the corpus needs; the next research run consumes
+    open requests as units.  Returns the request id (existing open one when
+    already present), or None on failure.
+    """
+    subject = concept["subject"]
+    need = (
+        f"The corpus lacks enough material to learn '{subject}'. Gather sources that "
+        f"explain what it is, why it works, how it differs from related ideas, and at "
+        f"least one worked example."
+    )
+    try:
+        with db._lock:
+            existing = db._conn.execute(
+                "SELECT id FROM research_requests WHERE concept_id=? AND status='open'",
+                (concept["id"],),
+            ).fetchone()
+            if existing:
+                return existing["id"]
+            rid = _uuid()
+            db._conn.execute(
+                """INSERT INTO research_requests
+                       (id, work_id, concept_id, need, diagnosis, evidence_json,
+                        status, created_at)
+                   VALUES(?,?,?,?,?,?,'open',?)""",
+                (
+                    rid,
+                    concept["work_id"],
+                    concept["id"],
+                    need,
+                    diagnosis,
+                    json.dumps(evidence),
+                    _now(),
+                ),
+            )
+            db._conn.commit()
+    except Exception:
+        logger.warning("research request emission failed for concept %s", concept["id"])
+        return None
+    try:
+        db.audit(
+            "learning.research_requested",
+            object_id=concept["id"],
+            object_type="learning_concept",
+            actor="system",
+            detail=f"diagnosis={diagnosis} subject={subject[:80]}",
+        )
+    except Exception:
+        pass
+    return rid
+
+
+def list_research_requests(db: Any, work_id: str, status: str | None = "open") -> list[dict]:
+    """Open (or all) research requests for a Work, oldest first."""
+    q = "SELECT * FROM research_requests WHERE work_id=?"
+    params: list[Any] = [work_id]
+    if status:
+        q += " AND status=?"
+        params.append(status)
+    q += " ORDER BY created_at ASC"
+    try:
+        with db._lock:
+            rows = db._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def resolve_research_request(db: Any, request_id: str) -> bool:
+    """Atomically mark an open research request resolved. False when not open."""
+    try:
+        with db._lock:
+            cur = db._conn.execute(
+                "UPDATE research_requests SET status='resolved', resolved_at=? "
+                "WHERE id=? AND status='open'",
+                (_now(), request_id),
+            )
+            db._conn.commit()
+        return cur.rowcount > 0
+    except Exception:
+        return False
 
 
 def get_learning_analytics(db: Any, work_id: str) -> dict:
@@ -1601,13 +2277,23 @@ def get_blocking_concepts(db: Any, concept_id: str) -> list[str]:
 # ─── Private helpers ──────────────────────────────────────────────────────────
 
 
-def _compute_route(db: Any, concept_id: str, score: float, streak_increment: int = 1) -> str:
+def _compute_route(
+    db: Any,
+    concept_id: str,
+    score: float,
+    streak_increment: int = 1,
+    level: str | None = None,
+) -> str:
     """Determine routing: STEP_FORWARD / STEP_BACKWARD / STAY_HERE.
 
     streak_increment: how many consecutive passes this assessment will award (normally 1;
     2 for a correctly-answered transfer question).  This lets the route correctly reflect
     graduation when the +2 bonus would push the learner past _PASSES_TO_GRAD even though
     the current record shows one fewer pass.
+
+    level: the depth-ladder level of the attempt being routed (counted as passed
+    when the score passes).  STEP_FORWARD requires the FULL depth ladder, not
+    just the streak.
 
     Uses the multi-prerequisite graph (work_concept_prereqs) to determine whether
     to route backward.  If the student failed AND any prerequisite is not yet
@@ -1622,10 +2308,17 @@ def _compute_route(db: Any, concept_id: str, score: float, streak_increment: int
                 return "STEP_BACKWARD"
         return "STAY_HERE"
 
-    # Score is a pass — are we now graduated (durable)?
+    # Score is a pass — would we be graduated after this attempt?  The streak
+    # alone is no longer enough: the depth ladder must also be complete, so a
+    # recall-only streak keeps the learner climbing (STAY_HERE) rather than
+    # stepping forward prematurely (T-M4).
     mastery = _get_mastery(db, concept_id)
     if mastery["consecutive_passes"] + streak_increment >= _PASSES_TO_GRAD:
-        return "STEP_FORWARD"
+        passed = _levels_passed(db, concept_id)
+        if level and level in _LEVELS:
+            passed = passed | {level}
+        if all(lvl in passed for lvl in _required_levels(db, concept_id)):
+            return "STEP_FORWARD"
     return "STAY_HERE"
 
 
@@ -1640,6 +2333,7 @@ def _record_mastery(
     remediation_hint: str | None = None,
     question_type: str = "recall",
     session_mode: str = "blocked",
+    rubric_json: str | None = None,
 ) -> None:
     """Insert a mastery record, update the consecutive-pass streak, and apply HLR update.
 
@@ -1703,8 +2397,8 @@ def _record_mastery(
                    last_reviewed_at, next_review_at,
                    half_life_days, review_session_count,
                    error_type, remediation_hint,
-                   question_type, session_mode)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   question_type, session_mode, rubric_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 mid,
                 concept_id,
@@ -1719,8 +2413,9 @@ def _record_mastery(
                 new_session_count,
                 error_type,
                 remediation_hint,
-                question_type if question_type in ("recall", "transfer") else "recall",
+                question_type if question_type in (*_LEVELS, _TEACH_BACK) else "recall",
                 session_mode if session_mode in _VALID_SESSION_MODES else "blocked",
+                rubric_json,
             ),
         )
         db._conn.commit()

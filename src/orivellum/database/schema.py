@@ -3347,4 +3347,32 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON work_concept_items(concept_id)
     """,
     ),
+    # v139 — Depth ladder, teach-back, and the reverse research loop (T-M4/5/6).
+    # rubric_json stores the per-criterion grading record (atomic binary
+    # criteria with extractive quotes) so every assessment above recall is
+    # auditable.  research_requests is the reverse loop: a concept whose
+    # repeated failure is diagnosed as "corpus insufficient" emits a request
+    # naming what it needs; the next research run consumes open requests.
+    # The partial unique index guarantees at most ONE open request per concept.
+    (
+        139,
+        "Depth-ladder rubric records + research_requests reverse loop",
+        """
+        ALTER TABLE work_mastery ADD COLUMN rubric_json TEXT;
+        CREATE TABLE IF NOT EXISTS research_requests (
+            id            TEXT PRIMARY KEY,
+            work_id       TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            concept_id    TEXT REFERENCES work_concepts(id) ON DELETE CASCADE,
+            need          TEXT NOT NULL,
+            diagnosis     TEXT NOT NULL,
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            status        TEXT NOT NULL DEFAULT 'open',
+            created_at    TEXT NOT NULL,
+            resolved_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_rr_work ON research_requests(work_id, status);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_rr_open_concept
+            ON research_requests(concept_id) WHERE status='open'
+    """,
+    ),
 ]

@@ -19,7 +19,13 @@ rows are UNIQUE(concept_id, question).
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
 
 logger = logging.getLogger("orivellum.research_import")
 
@@ -40,10 +46,12 @@ def import_research_digests(db: Any, work_id: str, digests: dict) -> dict:
     """
     created, duplicate, skipped = 0, 0, 0
     total = 0
+    resolved_requests = 0
     for dg in digests.get("digests") or []:
         if not isinstance(dg, dict):
             skipped += 1
             continue
+        dg_created_before = created
         src_by_id = {s.get("id"): s for s in dg.get("sources") or [] if isinstance(s, dict)}
         query = str(dg.get("query") or "")[:300]
         for cl in dg.get("claims") or []:
@@ -74,6 +82,7 @@ def import_research_digests(db: Any, work_id: str, digests: dict) -> dict:
                 "query": query,
                 "origin": dg.get("origin"),
                 "gap_id": dg.get("gap_id"),
+                "request_id": dg.get("request_id"),
                 "quote": quote[:500],
                 "runner_confidence": cl.get("confidence", "low"),
                 "sources": [
@@ -107,7 +116,25 @@ def import_research_digests(db: Any, work_id: str, digests: dict) -> dict:
                 meta=meta,
             )
             created += 1
-    return {"proposals_created": created, "duplicates": duplicate, "skipped_unsourced": skipped}
+        # A digest that answered a learner research request closes it — but
+        # only when it actually landed new material (atomic conditional UPDATE).
+        request_id = dg.get("request_id")
+        if request_id and created > dg_created_before:
+            with db._lock:
+                cur = db._conn.execute(
+                    "UPDATE research_requests SET status='resolved', resolved_at=? "
+                    "WHERE id=? AND status='open'",
+                    (_now_iso(), str(request_id)),
+                )
+                db._conn.commit()
+            if cur.rowcount:
+                resolved_requests += 1
+    return {
+        "proposals_created": created,
+        "duplicates": duplicate,
+        "skipped_unsourced": skipped,
+        "research_requests_resolved": resolved_requests,
+    }
 
 
 def import_research_run(
