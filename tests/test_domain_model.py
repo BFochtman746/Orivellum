@@ -437,3 +437,52 @@ def test_domain_api_roundtrip(tmp_path):
 
     r = client.get(f"/api/works/{work['id']}/relative-recall")
     assert r.status_code == 200
+
+
+def test_source_delete_is_work_scoped(tmp_path):
+    client, db = _make_app(tmp_path)
+    work_a = db.create_work(title="A")
+    work_b = db.create_work(title="B")
+    doc = _structure_doc(db, work_a["id"], "Handbook", [(1, "Divine Justice")])
+    src = db.add_domain_source(work_a["id"], "theodicy", doc, "structure")
+
+    # Another Work's scope must NOT be able to delete A's source.
+    r = client.delete(f"/api/works/{work_b['id']}/domain/sources/{src['id']}")
+    assert r.status_code == 404
+    assert db.list_domain_sources(work_a["id"])  # still there
+
+    # Nonexistent work -> 404 on every domain surface.
+    assert client.get("/api/works/nope/domain/sources").status_code == 404
+    assert client.get("/api/works/nope/domain/nodes").status_code == 404
+    assert client.delete(f"/api/works/nope/domain/sources/{src['id']}").status_code == 404
+
+    # The owning Work can delete it.
+    r = client.delete(f"/api/works/{work_a['id']}/domain/sources/{src['id']}")
+    assert r.status_code == 200
+    assert db.list_domain_sources(work_a["id"]) == []
+
+
+def test_domain_node_defer_in_review_inbox(tmp_path):
+    from orivellum.capabilities.domain_model import harvest_domain
+
+    client, db = _make_app(tmp_path)
+    work = db.create_work(title="W")
+    _setup_three_sources(db, work["id"])
+    harvest_domain(db, work["id"], "theodicy")
+    node = db.list_domain_nodes(work["id"])[0]
+
+    r = client.post(
+        f"/api/review/domain_node:{node['id']}/resolve",
+        json={"decision": "defer", "author": "me"},
+    )
+    assert r.status_code == 200
+    assert r.json()["decision"] == "defer"
+    queue = client.get("/api/review/queue").json()
+    assert not any(i["id"] == f"domain_node:{node['id']}" for i in queue["items"])
+
+    # Deferring a nonexistent node is a clean 404, not a 500.
+    r = client.post(
+        "/api/review/domain_node:dn-nope/resolve",
+        json={"decision": "defer", "author": "me"},
+    )
+    assert r.status_code == 404

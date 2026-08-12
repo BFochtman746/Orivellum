@@ -269,14 +269,19 @@ def add_domain_source(work_id: str, req: DomainSourceRequest):
 @router.get("/works/{work_id}/domain/sources")
 def list_domain_sources(work_id: str, domain: str | None = None):
     db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
     return {"sources": db.list_domain_sources(work_id, domain)}
 
 
 @router.delete("/works/{work_id}/domain/sources/{source_id}")
 def remove_domain_source(work_id: str, source_id: str):
     db = get_db()
-    if not db.remove_domain_source(source_id):
-        raise HTTPException(404, f"domain source {source_id!r} not found")
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    # Scoped delete — a request under one Work can never remove another Work's source.
+    if not db.remove_domain_source(source_id, work_id):
+        raise HTTPException(404, f"domain source {source_id!r} not found for this Work")
     return {"ok": True}
 
 
@@ -307,6 +312,8 @@ def list_domain_nodes(
     node_class: str | None = None,
 ):
     db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
     import json as _json
 
     nodes = db.list_domain_nodes(work_id, domain=domain, status=status, node_class=node_class)

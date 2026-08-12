@@ -458,6 +458,7 @@ _PENDING_SQL = {
     "canon_fact": "SELECT 1 FROM wa_canon_proposals WHERE id=? AND status='proposed'",
     "position": "SELECT 1 FROM position_proposal WHERE id=? AND status='proposed'",
     "loom_persona": "SELECT 1 FROM loom_persona WHERE id=? AND status='proposed'",
+    "domain_node": "SELECT 1 FROM domain_node WHERE id=? AND status='proposed'",
 }
 
 

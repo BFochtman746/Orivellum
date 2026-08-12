@@ -477,20 +477,32 @@ function DomainModelSection({ workId }: { workId: string }) {
 
   const { data: srcData, refetch: refetchSources } = useQuery<{ sources: DomainSource[] }>({
     queryKey: ["domain-sources", workId],
-    queryFn: () => apiFetch(`${WORK_API_BASE}/works/${workId}/domain/sources`).then((r) => r.json()),
+    queryFn: () =>
+      apiFetch(`${WORK_API_BASE}/works/${workId}/domain/sources`).then((r) => {
+        if (!r.ok) throw new Error("domain sources fetch failed");
+        return r.json();
+      }),
   });
   const sources = srcData?.sources ?? [];
   const domains = [...new Set(sources.map((s) => s.domain))];
 
   const { data: nodeData, refetch: refetchNodes } = useQuery<{ nodes: DomainNode[] }>({
     queryKey: ["domain-nodes", workId],
-    queryFn: () => apiFetch(`${WORK_API_BASE}/works/${workId}/domain/nodes`).then((r) => r.json()),
+    queryFn: () =>
+      apiFetch(`${WORK_API_BASE}/works/${workId}/domain/nodes`).then((r) => {
+        if (!r.ok) throw new Error("domain nodes fetch failed");
+        return r.json();
+      }),
   });
   const nodes = nodeData?.nodes ?? [];
 
   const { data: recall } = useQuery<{ peers: RecallPeer[]; note?: string }>({
     queryKey: ["relative-recall", workId],
-    queryFn: () => apiFetch(`${WORK_API_BASE}/works/${workId}/relative-recall`).then((r) => r.json()),
+    queryFn: () =>
+      apiFetch(`${WORK_API_BASE}/works/${workId}/relative-recall`).then((r) => {
+        if (!r.ok) throw new Error("relative recall fetch failed");
+        return r.json();
+      }),
     enabled: sources.length > 0,
     staleTime: 120_000,
   });
@@ -539,7 +551,7 @@ function DomainModelSection({ workId }: { workId: string }) {
     const d = await post(`harvest-${domain}`, `/works/${workId}/domain/harvest`, { domain });
     if (d) {
       toast.success(
-        `Harvested ${d.nodes} node${d.nodes === 1 ? "" : "s"} from ${d.sources} source${d.sources === 1 ? "" : "s"}` +
+        `Proposed ${d.proposed} node${d.proposed === 1 ? "" : "s"} from ${d.sources} source${d.sources === 1 ? "" : "s"}` +
         (d.note ? ` — ${d.note}` : "")
       );
       refetchNodes();

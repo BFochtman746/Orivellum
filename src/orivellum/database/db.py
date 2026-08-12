@@ -6348,9 +6348,13 @@ class OrivellumDB:
             rows = self._conn.execute(q, params).fetchall()
         return [dict(r) for r in rows]
 
-    def remove_domain_source(self, source_id: str) -> bool:
+    def remove_domain_source(self, source_id: str, work_id: str) -> bool:
+        """Delete one registered source, scoped to its Work — a request scoped
+        to a different Work must never delete another Work's source."""
         with self._lock:
-            cur = self._conn.execute("DELETE FROM domain_source WHERE id=?", (source_id,))
+            cur = self._conn.execute(
+                "DELETE FROM domain_source WHERE id=? AND work_id=?", (source_id, work_id)
+            )
             self._maybe_commit()
         return cur.rowcount > 0
 
