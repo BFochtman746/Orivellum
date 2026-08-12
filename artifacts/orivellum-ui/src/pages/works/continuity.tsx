@@ -90,7 +90,9 @@ export default function ContinuityPage() {
   const { workId } = useParams<{ workId: string }>();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState("full_series");
+  const [chapterId, setChapterId] = useState<string>("");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const needsChapter = mode === "chapter_vs_book" || mode === "change_impact";
 
   const { data: modesData } = useQuery({
     queryKey: ["review-modes"],
@@ -120,12 +122,29 @@ export default function ContinuityPage() {
   const runs: Run[] = runsData?.runs ?? [];
   const activeRun = runs.find((r) => r.id === selectedRunId) ?? runs[0] ?? null;
 
+  const { data: chaptersData } = useQuery({
+    queryKey: ["work-chapters", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${API}/works/${workId}/chapters`);
+      if (!r.ok) throw new Error("Failed to load chapters");
+      return r.json();
+    },
+    enabled: needsChapter,
+    staleTime: 60_000,
+  });
+  const chapters: { id: string; seq: number; title: string | null }[] =
+    chaptersData?.chapters ?? [];
+
   const startRun = useMutation({
     mutationFn: async () => {
       const r = await apiFetch(`${API}/review-runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, work_id: workId }),
+        body: JSON.stringify({
+          mode,
+          work_id: workId,
+          chapter_id: needsChapter ? chapterId : null,
+        }),
       });
       if (!r.ok) throw new Error((await r.json()).detail || "Could not start the review");
       return r.json();
@@ -161,19 +180,35 @@ export default function ContinuityPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(modesData?.modes ?? Object.keys(MODE_LABELS))
-                  .filter((m: string) => m !== "chapter_vs_book" && m !== "change_impact")
-                  .map((m: string) => (
-                    <SelectItem key={m} value={m}>
-                      {MODE_LABELS[m] ?? m}
-                    </SelectItem>
-                  ))}
+                {(modesData?.modes ?? Object.keys(MODE_LABELS)).map((m: string) => (
+                  <SelectItem key={m} value={m}>
+                    {MODE_LABELS[m] ?? m}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
+          {needsChapter && (
+            <div className="space-y-1">
+              <div className="text-xs font-medium text-muted-foreground">Chapter</div>
+              <Select value={chapterId} onValueChange={setChapterId}>
+                <SelectTrigger className="w-64" data-testid="select-review-chapter">
+                  <SelectValue placeholder="Pick the chapter to review" />
+                </SelectTrigger>
+                <SelectContent>
+                  {chapters.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      Ch. {c.seq}
+                      {c.title ? ` — ${c.title}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <Button
             onClick={() => startRun.mutate()}
-            disabled={startRun.isPending}
+            disabled={startRun.isPending || (needsChapter && !chapterId)}
             data-testid="button-start-review"
           >
             {startRun.isPending ? (

@@ -77,16 +77,36 @@ class _Base(unittest.TestCase):
             self.db._conn.commit()
         return cid
 
+    def _ensure_quote(self, chapter_id: str, quote: str) -> None:
+        """Make the quote verifiably present in the chapter text.
+
+        Real ATLAS extraction guarantees grounded quotes (LAW 3); the ledger
+        now verifies them, so fixtures must honor the same contract.
+        """
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT text FROM book_chapters WHERE id=?", (chapter_id,)
+            ).fetchone()
+            if row is not None and quote not in (row["text"] or ""):
+                self.db._conn.execute(
+                    "UPDATE book_chapters SET text = COALESCE(text,'') || ' ' || ? "
+                    "WHERE id=?", (quote, chapter_id))
+                self.db._conn.commit()
+
     def _node(self, work_id, chapter_id, node_type, name, **kw):
+        quote = kw.pop("quote", f"...{name}...")
+        self._ensure_quote(chapter_id, quote)
         return self.db.create_graph_node(
             work_id=work_id, chapter_id=chapter_id, node_type=node_type,
-            name=name, evidence_quote=kw.pop("quote", f"...{name}..."),
+            name=name, evidence_quote=quote,
             evidence_offset=kw.pop("offset", 0), **kw)
 
     def _edge(self, work_id, chapter_id, src, dst, edge_type, **kw):
+        quote = kw.pop("quote", "...")
+        self._ensure_quote(chapter_id, quote)
         return self.db.create_graph_edge(
             work_id=work_id, chapter_id=chapter_id, src=src, dst=dst,
-            edge_type=edge_type, evidence_quote=kw.pop("quote", "..."),
+            edge_type=edge_type, evidence_quote=quote,
             evidence_offset=kw.pop("offset", 0))
 
 
@@ -577,6 +597,88 @@ class ApiTests(_Base):
         r = self.client.post("/api/review-runs", headers=AUTH_HEADERS,
                              json={"mode": "vibes_check", "work_id": b1["id"]})
         self.assertEqual(r.status_code, 422)
+
+
+class ReviewHardeningTests(_Base):
+    """Coverage-truth and mode-completeness guarantees added after review."""
+
+    def _two_book_series(self):
+        b1, b2 = self._work("Book One"), self._work("Book Two")
+        self._series("Duology", b1, b2)
+        c1 = self._chapter(b1["id"], 1, "One", "Mira rode north to the keep.")
+        c2 = self._chapter(b2["id"], 1, "One", "Mira arrived at the keep at last.")
+        return b1, b2, c1, c2
+
+    def test_chapter_modes_require_chapter_id(self):
+        b1, _, _, _ = self._two_book_series()
+        for mode in ("chapter_vs_book", "change_impact"):
+            with self.assertRaises(sr.SeriesReviewError):
+                sr.create_run(self.db, mode=mode, work_id=b1["id"],
+                              series_id=None)
+
+    def test_run_scope_is_snapshotted_at_creation(self):
+        b1, b2, _, _ = self._two_book_series()
+        run = sr.create_run(self.db, mode="full_series",
+                            work_id=b1["id"], series_id=None)
+        stored = (sr.get_run(self.db, run["id"])["params"] or {}).get("scope")
+        self.assertIsNotNone(stored)
+        self.assertEqual([s["work_id"] for s in stored],
+                         [b1["id"], b2["id"]])
+        # A membership change AFTER creation must not alter the stored scope.
+        b3 = self._work("Book Three")
+        self._chapter(b3["id"], 1, "One", "A late addition.")
+        series = self.series_store.list_series()[0]
+        self.series_store.add_member(series["id"], b3["id"], volume=3)
+        stored_after = (sr.get_run(self.db, run["id"])["params"] or {}).get("scope")
+        self.assertEqual([s["work_id"] for s in stored_after],
+                         [b1["id"], b2["id"]])
+
+    def test_unverifiable_span_is_excluded_and_forces_partial(self):
+        b1, b2, c1, c2 = self._two_book_series()
+        # Grounded node in book 1
+        self._node(b1["id"], c1, "Character", "Mira",
+                   quote="Mira rode north to the keep.")
+        # Node whose quote does NOT appear in the chapter text — bypass the
+        # test helper's quote-seeding so the item is genuinely unverifiable.
+        self.db.create_graph_node(
+            work_id=b2["id"], chapter_id=c2, node_type="Character",
+            name="Mira", evidence_quote="A sentence that is not in the text.",
+            evidence_offset=0, attributes={"status": "dead"})
+        sr.build_book_ledger(self.db, b1["id"])
+        sr.build_book_ledger(self.db, b2["id"])
+        scope = sr.resolve_scope(self.db, mode="full_series",
+                                 work_id=b1["id"], series_id=None)
+        # The unverified item never feeds comparators…
+        findings = sr.reconcile(self.db, mode="full_series", scope=scope)
+        self.assertFalse(any(f["finding_type"] in ("state_drift", "injury_drift")
+                             for f in findings))
+        # …and the manifest names the chapter and forces a partial review.
+        manifest = sr.build_manifest(self.db, mode="full_series", scope=scope)
+        self.assertTrue(manifest["partial"])
+        reasons = [u["reason"] for u in manifest["unreviewed_regions"]]
+        self.assertTrue(any("unverifiable" in r for r in reasons))
+
+    def test_canon_evidence_is_labeled_not_faked_as_passage(self):
+        b1, b2, _, _ = self._two_book_series()
+        self.canon.create_fact(statement="The war ended in 512.",
+                               classification="HISTORICAL",
+                               work_id=b1["id"], signed_by="author",
+                               source_ref="Chronicle, f.3")
+        self.canon.create_fact(statement="The war ended in 515.",
+                               classification="HISTORICAL",
+                               work_id=b2["id"], signed_by="author",
+                               source_ref="Chronicle, f.9")
+        sr.build_book_ledger(self.db, b1["id"])
+        sr.build_book_ledger(self.db, b2["id"])
+        scope = sr.resolve_scope(self.db, mode="full_series",
+                                 work_id=b1["id"], series_id=None)
+        findings = sr.reconcile(self.db, mode="full_series", scope=scope)
+        canon_spans = [e for f in findings for e in f["evidence"]
+                       if e.get("source") == "canon"]
+        self.assertTrue(canon_spans)
+        for e in canon_spans:
+            self.assertTrue(e["source_ref"])
+            self.assertIsNone(e["chapter_id"])
 
 
 if __name__ == "__main__":

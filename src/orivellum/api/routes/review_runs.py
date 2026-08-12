@@ -125,12 +125,26 @@ def create_review_run(body: CreateRunBody):
 
     with db._lock:
         db._conn.execute(
-            "UPDATE review_run SET operation_id=?, status='running', updated_at=? WHERE id=?",
+            "UPDATE review_run SET operation_id=?, updated_at=? WHERE id=?",
             (op_id, datetime.now(UTC).isoformat(), run["id"]),
         )
         db._conn.commit()
     if not start_operation_run(db, get_config(), op_id):
+        # Keep both records honest: the run never started, so it is failed —
+        # never left 'running' with a pending operation behind it.
+        with db._lock:
+            db._conn.execute(
+                "UPDATE review_run SET status='failed', updated_at=? WHERE id=?",
+                (datetime.now(UTC).isoformat(), run["id"]),
+            )
+            db._conn.commit()
         raise HTTPException(409, "Could not start the review operation.")
+    with db._lock:
+        db._conn.execute(
+            "UPDATE review_run SET status='running', updated_at=? WHERE id=?",
+            (datetime.now(UTC).isoformat(), run["id"]),
+        )
+        db._conn.commit()
     return {"run": _with_effective(db, sr.get_run(db, run["id"])), "scope": scope}
 
 

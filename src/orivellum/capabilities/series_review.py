@@ -201,6 +201,7 @@ def build_book_ledger(db: OrivellumDB, work_id: str) -> dict:
     canon_facts = CanonStore(db).list_facts(work_id=work_id, status="active")
 
     seq_by_chapter = {c["id"]: int(c["seq"]) for c in chapters}
+    text_by_chapter = {c["id"]: c.get("text") or "" for c in chapters}
     graph_chapter_ids = {n["chapter_id"] for n in nodes} | {e["chapter_id"] for e in edges}
     chapter_meta = [
         {
@@ -218,6 +219,8 @@ def build_book_ledger(db: OrivellumDB, work_id: str) -> dict:
     node_by_id = {n["id"]: n for n in nodes}
     items: list[dict] = []
 
+    unverified_by_chapter: dict[str, int] = {}
+
     def _add(
         kind: str,
         subject: str,
@@ -228,6 +231,18 @@ def build_book_ledger(db: OrivellumDB, work_id: str) -> dict:
         offset: int | None = None,
         meta: dict | None = None,
     ) -> None:
+        meta = dict(meta or {})
+        # Enforce the provenance guarantee at build time: a passage-cited
+        # item whose quote can no longer be found in the chapter text is
+        # UNVERIFIED evidence — it never feeds comparators, and the manifest
+        # names it so the run is honestly partial.
+        if chapter_id is not None:
+            text = text_by_chapter.get(chapter_id, "")
+            if not quote.strip() or quote not in text:
+                meta["span_unverified"] = True
+                unverified_by_chapter[chapter_id] = (
+                    unverified_by_chapter.get(chapter_id, 0) + 1
+                )
         items.append(
             {
                 "kind": kind,
@@ -237,7 +252,7 @@ def build_book_ledger(db: OrivellumDB, work_id: str) -> dict:
                 "chapter_seq": seq_by_chapter.get(chapter_id or ""),
                 "quote": quote,
                 "span_offset": offset,
-                "meta": meta or {},
+                "meta": meta,
             }
         )
 
@@ -366,10 +381,16 @@ def build_book_ledger(db: OrivellumDB, work_id: str) -> dict:
             meta={
                 "canon_fact_id": f.get("id"),
                 "classification": f.get("classification"),
+                "source_ref": f.get("source_ref") or "",
                 "year": _parse_year(stmt),
                 "temporal": _parse_year(stmt) is not None,
             },
         )
+
+    # Annotate per-chapter unverified-evidence counts so the manifest can
+    # name them (and refuse a full-review claim while any exist).
+    for cm in chapter_meta:
+        cm["unverified"] = unverified_by_chapter.get(cm["chapter_id"], 0)
 
     # Persist — replace the previous ledger, carrying dispositions forward.
     now = _now()
@@ -525,7 +546,7 @@ def resolve_scope(db: OrivellumDB, *, mode: str, work_id: str | None,
 
 
 def _span(item: dict, book: dict) -> dict:
-    return {
+    span = {
         "work_id": book["work_id"],
         "work_title": book["title"],
         "order": book["order"],
@@ -535,6 +556,13 @@ def _span(item: dict, book: dict) -> dict:
         "offset": item.get("span_offset"),
         "statement": item.get("statement") or "",
     }
+    meta = item.get("meta") or {}
+    if item.get("chapter_id") is None and meta.get("canon_fact_id"):
+        # Canon facts are not passage evidence — say so explicitly instead of
+        # presenting an empty quote as if it were a manuscript span.
+        span["source"] = "canon"
+        span["source_ref"] = meta.get("source_ref") or ""
+    return span
 
 
 def _mk_finding(ftype: str, subject: str, explanation: str, spans: list[dict],
@@ -561,6 +589,10 @@ def _by_kind(items: list[dict]) -> dict[str, list[dict]]:
     for it in items:
         # rejected ledger items are author-refuted evidence — never compare on them
         if it["review_status"] == "rejected":
+            continue
+        # unverifiable spans never feed comparators — a finding must be able
+        # to cite a real passage; the manifest reports these as unreviewed
+        if (it.get("meta") or {}).get("span_unverified"):
             continue
         out[it["kind"]].append(it)
     return out
@@ -888,6 +920,16 @@ def build_manifest(db: OrivellumDB, *, mode: str, scope: list[dict]) -> dict:
                 })
                 if status == "failed":
                     error_count += 1
+            elif cm.get("unverified"):
+                # Parsed, but some extracted evidence could not be verified
+                # against the chapter text — those items were excluded from
+                # reconciliation, so the review of this chapter is incomplete.
+                unreviewed.append({
+                    "work_id": s["work_id"], "work_title": s["title"],
+                    "chapter_id": cm["chapter_id"], "seq": cm["seq"],
+                    "title": cm.get("title") or "",
+                    "reason": f"{cm['unverified']} unverifiable evidence span(s)",
+                })
         new_ids = set(current) - {cm["chapter_id"] for cm in ledger["chapters"]}
         for cid in new_ids:
             unreviewed.append({"work_id": s["work_id"], "work_title": s["title"],
@@ -928,7 +970,15 @@ def create_run(db: OrivellumDB, *, mode: str, work_id: str | None,
                params: dict | None = None) -> dict:
     if mode not in MODES:
         raise SeriesReviewError(f"mode must be one of {MODES}")
+    if mode in ("chapter_vs_book", "change_impact") and not chapter_id:
+        raise SeriesReviewError(f"{mode} requires a chapter_id")
     scope = resolve_scope(db, mode=mode, work_id=work_id, series_id=series_id)
+    # Snapshot the scope on the run: a durable job must review exactly the
+    # books it was started for, even if series membership changes while it
+    # is paused or running.  Reconciliation and the manifest consume ONLY
+    # this snapshot — never live membership.
+    params = dict(params or {})
+    params["scope"] = scope
     run_id = str(uuid.uuid4())
     now = _now()
     with db.governed_write(
@@ -945,7 +995,7 @@ def create_run(db: OrivellumDB, *, mode: str, work_id: str | None,
                 tool_version, created_at, updated_at)
                VALUES(?,?,?,?,?,?,?,?,?,?)""",
             (run_id, mode, work_id, series_id, chapter_id, "pending",
-             json.dumps(params or {}), TOOL_VERSION, now, now),
+             json.dumps(params), TOOL_VERSION, now, now),
         )
     run = get_run(db, run_id)
     run["scope"] = scope
@@ -1143,8 +1193,15 @@ def register_op_actions() -> None:
         run = get_run(ctx.db, run_id or "")
         if run is None:
             raise SeriesReviewError(f"review run {run_id!r} not found")
-        scope = resolve_scope(ctx.db, mode=run["mode"],
-                              work_id=run["work_id"], series_id=run["series_id"])
+        # Use the scope SNAPSHOT taken at run creation — never live series
+        # membership.  A membership change mid-run must not let the manifest
+        # claim coverage of books this operation never built ledgers for.
+        scope = (run.get("params") or {}).get("scope")
+        if not scope:
+            raise SeriesReviewError(
+                f"review run {run_id!r} has no scope snapshot; "
+                "re-create the run instead of resolving live membership"
+            )
         findings = reconcile(ctx.db, mode=run["mode"], scope=scope,
                              chapter_id=run["chapter_id"])
         manifest = build_manifest(ctx.db, mode=run["mode"], scope=scope)
