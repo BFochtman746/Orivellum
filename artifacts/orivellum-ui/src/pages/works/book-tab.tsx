@@ -35,6 +35,7 @@ import {
 import { toast } from "sonner";
 import { BrainstormB3Panel } from "./brainstorm-tab";
 import { ChapterBandDialog } from "./chapter-history";
+import { DraftingCockpit } from "./drafting-cockpit";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -1483,6 +1484,9 @@ export function BookTab({ workId }: { workId: string }) {
     <div className="space-y-8">
       {/* Production pipeline lifecycle tracker */}
       <PipelinePanel workId={workId} />
+
+      {/* LOOM drafting cockpit — contracts, personas, runs, revisions */}
+      <DraftingCockpit workId={workId} />
 
       {/* Next action */}
       <Card className="border-primary/30 bg-primary/[0.03]">
