@@ -440,7 +440,17 @@ def check_restore_compatibility(
             f"data can be safely discarded before proceeding."
         )
 
-    # --- CHECK 3: column incompatibility (backup has cols absent from target) ---
+    # --- CHECK 3: column incompatibility (bidirectional) ---
+    #
+    # 3a: Backup has columns absent from target.
+    #     INSERT OR REPLACE would fail with "table has no column named X"
+    #     AFTER the DB is already wiped.
+    #
+    # 3b: Target has required columns (NOT NULL, no default, not an INTEGER PK)
+    #     absent from the backup.
+    #     INSERT would fail with "NOT NULL constraint failed: <table>.<col>"
+    #     AFTER the DB is already wiped because the backup JSON cannot supply
+    #     a value for that column.
     for t in manifest["tables"]:
         name = t["name"]
         backup_cols = t.get("columns")
@@ -449,20 +459,47 @@ def check_restore_compatibility(
         cl = t.get("classification", classify_table(name, fts_virtual))
         if cl == "log_operational":
             continue
-        target_cols = {
-            r[1]
-            for r in conn.execute(f'PRAGMA table_info("{name}")').fetchall()
-        }
+
+        # Fetch target column metadata once for both sub-checks.
+        # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
+        target_col_rows = conn.execute(f'PRAGMA table_info("{name}")').fetchall()
+        target_cols = {r[1] for r in target_col_rows}
+
+        # 3a — backup columns not in target
         extra_in_backup = set(backup_cols) - target_cols
         if extra_in_backup:
             errors.append(
-                f"  CHECK3: {name!r} — backup column(s) missing from target: "
+                f"  CHECK3a: {name!r} — backup column(s) missing from target: "
                 + ", ".join(sorted(extra_in_backup))
             )
+            continue  # skip 3b for this table — already broken
+
+        # 3b — target required columns not supplied by backup
+        backup_cols_set = set(backup_cols)
+        for row in target_col_rows:
+            col_name = row[1]
+            col_type = (row[2] or "").upper()
+            notnull = row[3]
+            dflt_value = row[4]
+            pk = row[5]
+
+            if col_name in backup_cols_set:
+                continue  # backup will supply a value
+
+            # INTEGER PRIMARY KEY is a ROWID alias — SQLite fills it automatically.
+            is_integer_pk = pk == 1 and col_type in ("INTEGER", "INT")
+            if is_integer_pk:
+                continue
+
+            if notnull == 1 and dflt_value is None:
+                errors.append(
+                    f"  CHECK3b: {name!r}.{col_name!r} is NOT NULL with no default "
+                    f"and is absent from the backup — INSERT would fail post-wipe"
+                )
 
     if errors:
         raise RuntimeError(
-            f"Column incompatibility in {len(errors)} table(s). "
+            f"Column incompatibility in {len(errors)} table/column combination(s). "
             f"INSERT would fail after the DB is wiped.\n"
             + "\n".join(errors)
             + "\nApply schema migrations or restore to a database with a compatible schema."

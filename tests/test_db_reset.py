@@ -751,12 +751,11 @@ class TestSchemaCompatibility(unittest.TestCase):
         # Must not raise — no rows would be lost
         dr.check_restore_compatibility(self.conn, self.manifest, self.fts_virtual)
 
-    def test_column_incompatibility_raises_before_wipe(self):
-        """If the backup has a column that no longer exists in the target schema
-        (e.g. a column was renamed/dropped), INSERT would fail AFTER the DB is
-        already wiped. check_restore_compatibility must catch this pre-wipe."""
-        # Build a manifest that claims 'works' has an extra column 'old_column'
-        # not present in the test schema.
+    def test_column_incompatibility_backup_has_dropped_column_raises(self):
+        """CHECK 3a: backup has a column that was dropped from the target schema.
+        INSERT OR REPLACE would fail AFTER the DB is wiped ('no column named X').
+        check_restore_compatibility must catch this pre-wipe."""
+        # Claim 'works' has an extra column 'old_column' not in the test schema.
         doctored_tables = []
         for t in self.manifest["tables"]:
             if t["name"] == "works":
@@ -776,6 +775,59 @@ class TestSchemaCompatibility(unittest.TestCase):
         # DB must still be intact
         n = self.conn.execute("SELECT COUNT(*) FROM works").fetchone()[0]
         self.assertEqual(n, 1, "works must be intact after failed column check")
+
+    def test_target_required_column_absent_from_backup_raises_before_wipe(self):
+        """CHECK 3b: target schema added a required (NOT NULL, no default) column
+        after the backup was taken. INSERT into that table would fail post-wipe
+        because the backup JSON has no value for the new column.
+        check_restore_compatibility must catch this pre-wipe."""
+        # Add a required column to 'conversations' after the backup was taken.
+        self.conn.execute(
+            "ALTER TABLE conversations ADD COLUMN required_new_col TEXT NOT NULL DEFAULT ''"
+        )
+        # Remove the default so the column becomes truly required with no fallback.
+        # SQLite doesn't support DROP DEFAULT, so we simulate by using a new table.
+        # Instead, use a fresh table with a stricter column for the test.
+        self.conn.execute(
+            "CREATE TABLE strict_table ("
+            "id TEXT PRIMARY KEY, must_have TEXT NOT NULL)"
+        )
+        self.conn.commit()
+
+        # Build a manifest that covers strict_table but without 'must_have' column
+        # (simulates an old backup taken before that column was added).
+        from pathlib import Path as _Path
+        import json as _json
+        tables_dir = self.backup_dir / "tables"
+        fake_rows = [{"id": "st1"}]  # 'must_have' omitted
+        content = _json.dumps(fake_rows).encode("utf-8")
+        (tables_dir / "strict_table.json").write_bytes(content)
+        sha = dr._sha256_bytes(content)
+
+        fake_manifest = {
+            **self.manifest,
+            "tables": self.manifest["tables"] + [
+                {
+                    "name": "strict_table",
+                    "row_count": 1,
+                    "sha256": sha,
+                    "file": "tables/strict_table.json",
+                    "classification": "user_data",
+                    "columns": ["id"],  # 'must_have' absent from backup cols
+                }
+            ],
+        }
+
+        with self.assertRaises(RuntimeError) as ctx:
+            dr.check_restore_compatibility(self.conn, fake_manifest, self.fts_virtual)
+        err = str(ctx.exception)
+        self.assertIn("must_have", err, "Error must name the required column")
+        self.assertIn("strict_table", err, "Error must name the affected table")
+        self.assertIn("CHECK3b", err)
+
+        # DB must still have all original data
+        n = self.conn.execute("SELECT COUNT(*) FROM works").fetchone()[0]
+        self.assertEqual(n, 1, "works must be intact after failed CHECK3b")
 
 
 if __name__ == "__main__":
