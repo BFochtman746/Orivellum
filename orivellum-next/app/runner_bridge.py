@@ -32,29 +32,40 @@ if str(_RUNNER_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_RUNNER_ROOT))
 
 try:
-    from runner import store as _runner_store  # type: ignore[import-not-found]
+    from runner import store as _runner_store          # type: ignore[import-not-found]
+    from runner import harness as _runner_harness      # type: ignore[import-not-found]
+    from runner.jobs import next_action as _next_action_job  # type: ignore[import-not-found]
     _HAS_RUNNER = True
 except Exception:
-    _runner_store = None  # type: ignore[assignment]
+    _runner_store = None       # type: ignore[assignment]
+    _runner_harness = None     # type: ignore[assignment]
+    _next_action_job = None    # type: ignore[assignment]
     _HAS_RUNNER = False
 
 
 def _runner_dispatch(action: dict, *, executor=None) -> dict:
-    """Hand one action to the runner queue. Returns a unit descriptor.
+    """Dispatch one action to the runner and synchronously wait for the outcome.
 
-    Resolution order:
-      1. ``executor`` callback — used by tests and dry-run callers.
-      2. orivellum-runner store — the real production queue.
-      3. Stub — runner package not installed; the action is still tracked
-         in next.db so nothing is lost.
+    Returns a descriptor whose ``ok`` field is the ONLY authority on whether
+    the action actually executed successfully.  Callers must never mark an
+    action 'done' until they see ``ok=True`` here.
 
-    The stub path is NOT a silent success: it is logged in the return value
-    so the caller can see that no external unit was created.
+    Resolution order
+    ────────────────
+    1. ``executor`` callback — trusted callable used by tests and dry-run callers.
+       The caller controls the result; ``ok`` defaults to ``True`` if not set,
+       so a test that returns ``{"status": "done"}`` is treated as success.
+    2. orivellum-runner harness — the real path.  Creates a run in the runner
+       store, queues the unit, runs the harness *synchronously*, and returns
+       ``ok=True`` only when the harness reports ``status='done'``.
+    3. Stub — runner package is not installed.  Always returns ``ok=False``
+       because we cannot verify execution happened.  The action is recorded in
+       next.db but must NOT be marked done.
     """
     if executor is not None:
         result = executor(action)
-        return {"source": "executor",
-                **(result if isinstance(result, dict) else {})}
+        d = result if isinstance(result, dict) else {}
+        return {"source": "executor", "ok": d.get("ok", True), **d}
 
     if _HAS_RUNNER:
         try:
@@ -75,25 +86,39 @@ def _runner_dispatch(action: dict, *, executor=None) -> dict:
                 "payload": {
                     "action_id": action["id"],
                     "prompt": action["prompt"],
+                    "anchor_ref": action.get("anchor_ref", ""),
                 },
             }])
+            # Execute synchronously.  The harness retries transient unit
+            # failures internally; we only see the final run status.
+            res = _runner_harness.execute(
+                run_id,
+                _next_action_job,
+                _next_action_job.unit_worker,
+                _next_action_job.final_pass,
+            )
+            ok = res.get("status") == "done"
             return {
                 "source": "runner",
+                "ok": ok,
                 "run_id": run_id,
-                "prompt": action["prompt"],
-                "anchor_ref": action.get("anchor_ref", ""),
-                "cost_units": action.get("cost_units"),
-                "cost_minutes": action.get("cost_minutes"),
+                "status": res.get("status"),
+                "stop_reason": res.get("stop_reason"),
+                "totals": res.get("totals"),
             }
-        except Exception:
-            pass  # runner present but errored; fall through to stub
+        except Exception as exc:
+            # Runner present but threw — surface the error, never swallow it.
+            return {
+                "source": "runner",
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}"[:400],
+            }
 
+    # Stub: runner package absent.  Explicitly failed so callers never mark done.
     return {
         "source": "stub",
-        "prompt": action["prompt"],
-        "anchor_ref": action.get("anchor_ref", ""),
-        "cost_units": action.get("cost_units"),
-        "cost_minutes": action.get("cost_minutes"),
+        "ok": False,
+        "error": "runner package not installed; action recorded in next.db only",
     }
 
 # A session budget, so an autonomous chain cannot run away. The runner has its
@@ -225,7 +250,15 @@ def run_chain(db: DB, thread_id: str, action_ids: list[str],
         try:
             result = enqueue(db, aid, chain=chain, executor=executor)
             if result.get("auto"):
-                finish(db, aid, ok=True, detail="chain step complete")
+                # Gate completion on what the runner actually reported.
+                # Never mark an action done before execution proves success.
+                unit = result.get("unit", {})
+                ok = unit.get("ok", False)
+                detail = (
+                    unit.get("error")
+                    or ("chain step complete" if ok else "dispatch failed or runner unavailable")
+                )
+                finish(db, aid, ok=ok, detail=detail)
         except ChainExhausted as exc:
             stopped_reason = str(exc)
             break

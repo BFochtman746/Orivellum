@@ -341,8 +341,11 @@ class TestBridge(Base):
         aid = nextaction.read_set(self.db, sid)["actions"][0]["id"]
         res = runner_bridge.enqueue(self.db, aid)
         self.assertTrue(res["auto"])
-        self.assertIn("prompt", res["unit"])
-        self.assertIn("anchor_ref", res["unit"])
+        # unit now carries the execution result, not the raw action payload
+        self.assertIn("ok", res["unit"],
+                      "unit must report whether execution succeeded")
+        self.assertIn("source", res["unit"],
+                      "unit must identify which dispatch path was taken")
 
     def test_chain_budget_stops_the_loop(self):
         on = {**POLICY, "auto_run_enabled": 1}
@@ -764,6 +767,72 @@ class TestN5Chain(Base):
         self.assertFalse(result["auto"],
                          "irreversible action must not auto-run under any policy")
         self.assertIn("reversible", result["why"])
+
+    def test_failed_dispatch_marks_action_failed_not_done(self):
+        """N5: a failed runner dispatch marks the action failed — never done."""
+        acts = [
+            self._cheap_action("step-fail", recommended=True),
+            self._cheap_action("step-ok"),
+        ]
+        stored = self._offer(acts, thread="fail-t")
+        ids = [a["id"] for a in stored]
+
+        # Executor that reports failure for step-fail, success for step-ok.
+        # This simulates the real runner returning ok=False for a crashed unit.
+        def fail_exec(act):
+            if "step-fail" in act.get("label", ""):
+                return {"ok": False, "error": "simulated runner crash"}
+            return {"ok": True}
+
+        report = runner_bridge.run_chain(
+            self.db, "fail-t", ids,
+            budget={"max_steps": 8, "max_minutes": 60, "max_units": 9999},
+            executor=fail_exec,
+        )
+        # The failed action must be in 'failed', never 'done'
+        fail_row = self.db.q1("SELECT state FROM next_action WHERE id=?", (ids[0],))
+        self.assertEqual(fail_row["state"], "failed",
+                         "a failed dispatch must land in state='failed'")
+        self.assertNotEqual(fail_row["state"], "done",
+                            "state must never be 'done' before execution succeeds")
+        # The successful action still runs — a single failure must not abort the chain
+        ok_row = self.db.q1("SELECT state FROM next_action WHERE id=?", (ids[1],))
+        self.assertEqual(ok_row["state"], "done",
+                         "a chain must continue running after a single failed step")
+
+    def test_real_runner_store_executes_and_marks_done(self):
+        """N5 integration: run_chain without executor uses real runner harness (MOCK=True)."""
+        if not runner_bridge._HAS_RUNNER:
+            self.skipTest("runner package not installed — skipping real-runner path")
+        from runner.config import CFG as _rcfg
+        import tempfile
+        from pathlib import Path as _Path
+        acts = [
+            self._cheap_action("real-a", recommended=True),
+            self._cheap_action("real-b"),
+        ]
+        stored = self._offer(acts, thread="real-run-t")
+        ids = [a["id"] for a in stored]
+        with tempfile.TemporaryDirectory() as td:
+            old_db, old_mock = _rcfg.db, _rcfg.mock
+            _rcfg.db = str(_Path(td) / "runner.db")
+            _rcfg.mock = True
+            try:
+                # executor=None → takes the real runner store + harness path
+                report = runner_bridge.run_chain(
+                    self.db, "real-run-t", ids,
+                    budget={"max_steps": 8, "max_minutes": 60, "max_units": 9999},
+                    executor=None,
+                )
+            finally:
+                _rcfg.db = old_db
+                _rcfg.mock = old_mock
+        self.assertEqual(report["steps_run"], 2,
+                         f"both actions should run; report: {report}")
+        for aid in ids:
+            row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+            self.assertEqual(row["state"], "done",
+                             f"action {aid} should be 'done' after real runner completes")
 
     def test_pending_for_you_shows_all_queued_items_with_reasons(self):
         """N5: pending_for_you() lists every non-auto item with waits_because filled."""

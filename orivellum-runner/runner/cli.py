@@ -15,10 +15,16 @@ from pathlib import Path
 from . import harness, llm, report, store  # noqa: F401 (json/llm: kept for job modules & debugging)
 from .config import CFG
 from .jobs import code as code_job
+from .jobs import next_action as next_action_job
 from .jobs import research as research_job
 from .jobs import xlsx as xlsx_job
 
-JOBS = {"code": code_job, "xlsx": xlsx_job, "research": research_job}
+JOBS = {
+    "code": code_job,
+    "next_action": next_action_job,
+    "research": research_job,
+    "xlsx": xlsx_job,
+}
 
 
 def _run_dir(run_id):
