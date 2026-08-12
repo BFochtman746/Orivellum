@@ -15,6 +15,7 @@ import {
   FileAudio, Loader2, Volume2, Download, BookHeadphones, FileText,
   X, Trash2, RefreshCw, Activity, Sparkles, FileSpreadsheet, Check, Copy,
   Presentation, CheckCircle2, AlertTriangle, ChevronRight, Wand2, Square,
+  Terminal, Code2, FolderOpen, TestTube2, PackageOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation, useSearch } from "wouter";
@@ -2487,6 +2488,378 @@ function QuickGeneratePanel() {
   );
 }
 
+// ── Code Studio Panel ─────────────────────────────────────────────────────────
+
+type CodePhase = "idle" | "planning" | "generating" | "done" | "error";
+
+interface CodeFile { path: string; size: number; is_test: boolean; }
+interface CodeTests { passed: boolean; output: string; error: string; tests_found: boolean; }
+interface CodeResult {
+  ok: boolean;
+  title: string;
+  language: string;
+  error?: string;
+  files: CodeFile[];
+  download_url?: string;
+  tests?: CodeTests;
+  plan?: { entry_point: string; test_command: string; dependencies: string[] };
+}
+
+function CodeStudioPanel() {
+  const [desc, setDesc] = useState("");
+  const [lang, setLang] = useState<string>("python");
+  const [phase, setPhase] = useState<CodePhase>("idle");
+  const [planData, setPlanData] = useState<any>(null);
+  const [result, setResult] = useState<CodeResult | null>(null);
+  const [errMsg, setErrMsg] = useState("");
+  const [analyzeFile, setAnalyzeFile] = useState<File | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysis, setAnalysis] = useState<any>(null);
+  const analyzeRef = useRef<HTMLInputElement>(null);
+
+  async function handlePlan() {
+    if (!desc.trim()) return;
+    setPhase("planning"); setPlanData(null); setResult(null); setErrMsg("");
+    try {
+      const r = await apiFetch(`${BASE}/code/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: desc, language: lang }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail ?? "Planning failed");
+      setPlanData(data);
+      setPhase("idle");
+    } catch (e: any) {
+      setErrMsg(e.message ?? "Planning failed");
+      setPhase("error");
+    }
+  }
+
+  async function handleGenerate() {
+    if (!desc.trim()) return;
+    setPhase("generating"); setResult(null); setErrMsg("");
+    try {
+      const r = await apiFetch(`${BASE}/code/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: desc, language: lang, max_fix_retries: 2 }),
+      });
+      const data: CodeResult = await r.json();
+      if (!r.ok) throw new Error((data as any).detail ?? "Generation failed");
+      setResult(data);
+      setPhase("done");
+      if (!data.ok) {
+        setErrMsg(data.error ?? "Tests did not pass — see output below");
+      }
+    } catch (e: any) {
+      setErrMsg(e.message ?? "Generation failed");
+      setPhase("error");
+    }
+  }
+
+  function handleDownload() {
+    if (!result?.download_url) return;
+    const a = document.createElement("a");
+    a.href = `${BASE}/${result.download_url.replace(/^\/api\//, "")}`;
+    a.download = `${result.title ?? "project"}.zip`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  async function handleAnalyze() {
+    if (!analyzeFile) return;
+    setAnalyzing(true); setAnalysis(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", analyzeFile);
+      const r = await apiFetch(`${BASE}/code/analyze`, { method: "POST", body: fd });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail ?? "Analysis failed");
+      setAnalysis(data);
+    } catch (e: any) {
+      toast.error(e.message ?? "Analysis failed");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  const busy = phase === "planning" || phase === "generating";
+
+  return (
+    <div className="space-y-6">
+      {/* ── Generate panel ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Terminal className="w-5 h-5" style={{ color: "var(--gd-accent)" }} />
+            Generate a program
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Describe what you want to build</Label>
+            <Textarea
+              placeholder="e.g. A CLI tool that reads a CSV of expenses, groups them by category, and prints a monthly summary table"
+              value={desc}
+              onChange={e => setDesc(e.target.value)}
+              rows={4}
+              disabled={busy}
+            />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="space-y-1 flex-1">
+              <Label>Language</Label>
+              <Select value={lang} onValueChange={setLang} disabled={busy}>
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="python">Python</SelectItem>
+                  <SelectItem value="javascript">JavaScript</SelectItem>
+                  <SelectItem value="typescript">TypeScript</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex gap-2 mt-5">
+              <Button variant="outline" size="sm" onClick={handlePlan} disabled={busy || !desc.trim()}>
+                {phase === "planning" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderOpen className="w-4 h-4" />}
+                Preview plan
+              </Button>
+              <Button size="sm" onClick={handleGenerate} disabled={busy || !desc.trim()}>
+                {phase === "generating" ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+                ) : (
+                  <><Code2 className="w-4 h-4" /> Generate & test</>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {/* Status messages */}
+          {phase === "generating" && (
+            <div className="rounded-md bg-muted/50 border border-border/40 px-4 py-3 text-sm text-muted-foreground flex items-start gap-2">
+              <Loader2 className="w-4 h-4 animate-spin mt-0.5 shrink-0" />
+              <div>
+                <p className="font-medium text-foreground">Building your project…</p>
+                <p className="text-xs mt-0.5">Plan → generate files → run tests → fix if needed → package. Takes 1–3 minutes.</p>
+              </div>
+            </div>
+          )}
+          {phase === "planning" && (
+            <div className="rounded-md bg-muted/50 border border-border/40 px-4 py-3 text-sm text-muted-foreground flex items-start gap-2">
+              <Loader2 className="w-4 h-4 animate-spin mt-0.5 shrink-0" />
+              <span>Planning project structure…</span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Plan preview ── */}
+      {planData && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FolderOpen className="w-4 h-4" style={{ color: "var(--gd-accent)" }} />
+              Project plan — {planData.title}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">{planData.description}</p>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge variant="outline">{planData.language}</Badge>
+              {(planData.dependencies ?? []).map((d: string) => (
+                <Badge key={d} variant="secondary" className="font-mono text-[11px]">{d}</Badge>
+              ))}
+            </div>
+            <div className="border border-border/40 rounded-md divide-y divide-border/30 overflow-hidden">
+              {(planData.files ?? []).map((f: any) => (
+                <div key={f.path} className="flex items-center gap-3 px-3 py-2">
+                  {f.is_test
+                    ? <TestTube2 className="w-3.5 h-3.5 shrink-0 text-violet-400" />
+                    : <Code2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gd-accent)" }} />}
+                  <span className="font-mono text-[12px] flex-1">{f.path}</span>
+                  <span className="text-[11px] text-muted-foreground">{f.description}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground font-mono">$ {planData.test_command}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Result ── */}
+      {result && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              {result.ok
+                ? <CheckCircle2 className="w-4 h-4 text-green-500" />
+                : <AlertTriangle className="w-4 h-4 text-amber-500" />}
+              {result.ok ? "Ready to download" : "Generated with test failures"}
+              {result.title && <span className="font-normal text-muted-foreground">— {result.title}</span>}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Test badge */}
+            {result.tests && (
+              <div className={`flex items-start gap-2 px-3 py-2 rounded-md text-sm ${
+                result.tests.passed
+                  ? "bg-green-500/10 border border-green-500/20"
+                  : "bg-amber-500/10 border border-amber-500/20"
+              }`}>
+                {result.tests.passed
+                  ? <CheckCircle2 className="w-4 h-4 mt-0.5 text-green-500 shrink-0" />
+                  : <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-500 shrink-0" />}
+                <div className="min-w-0">
+                  <p className="font-medium">{result.tests.passed ? "All tests passed" : "Tests did not pass"}</p>
+                  {result.tests.output && (
+                    <pre className="mt-1 text-[11px] text-muted-foreground whitespace-pre-wrap overflow-auto max-h-40 font-mono">
+                      {result.tests.output.slice(0, 2000)}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* File tree */}
+            {result.files.length > 0 && (
+              <div className="border border-border/40 rounded-md divide-y divide-border/30 overflow-hidden">
+                {result.files.map(f => (
+                  <div key={f.path} className="flex items-center gap-3 px-3 py-1.5">
+                    {f.is_test
+                      ? <TestTube2 className="w-3.5 h-3.5 shrink-0 text-violet-400" />
+                      : <Code2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gd-accent)" }} />}
+                    <span className="font-mono text-[12px] flex-1">{f.path}</span>
+                    <span className="text-[11px] text-muted-foreground">{(f.size / 1024).toFixed(1)} KB</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Plan info */}
+            {result.plan && (
+              <div className="text-xs text-muted-foreground space-y-0.5">
+                <p>Entry: <span className="font-mono">{result.plan.entry_point}</span></p>
+                {result.plan.dependencies.length > 0 && (
+                  <p>Deps: <span className="font-mono">{result.plan.dependencies.join(", ")}</span></p>
+                )}
+              </div>
+            )}
+
+            {/* Error */}
+            {errMsg && (
+              <p className="text-sm text-amber-600 dark:text-amber-400">{errMsg}</p>
+            )}
+
+            {/* Download */}
+            {result.download_url && (
+              <Button size="sm" onClick={handleDownload} className="gap-2">
+                <PackageOpen className="w-4 h-4" /> Download project zip
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {phase === "error" && errMsg && !result && (
+        <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
+          {errMsg}
+        </div>
+      )}
+
+      {/* ── Analyze existing code ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Activity className="w-4 h-4" style={{ color: "var(--gd-accent)" }} />
+            Analyze existing code
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Upload a .zip of your project and get a prioritized list of issues and improvement proposals.
+            Nothing is modified — analysis only.
+          </p>
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" onClick={() => analyzeRef.current?.click()} className="gap-2">
+              <Upload className="w-4 h-4" />
+              {analyzeFile ? analyzeFile.name : "Upload zip"}
+            </Button>
+            <input
+              ref={analyzeRef}
+              type="file"
+              accept=".zip"
+              className="hidden"
+              onChange={e => setAnalyzeFile(e.target.files?.[0] ?? null)}
+            />
+            {analyzeFile && (
+              <Button size="sm" onClick={handleAnalyze} disabled={analyzing} className="gap-2">
+                {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
+                {analyzing ? "Analyzing…" : "Run analysis"}
+              </Button>
+            )}
+          </div>
+
+          {analysis && (
+            <div className="space-y-4">
+              <p className="text-sm">{analysis.summary}</p>
+              <p className="text-xs text-muted-foreground">{analysis.files_analyzed} files analyzed</p>
+
+              {(analysis.issues ?? []).length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Issues</p>
+                  <div className="space-y-1.5">
+                    {(analysis.issues as any[]).map((issue, i) => (
+                      <div key={i} className="flex items-start gap-2 text-sm">
+                        <Badge
+                          variant="outline"
+                          className={`shrink-0 text-[10px] ${
+                            issue.severity === "high" ? "border-red-400 text-red-500" :
+                            issue.severity === "medium" ? "border-amber-400 text-amber-500" :
+                            "border-muted-foreground/40 text-muted-foreground"
+                          }`}
+                        >
+                          {issue.severity}
+                        </Badge>
+                        <div>
+                          {issue.location && (
+                            <span className="font-mono text-[11px] text-muted-foreground mr-1.5">{issue.location}</span>
+                          )}
+                          {issue.description}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(analysis.proposals ?? []).length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Improvement proposals</p>
+                  <div className="space-y-2">
+                    {(analysis.proposals as any[]).map((p, i) => (
+                      <div key={i} className="flex items-start gap-3 border border-border/40 rounded-md px-3 py-2">
+                        <span className="text-xs font-mono text-muted-foreground shrink-0 mt-0.5">#{p.priority}</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium">{p.title}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>
+                        </div>
+                        <Badge variant="outline" className="shrink-0 text-[10px]">{p.estimated_effort}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // Entry screen of the Studio app: pick a tool, do the job, collect the output.
 // Tools deep-link into the existing tabbed tool view via /studio?tool=…, and
 // Forge / Graph keep their own routes inside the Studio frame.
@@ -2494,6 +2867,7 @@ function QuickGeneratePanel() {
 const HUB_TOOLS = [
   { key: "voice",    href: "/studio?tool=voice",    icon: Volume2,  title: "Voice & narration", desc: "Read text aloud, preview voices, build audiobooks" },
   { key: "workshop", href: "/studio?tool=workshop", icon: Wand2,    title: "Scriptorium",        desc: "Generate Word, PDF, Excel & slide documents" },
+  { key: "code",     href: "/studio?tool=code",     icon: Terminal, title: "Code Studio",        desc: "Generate, test & package complete programs from a description" },
   { key: "image",    href: "/studio?tool=image",    icon: ImageIcon, title: "Image generation",  desc: "Create images from text prompts" },
   { key: "transcribe", href: "/studio?tool=transcribe", icon: FileAudio, title: "Transcription",  desc: "Turn audio recordings into text" },
   { key: "ocr",      href: "/studio?tool=ocr",      icon: ScanText, title: "Text extraction",   desc: "Pull text out of screenshots, photos & scans" },
@@ -2620,7 +2994,7 @@ function StudioHub() {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const TOOL_TABS = ["voice", "image", "workshop", "transcribe", "ocr", "outputs"] as const;
+const TOOL_TABS = ["voice", "image", "workshop", "code", "transcribe", "ocr", "outputs"] as const;
 type ToolTab = (typeof TOOL_TABS)[number];
 
 export default function Studio() {
@@ -2640,6 +3014,7 @@ export default function Studio() {
     { id: "voice",    label: "Voice Studio",       icon: Volume2 },
     { id: "image",    label: "Image Generation",   icon: ImageIcon },
     { id: "workshop", label: "Scriptorium",        icon: Wand2 },
+    { id: "code",     label: "Code Studio",        icon: Terminal },
     { id: "transcribe", label: "Transcription",    icon: FileAudio },
     { id: "ocr",      label: "Text Extraction",    icon: ScanText },
     { id: "outputs",  label: "Recent Outputs",     icon: Video },
@@ -2728,6 +3103,14 @@ export default function Studio() {
             <div className="p-6 max-w-3xl mx-auto space-y-6">
               <ErrorBoundary label="quick generate"><QuickGeneratePanel /></ErrorBoundary>
               <ErrorBoundary label="scriptorium"><DocumentWorkshopPanel /></ErrorBoundary>
+            </div>
+          </ScrollArea>
+        )}
+
+        {mainTab === "code" && (
+          <ScrollArea className="h-full">
+            <div className="p-6 max-w-3xl mx-auto space-y-6">
+              <ErrorBoundary label="code studio"><CodeStudioPanel /></ErrorBoundary>
             </div>
           </ScrollArea>
         )}
