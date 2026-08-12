@@ -2180,6 +2180,22 @@ class OrivellumDB:
             )
             self._maybe_commit()
 
+    def release_idempotency(self, conv_id: str, client_msg_id: str) -> None:
+        """Release a still-'processing' idempotency claim (failed generation).
+
+        Deletes the slot ONLY while it is 'processing' — a completed slot is
+        the durable exactly-once record and must never be released.  After
+        release, the client's queued retry re-claims and regenerates instead
+        of 409-ing until the stale timeout.
+        """
+        with self._lock:
+            self._conn.execute(
+                """DELETE FROM message_idempotency
+                    WHERE conversation_id=? AND client_msg_id=? AND state='processing'""",
+                (conv_id, client_msg_id),
+            )
+            self._maybe_commit()
+
     # ── Generation job journal (iPhone continuity, schema v151) ──────────────
     # High-frequency recovery buffer — plain writes under the lock, not
     # governed_write (events are not user objects; the message row is the

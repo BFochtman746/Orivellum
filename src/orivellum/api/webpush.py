@@ -139,6 +139,17 @@ def send_to_all(db: OrivellumDB, payload: dict) -> dict:
     body = json.dumps(payload)
     sent = failed = pruned = 0
     for sub in subs:
+        # Re-validate at DELIVERY time, not just at subscribe time: a DNS
+        # rebinding after registration would otherwise turn an accepted public
+        # endpoint into a blind request against internal infrastructure.
+        err = validate_subscription(sub["endpoint"], sub["p256dh"], sub["auth"])
+        if err:
+            logger.warning(
+                "Pruning push subscription failing delivery-time validation (%s)", err
+            )
+            db.delete_push_subscription(sub["endpoint"])
+            pruned += 1
+            continue
         info = {
             "endpoint": sub["endpoint"],
             "keys": {"p256dh": sub["p256dh"], "auth": sub["auth"]},

@@ -163,11 +163,31 @@ def _journal_frame(db: OrivellumDB, job_id: str, coalescer: _Coalescer, frame: s
     return False
 
 
+def _settle_idempotency(db: OrivellumDB, job_id: str, conv_id: str, client_msg_id: str) -> None:
+    """Complete or release the message_idempotency claim when the job ends.
+
+    The streaming route claims the slot ('processing') before generation, but
+    the assistant message is persisted inside the pumped generator — so the
+    claim must be settled HERE, when the pump finishes, or retries with the
+    same client_msg_id would 409 until the stale timeout and then regenerate
+    a duplicate reply.  A persisted terminal message completes the slot; a
+    failed job releases it so the client's queued retry can regenerate.
+    """
+    job = db.get_gen_job(job_id)
+    msg_id = (job or {}).get("message_id")
+    if msg_id:
+        db.complete_idempotency(conv_id, client_msg_id, msg_id)
+    else:
+        db.release_idempotency(conv_id, client_msg_id)
+
+
 async def _pump(
     db: OrivellumDB,
     job_id: str,
     gen: AsyncGenerator[str],
     relay: _Relay,
+    conv_id: str,
+    client_msg_id: str | None,
 ) -> None:
     """Drain the generator to completion, journalling + relaying every frame.
 
@@ -202,6 +222,9 @@ async def _pump(
                 db.finish_gen_job(job_id, "done")
             else:
                 db.finish_gen_job(job_id, "failed")
+        if client_msg_id:
+            with contextlib.suppress(Exception):
+                _settle_idempotency(db, job_id, conv_id, client_msg_id)
         relay.detach()
         _TASKS.pop(job_id, None)
 
@@ -221,7 +244,9 @@ async def wrap(
     """
     job_id = db.create_gen_job(conversation_id, client_msg_id=client_msg_id)
     relay = _Relay()
-    task = asyncio.get_running_loop().create_task(_pump(db, job_id, gen, relay))
+    task = asyncio.get_running_loop().create_task(
+        _pump(db, job_id, gen, relay, conversation_id, client_msg_id)
+    )
     _TASKS[job_id] = task
     try:
         yield f"data: {json.dumps({'job_id': job_id})}\n\n"

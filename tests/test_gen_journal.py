@@ -279,6 +279,55 @@ class TestPump:
 
         asyncio.run(run())
 
+    def test_stream_idempotency_completed_when_pump_finishes(self, db):
+        """Exactly-once for streamed sends: the 'processing' claim taken by the
+        route must be completed when the journalled stream persists its
+        terminal assistant message — a retry with the same client_msg_id must
+        get the stored reply back, never a 409-until-stale or a duplicate."""
+        from orivellum.api import genjournal
+
+        conv = db.create_conversation(title="c")
+        action, _, _ = db.store_user_msg_and_claim(conv["id"], "hi", None, "cmid-1")
+        assert action == "generate"
+        ai = db.add_message(conv["id"], "assistant", "reply")
+
+        async def fake_gen():
+            yield _sse({"token": "reply"})
+            yield _sse({"message_id": ai["id"], "model": "m"})
+            yield "data: [DONE]\n\n"
+
+        async def run():
+            await _collect(genjournal.wrap(db, conv["id"], fake_gen(), client_msg_id="cmid-1"))
+            await asyncio.sleep(0.05)
+
+        asyncio.run(run())
+        # Retry (outbox flush after lost response) returns the stored reply.
+        action2, ai_id, _ = db.store_user_msg_and_claim(conv["id"], "hi", None, "cmid-1")
+        assert action2 == "return"
+        assert ai_id == ai["id"]
+
+    def test_stream_idempotency_released_on_failed_generation(self, db):
+        """A failed stream (no persisted assistant message) must RELEASE the
+        claim so the client's queued retry regenerates immediately instead of
+        409-ing until the stale timeout."""
+        from orivellum.api import genjournal
+
+        conv = db.create_conversation(title="c")
+        action, _, _ = db.store_user_msg_and_claim(conv["id"], "hi", None, "cmid-2")
+        assert action == "generate"
+
+        async def fake_gen():
+            yield _sse({"token": "par"})
+            raise RuntimeError("engine died")
+
+        async def run():
+            await _collect(genjournal.wrap(db, conv["id"], fake_gen(), client_msg_id="cmid-2"))
+            await asyncio.sleep(0.05)
+
+        asyncio.run(run())
+        action2, _, _ = db.store_user_msg_and_claim(conv["id"], "hi", None, "cmid-2")
+        assert action2 == "generate"
+
     def test_generator_exception_journals_failed(self, db):
         from orivellum.api import genjournal
 
@@ -424,6 +473,33 @@ class TestPushEndpoints:
             assert r.status_code == 422, f"accepted {endpoint!r}"
         assert db.list_push_subscriptions() == []
 
+    def test_send_to_all_revalidates_at_delivery_time(self, db, monkeypatch):
+        """DNS rebinding defense: an endpoint accepted at subscribe time must
+        be re-validated at DELIVERY time — if it now resolves privately, the
+        subscription is pruned and no outbound request is made."""
+        import socket
+
+        import pywebpush
+
+        from orivellum.api import webpush
+
+        webpush.ensure_vapid_keys(db)
+        db.save_push_subscription("https://push.example.com/x", "pk", "ak")
+
+        # The host now resolves to loopback (rebound after registration).
+        monkeypatch.setattr(
+            socket,
+            "getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))],
+        )
+        called = []
+        monkeypatch.setattr(pywebpush, "webpush", lambda **kw: called.append(kw))
+
+        result = webpush.send_to_all(db, {"id": 0, "kind": "test", "url": "/system"})
+        assert result == {"sent": 0, "failed": 0, "pruned": 1}
+        assert called == []
+        assert db.list_push_subscriptions() == []
+
     def test_subscribe_rejects_oversized_keys(self, db, client):
         r = client.post(
             "/api/system/push/subscribe",
@@ -445,7 +521,14 @@ class TestPushEndpoints:
         r = client.post("/api/system/push/test")
         assert r.status_code == 409
 
-    def test_test_push_sends_via_webpush(self, db, client):
+    def test_test_push_sends_via_webpush(self, db, client, monkeypatch):
+        import socket
+
+        monkeypatch.setattr(
+            socket,
+            "getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
+        )
         client.get("/api/system/push/config")  # provision VAPID keys
         db.save_push_subscription("https://push.example/ep2", "pk", "ak")
         with patch("pywebpush.webpush") as wp:
@@ -457,9 +540,16 @@ class TestPushEndpoints:
         payload = json.loads(wp.call_args.kwargs.get("data") or wp.call_args[0][1])
         assert set(payload) <= {"id", "kind", "url"}
 
-    def test_dead_subscription_is_pruned(self, db, client):
+    def test_dead_subscription_is_pruned(self, db, client, monkeypatch):
+        import socket
+
         from pywebpush import WebPushException
 
+        monkeypatch.setattr(
+            socket,
+            "getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
+        )
         client.get("/api/system/push/config")  # provision VAPID keys
         db.save_push_subscription("https://push.example/gone", "pk", "ak")
 
