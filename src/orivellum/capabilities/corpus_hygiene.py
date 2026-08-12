@@ -78,15 +78,21 @@ def finding_key(work_id: str, kind: str, scope: str) -> str:
 
 
 def _scope_of(f: HygieneFinding) -> str:
-    """Deterministic scope string for a finding, from its metadata."""
+    """Deterministic scope string for a finding, from its metadata.
+
+    A COMPOSITE of every identifying field, so two findings of the same kind
+    that differ in any identifier (e.g. two weak chapters in the same
+    document) get distinct keys — dismissing one never hides the other.
+    Aggregate findings (missing_sources, orphaned_research, stale_source,
+    duplicate_research, no_structure) intentionally scope to "" — they are
+    singletons per Work per kind, so dismissing the aggregate means "stop
+    reporting this kind here", which is exactly the never-reappear contract.
+    Mutable counts / sample lists are deliberately EXCLUDED from the scope so
+    a changing count cannot resurrect a dismissed aggregate.
+    """
     md = f.metadata or {}
-    for key in ("doc_id", "chapter_title", "item_ids", "sample_ids"):
-        if md.get(key):
-            val = md[key]
-            if isinstance(val, list):
-                return ",".join(str(v) for v in sorted(val))
-            return str(val)
-    return ""
+    parts = [f"{key}={md[key]}" for key in ("doc_id", "chapter_title") if md.get(key)]
+    return "|".join(parts)
 
 
 def detect_hygiene(work_id: str, db: OrivellumDB) -> HygieneReport:

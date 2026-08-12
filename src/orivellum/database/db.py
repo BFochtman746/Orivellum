@@ -5869,7 +5869,9 @@ class OrivellumDB:
         frame_node_id: str,
         frame_source_ref: str,
         evidence_absent: str,
-        severity: str,
+        centrality: int = 0,
+        dependent_count: int = 0,
+        blocking_active_work: bool = False,
         unit: str = "",
         force_check: str = "",
         issue_type: str = "",
@@ -5879,8 +5881,14 @@ class OrivellumDB:
     ) -> dict:
         """Insert a gap, or refresh evidence on the existing row with the same identity.
 
-        Identity is a content hash over (frame_node_id, gap_class, scope) — the
-        same absence detected twice maps to ONE row.
+        Identity is a content hash over (work_id, frame_node_id, gap_class,
+        scope) — the same absence detected twice in one Work maps to ONE row,
+        while distinct Works citing the same absence keep independent rows
+        (and independent dismissals).
+
+        Severity is DERIVED HERE from (gap_class, centrality, dependent_count,
+        blocking_active_work) via the deterministic scoring function — callers
+        cannot assign it, and no model is ever asked.
 
         REFUSES (raises ``ValueError``) any gap without a frame citation:
         ``frame_node_id``, ``frame_source_ref``, and ``evidence_absent`` must
@@ -5905,13 +5913,20 @@ class OrivellumDB:
                 )
         if not (gap_class or "").strip() or not (scope or "").strip():
             raise ValueError("gap refused: gap_class and scope are required")
-        if severity not in ("critical", "high", "medium", "low"):
-            raise ValueError(f"gap refused: invalid severity {severity!r}")
+        from orivellum.capabilities.gap_engine import compute_severity
+
+        severity = compute_severity(
+            gap_class,
+            centrality=centrality,
+            dependent_count=dependent_count,
+            blocking_active_work=blocking_active_work,
+        )
 
         gap_id = (
             "gap-"
             + hashlib.sha256(
-                f"{frame_node_id.strip()}|{gap_class.strip()}|{scope.strip()}".encode()
+                f"{work_id or ''}|{frame_node_id.strip()}|{gap_class.strip()}"
+                f"|{scope.strip()}".encode()
             ).hexdigest()[:40]
         )
         now = _now()

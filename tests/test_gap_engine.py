@@ -61,7 +61,8 @@ def _valid_gap(db, work_id, **overrides):
         frame_node_id="citation:smith 1998",
         frame_source_ref="doc:abc — Some Held Doc",
         evidence_absent="Library holds no document matching Smith (1998)",
-        severity="medium",
+        centrality=3,
+        dependent_count=1,
     )
     kwargs.update(overrides)
     return db.create_or_refresh_gap(**kwargs)
@@ -76,20 +77,20 @@ def test_gap_insert_refuses_missing_frame_citation(tmp_path):
     for missing in ("frame_node_id", "frame_source_ref", "evidence_absent"):
         with pytest.raises(ValueError, match=missing):
             _valid_gap(db, work["id"], **{missing: "   "})
-    with pytest.raises(ValueError, match="severity"):
-        _valid_gap(db, work["id"], severity="urgent")
     assert db.list_gaps(work["id"]) == []
 
 
 def test_gap_content_hash_identity(tmp_path):
     db = _make_db(tmp_path)
     work = db.create_work("W")
-    a = _valid_gap(db, work["id"], severity="low")
-    b = _valid_gap(db, work["id"], severity="high", evidence_absent="now cited 9× more")
+    a = _valid_gap(db, work["id"], centrality=1, dependent_count=1)
+    b = _valid_gap(
+        db, work["id"], centrality=9, dependent_count=3, evidence_absent="now cited 9× more"
+    )
     assert a["id"] == b["id"]
     rows = db.list_gaps(work["id"])
     assert len(rows) == 1
-    assert rows[0]["severity"] == "high"  # evidence refreshed in place
+    assert rows[0]["severity"] == "high"  # evidence + derived severity refreshed in place
     assert rows[0]["status"] == "proposed"  # lifecycle untouched
     # Different scope → different identity
     c = _valid_gap(db, work["id"], scope="jones 2001", frame_node_id="citation:jones 2001")
@@ -151,10 +152,41 @@ def test_dismissed_gap_is_terminal_and_never_resurrected(tmp_path):
     with pytest.raises(ValueError, match="illegal"):
         db.transition_gap(gap["id"], "ratified", reason="x", signed_by="y")
     # re-detection maps to the same identity and must NOT resurrect
-    again = _valid_gap(db, work["id"], severity="critical" if False else "high")
+    again = _valid_gap(db, work["id"], centrality=12, dependent_count=4)
     assert again["id"] == gap["id"]
     assert again["status"] == "dismissed"
     assert db.get_gap(gap["id"])["status"] == "dismissed"
+
+
+def test_gap_identity_is_work_scoped(tmp_path):
+    """Two Works citing the same absent source keep independent gaps and
+    independent dismissals — one Work's dismissal never suppresses another's."""
+    db = _make_db(tmp_path)
+    w1 = db.create_work("W1")
+    w2 = db.create_work("W2")
+    g1 = _valid_gap(db, w1["id"])
+    g2 = _valid_gap(db, w2["id"])
+    assert g1["id"] != g2["id"]
+    assert len(db.list_gaps(w1["id"])) == 1
+    assert len(db.list_gaps(w2["id"])) == 1
+    db.transition_gap(g1["id"], "dismissed", reason="noise", signed_by="ben")
+    assert db.get_gap(g2["id"])["status"] == "proposed"
+    # re-detection in W2 still refreshes normally
+    again = _valid_gap(db, w2["id"], centrality=9, dependent_count=3)
+    assert again["id"] == g2["id"] and again["status"] == "proposed"
+
+
+def test_gap_severity_is_derived_not_caller_assigned(tmp_path):
+    """The insert path derives severity from evidence counts — callers cannot
+    hand it an arbitrary severity."""
+    db = _make_db(tmp_path)
+    work = db.create_work("W")
+    with pytest.raises(TypeError):
+        _valid_gap(db, work["id"], severity="critical")
+    row = _valid_gap(db, work["id"], centrality=9, dependent_count=3)
+    from orivellum.capabilities.gap_engine import compute_severity
+
+    assert row["severity"] == compute_severity("citation_closure", centrality=9, dependent_count=3)
 
 
 # ── severity is computed, never model-asked ──────────────────────────────────
@@ -256,6 +288,17 @@ def test_citation_extraction_skips_non_authors():
     assert extract_citations(text) == [("Smith", "1998")]
 
 
+def test_citation_extraction_et_al_and_held_word_boundary(tmp_path):
+    from orivellum.capabilities.gap_engine import _is_held, extract_citations
+
+    assert ("Roux et al.", "2014") in extract_citations("As Roux et al. (2014) found.")
+    assert ("Roux et al.", "2014") in extract_citations("It was shown (Roux et al., 2014).")
+    # word-boundary held matching: "Smith" must not match "blacksmith"
+    assert not _is_held("Smith", "1998", ["the blacksmith guild records 1998"])
+    assert _is_held("Smith", "1998", ["smith - collected papers"])
+    assert _is_held("Roux et al.", "2014", ["roux, ceramics and society"])
+
+
 # ── API routes ────────────────────────────────────────────────────────────────
 
 
@@ -318,6 +361,35 @@ def test_hygiene_dismissal_never_reappears(tmp_path):
     # dismissal is idempotent
     db.dismiss_hygiene_finding(work["id"], target.finding_key, reason="again")
     assert target.finding_key in db.list_hygiene_dismissal_keys(work["id"])
+
+
+def test_hygiene_sibling_findings_have_distinct_keys(tmp_path):
+    """Two weak/uncovered chapters in the SAME document get distinct keys —
+    dismissing one never hides the other."""
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
+
+    db = _make_db(tmp_path)
+    work = db.create_work("W")
+    doc_id = _ready_doc(db, work["id"], "TwoChapters")
+    db.upsert_book_chapters(
+        doc_id,
+        work["id"],
+        [
+            {"seq": 1, "level": 1, "title": "Chapter One", "text": ""},
+            {"seq": 2, "level": 1, "title": "Chapter Two", "text": ""},
+        ],
+    )
+    report = detect_hygiene(work["id"], db)
+    uncovered = [f for f in report.findings if f.kind == "uncovered_chapter"]
+    assert len(uncovered) == 2
+    keys = {f.finding_key for f in uncovered}
+    assert len(keys) == 2
+    # dismiss chapter one's finding — chapter two's must survive
+    victim = next(f for f in uncovered if f.metadata.get("chapter_title") == "Chapter One")
+    db.dismiss_hygiene_finding(work["id"], victim.finding_key, reason="fine")
+    after = [f for f in detect_hygiene(work["id"], db).findings if f.kind == "uncovered_chapter"]
+    assert len(after) == 1
+    assert after[0].metadata.get("chapter_title") == "Chapter Two"
 
 
 def test_hygiene_finding_keys_are_stable(tmp_path):

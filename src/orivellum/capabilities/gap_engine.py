@@ -72,7 +72,7 @@ def compute_severity(
 # The cited-work key is the normalised "surname year" pair.
 
 _AUTHOR = r"[A-Z][A-Za-z\u00C0-\u024F'\-]{2,}"
-_PAIR = rf"{_AUTHOR}(?:\s+(?:and|&)\s+{_AUTHOR})?"
+_PAIR = rf"{_AUTHOR}(?:\s+(?:and|&)\s+{_AUTHOR}|\s+et\s+al\.?)?"
 _YEAR = r"(1[5-9]\d\d|20\d\d)[a-z]?"
 
 _NARRATIVE_RE = re.compile(rf"\b({_PAIR})\s*\(\s*{_YEAR}\s*\)")
@@ -157,11 +157,14 @@ def _library_haystack(db: OrivellumDB) -> list[str]:
 
 
 def _is_held(author: str, year: str, haystack: list[str]) -> bool:
-    """A cited work is held when some Library doc mentions the author's surname
-    (and, when the surname alone matches, we do not additionally require the
-    year — editions and reprints legitimately differ)."""
+    """A cited work is held when some Library doc mentions every author
+    surname as a whole word.  The year is intentionally NOT required —
+    editions and reprints legitimately differ — but surnames must match on
+    word boundaries so "Smith" never matches "blacksmith"."""
+    author = re.sub(r"\s+et\s+al\.?$", "", author)
     surnames = [s.lower() for s in re.split(r"\s+(?:and|&)\s+", author)]
-    return any(all(s in hay for s in surnames) for hay in haystack)
+    patterns = [re.compile(rf"\b{re.escape(s)}\b") for s in surnames]
+    return any(all(p.search(hay) for p in patterns) for hay in haystack)
 
 
 def detect_citation_gaps(work_id: str, db: OrivellumDB) -> dict:
@@ -210,11 +213,6 @@ def detect_citation_gaps(work_id: str, db: OrivellumDB) -> dict:
             continue
         citing = sorted(entry["docs"].items(), key=lambda kv: -kv[1])
         top_doc_id = citing[0][0]
-        severity = compute_severity(
-            GAP_CLASS_CITATION,
-            centrality=entry["count"],
-            dependent_count=len(citing),
-        )
         row = db.create_or_refresh_gap(
             work_id=work_id,
             gap_class=GAP_CLASS_CITATION,
@@ -225,7 +223,8 @@ def detect_citation_gaps(work_id: str, db: OrivellumDB) -> dict:
                 f'Library holds no document matching "{entry["author"]} ({entry["year"]})", '
                 f"cited {entry['count']}× across {len(citing)} held document(s)"
             ),
-            severity=severity,
+            centrality=entry["count"],
+            dependent_count=len(citing),
             unit=f"work:{work_id}",
             force_check="citation_graph_closure",
             issue_type="cited_work_not_held",
