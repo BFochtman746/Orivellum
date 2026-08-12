@@ -1194,6 +1194,52 @@ asks to search or look something up, it fetches current results automatically.\
 """
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# A-01 copilot persona.  Stored in the MCOS prompt registry (slot 'chat.persona')
+# so it can be edited from the System page and versioned/benchmarked like any
+# other governed prompt.  This constant is the seed text and the never-break
+# fallback — if the registry is unavailable, chat still speaks as A-01.
+#
+# Design intent:
+#   • chat.base   → what Orivellum is and its capabilities
+#   • chat.persona → how Brian's copilot thinks and communicates (this text)
+#   • task persona → role flavors layered on top (story partner, editor, etc.)
+# ──────────────────────────────────────────────────────────────────────────────
+_CHAT_PERSONA_PROMPT = """\
+COPILOT IDENTITY — A-01:
+You are Brian's copilot. Use his name when acknowledging a context shift, marking a pivot, or adding \
+genuine warmth — not on every reply.
+
+VOICE:
+• Lead with the answer. State the conclusion first, support it second. Never open with pleasantries, \
+preamble, recap, or a summary of what you are about to say.
+• Plain language. When a simpler word works, use it. Jargon enters only when Brian introduces it first.
+• Match his register. If he is brief, be brief. Casual stays casual.
+• Earn every word. Strip filler without exception: "Certainly", "Great question", "I'd be happy to", \
+"As an AI", "Absolutely", "Sure!", "It's worth noting that", "Of course". These carry no information.
+• Vary sentence length. Short sentences close points hard. Long ones build. Use both deliberately.
+
+EPISTEMIC HONESTY — NON-NEGOTIABLE:
+• Mark your certainty. Use [CONFIRMED] for facts drawn from the knowledge base or a cited source, \
+[INFERRED] for reasonable deductions, and [UNKNOWN] when you genuinely do not know.
+• Never claim unverified work. If a fact is not in the knowledge base and you are drawing on training \
+data, say so.
+• Push back on weak evidence. If Brian asserts something the knowledge base contradicts, say so directly \
+and cite the contradiction.
+• One recommended path. When options exist, name the best one and explain why in a sentence; mention \
+alternatives briefly, without over-qualifying.
+
+HUMOR:
+• Dry, understated humor is welcome — a quiet aside, a precise observation, a well-placed understatement.
+• Hard limits: never use humor to soften bad news; never during safety-critical issues or errors that \
+could damage Brian's work; never when he signals frustration or upset.
+
+WHAT YOU ARE NOT:
+• Not a yes-machine. Agreement without basis is useless to Brian.
+• You do not summarize what he just said before answering.
+• You do not pad replies with enthusiasm.\
+"""
+
 _abstention_policy = AbstentionPolicy()
 
 
@@ -1531,29 +1577,35 @@ def _build_system_prompt(
       - If no claims: enforces abstention — the model MUST NOT guess.
       - For USER_DECLARED_FACT: logs that the capture path should run.
     """
-    # Built-in conversation personas.  Each slug maps to a short directive that
-    # is appended to the base prompt so the model adopts a distinct tone/focus.
+    # Built-in conversation personas.  Each slug maps to a role-layer directive
+    # that is appended AFTER the A-01 core persona.  They add a focused role
+    # without replacing the copilot identity, voice rules, or humor guardrails.
+    # "default" is intentionally empty — A-01 alone is the default experience.
     _PERSONAS: dict[str, str] = {
         "default": "",
         "story_partner": (
-            "ROLE: You are a creative story partner. Spark imagination with 'what if' questions, "
-            "explore narrative possibilities with enthusiasm, celebrate ideas before critiquing them, "
-            "and keep the creative energy high. Prioritise generative thinking over correctness."
+            "ROLE LAYER — STORY PARTNER: Apply the creative partner role on top of your core copilot "
+            "identity. Spark imagination with 'what if' questions, explore narrative possibilities with "
+            "enthusiasm, and celebrate ideas before critiquing them. Prioritise generative thinking over "
+            "correctness. The A-01 epistemic-honesty and humor guardrails still apply."
         ),
         "technical_editor": (
-            "ROLE: You are a precise technical editor. Flag inconsistencies, ambiguities, and structural "
-            "weaknesses. Suggest clarity improvements with concrete alternatives. Stay factual, concise, "
-            "and direct — praise sparingly; focus on what can be made sharper."
+            "ROLE LAYER — TECHNICAL EDITOR: Apply the editor role on top of your core copilot identity. "
+            "Flag inconsistencies, ambiguities, and structural weaknesses. Suggest clarity improvements "
+            "with concrete alternatives. Stay factual, concise, and direct — praise sparingly; focus on "
+            "what can be made sharper. The A-01 epistemic-honesty rules still apply."
         ),
         "research_assistant": (
-            "ROLE: You are a thorough research assistant. Cite sources when you have them, provide context "
-            "and background, and ask one clarifying question before diving into a long answer. Organise "
-            "findings clearly and flag uncertainty explicitly."
+            "ROLE LAYER — RESEARCH ASSISTANT: Apply the researcher role on top of your core copilot "
+            "identity. Cite sources when you have them, provide context and background, and ask one "
+            "clarifying question before diving into a long answer. Organise findings clearly — the "
+            "[CONFIRMED]/[INFERRED]/[UNKNOWN] labels apply here too."
         ),
         "devils_advocate": (
-            "ROLE: You are a devil's advocate. Challenge assumptions, surface counterarguments, and push "
-            "the user to stress-test their reasoning. You are not trying to win — you are trying to make "
-            "their thinking stronger. Be rigorous but constructive."
+            "ROLE LAYER — DEVIL'S ADVOCATE: Apply the challenger role on top of your core copilot "
+            "identity. Challenge assumptions, surface counterarguments, and push Brian to stress-test "
+            "his reasoning. You are not trying to win — you are trying to make his thinking stronger. "
+            "Be rigorous but constructive. The A-01 humor guardrails still apply."
         ),
     }
     _COMM_STYLE_DIRECTIVES: dict[str, str] = {
@@ -1575,10 +1627,11 @@ def _build_system_prompt(
     except Exception:
         base = _CHAT_BASE_PROMPT
 
-    # ── User profile + communication style injection ───────────────────────────
-    # Reads user_name / user_bio / communication_style from the settings table
-    # and prepends a compact "About the user" block at the top of the prompt.
+    # ── User profile injection ─────────────────────────────────────────────────
+    # Reads user_name / user_bio from the settings table and prepends a compact
+    # "About the user" block at the top of the prompt.
     # Falls through silently on old schemas / missing keys (zero regression).
+    _ustyle = ""
     try:
         _uname = db.get_setting("user_name", "").strip()
         _ubio = db.get_setting("user_bio", "").strip()
@@ -1590,13 +1643,41 @@ def _build_system_prompt(
             _profile_lines.append(f"  About: {_ubio}")
         if _profile_lines:
             base = "ABOUT THE USER:\n" + "\n".join(_profile_lines) + "\n\n" + base
-        # Communication style directive
-        if _ustyle and _ustyle in _COMM_STYLE_DIRECTIVES:
-            base = base + "\n\nCOMMUNICATION STYLE: " + _COMM_STYLE_DIRECTIVES[_ustyle]
     except Exception:
         pass  # settings table unavailable on old schemas
 
-    # ── Conversation persona directive ─────────────────────────────────────────
+    # ── A-01 copilot persona ───────────────────────────────────────────────────
+    # Injected from the governed 'chat.persona' MCOS slot so edits from the
+    # System page take effect on the next message without a server restart.
+    # Falls back to the hardcoded constant — never omitted.
+    #
+    # Ordering: base (capabilities) → persona (voice/identity) → role layer
+    try:
+        _persona_text = db.get_active_prompt("chat.persona")
+        if not _persona_text:
+            _persona_text = _CHAT_PERSONA_PROMPT
+        base = base + "\n\n" + _persona_text
+    except Exception:
+        base = base + "\n\n" + _CHAT_PERSONA_PROMPT
+
+    # ── Communication-style directive — deconfliction with A-01 ───────────────
+    # The A-01 persona encodes its own voice rules, so the style picker becomes
+    # a supplementary hint rather than the primary directive.  This prevents the
+    # picker from contradicting or overriding the persona's voice instructions.
+    # The picker remains available for users who want extra emphasis on one axis.
+    try:
+        if _ustyle and _ustyle in _COMM_STYLE_DIRECTIVES:
+            base = (
+                base
+                + "\n\nSUPPLEMENTARY STYLE HINT: "
+                + _COMM_STYLE_DIRECTIVES[_ustyle]
+            )
+    except Exception:
+        pass
+
+    # ── Conversation role layer ────────────────────────────────────────────────
+    # Role directives (story partner, technical editor, etc.) layer on top of
+    # the A-01 persona rather than replacing it — see _PERSONAS definitions.
     try:
         _pid = (conv.get("persona_id") or "default").lower()
         _pdirective = _PERSONAS.get(_pid, "")

@@ -518,7 +518,16 @@ def seed_default_benchmarks(db: Any) -> dict:
 # Only the chat persona is benchmarkable (that's the only slot where "run the
 # suites with this prompt as a system message" is meaningful).
 PROMPT_SLOTS: dict[str, dict] = {
-    "chat.base": {"label": "Chat persona", "benchmarkable": True},
+    "chat.base": {"label": "Chat capabilities & standards", "benchmarkable": True},
+    "chat.persona": {
+        "label": "Copilot persona (A-01)",
+        "benchmarkable": True,
+        "description": (
+            "Brian's copilot identity: voice rules, epistemic-honesty markers, humor guardrails. "
+            "Injected into every chat conversation after the base capabilities block. "
+            "Editable from the System page; changes take effect on the next message."
+        ),
+    },
     "harvest.extract": {"label": "Knowledge extraction", "benchmarkable": False},
     "mcos.judge": {"label": "Evaluation judge", "benchmarkable": False},
     "write.draft": {
@@ -606,6 +615,21 @@ def seed_default_prompts(db: Any) -> None:
             )
         except Exception as exc:
             logger.warning("seed mcos.judge failed: %s", exc)
+
+        # chat.persona — A-01 copilot identity (voice, honesty, humor rules).
+        try:
+            from orivellum.api.routes.conversations import _CHAT_PERSONA_PROMPT
+
+            _seed_prompt_slot(
+                db,
+                "chat.persona",
+                "A-01 Copilot Persona",
+                _CHAT_PERSONA_PROMPT,
+                "Seeded from the hardcoded A-01 spec. Injected into every chat conversation after "
+                "the base capabilities block. Editable from the System page.",
+            )
+        except Exception as exc:
+            logger.warning("seed chat.persona failed: %s", exc)
 
         # write.draft — prose drafting persona (creative / narrative output).
         try:

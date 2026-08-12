@@ -2408,6 +2408,129 @@ def update_profile(body: _ProfileUpdate):
     return get_profile()
 
 
+# ── Persona management API ────────────────────────────────────────────────────
+# Simple GET/PATCH/reset endpoints so the System page PersonaCard can read and
+# write the active 'chat.persona' MCOS prompt without needing to know about the
+# full prompt-governance API.  Every write creates a new versioned row and
+# activates it atomically, so the governance history is always intact.
+
+
+class _PersonaUpdate(BaseModel):
+    content: str
+    name: str | None = None  # optional version name; defaults to "Custom"
+
+
+@router.get("/system/persona")
+def get_persona():
+    """Return the active chat.persona prompt text and whether it matches the seeded default."""
+    from orivellum.api.routes.conversations import _CHAT_PERSONA_PROMPT
+
+    db = get_db()
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT id, content, version, name FROM prompts"
+                " WHERE slot='chat.persona' AND active=1 LIMIT 1"
+            ).fetchone()
+        if row:
+            content = row["content"]
+            return {
+                "content": content,
+                "version": row["version"],
+                "name": row["name"],
+                "is_default": content.strip() == _CHAT_PERSONA_PROMPT.strip(),
+            }
+    except Exception:
+        pass
+    return {
+        "content": _CHAT_PERSONA_PROMPT,
+        "version": None,
+        "name": "A-01 Default",
+        "is_default": True,
+    }
+
+
+@router.patch("/system/persona")
+def update_persona(body: _PersonaUpdate):
+    """Save a new persona version and activate it. Takes effect on the next chat message."""
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
+    from orivellum.api.routes.conversations import _CHAT_PERSONA_PROMPT
+
+    db = get_db()
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(400, "Persona content cannot be empty")
+
+    name = (body.name or "Custom").strip()[:120] or "Custom"
+    pid = str(_uuid.uuid4())
+    created = datetime.now(timezone.utc).isoformat()
+
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT COALESCE(MAX(version),0) AS mv FROM prompts WHERE slot='chat.persona'"
+        ).fetchone()
+        version = int(row["mv"]) + 1
+        db._conn.execute(
+            "INSERT INTO prompts(id,slot,name,content,version,active,notes,created_at)"
+            " VALUES(?,?,?,?,?,0,?,?)",
+            (pid, "chat.persona", name, content, version, "Saved from System settings.", created),
+        )
+        db._conn.execute("UPDATE prompts SET active=0 WHERE slot='chat.persona'")
+        db._conn.execute("UPDATE prompts SET active=1 WHERE id=?", (pid,))
+        db._conn.commit()
+
+    return {
+        "content": content,
+        "version": version,
+        "name": name,
+        "is_default": content == _CHAT_PERSONA_PROMPT.strip(),
+    }
+
+
+@router.post("/system/persona/reset")
+def reset_persona():
+    """Restore the A-01 default persona as a new active version."""
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
+    from orivellum.api.routes.conversations import _CHAT_PERSONA_PROMPT
+
+    db = get_db()
+    pid = str(_uuid.uuid4())
+    created = datetime.now(timezone.utc).isoformat()
+
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT COALESCE(MAX(version),0) AS mv FROM prompts WHERE slot='chat.persona'"
+        ).fetchone()
+        version = int(row["mv"]) + 1
+        db._conn.execute(
+            "INSERT INTO prompts(id,slot,name,content,version,active,notes,created_at)"
+            " VALUES(?,?,?,?,?,0,?,?)",
+            (
+                pid,
+                "chat.persona",
+                "A-01 Default",
+                _CHAT_PERSONA_PROMPT,
+                version,
+                "Reset to factory default from System settings.",
+                created,
+            ),
+        )
+        db._conn.execute("UPDATE prompts SET active=0 WHERE slot='chat.persona'")
+        db._conn.execute("UPDATE prompts SET active=1 WHERE id=?", (pid,))
+        db._conn.commit()
+
+    return {
+        "content": _CHAT_PERSONA_PROMPT,
+        "version": version,
+        "name": "A-01 Default",
+        "is_default": True,
+    }
+
+
 # ─── Watch directories CRUD ───────────────────────────────────────────────────
 
 

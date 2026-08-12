@@ -140,6 +140,129 @@ function ProfileCard() {
   );
 }
 
+// ─── Persona card ─────────────────────────────────────────────────────────────
+// Edits the active 'chat.persona' MCOS prompt.  Every save creates a new
+// versioned row and activates it immediately — the next message Brian sends
+// will use the updated persona without a server restart.
+
+function PersonaCard() {
+  const [content,   setContent]   = useState("");
+  const [isDefault, setIsDefault] = useState(true);
+  const [version,   setVersion]   = useState<number | null>(null);
+  const [loaded,    setLoaded]    = useState(false);
+  const [saving,    setSaving]    = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const load = () =>
+    apiFetch(`${API_BASE}/system/persona`).then(r => r.json()).then(d => {
+      setContent(d.content ?? "");
+      setIsDefault(d.is_default ?? true);
+      setVersion(d.version ?? null);
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    if (!content.trim()) { toast.error("Persona cannot be empty"); return; }
+    setSaving(true);
+    try {
+      const res = await apiFetch(`${API_BASE}/system/persona`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, name: "Custom" }),
+      });
+      const d = await res.json();
+      setIsDefault(d.is_default ?? false);
+      setVersion(d.version ?? null);
+      toast.success("Persona saved — takes effect on the next message");
+    } catch {
+      toast.error("Could not save persona");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = async () => {
+    setResetting(true);
+    try {
+      const res = await apiFetch(`${API_BASE}/system/persona/reset`, { method: "POST" });
+      const d = await res.json();
+      setContent(d.content ?? "");
+      setIsDefault(true);
+      setVersion(d.version ?? null);
+      toast.success("Persona reset to A-01 default");
+    } catch {
+      toast.error("Could not reset persona");
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  return (
+    <Card className="vellum-card" style={{ background: 'var(--page-bg)' }}>
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Brain className="w-4 h-4 text-primary" />
+          <h3 className="font-mono text-sm uppercase tracking-wider text-foreground">Copilot Persona</h3>
+          <div className="ml-auto flex items-center gap-2">
+            {version && (
+              <span className="text-[10px] font-mono text-muted-foreground">v{version}</span>
+            )}
+            {isDefault ? (
+              <Badge variant="outline" className="text-[10px] font-mono">A-01 default</Badge>
+            ) : (
+              <Badge className="text-[10px] font-mono" style={{ background: 'var(--gilt)', color: '#000' }}>customised</Badge>
+            )}
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          Every chat conversation speaks as this persona. Saves create a new governed version and take
+          effect on the next message — no restart needed.
+        </p>
+
+        {!loaded ? (
+          <div className="space-y-2">
+            <Skeleton className="h-48 w-full" />
+            <Skeleton className="h-8 w-32" />
+          </div>
+        ) : (
+          <>
+            <Textarea
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              rows={18}
+              className="font-mono text-[12px] resize-y"
+              spellCheck={false}
+            />
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button size="sm" onClick={save} disabled={saving || resetting} className="gap-1.5">
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Save persona
+              </Button>
+              {!isDefault && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={reset}
+                  disabled={saving || resetting}
+                  className="gap-1.5"
+                >
+                  {resetting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                  Reset to A-01 default
+                </Button>
+              )}
+              <span className="ml-auto text-[10px] font-mono text-muted-foreground">
+                {content.length} chars
+              </span>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Diagnostics card ─────────────────────────────────────────────────────────
 
 type DiagCheck = { name: string; status: "ok" | "warn" | "error" | "info"; value: string | number; detail: string };
@@ -2875,6 +2998,7 @@ export default function System() {
       </div>
 
       <ProfileCard />
+      <PersonaCard />
 
       <div className="grid md:grid-cols-3 gap-4">
         {/* Overall */}
