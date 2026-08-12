@@ -123,8 +123,8 @@ def import_research_digests(db: Any, work_id: str, digests: dict) -> dict:
             with db._lock:
                 cur = db._conn.execute(
                     "UPDATE research_requests SET status='resolved', resolved_at=? "
-                    "WHERE id=? AND status='open'",
-                    (_now_iso(), str(request_id)),
+                    "WHERE id=? AND status='open' AND work_id=?",
+                    (_now_iso(), str(request_id), work_id),
                 )
                 db._conn.commit()
             if cur.rowcount:

@@ -50,7 +50,7 @@ _LEVELS = ("recall", "self_explanation", "contrast", "transfer")
 _TEACH_BACK = "teach_back"  # long-form mode outside the ladder; can fail a graduate
 _MAX_TRANSFER_STREAK_CREDIT = 2  # max consecutive_passes increment for a correct transfer answer
 _VALID_QUESTION_TYPES = frozenset({*_LEVELS, "auto"})
-_MIN_RUBRIC_CRITERIA = 1  # fewer valid criteria than this → neutral fallback
+_MIN_RUBRIC_CRITERIA = 3  # fewer valid criteria than this → rubric unusable (fail closed)
 _MAX_RUBRIC_CRITERIA = 6  # criteria beyond this are dropped (prompt asks for 3-6)
 
 # ── Reverse research loop (T-M6) ──────────────────────────────────────────────
@@ -1080,13 +1080,15 @@ def get_question(
 
     # ── Self-explanation: deterministic, works offline, source withheld ──────
     if resolved_type == "self_explanation":
+        q = (
+            f"In your own words: what does '{subject}' mean, why is it true or why does "
+            "it work the way it does, and how does it connect to something YOU already "
+            "know or have experienced? Make the connection yourself — it will not be "
+            "given to you."
+        )
+        _issue_question(db, concept_id, "self_explanation", q)
         return {
-            "question": (
-                f"In your own words: what does '{subject}' mean, why is it true or why does "
-                "it work the way it does, and how does it connect to something YOU already "
-                "know or have experienced? Make the connection yourself — it will not be "
-                "given to you."
-            ),
+            "question": q,
             "context_snippet": "",  # withheld: the explanation must be self-generated
             "question_type": "self_explanation",
             "level": "self_explanation",
@@ -1130,6 +1132,7 @@ def get_question(
                         question = str(parsed.get("question") or "").strip() or fallback_q
                     except Exception:
                         question = fallback_q
+            _issue_question(db, concept_id, "contrast", question)
             return {
                 "question": question,
                 # Only the neighbour's NAME is shown — never source excerpts or the
@@ -1144,8 +1147,10 @@ def get_question(
     if not base_url or not ctx:
         # No LLM or no source material — always recall; never label a generic
         # "explain in your own words" question as a transfer application question.
+        q = f"In your own words, explain the key idea behind '{subject}' and give a concrete example."
+        _issue_question(db, concept_id, "recall", q)
         return {
-            "question": f"In your own words, explain the key idea behind '{subject}' and give a concrete example.",
+            "question": q,
             "context_snippet": ctx,
             "question_type": "recall",
             "level": "recall",
@@ -1184,8 +1189,10 @@ def get_question(
     if raw:
         try:
             parsed = json.loads(_strip_fences(raw))
+            q = str(parsed.get("question", ""))
+            _issue_question(db, concept_id, resolved_type, q)
             return {
-                "question": parsed.get("question", ""),
+                "question": q,
                 "context_snippet": parsed.get("context_snippet", ""),
                 "question_type": resolved_type,
                 "level": resolved_type,
@@ -1196,12 +1203,68 @@ def get_question(
     # LLM call failed / JSON unparseable — fall back to a generic recall question.
     # NEVER label this fallback as "transfer": it isn't a novel application scenario,
     # so it must not display the ⚡ badge or grant the +2 mastery bonus.
+    q = f"In your own words, explain the key idea behind '{subject}' and give a concrete example."
+    _issue_question(db, concept_id, "recall", q)
     return {
-        "question": f"In your own words, explain the key idea behind '{subject}' and give a concrete example.",
+        "question": q,
         "context_snippet": ctx[:120] if ctx else "",
         "question_type": "recall",
         "level": "recall",
     }
+
+
+def _issue_question(db: Any, concept_id: str, level: str, question: str) -> None:
+    """Record the question the server issued for this concept (one row per concept).
+
+    Assessments are only accepted against an issued question (see
+    consume_issued_question) so ladder credit is always bound to an exercise
+    the SERVER generated at a server-derived level — never client-authored.
+    """
+    try:
+        with db._lock:
+            db._conn.execute(
+                "INSERT INTO learning_issued_questions(concept_id, level, question, created_at) "
+                "VALUES(?,?,?,?) ON CONFLICT(concept_id) DO UPDATE SET "
+                "level=excluded.level, question=excluded.question, created_at=excluded.created_at",
+                (concept_id, level, question, _now()),
+            )
+            db._conn.commit()
+    except Exception:
+        logger.warning("could not record issued question for %s", concept_id, exc_info=True)
+
+
+def consume_issued_question(
+    db: Any, concept_id: str, question: str | None = None, level: str | None = None
+) -> str | None:
+    """Atomically claim (delete) the issued question for a concept.
+
+    Returns the level it was issued at, or None when there is no issued
+    question, the submitted question text does not match, or (when ``level``
+    is given, e.g. teach_back) the issued level differs.  Single-use: a
+    successful claim deletes the row, so replays and concurrent double-submits
+    of the same question are rejected.
+    """
+    try:
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT level, question FROM learning_issued_questions WHERE concept_id=?",
+                (concept_id,),
+            ).fetchone()
+            if not row:
+                return None
+            if question is not None and row["question"] != question:
+                return None
+            if level is not None and row["level"] != level:
+                return None
+            cur = db._conn.execute(
+                "DELETE FROM learning_issued_questions WHERE concept_id=? AND question=?",
+                (concept_id, row["question"]),
+            )
+            db._conn.commit()
+            return row["level"] if cur.rowcount else None
+    except Exception:
+        logger.warning("could not consume issued question for %s", concept_id, exc_info=True)
+        return None
 
 
 def _generate_socratic_followup(
@@ -1443,9 +1506,16 @@ def assess_answer(
             # Score is computed HERE from the fraction of criteria met — never
             # trusted as a bare float from the model.
             score = sum(1 for c in rubric if c["met"]) / len(rubric)
-        else:
+        elif resolved_qt == "recall":
             # Legacy shape (no criteria list) — accept a clamped float score.
+            # Only recall may use it: recall alone can never graduate, so an
+            # unverified float cannot advance the depth ladder.
             score = max(0.0, min(1.0, float(parsed.get("score", 0.5))))
+        else:
+            # Ladder levels above recall FAIL CLOSED without a verifiable
+            # rubric: cap at neutral so no unverified model float ever grants
+            # level credit or streak progress toward graduation.
+            score = min(0.5, max(0.0, min(1.0, float(parsed.get("score", 0.5)))))
         feedback = str(parsed.get("feedback", ""))
         raw_et = parsed.get("error_type") or "null"
         error_type: str | None = raw_et if raw_et in _VALID_ERROR_TYPES else None
@@ -1568,15 +1638,17 @@ def get_teach_back(db: Any, concept_id: str) -> dict | None:
     if not concept:
         return None
     subject = concept["subject"]
+    prompt = (
+        f"Teach '{subject}' to someone who has never heard of it. In your own words: "
+        "what is it, why does it work or matter, and what is one concrete example? "
+        "Write it the way you would actually say it to a curious beginner."
+    )
+    _issue_question(db, concept_id, _TEACH_BACK, prompt)
     return {
         "concept_id": concept_id,
         "subject": subject,
         "level": _TEACH_BACK,
-        "prompt": (
-            f"Teach '{subject}' to someone who has never heard of it. In your own words: "
-            "what is it, why does it work or matter, and what is one concrete example? "
-            "Write it the way you would actually say it to a curious beginner."
-        ),
+        "prompt": prompt,
     }
 
 

@@ -205,6 +205,11 @@ class TestRubricEnforcement:
                         "met": True,
                         "quote": "inverse fourth power",  # NOT in the answer
                     },
+                    {
+                        "criterion": "names a real-world consequence",
+                        "met": False,
+                        "quote": "",
+                    },
                 ],
                 "feedback": "ok",
                 "error_type": "null",
@@ -215,7 +220,7 @@ class TestRubricEnforcement:
         _, (cid,) = _seed(db)
         with patch("orivellum.capabilities.learning._call", return_value=critic):
             result = assess_answer(db, cid, "Q?", answer, base_url=DUMMY_URL, model="t")
-        assert result["score"] == pytest.approx(0.5), "score must be met/total computed in code"
+        assert result["score"] == pytest.approx(1 / 3), "score must be met/total computed in code"
         met = [c for c in result["rubric"] if c["met"]]
         assert len(met) == 1
         assert met[0]["quote"].lower() in answer.lower(), "met criterion must carry a real quote"
@@ -225,7 +230,11 @@ class TestRubricEnforcement:
 
         critic = json.dumps(
             {
-                "criteria": [{"criterion": "c1", "met": True, "quote": "my answer"}],
+                "criteria": [
+                    {"criterion": "c1", "met": True, "quote": "my answer"},
+                    {"criterion": "c2", "met": False, "quote": ""},
+                    {"criterion": "c3", "met": False, "quote": ""},
+                ],
                 "feedback": "ok",
             }
         )
@@ -283,6 +292,11 @@ class TestTeachBack:
                         "met": True,
                         "quote": "sunsets look red",
                     },
+                    {
+                        "criterion": "states the everyday consequence",
+                        "met": True,
+                        "quote": "the sky looks blue",
+                    },
                 ],
                 "student_followup": "But why do SHORT wavelengths scatter more?",
                 "feedback": "Clear teaching.",
@@ -311,6 +325,7 @@ class TestTeachBack:
                 "criteria": [
                     {"criterion": "explains the mechanism", "met": False, "quote": ""},
                     {"criterion": "gives an example", "met": False, "quote": ""},
+                    {"criterion": "says why it matters", "met": False, "quote": ""},
                 ],
                 "student_followup": "So... what actually happens to the light?",
                 "feedback": "Too vague to teach from.",
@@ -325,12 +340,17 @@ class TestTeachBack:
     def test_http_endpoints(self):
         db = _make_db()
         work_id, (cid,) = _seed(db)
+        self._graduate(db, cid)  # teach-back is gated to graduated concepts
         client = _make_test_client(db)
         r = client.get(f"/api/works/{work_id}/learning/teach-back", params={"concept_id": cid})
         assert r.status_code == 200 and r.json()["level"] == "teach_back"
         critic = json.dumps(
             {
-                "criteria": [{"criterion": "c", "met": True, "quote": "light scatters"}],
+                "criteria": [
+                    {"criterion": "c1", "met": True, "quote": "light scatters"},
+                    {"criterion": "c2", "met": True, "quote": "a lot"},
+                    {"criterion": "c3", "met": True, "quote": "light"},
+                ],
                 "student_followup": "why?",
                 "feedback": "ok",
             }
@@ -343,6 +363,92 @@ class TestTeachBack:
         assert r2.status_code == 200
         body = r2.json()
         assert body["passed"] is True and "summary" in body
+
+    def test_ungraduated_concept_cannot_teach_back(self):
+        """Teach-back is the retention check for graduated concepts only."""
+        db = _make_db()
+        work_id, (cid,) = _seed(db)
+        client = _make_test_client(db)
+        client.get(f"/api/works/{work_id}/learning/teach-back", params={"concept_id": cid})
+        r = client.post(
+            f"/api/works/{work_id}/learning/teach-back/assess",
+            json={"concept_id": cid, "explanation": "light scatters a lot"},
+        )
+        assert r.status_code == 409
+
+    def test_teach_back_assess_requires_issued_prompt(self):
+        db = _make_db()
+        work_id, (cid,) = _seed(db)
+        self._graduate(db, cid)
+        client = _make_test_client(db)
+        # No GET first → no issued prompt → rejected
+        r = client.post(
+            f"/api/works/{work_id}/learning/teach-back/assess",
+            json={"concept_id": cid, "explanation": "light scatters a lot"},
+        )
+        assert r.status_code == 409
+
+
+# ── 3b. Issued-question binding & fail-closed rubric ─────────────────────────
+
+
+class TestIssuedQuestionBinding:
+    def test_client_authored_question_rejected(self):
+        """POST /assess without a server-issued question must be refused."""
+        db = _make_db()
+        work_id, (cid,) = _seed(db)
+        client = _make_test_client(db)
+        r = client.post(
+            f"/api/works/{work_id}/learning/assess",
+            json={"concept_id": cid, "question": "What is 1+1?", "answer": "2"},
+        )
+        assert r.status_code == 409
+
+    def test_mismatched_question_rejected(self):
+        """A submitted question that differs from the issued one is refused."""
+        db = _make_db()
+        work_id, (cid,) = _seed(db)
+        client = _make_test_client(db)
+        qr = client.get(f"/api/works/{work_id}/learning/question", params={"concept_id": cid})
+        assert qr.status_code == 200
+        r = client.post(
+            f"/api/works/{work_id}/learning/assess",
+            json={"concept_id": cid, "question": "my own trivial question", "answer": "easy"},
+        )
+        assert r.status_code == 409
+
+    def test_issued_question_is_single_use(self):
+        """Replaying the same issued question must be refused the second time."""
+        db = _make_db()
+        work_id, (cid,) = _seed(db)
+        client = _make_test_client(db)
+        qr = client.get(f"/api/works/{work_id}/learning/question", params={"concept_id": cid})
+        question = qr.json()["question"]
+        payload = {"concept_id": cid, "question": question, "answer": "an answer"}
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.9,"feedback":"ok"}',
+        ):
+            r1 = client.post(f"/api/works/{work_id}/learning/assess", json=payload)
+            r2 = client.post(f"/api/works/{work_id}/learning/assess", json=payload)
+        assert r1.status_code == 200
+        assert r2.status_code == 409, "issued questions are single-use"
+
+    def test_nonrecall_level_fails_closed_without_rubric(self):
+        """Above recall, a bare model float must never grant ladder credit."""
+        from orivellum.capabilities.learning import _get_mastery, assess_answer
+
+        db = _make_db()
+        _, (cid,) = _seed(db)
+        with patch(
+            "orivellum.capabilities.learning._call",
+            return_value='{"score":0.95,"feedback":"great"}',  # no criteria list
+        ):
+            result = assess_answer(
+                db, cid, "Q?", "A", base_url=DUMMY_URL, model="t", question_type="transfer"
+            )
+        assert result["score"] <= 0.5, "unverified float must be capped at neutral"
+        assert _get_mastery(db, cid)["consecutive_passes"] == 0, "no streak credit"
 
 
 # ── 4. Reverse research loop ──────────────────────────────────────────────────
@@ -490,6 +596,36 @@ class TestReverseLoop:
         assert result["research_requests_resolved"] == 0
         reqs = list_research_requests(db, work_id)
         assert reqs and reqs[0]["status"] == "open", "an unanswered request must stay open"
+
+    def test_cross_work_writeback_cannot_resolve_request(self):
+        """A digest imported into Work B must never resolve Work A's request."""
+        from orivellum.capabilities.learning import list_research_requests, triage_failure
+        from orivellum.capabilities.research_import import import_research_digests
+
+        db = _make_db()
+        work_a, (cid,) = _seed(db, knowledge_texts=[])
+        work_b = db.create_work("Other Work", work_type="learning")["id"]
+        self._fail_n(db, cid, 3)
+        rid = triage_failure(db, cid)["request_id"]
+        digests = {
+            "topic": "Rayleigh scattering",
+            "digests": [
+                {
+                    "query": "q",
+                    "request_id": rid,  # belongs to work_a
+                    "sources": [
+                        {"id": "s1", "url": "https://example.org/x", "title": "X"},
+                    ],
+                    "claims": [
+                        {"claim": "Some sourced claim.", "sources": ["s1"], "quote": "q"},
+                    ],
+                }
+            ],
+        }
+        result = import_research_digests(db, work_b, digests)
+        assert result["research_requests_resolved"] == 0
+        reqs = list_research_requests(db, work_a)
+        assert reqs and reqs[0]["status"] == "open", "cross-Work writeback must not resolve"
 
     def test_resolve_endpoint(self):
         from orivellum.capabilities.learning import triage_failure

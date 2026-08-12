@@ -309,17 +309,24 @@ async def learning_assess(work_id: str, body: AssessBody):
     base_url, model = _cfg()
     from orivellum.capabilities.learning import (
         _VALID_SESSION_MODES,
-        _resolve_question_type,
         assess_answer,
+        consume_issued_question,
         get_mastery_summary,
         next_concept_id,
     )
 
-    # Re-derive question_type server-side from the concept's depth ladder using
-    # the same "auto" logic as get_question.  This prevents clients from forging a
-    # transfer question_type to obtain +2 mastery bonus on a recall question:
-    # the ladder returns the lowest level not yet passed.
-    qt = _resolve_question_type(db, body.concept_id, "auto")
+    # Issued-question binding: an assessment is only accepted against the exact
+    # question the server issued for this concept, at the level the server
+    # derived when issuing it.  Single-use — the claim deletes the issued row,
+    # so client-authored questions, replays, and stale/concurrent submissions
+    # can never earn ladder credit.
+    qt = consume_issued_question(db, body.concept_id, question=body.question)
+    if qt is None:
+        raise HTTPException(
+            409,
+            "No matching issued question for this concept — fetch a question from "
+            "GET /learning/question first and submit it unchanged.",
+        )
     smode = body.session_mode if body.session_mode in _VALID_SESSION_MODES else "blocked"
     result = await asyncio.to_thread(
         assess_answer,
@@ -430,7 +437,25 @@ async def learning_teach_back_assess(work_id: str, body: TeachBackBody):
         raise HTTPException(422, "Explanation cannot be empty")
     _require_work_concept(db, work_id, body.concept_id)
     base_url, model = _cfg()
-    from orivellum.capabilities.learning import assess_teach_back, get_mastery_summary
+    from orivellum.capabilities.learning import (
+        _TEACH_BACK,
+        _is_graduated,
+        assess_teach_back,
+        consume_issued_question,
+        get_mastery_summary,
+    )
+
+    # Teach-back is the retention check for GRADUATED concepts only — the
+    # depth ladder is the path for everything else.
+    if not _is_graduated(db, body.concept_id):
+        raise HTTPException(409, "Teach-back is only available for graduated concepts")
+    # Single-use issued-prompt claim: the prompt must have been fetched first.
+    if consume_issued_question(db, body.concept_id, level=_TEACH_BACK) is None:
+        raise HTTPException(
+            409,
+            "No issued teach-back prompt for this concept — fetch it from "
+            "GET /learning/teach-back first.",
+        )
 
     result = await asyncio.to_thread(
         assess_teach_back, db, body.concept_id, body.explanation, base_url, model

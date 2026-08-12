@@ -3375,4 +3375,22 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON research_requests(concept_id) WHERE status='open'
     """,
     ),
+    # v140 — Issued-question binding for the depth ladder.  Assessments must be
+    # bound to a question the SERVER issued at a server-derived level: one row
+    # per concept holds the latest issued question + level, consumed (deleted)
+    # single-use at assessment time.  Prevents a client from submitting an
+    # arbitrary self-written "question" for ladder credit, and prevents a stale
+    # answer being recorded at a different level than it was issued at.
+    (
+        140,
+        "Issued-question binding for ladder assessments",
+        """
+        CREATE TABLE IF NOT EXISTS learning_issued_questions (
+            concept_id TEXT PRIMARY KEY REFERENCES work_concepts(id) ON DELETE CASCADE,
+            level      TEXT NOT NULL,
+            question   TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """,
+    ),
 ]

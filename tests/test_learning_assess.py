@@ -14,6 +14,7 @@ patched at the module boundary so tests never make real network calls.
 
 from __future__ import annotations
 
+import json
 import uuid
 from unittest.mock import patch
 
@@ -76,6 +77,36 @@ def _make_test_client(db):
 
 
 DUMMY_URL = "http://localhost:11434/v1"  # truthy; _call is always patched
+
+
+def _issue(db, concept_id, level="recall", question="Q?"):
+    """Record a server-issued question so the assess route accepts the POST.
+
+    The route only assesses questions the server issued (single-use binding);
+    tests that POST directly must issue first, exactly as GET /question would.
+    """
+    from orivellum.capabilities.learning import _issue_question
+
+    _issue_question(db, concept_id, level, question)
+
+
+def _rubric_payload(score: float, quote: str = "A", **extra) -> str:
+    """Critic JSON with a 4-criterion rubric equivalent to the given score.
+
+    Levels above recall fail closed without a verifiable rubric, so tests
+    exercising those levels must mock rubric-shaped critic output.  Met
+    criteria carry the extractive quote (must be a substring of the answer).
+    """
+    met_n = round(float(score) * 4)
+    payload = {
+        "criteria": [
+            {"criterion": f"c{i}", "met": i < met_n, "quote": quote if i < met_n else ""}
+            for i in range(4)
+        ],
+        "feedback": "graded",
+        **extra,
+    }
+    return json.dumps(payload)
 
 
 # ── L1: _record_mastery ────────────────────────────────────────────────────────
@@ -218,7 +249,7 @@ class TestAssessAnswer:
         for qt in ("recall", "self_explanation", "transfer"):
             with patch(
                 "orivellum.capabilities.learning._call",
-                return_value='{"score":0.9,"feedback":"Correct!"}',
+                return_value=_rubric_payload(1.0),
             ):
                 assess_answer(
                     db,
@@ -396,6 +427,7 @@ class TestAssessRouteErrorClassification:
         db = _make_db()
         work_id, cid = _seed(db)
         client = _make_test_client(db)
+        _issue(db, cid)
         with patch(
             "orivellum.capabilities.learning._call",
             return_value='{"score":0.3,"feedback":"Wrong.","error_type":"careless_slip",'
@@ -439,6 +471,7 @@ class TestAssessRouteErrorClassification:
             db._conn.commit()
 
         client = _make_test_client(db)
+        _issue(db, concept_id)
         # knowledge_gap with an unstarted prereq → should STEP_BACKWARD to prereq
         with patch(
             "orivellum.capabilities.learning._call",
@@ -553,7 +586,17 @@ class TestTransferQuestions:
     def _assess_transfer(self, db, cid: str, score_json: str, qt: str = "transfer"):
         from orivellum.capabilities.learning import assess_answer
 
-        with patch("orivellum.capabilities.learning._call", return_value=score_json):
+        payload = json.loads(score_json)
+        if qt != "recall" and "criteria" not in payload:
+            # Non-recall levels fail closed without a verifiable rubric —
+            # convert the legacy float score into an equivalent rubric.
+            score = float(payload.pop("score", 0.5))
+            met_n = round(score * 4)
+            payload["criteria"] = [
+                {"criterion": f"c{i}", "met": i < met_n, "quote": "A" if i < met_n else ""}
+                for i in range(4)
+            ]
+        with patch("orivellum.capabilities.learning._call", return_value=json.dumps(payload)):
             return assess_answer(
                 db, cid, "Q?", "A", base_url="http://x", model="t", question_type=qt
             )
@@ -920,6 +963,8 @@ class TestTransferRouteSecurity:
         db = _make_db()
         work_id, cid = _seed(db)
         client = _make_test_client(db)
+        # Server issued a RECALL question (what GET /question does at streak 0)
+        _issue(db, cid, "recall")
         with patch(
             "orivellum.capabilities.learning._call",
             return_value='{"score":0.9,"feedback":"Good.","error_type":"null","remediation_hint":""}',
@@ -960,10 +1005,13 @@ class TestTransferRouteSecurity:
         _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="recall")
         _record_mastery(db, cid, 0.9, "STAY_HERE", "Good", question_type="self_explanation")
         client = _make_test_client(db)
-        # Client sends question_type='recall' — route should IGNORE it and re-derive 'transfer'
+        # Server issued the question at TRANSFER level (what GET /question does
+        # once the lower levels are passed) — the body's 'recall' is ignored.
+        _issue(db, cid, "transfer")
+        # Client sends question_type='recall' — route should IGNORE it and use 'transfer'
         with patch(
             "orivellum.capabilities.learning._call",
-            return_value='{"score":0.9,"feedback":"Excellent.","error_type":"null","remediation_hint":""}',
+            return_value=_rubric_payload(1.0, error_type="null", remediation_hint=""),
         ):
             r = client.post(
                 f"/api/works/{work_id}/learning/assess",
@@ -1002,6 +1050,7 @@ class TestAssessRoute:
         db = _make_db()
         work_id, concept_id = _seed(db)
         client = _make_test_client(db)
+        _issue(db, concept_id, "recall", "Why blue sky?")
         with patch(
             "orivellum.capabilities.learning._call",
             return_value='{"score":0.85,"feedback":"Well done!"}',
@@ -1024,6 +1073,7 @@ class TestAssessRoute:
         db = _make_db()
         work_id, concept_id = _seed(db)
         client = _make_test_client(db)
+        _issue(db, concept_id, "recall", "Why blue sky?")
         with patch(
             "orivellum.capabilities.learning._call",
             return_value='{"score":0.1,"feedback":"Try again."}',
@@ -1048,10 +1098,12 @@ class TestAssessRoute:
         work_id, concept_id = _seed(db)
         client = _make_test_client(db)
         last_resp = None
-        for _ in range(3):
+        # Graduation needs the depth ladder — issue each level like GET /question would
+        for level in ("recall", "self_explanation", "transfer"):
+            _issue(db, concept_id, level)
             with patch(
                 "orivellum.capabilities.learning._call",
-                return_value='{"score":0.9,"feedback":"Correct!"}',
+                return_value=_rubric_payload(1.0),
             ):
                 last_resp = client.post(
                     f"/api/works/{work_id}/learning/assess",
@@ -1482,6 +1534,7 @@ class TestStepBackwardMultiPrereq:
         _record_mastery(db, cid_a, 0.9, "STAY_HERE", "Good")
 
         client = _make_test_client(db)
+        _issue(db, cid_top)
         with patch(
             "orivellum.capabilities.learning._call",
             return_value='{"score":0.1,"feedback":"Wrong!"}',
@@ -1546,6 +1599,7 @@ class TestStepBackwardMultiPrereq:
 
         # The STEP_BACKWARD routing must see consecutive_passes=0 (the fail record)
         client = _make_test_client(db)
+        _issue(db, cid_top)
         with patch(
             "orivellum.capabilities.learning._call",
             return_value='{"score":0.1,"feedback":"Wrong!"}',
@@ -1611,6 +1665,7 @@ class TestStepBackwardMultiPrereq:
         _record_mastery(db, cid_b, 0.9, "STAY_HERE", "Pass 1")
 
         client = _make_test_client(db)
+        _issue(db, cid_top)
         with patch(
             "orivellum.capabilities.learning._call",
             return_value='{"score":0.1,"feedback":"Wrong!"}',
