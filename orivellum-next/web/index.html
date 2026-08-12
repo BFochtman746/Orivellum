@@ -200,6 +200,16 @@
   .rec-why{
     display:block;font-size:12.5px;color:var(--green-ink);margin-top:5px;
   }
+   /* ── dismiss button on each API chip ──────────────── */
+   .step{position:relative;}
+   .dismiss-btn{
+     position:absolute;top:.4rem;right:.4rem;width:1.2rem;height:1.2rem;
+     border:none;background:transparent;color:var(--muted);font-size:.9rem;
+     line-height:1;cursor:pointer;border-radius:.2rem;display:flex;
+     align-items:center;justify-content:center;opacity:0;transition:opacity .15s;
+   }
+   .step:hover .dismiss-btn,.step:focus-within .dismiss-btn{opacity:.55;}
+   .dismiss-btn:hover{opacity:1!important;background:rgba(200,0,0,.08);color:#c00;}
 
   /* ── defaults applied banner ──────────────────────── */
   #defaults-banner{
@@ -345,6 +355,7 @@
           <span class="hard">not reversible without a restore</span>
         </div>
 
+        <div id="gate-facets">
         <!-- facet 1 -->
         <div class="facet" data-facet="1">
           <span class="facet-n">01 / ontology</span>
@@ -410,6 +421,7 @@
             unreviewed reaches a question or a grade.</p>
           </div>
         </div>
+        </div><!-- /gate-facets -->
 
         <div class="gate-foot">
           <button id="btn-run" class="btn btn-go">Run with these answers</button>
@@ -558,7 +570,7 @@
   // ══════════════════════════════════════════════════════════════════════
   // N4 WIRING: connects the pattern study to the live API.
   // All state is in-memory (no browser storage per milestone requirement).
-  // The static mockup is the fallback; the API layer overlays it.
+  // The static mockup is the no-JS fallback; the API layer replaces it.
   // ══════════════════════════════════════════════════════════════════════
   (function () {
     'use strict';
@@ -604,6 +616,7 @@
             default_value: 'narrative',
             default_source: 'work.domain is unset',
             default_risk: 'the setting that produced the last bad harvest',
+            allow_freeform: true,
             options: [
               { label: 'Technical',        value: 'technical', hint: 'function · platform · testcase' },
               { label: 'Domain reference', value: 'domain',    hint: 'entity · term · source' },
@@ -613,9 +626,10 @@
             name: 'scope',
             question: 'Which document types are in scope?',
             why: '1,204 of these documents are still typed unknown.',
-            default_value: 'Reference only',
+            default_value: 'reference',
             default_source: 'last run used Reference only',
             default_risk: 'skips 1,204 unknowns',
+            allow_freeform: false,
             options: [
               { label: 'Reference only',            value: 'reference' },
               { label: 'Reference + test catalogs', value: 'reference+test' },
@@ -628,6 +642,7 @@
             default_value: 'standard',
             default_source: 'policy default',
             default_risk: 'may miss concepts in complex nested tables',
+            allow_freeform: true,
             options: [
               { label: 'Standard', value: 'standard' },
               { label: 'Deep',     value: 'deep' },
@@ -646,6 +661,16 @@
       }).catch(function () { /* API may not be running; static counter stays */ });
     }
 
+    /** Count answered facets from rendered gate chips and update the counter. */
+    function countAnswered() {
+      var n = 0;
+      document.querySelectorAll('#gate-facets .facet').forEach(function (f) {
+        if (f.querySelector('.chip[aria-pressed="true"]')) { n++; }
+      });
+      var el = document.getElementById('pcount');
+      if (el) el.textContent = n;
+    }
+
     /** Show defaults-applied banner after gate is closed with skip=true. */
     function showDefaultsBanner(defaults) {
       var el = document.getElementById('defaults-banner');
@@ -660,9 +685,103 @@
       el.style.display = 'block';
     }
 
+    /**
+     * Render gate facets from the API response into #gate-facets, replacing
+     * the static HTML.  Each facet's chips are wired to POST /api/gate/resolve;
+     * freeform textareas resolve on blur.
+     */
+    function renderGate(gate) {
+      var container = document.getElementById('gate-facets');
+      if (!container || !gate || !gate.facets) return;
+      container.innerHTML = '';  // replace static content
+
+      gate.facets.forEach(function (f, idx) {
+        var n = idx + 1;
+        var numStr = n < 10 ? '0' + n : '' + n;
+
+        // Build chips HTML
+        var optionsHtml = (f.options || []).map(function (o) {
+          var pressed = f.resolved_value === o.value ? 'true' : 'false';
+          return '<button class="chip" aria-pressed="' + pressed + '"'
+               + ' data-value="' + esc(o.value) + '">'
+               + esc(o.label)
+               + (o.hint ? ' <span class="tier">' + esc(o.hint) + '</span>' : '')
+               + '</button>';
+        }).join('') + '<button class="chip other" aria-pressed="false">Something else</button>';
+
+        var freeformHtml = (f.allow_freeform !== false)
+          ? '<div class="freeform"><label>In your own words</label>'
+          + '<textarea placeholder="Describe your answer…"></textarea></div>'
+          : '';
+
+        var assumeHtml = '<div class="assume"><span class="lab">If you skip this</span>'
+          + '<p>Uses <code>' + esc(f.default_value) + '</code>'
+          + (f.default_source ? ' (' + esc(f.default_source) + ')' : '') + '.'
+          + (f.default_risk ? ' Risk: ' + esc(f.default_risk) : '') + '</p></div>';
+
+        var facetEl = document.createElement('div');
+        facetEl.className = 'facet';
+        facetEl.setAttribute('data-facet', n);
+        facetEl.setAttribute('data-facet-id', f.id || '');
+        facetEl.innerHTML =
+          '<span class="facet-n">' + esc(numStr) + ' / ' + esc(f.name) + '</span>'
+          + '<p class="q">' + esc(f.question) + '</p>'
+          + '<p class="why">' + esc(f.why) + '</p>'
+          + '<div class="chips">' + optionsHtml + '</div>'
+          + freeformHtml + assumeHtml;
+
+        // Wire chip single-select + API resolve
+        var chips = facetEl.querySelectorAll('.chip');
+        var freeformDiv = facetEl.querySelector('.freeform');
+        chips.forEach(function (chip) {
+          chip.addEventListener('click', function () {
+            var wasOn = chip.getAttribute('aria-pressed') === 'true';
+            chips.forEach(function (c) { c.setAttribute('aria-pressed', 'false'); });
+            chip.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
+            var isOther = chip.classList.contains('other') && !wasOn;
+            if (freeformDiv) freeformDiv.classList.toggle('open', isOther);
+            if (isOther && freeformDiv) { freeformDiv.querySelector('textarea').focus(); return; }
+            if (!wasOn && !chip.classList.contains('other')) {
+              apiPost('/api/gate/resolve', {
+                facet_id: f.id,
+                value: chip.getAttribute('data-value'),
+                kind: 'option',
+              }).then(syncProgress).catch(function (err) {
+                console.warn('gate/resolve option:', err);
+              });
+            }
+            countAnswered();
+          });
+        });
+
+        // Wire freeform textarea: resolve on blur if non-empty
+        if (freeformDiv) {
+          var textarea = freeformDiv.querySelector('textarea');
+          textarea.addEventListener('blur', function () {
+            var val = textarea.value.trim();
+            if (!val) return;
+            apiPost('/api/gate/resolve', {
+              facet_id: f.id,
+              value: val,
+              kind: 'freeform',
+            }).then(function () {
+              var otherChip = facetEl.querySelector('.chip.other');
+              if (otherChip) otherChip.setAttribute('aria-pressed', 'true');
+              syncProgress();
+              countAnswered();
+            }).catch(function (err) { console.warn('gate/resolve freeform:', err); });
+          });
+        }
+
+        container.appendChild(facetEl);
+      });
+    }
+
     function initGate() {
       bootGate().then(function (gate) {
         _rid = gate.id;
+        // Render gate facets from API response, replacing static HTML
+        renderGate(gate);
         syncProgress();
 
         // "Run on the assumptions above" — skip all unanswered facets, record defaults
@@ -674,7 +793,7 @@
                 showDefaultsBanner(res.defaults_applied || []);
                 syncProgress();
               })
-              .catch(function (err) { console.warn('gate/close:', err); });
+              .catch(function (err) { console.warn('gate/close skip:', err); });
           });
         }
 
@@ -698,48 +817,81 @@
           });
         }
       }).catch(function () {
-        /* API not reachable — static demo continues working unchanged. */
+        /* API not reachable — static demo HTML stays in place as fallback. */
+        // Wire static chips with old DOM-walk approach as fallback
+        document.querySelectorAll('#gate-facets .facet').forEach(function (facet) {
+          var chips = facet.querySelectorAll('.chip');
+          var free = facet.querySelector('.freeform');
+          chips.forEach(function (chip) {
+            chip.addEventListener('click', function () {
+              var wasOn = chip.getAttribute('aria-pressed') === 'true';
+              chips.forEach(function (c) { c.setAttribute('aria-pressed', 'false'); });
+              chip.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
+              var isOther = chip.classList.contains('other') && !wasOn;
+              if (free) free.classList.toggle('open', isOther);
+              if (isOther && free) free.querySelector('textarea').focus();
+              countAnswered();
+            });
+          });
+        });
       });
     }
 
     // ── Scene B: next-action set ────────────────────────────────────────
 
+    /**
+     * Render API-sourced action chips into #api-stack.
+     * Each chip gets a × dismiss button that posts /api/next/dismiss.
+     */
     function renderApiStack(set) {
       var stack = document.getElementById('api-stack');
       if (!stack || !set || !set.actions) return;
       _actions = set.actions;
       stack.innerHTML = '';
+
       set.actions.forEach(function (a) {
         var isRec = !!a.recommended;
         var btn = document.createElement('button');
         btn.className = 'step' + (isRec ? ' is-rec' : '');
         btn.dataset.actionId = a.id;
-        btn.innerHTML =
-          '<span class="kind">' + esc(a.kind) + '</span>' +
-          '<span class="step-body">' + esc(a.label) +
-            '<span class="anchor">' + esc(a.anchor) + '</span>' +
-            (isRec && a.rationale
-              ? '<span class="rec-why"><b>Recommended</b> — ' + esc(a.rationale) + '</span>'
-              : '') +
-          '</span>' +
-          '<span class="pencil">tap to edit</span>';
 
+        // Inner content
+        btn.innerHTML =
+          '<span class="kind">' + esc(a.kind) + '</span>'
+          + '<span class="step-body">' + esc(a.label)
+          + '<span class="anchor">' + esc(a.anchor) + '</span>'
+          + (isRec && a.rationale
+              ? '<span class="rec-why"><b>Recommended</b> — ' + esc(a.rationale) + '</span>'
+              : '')
+          + '</span>'
+          + '<span class="pencil">tap to edit</span>';
+
+        // Dismiss button (×) — calls /api/next/dismiss with this action's id
+        var dismissBtn = document.createElement('button');
+        dismissBtn.className = 'dismiss-btn';
+        dismissBtn.setAttribute('aria-label', 'Dismiss this suggestion');
+        dismissBtn.title = 'Dismiss';
+        dismissBtn.textContent = '×';
+        dismissBtn.addEventListener('click', function (e) {
+          e.stopPropagation();  // don't trigger chip selection
+          apiPost('/api/next/dismiss', { action_id: a.id, reason: 'user dismissed' })
+            .then(function () {
+              btn.style.opacity = '0.3';
+              btn.style.pointerEvents = 'none';
+            })
+            .catch(function (err) { console.warn('next/dismiss:', err); });
+        });
+        btn.appendChild(dismissBtn);
+
+        // Select chip — puts editable prompt into composer + records selection
         btn.addEventListener('click', function () {
-          // Put the (editable) prompt in the composer
           var input = document.querySelector('.own input');
           if (input) { input.value = a.prompt || a.label; input.focus(); }
-          // Tell the API which action was selected
           apiPost('/api/next/select', { action_id: a.id })
             .catch(function (err) { console.warn('next/select:', err); });
         });
-        stack.appendChild(btn);
-      });
 
-      // Wire dismiss on static chips once API stack is live (fallback)
-      document.querySelectorAll('#static-stack .step').forEach(function (step) {
-        step.addEventListener('dblclick', function () {
-          console.log('[demo] dismiss: no action_id on static chip');
-        });
+        stack.appendChild(btn);
       });
 
       document.getElementById('api-stack').style.display = 'flex';
@@ -758,74 +910,28 @@
         if (statusEl) statusEl.style.display = 'none';
         if (res.set && res.set.actions && res.set.actions.length) {
           renderApiStack(res.set);
-        } else if (!res.set_id) {
+        } else {
           if (statusEl) {
-            statusEl.textContent = res.reason || 'no chips — no real data yet';
+            statusEl.textContent = res.reason || 'no chips — no real data in the connected DB yet';
             statusEl.style.display = 'block';
           }
         }
       }).catch(function (err) {
-        if (statusEl) { statusEl.textContent = 'API not available — static demo'; statusEl.style.display = 'block'; }
+        if (statusEl) {
+          statusEl.textContent = 'API not available — using static demo';
+          statusEl.style.display = 'block';
+        }
         console.warn('next/build:', err);
       });
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // Static UI (unchanged from original; runs regardless of API state)
-    // ══════════════════════════════════════════════════════════════════
-
-    // Facet chips: single-select per facet, "Something else" opens the free-text slot.
-    document.querySelectorAll('.facet').forEach(function (facet) {
-      var chips = facet.querySelectorAll('.chip');
-      var free = facet.querySelector('.freeform');
-      chips.forEach(function (chip) {
-        chip.addEventListener('click', function () {
-          var wasOn = chip.getAttribute('aria-pressed') === 'true';
-          chips.forEach(function (c) { c.setAttribute('aria-pressed', 'false'); });
-          chip.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
-          var isOther = chip.classList.contains('other') && !wasOn;
-          free.classList.toggle('open', isOther);
-          if (isOther) { free.querySelector('textarea').focus(); }
-          countAnswered();
-          // If a facet chip is answered and we have a live gate, resolve it via API.
-          if (!wasOn && !chip.classList.contains('other') && _rid) {
-            var facetSeq = parseInt(facet.getAttribute('data-facet'), 10);
-            apiPost('/api/gate/read', { request_id: _rid }).then(function (g) {
-              var f = g.facets[facetSeq - 1];
-              if (f) {
-                var val = chip.textContent.trim();
-                // Match offered option labels to find the value
-                var matched = (f.options || []).find(function (o) {
-                  return o.label === val || val.startsWith(o.label);
-                });
-                if (matched) {
-                  apiPost('/api/gate/resolve', {
-                    facet_id: f.id,
-                    value: matched.value,
-                    kind: 'option',
-                  }).then(syncProgress).catch(function () {});
-                }
-              }
-            }).catch(function () {});
-          }
-        });
-      });
-    });
-
-    function countAnswered() {
-      var n = 0;
-      document.querySelectorAll('.facet').forEach(function (f) {
-        if (f.querySelector('.chip[aria-pressed="true"]')) { n++; }
-      });
-      document.getElementById('pcount').textContent = n;
-    }
-
-    // Static next-step chips: edit-before-send into composer.
+    // Static next-step chips: edit-before-send into composer (no-JS / no-API fallback).
     document.querySelectorAll('#static-stack .step').forEach(function (step) {
       step.addEventListener('click', function () {
         var input = document.querySelector('.own input');
         if (input) {
-          input.value = step.querySelector('.step-body').childNodes[0].textContent.trim();
+          var body = step.querySelector('.step-body');
+          if (body) input.value = body.childNodes[0].textContent.trim();
           input.focus();
         }
       });
@@ -834,7 +940,6 @@
     // ── init ────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', function () {
       initGate();
-
       var buildBtn = document.getElementById('btn-build-api');
       if (buildBtn) { buildBtn.addEventListener('click', buildNextSteps); }
     });

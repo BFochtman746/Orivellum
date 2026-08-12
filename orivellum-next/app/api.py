@@ -40,6 +40,23 @@ ROOT = Path(__file__).resolve().parent.parent
 POLICY = load_policy(ROOT / "policy" / "next_policy.yaml")
 DBPATH = ROOT / "next.db"
 
+# Path to the main Orivellum DB (may not exist in dev/standalone mode).
+# Override by setting ORIVELLUM_DB_PATH in the environment.
+import os as _os
+_ENV_ORIVELLUM = _os.environ.get("ORIVELLUM_DB_PATH", "")
+_ORIVELLUM_DB_CANDIDATES = [
+    Path(_ENV_ORIVELLUM) if _ENV_ORIVELLUM else None,
+    ROOT.parent / "data" / "orivellum.db",
+]
+
+
+def _orivellum_db_path() -> Path | None:
+    """Return the first existing Orivellum DB path, or None if not found."""
+    for p in _ORIVELLUM_DB_CANDIDATES:
+        if p and p.exists():
+            return p
+    return None
+
 
 def _db() -> DB:
     return DB(DBPATH)
@@ -108,17 +125,23 @@ def h_gate_needed(body):
 
 def h_next_build(body):
     db = _db()
+    # Open the main Orivellum DB for probes tagged "db": "orivellum", if it exists.
+    orivellum_path = _orivellum_db_path()
+    orivellum_db = DB(orivellum_path) if orivellum_path else None
     try:
         probes = body.get("probes")
         if probes is None:
             probes = EXAMPLE_PROBES
         res = build_set(db, body["thread_id"], body.get("from_message", "m"),
-                        body.get("answer", ""), probes, POLICY)
+                        body.get("answer", ""), probes, POLICY,
+                        orivellum_db=orivellum_db)
         if res.get("set_id"):
             res["set"] = read_set(db, res["set_id"])
         return res
     finally:
         db.close()
+        if orivellum_db:
+            orivellum_db.close()
 
 
 def h_next_latest(body):
