@@ -85,7 +85,7 @@ Orivellum auto-detects whether the URL is ComfyUI (port 8188) and uses the right
 ### Is Orivellum up?
 
 ```
-http://<windows-ip>:8080/api/system/health
+http://<windows-ip>:8080/api/healthz
 ```
 
 Should return `{"status": "ok", ...}`
@@ -170,27 +170,19 @@ Attach images in chat via the 📷 button in the message bar.
 
 ## Text to Speech
 
-Orivellum has three TTS engines in fallback order:
-
-1. **Kokoro ONNX** — high quality, auto-downloads on first use (~500 MB)
-2. **espeak-ng + ffmpeg** — lightweight, always available on Linux/WSL
-3. **Your AI server** — if it supports OpenAI TTS API
+Orivellum uses **Kokoro ONNX** for TTS — high-quality neural voices that
+auto-download on first use (~500 MB). It runs natively on Windows via the
+Python package; no WSL or extra installs needed.
 
 Use the **Read Aloud** button on any Library document to hear it read back.
 Use the 🔊 button in chat for voice replies.
 
-### Making TTS work on Windows
-
-Orivellum runs on Windows but TTS uses Linux tools (espeak-ng). Two options:
-
-**Option A — Run Orivellum inside WSL** (recommended for full TTS):
-```bash
-# In Ubuntu, from Orivellum folder:
-uv run python -m orivellum.api.main
-```
-
-**Option B — Install espeak-ng on Windows** and add it to PATH:
-Download from https://github.com/espeak-ng/espeak-ng/releases
+> **Note:** espeak-ng is listed as an optional install by `setup-windows.ps1`
+> but is **not used for audio output** — Orivellum's TTS pipeline rejects
+> robot-voice synthesis and relies on Kokoro. espeak-ng may be present for
+> legacy text-analysis tooling only. If TTS is silent, check that Kokoro
+> downloaded correctly: look for a `kokoro/` folder inside `data/` and ensure
+> ~500 MB of disk was written on first use.
 
 ---
 
@@ -218,7 +210,7 @@ make localhost:8188 work reliably without changing the System Settings URL.
 |---|---|
 | Check WSL IP | `wsl -d Ubuntu-24.04 -- hostname -I` |
 | Check ComfyUI | `curl http://172.20.205.199:8188/system_stats` |
-| Check Orivellum | `curl http://localhost:8080/api/system/health` |
+| Check Orivellum | `curl http://localhost:8080/api/healthz` |
 | View boot log | `notepad C:\OrivellumAppliance\logs\boot-*.log` |
 | Restart everything | `Start-ScheduledTask -TaskName OrivellumAppliance` |
 | Restart Orivellum only | `cd C:\Orivellum-main; .\start.ps1` |

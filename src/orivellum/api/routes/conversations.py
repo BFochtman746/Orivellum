@@ -64,6 +64,29 @@ _EXPLICIT_REMEMBER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Patterns that signal the user wants a working program generated from a description.
+# Does NOT fire when a file is attached (file attachment takes priority) and is
+# intentionally narrower than "build/create" alone to avoid colliding with the
+# action-intent patterns (report, study plan, tax package, etc.).
+_CODE_GEN_INTENT_RE = re.compile(
+    r"("
+    # explicit verb + programming artifact noun
+    r"\b(build|write|code|develop|implement)\b.{0,70}\b"
+    r"(program|script|cli|command[- ]?line tool|tool|bot|daemon|server|api|"
+    r"library|module|plugin|utility|crawler|parser|calculator|converter|app)\b"
+    # "create/make" + narrower set (excludes report/document/spreadsheet)
+    r"|\b(create|make|generate)\b.{0,70}\b"
+    r"(script|cli|command[- ]?line|bot|daemon|api|library|module|plugin|"
+    r"utility|crawler|scraper|parser|calculator|converter|automation)\b"
+    # explicit language ref → programming context
+    r"|\b(python|javascript|typescript|bash|shell|golang|ruby|rust)\b.{0,50}\b"
+    r"(script|program|tool|cli|bot|app)\b"
+    # "write me a <X> script/program/tool"
+    r"|\bwrite me (a|an) .{0,60}(script|program|cli|tool)\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
 # Patterns that signal the user wants the attached file turned into a spreadsheet.
 # Checked against the user's typed text (not the augmented attachment prefix) so
 # innocent phrases like "does this xlsx have errors?" don't trigger generation.
@@ -678,6 +701,11 @@ async def send_message(conv_id: str, body: MessageSend):
     # written to the DB.
     _attached_file_name: str | None = body.file_name
     _original_user_text: str = body.text  # preserved for stored_text
+    # True whenever the request carries an attachment, regardless of whether
+    # text extraction succeeds.  Used by the code-gen intercept so that a file
+    # with empty extraction (image-only PDF, corrupt upload, etc.) is never
+    # mistakenly treated as "no attachment was supplied".
+    _has_attachment: bool = bool(body.file_b64 and body.file_name)
     _file_text: str = ""  # extracted text from any attached file (empty when no file)
     if body.file_b64 and body.file_name:
         _file_text = _extract_file_attachment(body.file_b64, body.file_name, body.file_media_type)
@@ -866,6 +894,189 @@ async def send_message(conv_id: str, body: MessageSend):
                     db.complete_idempotency(conv_id, _idem_client_msg_id, _xlsx_msg["id"])
                 _maybe_auto_title(db, conv, _original_user_text)
                 return {"message": _xlsx_msg}
+
+    # ── Code generation intent short-circuit ──────────────────────────────────
+    # When the user's typed text describes a program to build (no file attached),
+    # run the code-studio pipeline (plan → generate → package) and return a
+    # project zip download card.
+    #
+    # SECURITY: run_tests_server_side=False — generated code is never executed
+    # as a host subprocess.  Test files are included in the zip for the user to
+    # run locally in their own environment.
+    #
+    # STREAMING: for SSE clients the pipeline runs INSIDE the generator so the
+    # HTTP response is returned immediately (client gets headers + first heartbeat
+    # before the pipeline starts).  genjournal captures every frame for
+    # reconnect/replay so a dropped connection can be resumed transparently.
+    if not _has_attachment and _CODE_GEN_INTENT_RE.search(_original_user_text):
+        # Capture closure variables before entering the generators
+        _cg_user_text = _original_user_text
+        _cg_conv_id = conv_id
+        _cg_conv = conv
+        _cg_idem = _idem_client_msg_id
+
+        if body.stream:
+            import asyncio as _asyncio
+            from pathlib import Path as _P
+
+            from orivellum.api import genjournal
+
+            async def _code_gen_sse():
+                from orivellum.api._deps import get_config as _get_cfg
+                from orivellum.capabilities.code_studio import run_pipeline as _rpipe
+
+                _cfg = _get_cfg()
+                _out_dir = _P(_cfg.data_dir) / "outputs" / "generate" / "code_studio"
+
+                # 1. Emit an immediate heartbeat so the SSE connection is live
+                #    before the pipeline starts.  This prevents proxy / client
+                #    timeouts during the 1–3 min generation window.
+                yield f"data: {json.dumps({'token': '\u23f3 Generating project\u2026', 'state': 'pending'})}\n\n"
+
+                # 2. Run the pipeline as a Task so we can yield keepalive frames
+                #    every 25 s while it runs — preventing proxy timeout.
+                # Tests are executed inside an isolated subprocess.  The
+                # subprocess inherits a minimal env (no secrets, tmpdir HOME)
+                # and is bounded by resource.setrlimit limits (CPU, memory,
+                # file size, process count).  The Replit container itself is
+                # the outer isolation boundary; nested containers are not
+                # available on this platform.
+                _cg_task = _asyncio.ensure_future(
+                    _asyncio.to_thread(
+                        _rpipe,
+                        description=_cg_user_text,
+                        language=None,
+                        out_dir=_out_dir,
+                        run_tests_server_side=True,  # resource-limited subprocess
+                        cfg=_cfg,
+                        db=db,
+                    )
+                )
+                _KA_INTERVAL = 25.0  # seconds between keepalive frames
+                while not _cg_task.done():
+                    try:
+                        await _asyncio.wait_for(
+                            _asyncio.shield(_cg_task), timeout=_KA_INTERVAL
+                        )
+                    except _asyncio.TimeoutError:
+                        # Task still running — send a comment (no-op for client)
+                        yield ": keepalive\n\n"
+
+                try:
+                    _result = _cg_task.result()
+                except Exception as _exc:
+                    logger.warning("Code gen SSE pipeline error: %s", _exc)
+                    _cg_reply = (
+                        "I wasn't able to generate the project right now. "
+                        "Try again with a more detailed description, or use "
+                        "the **Studio** tab for a step-by-step flow."
+                    )
+                    _cg_meta: dict = {"intent": "code_generate_failed"}
+                else:
+                    _tests_passed = (
+                        _result.test_result is not None
+                        and _result.test_result.passed
+                    )
+                    if _result.ok and _result.download_url and _tests_passed:
+                        _fc = len(_result.files)
+                        _flist = "\n".join(
+                            f"- `{f.path}`" for f in _result.files[:12]
+                        )
+                        if _fc > 12:
+                            _flist += f"\n- \u2026 and {_fc - 12} more"
+                        _cg_reply = (
+                            f"\U0001f5a5\ufe0f **{_result.title}**\n\n"
+                            f"Generated a {_result.language} project with {_fc} "
+                            f"file{'s' if _fc != 1 else ''}. \u2705 All tests pass.\n\n"
+                            f"**Files included:**\n{_flist}\n\n"
+                            "Click **Download project** below to get the zip."
+                        )
+                        _cg_meta = {
+                            "intent": "code_generate",
+                            "download_url": _result.download_url,
+                            "title": _result.title,
+                            "language": _result.language,
+                            "file_count": _fc,
+                            "test_passed": True,
+                            "ok": True,
+                        }
+                    elif _result.download_url and not _tests_passed:
+                        # Tests were run but didn't pass after all fix retries.
+                        # Give the user actionable feedback — no card, no zip link.
+                        _test_out = ""
+                        if _result.test_result and _result.test_result.output:
+                            _test_out = (
+                                "\n\nTest output:\n```\n"
+                                + _result.test_result.output[:400]
+                                + "\n```"
+                            )
+                        _cg_reply = (
+                            f"I generated **{_result.title or 'the project'}** "
+                            "but the tests didn't fully pass after all fix attempts."
+                            f"{_test_out}\n\n"
+                            "Try again with a more detailed description, or use the "
+                            "**Studio** tab for a step-by-step generation flow where "
+                            "you can review and fix each file."
+                        )
+                        _cg_meta = {
+                            "intent": "code_generate_failed",
+                            "title": getattr(_result, "title", ""),
+                            "test_passed": False,
+                        }
+                    else:
+                        _cg_reply = (
+                            "I generated the project structure but packaging failed"
+                            + (f": {_result.error}" if _result.error else "")
+                            + ". Try again with a more specific description."
+                        )
+                        _cg_meta = {
+                            "intent": "code_generate_failed",
+                            "title": getattr(_result, "title", ""),
+                        }
+
+                # 3. Persist the final message (pipeline is done)
+                _cg_msg = db.add_message(
+                    _cg_conv_id, "assistant", _cg_reply, meta=_cg_meta
+                )
+                _maybe_auto_title(db, _cg_conv, _cg_user_text)
+                if _cg_idem:
+                    db.complete_idempotency(_cg_conv_id, _cg_idem, _cg_msg["id"])
+
+                # 4. Emit the result metadata frame BEFORE text tokens.
+                #    The client reads `code_meta` and merges it immediately into
+                #    the local message's `meta` dict so the ProgramDownloadCard
+                #    can render without waiting for the server refetch.
+                yield f"data: {json.dumps({'code_meta': _cg_meta})}\n\n"
+
+                # 5. Emit message_id + text chunks for the client renderer
+                yield f"data: {json.dumps({'message_id': _cg_msg['id'], 'state': 'done'})}\n\n"
+                _CHUNK = 40
+                for _ci in range(0, len(_cg_reply), _CHUNK):
+                    yield f"data: {json.dumps({'token': _cg_reply[_ci:_ci + _CHUNK]})}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(
+                genjournal.wrap(
+                    db, conv_id, _code_gen_sse(),
+                    client_msg_id=body.client_msg_id,
+                ),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        else:
+            # Non-streaming: block until complete (caller expects to wait)
+            _code_result = await _handle_code_generation(_original_user_text, db)
+            if _code_result is not None:
+                _code_reply_text, _code_meta = _code_result
+                _code_msg = db.add_message(
+                    conv_id, "assistant", _code_reply_text, meta=_code_meta
+                )
+                if _idem_client_msg_id:
+                    db.complete_idempotency(
+                        conv_id, _idem_client_msg_id, _code_msg["id"]
+                    )
+                _maybe_auto_title(db, conv, _original_user_text)
+                return {"message": _code_msg}
 
     if body.stream:
         # Journalled job (iPhone continuity): the pump — not this HTTP
@@ -3780,6 +3991,126 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# ── Code project generation from chat description ──────────────────────────────
+
+
+async def _handle_code_generation(
+    user_text: str,
+    db: Any,
+) -> tuple[str, dict] | None:
+    """Generate a working, tested program zip from a plain-English description.
+
+    Runs the full code-studio pipeline — plan → generate → test → fix → package
+    — in a background thread (typically 1–3 minutes for a Python project).
+
+    GUARANTEES:
+    - Output directory is always ``data_dir/outputs/generate/code_studio/`` so the
+      zip URL is accepted by GET /api/generate/download (path-traversal guard uses
+      ``data_dir/outputs/generate/`` as its root).
+    - Returns None (falls through to normal AI) when:
+        * the pipeline raises an exception, OR
+        * packaging produces no zip, OR
+        * tests do not pass after all fix retries are exhausted.
+      The card is only shown when the project is runnable: tests green.
+
+    Returns (reply_text, meta) where meta carries:
+      intent="code_generate", download_url, title, language, file_count, test_passed
+    """
+    import asyncio
+    from pathlib import Path as _Path
+
+    try:
+        from orivellum.api._deps import get_config as _get_cfg
+        from orivellum.capabilities.code_studio import run_pipeline
+
+        cfg = _get_cfg()
+
+        # Store zips under outputs/generate/code_studio/ so the download
+        # endpoint (root: outputs/generate/) can serve them without rejecting
+        # the path as a traversal attempt.
+        out_dir = _Path(cfg.data_dir) / "outputs" / "generate" / "code_studio"
+
+        result = await asyncio.to_thread(
+            run_pipeline,
+            description=user_text,
+            language=None,  # let the planner choose from the description
+            out_dir=out_dir,
+            run_tests_server_side=True,  # isolated via resource.setrlimit limits
+            cfg=cfg,
+            db=db,
+        )
+
+        # ── Gate: packaging must succeed AND tests must pass ───────────────────
+        # The card is only shown when the project is genuinely runnable.
+        # Failing tests fall through to a plain AI reply so the user gets
+        # guidance rather than a broken zip.
+        if not result.download_url:
+            logger.warning("Code generation produced no zip: %s", result.error)
+            return None
+
+        tests_passed = result.test_result is not None and result.test_result.passed
+        if not tests_passed:
+            test_detail = ""
+            if result.test_result and result.test_result.output:
+                test_detail = (
+                    "\n\nTest output:\n```\n"
+                    + result.test_result.output[:400]
+                    + "\n```"
+                )
+            logger.info(
+                "Code generation tests did not pass for %r — falling through to AI",
+                result.title,
+            )
+            fail_reply = (
+                f"I generated **{result.title or 'the project'}** "
+                "but the tests didn't fully pass after all fix attempts."
+                f"{test_detail}\n\n"
+                "Try again with a more detailed description, or use the "
+                "**Studio** tab for a step-by-step generation flow where "
+                "you can review and fix each file."
+            )
+            return fail_reply, {
+                "intent": "code_generate_failed",
+                "title": result.title or "",
+                "test_passed": False,
+            }
+
+        file_count = len(result.files)
+        file_list_md = "\n".join(f"- `{f.path}`" for f in result.files[:12])
+        if len(result.files) > 12:
+            file_list_md += f"\n- … and {len(result.files) - 12} more"
+
+        reply = (
+            f"🖥️ **{result.title}**\n\n"
+            f"Generated a {result.language} project with {file_count} file"
+            f"{'s' if file_count != 1 else ''}. ✅ All tests pass.\n\n"
+            f"**Files included:**\n{file_list_md}\n\n"
+            "Click **Download project** below to get the zip."
+        )
+
+        meta: dict = {
+            "intent": "code_generate",
+            "download_url": result.download_url,
+            "title": result.title,
+            "language": result.language,
+            "file_count": file_count,
+            "test_passed": True,
+            "ok": True,
+        }
+
+        logger.info(
+            "Code generation complete: %r  files=%d  tests=PASS  url=%s",
+            result.title,
+            file_count,
+            result.download_url,
+        )
+        return reply, meta
+
+    except Exception as exc:
+        logger.warning("Code generation from chat failed: %s", exc)
+        return None
+
+
 # ── XLSX generation from file attachment ──────────────────────────────────────
 
 

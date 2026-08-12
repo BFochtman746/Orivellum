@@ -50,7 +50,7 @@ import {
 import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
   Trash2, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
-  AlertTriangle, FolderOpen, FileText, FileSpreadsheet, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
+  AlertTriangle, FolderOpen, FileText, FileSpreadsheet, Code2, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
   Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon, Square,
   Sparkles, History, RefreshCw, ExternalLink, Mail, Volume2, CloudOff,
 } from "lucide-react";
@@ -128,6 +128,9 @@ const THINKING_PREFIX = "\x02THINKING\x02";
 /** Sentinel carrying the server-side generation job id (first SSE frame) —
  *  persisted so a lost connection can be recovered by journal replay. */
 const JOBID_PREFIX = "\x02JOBID\x02";
+/** Sentinel carrying the full code-generation result metadata so the card
+ *  renders immediately — without waiting for the server-side refetch. */
+const CODE_META_PREFIX = "\x02CODEMETA\x02";
 
 // ─── Voice-mode sentence chunking ─────────────────────────────────────────────
 // While a reply streams in voice mode, completed sentences are flushed to the
@@ -549,6 +552,103 @@ function ExcelDownloadCard({
   );
 }
 
+// ─── Program download card ────────────────────────────────────────────────────
+
+/**
+ * Shown inside an assistant message when the AI generated a runnable program zip
+ * (intent="code_generate").  Displays the project title, language badge, file
+ * count, test status, and a Download button.
+ */
+function ProgramDownloadCard({
+  downloadUrl,
+  title,
+  language,
+  fileCount,
+  testPassed,
+}: {
+  downloadUrl: string;
+  title: string;
+  language?: string;
+  fileCount?: number;
+  testPassed?: boolean | null;
+}) {
+  const handleDownload = () => {
+    const a = document.createElement("a");
+    a.href = downloadUrl.startsWith("/api/")
+      ? `${API_BASE}/${downloadUrl.replace(/^\/api\//, "")}`
+      : downloadUrl;
+    a.download = `${title ?? "project"}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  // Per-language accent colours
+  const LANG_COLORS: Record<string, string> = {
+    python:     "#3b82f6",
+    javascript: "#f59e0b",
+    typescript: "#6366f1",
+    bash:       "#10b981",
+    shell:      "#10b981",
+    golang:     "#06b6d4",
+    ruby:       "#ef4444",
+    rust:       "#f97316",
+  };
+  const langColor = LANG_COLORS[(language ?? "").toLowerCase()] ?? "var(--gd-accent)";
+
+  return (
+    <div
+      className="mt-3 rounded-xl border overflow-hidden"
+      style={{ borderColor: "color-mix(in srgb, var(--gd-accent) 20%, transparent)" }}
+    >
+      {/* Header row */}
+      <div
+        className="flex items-center gap-3 px-4 py-3"
+        style={{ background: "color-mix(in srgb, var(--gd-accent) 7%, transparent)" }}
+      >
+        <Code2 className="w-4 h-4 shrink-0" style={{ color: "var(--gd-accent)" }} />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold truncate">{title || "Generated project"}</p>
+          <div className="flex flex-wrap items-center gap-2 mt-0.5">
+            {language && (
+              <span
+                className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                style={{ background: `${langColor}25`, color: langColor }}
+              >
+                {language}
+              </span>
+            )}
+            {fileCount !== undefined && (
+              <span className="text-[10px] font-mono text-muted-foreground">
+                {fileCount} file{fileCount !== 1 ? "s" : ""}
+              </span>
+            )}
+            {testPassed === true && (
+              <span className="text-[10px] font-mono" style={{ color: "var(--green-raw, #16a34a)" }}>
+                ✅ tests pass
+              </span>
+            )}
+            {testPassed === false && (
+              <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400">
+                ⚠️ tests partial
+              </span>
+            )}
+          </div>
+        </div>
+        <Button
+          size="sm"
+          onClick={handleDownload}
+          className="shrink-0 gap-1.5 h-8"
+          style={{ background: "var(--gd-accent)", color: "#fff", border: "none" }}
+        >
+          <Download className="w-3.5 h-3.5" />
+          Download
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Action confirmation card ─────────────────────────────────────────────────
 
 /**
@@ -895,11 +995,18 @@ async function* streamChat(
         if (parsed.sources) {
           yield `${SOURCES_PREFIX}${JSON.stringify(parsed.sources)}${SOURCES_PREFIX}`;
         }
+        // Code-generation result metadata — carries download_url, title, language,
+        // file_count so the ProgramDownloadCard can render without waiting for the
+        // server-side conversation refetch.
+        if (parsed.code_meta) {
+          yield `${CODE_META_PREFIX}${JSON.stringify(parsed.code_meta)}${CODE_META_PREFIX}`;
+        }
         // Thinking/reasoning tokens from <think> blocks or reasoning_content
         if (parsed.thinking) yield `${THINKING_PREFIX}${parsed.thinking as string}`;
         // Stream stalled — backend already persisted meta.incomplete + meta.cut_short;
         // yield a sentinel so the caller can mark the bubble incomplete immediately.
         if (parsed.timeout) { yield TIMEOUT_SENTINEL; }
+        // Keepalive SSE comments from the server have no `token` field; skip.
         if (parsed.token) yield parsed.token as string;
       } catch { /* ignore */ }
     }
@@ -2161,6 +2268,20 @@ export default function Chat() {
             ));
             continue;
           }
+          // Code-generation metadata sentinel — merge into local message meta so
+          // the ProgramDownloadCard condition (msg.meta?.intent + msg.meta?.download_url)
+          // is satisfied immediately when streaming ends, without waiting for refetch.
+          if (token.startsWith(CODE_META_PREFIX) && token.endsWith(CODE_META_PREFIX) && token.length > CODE_META_PREFIX.length * 2) {
+            try {
+              const codeMeta = JSON.parse(token.slice(CODE_META_PREFIX.length, -CODE_META_PREFIX.length)) as Record<string, unknown>;
+              setLocalMessages((prev) => prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, meta: { ...(m.meta ?? {}), ...codeMeta } }
+                  : m
+              ));
+            } catch { /* malformed — ignore */ }
+            continue;
+          }
           if (token.startsWith(THINKING_PREFIX)) {
             thinkingAccRef.current += token.slice(THINKING_PREFIX.length);
           } else {
@@ -3065,6 +3186,16 @@ export default function Chat() {
                               downloadUrl={msg.meta.download_url as string}
                               filename={msg.meta.filename as string ?? "workbook.xlsx"}
                               title={msg.meta.title as string | undefined}
+                            />
+                          )}
+                          {/* Program download card — shown when AI generated a runnable project zip */}
+                          {!msg.streaming && msg.meta?.intent === "code_generate" && msg.meta?.download_url && (
+                            <ProgramDownloadCard
+                              downloadUrl={msg.meta.download_url as string}
+                              title={(msg.meta.title as string) ?? "Generated project"}
+                              language={msg.meta.language as string | undefined}
+                              fileCount={msg.meta.file_count as number | undefined}
+                              testPassed={msg.meta.test_passed as boolean | null | undefined}
                             />
                           )}
                           {/* Action confirmation card — shown when the AI detected an action intent */}

@@ -219,7 +219,7 @@ if ((Test-Cmd espeak-ng) -or (Test-Path $espeakExe)) {
     Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$espeakMsi`" /quiet /norestart" -Wait
     Add-UserPath "C:\Program Files\eSpeak NG"
     Refresh-Path
-    Write-Ok "espeak-ng installed  -  Text-to-speech enabled"
+    Write-Ok "espeak-ng installed (used for legacy text analysis; TTS audio handled by Kokoro ONNX)"
   } catch {
     Write-Warn "espeak-ng install failed. TTS will be disabled. Manual install: https://github.com/espeak-ng/espeak-ng/releases"
   }

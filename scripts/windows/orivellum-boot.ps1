@@ -119,8 +119,42 @@ if (Test-Path (Join-Path $OrivellumPath ".git")) {
     Log "Updating Orivellum from GitHub..."
     try {
         Push-Location $OrivellumPath
+
+        $before = git rev-parse HEAD 2>&1
         git fetch origin main 2>&1 | ForEach-Object { Log "git: $_" }
         git merge --ff-only origin/main 2>&1 | ForEach-Object { Log "git: $_" }
+        $after = git rev-parse HEAD 2>&1
+
+        if ($before -ne $after) {
+            Log "Code updated ($before -> $after). Re-syncing dependencies..."
+
+            # Re-sync Python deps in case pyproject.toml changed
+            $uvExe = if (Get-Command uv -ErrorAction SilentlyContinue) { "uv" }
+                     elseif (Test-Path "$env:USERPROFILE\.local\bin\uv.exe") { "$env:USERPROFILE\.local\bin\uv.exe" }
+                     elseif (Test-Path "$env:APPDATA\uv\bin\uv.exe") { "$env:APPDATA\uv\bin\uv.exe" }
+                     else { $null }
+            if ($uvExe) {
+                & $uvExe sync --python 3.12 2>&1 | ForEach-Object { Log "uv: $_" }
+                Log "Python dependencies synced."
+            } else {
+                Log "WARNING: uv not found -- Python dependencies NOT synced. Run setup-windows.ps1 if the app fails to start."
+            }
+
+            # Rebuild the production UI bundle in case frontend changed
+            $pnpmExe = if (Get-Command pnpm -ErrorAction SilentlyContinue) { "pnpm" }
+                       elseif (Test-Path "$env:LOCALAPPDATA\pnpm\pnpm.exe") { "$env:LOCALAPPDATA\pnpm\pnpm.exe" }
+                       elseif (Test-Path "$env:LOCALAPPDATA\pnpm\pnpm.cmd") { "$env:LOCALAPPDATA\pnpm\pnpm.cmd" }
+                       else { $null }
+            if ($pnpmExe) {
+                & $pnpmExe install --frozen-lockfile 2>&1 | ForEach-Object { Log "pnpm: $_" }
+                Log "Node dependencies synced. start.ps1 will rebuild the UI bundle on next launch."
+            } else {
+                Log "WARNING: pnpm not found -- Node dependencies NOT synced. Run setup-windows.ps1 if the UI fails to load."
+            }
+        } else {
+            Log "Already up to date (no merge)."
+        }
+
         Pop-Location
     } catch {
         Log "git update failed (non-fatal): $_"

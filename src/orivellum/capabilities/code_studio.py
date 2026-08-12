@@ -421,6 +421,9 @@ def run_tests(
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONPATH": tmpdir,
+            # Explicitly block outbound HTTP proxies and D-Bus
+            "no_proxy": "*",
+            "NO_PROXY": "*",
         }
         # Python needs its home dir for stdlib
         for key in ("PYTHONHOME", "VIRTUAL_ENV"):
@@ -428,6 +431,30 @@ def run_tests(
                 env[key] = os.environ[key]
 
         cmd = lang_meta["test_cmd"]
+
+        def _resource_preexec(cpu_limit: int) -> None:
+            """Apply hard resource limits inside the generated-code subprocess.
+
+            Limits enforced (Linux/Mac only; no-op where unavailable):
+            - RLIMIT_CPU:   CPU-time ceiling = timeout + 10 s (kills spin-loops)
+            - RLIMIT_AS:    Virtual-memory cap = 512 MB (kills memory bombs)
+            - RLIMIT_FSIZE: Max file size = 10 MB (kills disk bombs)
+            - RLIMIT_NPROC: Max processes = 32 (kills fork bombs)
+
+            Together with the stripped environment and tmpdir isolation these
+            limits constitute the isolation boundary for LLM-generated test code.
+            They do not replace a true container sandbox but are sufficient to
+            prevent runaway resource consumption on the host.
+            """
+            try:
+                import resource as _r
+
+                _r.setrlimit(_r.RLIMIT_CPU,   (cpu_limit + 10, cpu_limit + 10))
+                _r.setrlimit(_r.RLIMIT_AS,    (512 * 1024 * 1024, 512 * 1024 * 1024))
+                _r.setrlimit(_r.RLIMIT_FSIZE, (10  * 1024 * 1024, 10  * 1024 * 1024))
+                _r.setrlimit(_r.RLIMIT_NPROC, (32, 32))
+            except Exception:
+                pass  # Windows / restricted environments — best-effort
 
         try:
             proc = subprocess.run(
@@ -437,6 +464,7 @@ def run_tests(
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                preexec_fn=lambda: _resource_preexec(timeout),
             )
             output = (proc.stdout or "") + (proc.stderr or "")
             passed = proc.returncode == 0
@@ -453,6 +481,7 @@ def run_tests(
                     capture_output=True,
                     text=True,
                     timeout=timeout,
+                    preexec_fn=lambda: _resource_preexec(timeout),
                 )
                 output = (proc2.stdout or "") + (proc2.stderr or "")
                 passed = proc2.returncode == 0
@@ -698,13 +727,22 @@ def run_pipeline(
     language: str | None = None,
     out_dir: Path | None = None,
     max_fix_retries: int = 2,
+    run_tests_server_side: bool = True,
     cfg: Any = None,
     db: Any = None,
 ) -> StudioResult:
-    """Run the complete plan → generate → test → fix → package pipeline.
+    """Run the complete plan → generate → (optionally test →fix →) package pipeline.
+
+    Args:
+        run_tests_server_side: When True (default, Studio UI path), stages 3 & 4
+            execute the generated code in a subprocess to verify correctness.
+            When False (chat path), stages 3 & 4 are skipped.  The project is
+            packaged immediately after generation; test files are included in the
+            zip so the user can run them locally, but no host subprocess is spawned.
+            Set to False when caller cannot guarantee a sandboxed environment.
 
     Returns a StudioResult with ok=True and a download zip on success, or
-    ok=False with an error message on failure.  Tests must pass for ok=True.
+    ok=False with an error message on failure.
     """
     if not description.strip():
         return StudioResult(ok=False, error="Description must not be empty")
@@ -728,15 +766,17 @@ def run_pipeline(
         logger.exception("generate_files failed")
         return StudioResult(ok=False, error=f"Code generation failed: {exc}", plan=plan)
 
-    # ── Stage 3: Run tests ────────────────────────────────────────────────────
-    test_result = run_tests(files, plan.language)
-
-    # ── Stage 4: Fix loop if tests fail ──────────────────────────────────────
-    if not test_result.passed:
-        files, test_result = fix_and_retry(
-            files, test_result, plan, description,
-            max_retries=max_fix_retries, cfg=cfg, db=db,
-        )
+    # ── Stages 3 & 4: Run tests + fix loop (only when server-side allowed) ────
+    if run_tests_server_side:
+        test_result = run_tests(files, plan.language)
+        if not test_result.passed:
+            files, test_result = fix_and_retry(
+                files, test_result, plan, description,
+                max_retries=max_fix_retries, cfg=cfg, db=db,
+            )
+    else:
+        # Tests skipped — caller is responsible for running them in their own env.
+        test_result = None
 
     # ── Stage 5: Package ─────────────────────────────────────────────────────
     try:
@@ -744,7 +784,7 @@ def run_pipeline(
     except Exception as exc:
         logger.exception("package_project failed")
         return StudioResult(
-            ok=test_result.passed,  # still give partial info
+            ok=False,
             title=plan.title,
             language=plan.language,
             files=files,
