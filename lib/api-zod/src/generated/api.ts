@@ -1414,8 +1414,55 @@ export const GetWorkGapsQueryParams = zod.object({
 
 export const GetWorkGapsResponse = zod.object({
   "work_id": zod.string().optional(),
-  "coverage_pct": zod.int().optional().describe('0-100 — chapters with sufficient coverage'),
-  "total_chapters": zod.int().optional(),
+  "coverage": zod.object({
+  "method": zod.string().optional().describe('chao1_good_turing'),
+  "framing": zod.string().optional().describe('upper_bound'),
+  "scope_note": zod.string().optional(),
+  "overall": zod.object({
+  "n": zod.int().optional().describe('total mentions'),
+  "s_obs": zod.int().optional().describe('distinct items observed'),
+  "f1": zod.int().optional().describe('singletons'),
+  "f2": zod.int().optional().describe('doubletons'),
+  "s_est": zod.number().nullish().describe('Chao1 estimated richness (lower bound)'),
+  "s_est_low": zod.number().nullish(),
+  "s_est_high": zod.number().nullish(),
+  "unseen_est": zod.number().nullish().describe('estimated items NOT yet seen'),
+  "unseen_low": zod.number().nullish(),
+  "unseen_high": zod.number().nullish(),
+  "good_turing": zod.number().nullish().describe('sample coverage C = 1 − f1\/n'),
+  "completeness": zod.number().nullish().describe('S_obs\/Ŝ — UPPER bound on coverage'),
+  "completeness_low": zod.number().nullish(),
+  "completeness_high": zod.number().nullish(),
+  "bias_corrected": zod.boolean().optional().describe('true when the f2 = 0 Chao1 form was used'),
+  "band": zod.enum(['under_sampled', 'moderate', 'well_sampled', 'no_data']).optional(),
+  "summary": zod.string().optional().describe('human framing — always \'at most\' + unseen count')
+}).optional().describe('Unseen-species estimate over mention frequencies. completeness is an upper bound on true coverage (Chao1 is a lower bound on richness); surfaces must use \"at most\" framing and show unseen_est, never a bare percentage.'),
+  "classes": zod.array(zod.object({
+  "n": zod.int().optional().describe('total mentions'),
+  "s_obs": zod.int().optional().describe('distinct items observed'),
+  "f1": zod.int().optional().describe('singletons'),
+  "f2": zod.int().optional().describe('doubletons'),
+  "s_est": zod.number().nullish().describe('Chao1 estimated richness (lower bound)'),
+  "s_est_low": zod.number().nullish(),
+  "s_est_high": zod.number().nullish(),
+  "unseen_est": zod.number().nullish().describe('estimated items NOT yet seen'),
+  "unseen_low": zod.number().nullish(),
+  "unseen_high": zod.number().nullish(),
+  "good_turing": zod.number().nullish().describe('sample coverage C = 1 − f1\/n'),
+  "completeness": zod.number().nullish().describe('S_obs\/Ŝ — UPPER bound on coverage'),
+  "completeness_low": zod.number().nullish(),
+  "completeness_high": zod.number().nullish(),
+  "bias_corrected": zod.boolean().optional().describe('true when the f2 = 0 Chao1 form was used'),
+  "band": zod.enum(['under_sampled', 'moderate', 'well_sampled', 'no_data']).optional(),
+  "summary": zod.string().optional().describe('human framing — always \'at most\' + unseen count')
+}).describe('Unseen-species estimate over mention frequencies. completeness is an upper bound on true coverage (Chao1 is a lower bound on richness); surfaces must use \"at most\" framing and show unseen_est, never a bare percentage.').and(zod.object({
+  "class": zod.string().optional()
+}))).optional(),
+  "under_sampled_classes": zod.array(zod.string()).optional(),
+  "well_sampled_classes": zod.array(zod.string()).optional(),
+  "evaluated_at": zod.string().optional()
+}).nullish(),
+  "total_chapters": zod.int().nullish(),
   "suggested_queries": zod.array(zod.string()).optional(),
   "evaluated_at": zod.string().optional(),
   "gaps": zod.array(zod.object({

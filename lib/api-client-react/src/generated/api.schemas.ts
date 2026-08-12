@@ -474,11 +474,89 @@ export interface GapItem {
   metadata?: GapItemMetadata;
 }
 
+export type CoverageEstimateBand = typeof CoverageEstimateBand[keyof typeof CoverageEstimateBand];
+
+
+export const CoverageEstimateBand = {
+  under_sampled: 'under_sampled',
+  moderate: 'moderate',
+  well_sampled: 'well_sampled',
+  no_data: 'no_data',
+} as const;
+
+/**
+ * Unseen-species estimate over mention frequencies. completeness is an upper bound on true coverage (Chao1 is a lower bound on richness); surfaces must use "at most" framing and show unseen_est, never a bare percentage.
+ */
+export interface CoverageEstimate {
+  /** total mentions */
+  n?: number;
+  /** distinct items observed */
+  s_obs?: number;
+  /** singletons */
+  f1?: number;
+  /** doubletons */
+  f2?: number;
+  /**
+     * Chao1 estimated richness (lower bound)
+     * @nullable
+     */
+  s_est?: number | null;
+  /** @nullable */
+  s_est_low?: number | null;
+  /** @nullable */
+  s_est_high?: number | null;
+  /**
+     * estimated items NOT yet seen
+     * @nullable
+     */
+  unseen_est?: number | null;
+  /** @nullable */
+  unseen_low?: number | null;
+  /** @nullable */
+  unseen_high?: number | null;
+  /**
+     * sample coverage C = 1 − f1/n
+     * @nullable
+     */
+  good_turing?: number | null;
+  /**
+     * S_obs/Ŝ — UPPER bound on coverage
+     * @nullable
+     */
+  completeness?: number | null;
+  /** @nullable */
+  completeness_low?: number | null;
+  /** @nullable */
+  completeness_high?: number | null;
+  /** true when the f2 = 0 Chao1 form was used */
+  bias_corrected?: boolean;
+  band?: CoverageEstimateBand;
+  /** human framing — always 'at most' + unseen count */
+  summary?: string;
+}
+
+export type CoverageClass = CoverageEstimate & {
+  class?: string;
+};
+
+export interface CoverageReport {
+  /** chao1_good_turing */
+  method?: string;
+  /** upper_bound */
+  framing?: string;
+  scope_note?: string;
+  overall?: CoverageEstimate;
+  classes?: CoverageClass[];
+  under_sampled_classes?: string[];
+  well_sampled_classes?: string[];
+  evaluated_at?: string;
+}
+
 export interface GapReport {
   work_id?: string;
-  /** 0-100 — chapters with sufficient coverage */
-  coverage_pct?: number;
-  total_chapters?: number;
+  coverage?: CoverageReport | null;
+  /** @nullable */
+  total_chapters?: number | null;
   suggested_queries?: string[];
   evaluated_at?: string;
   gaps?: GapItem[];

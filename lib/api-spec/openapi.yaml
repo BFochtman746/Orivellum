@@ -4371,13 +4371,69 @@ components:
       type: object
       properties:
         work_id:           { type: string }
-        coverage_pct:      { type: integer, description: "0-100 — chapters with sufficient coverage" }
-        total_chapters:    { type: integer }
+        coverage:
+          # Chao1 + Good–Turing coverage report — an UPPER bound ("at most")
+          # on entity/term coverage with estimated unseen counts. Replaces
+          # the removed self-referential coverage_pct. Nullable: cache rows
+          # written before schema v141 have no report.
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/CoverageReport"
+        total_chapters:    { type: integer, nullable: true }
         suggested_queries: { type: array, items: { type: string } }
         evaluated_at:      { type: string }
         gaps:
           type: array
           items: { $ref: "#/components/schemas/GapItem" }
+
+    CoverageEstimate:
+      type: object
+      description: >-
+        Unseen-species estimate over mention frequencies. completeness is an
+        upper bound on true coverage (Chao1 is a lower bound on richness);
+        surfaces must use "at most" framing and show unseen_est, never a
+        bare percentage.
+      properties:
+        n:                  { type: integer, description: "total mentions" }
+        s_obs:              { type: integer, description: "distinct items observed" }
+        f1:                 { type: integer, description: "singletons" }
+        f2:                 { type: integer, description: "doubletons" }
+        s_est:              { type: number, nullable: true, description: "Chao1 estimated richness (lower bound)" }
+        s_est_low:          { type: number, nullable: true }
+        s_est_high:         { type: number, nullable: true }
+        unseen_est:         { type: number, nullable: true, description: "estimated items NOT yet seen" }
+        unseen_low:         { type: number, nullable: true }
+        unseen_high:        { type: number, nullable: true }
+        good_turing:        { type: number, nullable: true, description: "sample coverage C = 1 − f1/n" }
+        completeness:       { type: number, nullable: true, description: "S_obs/Ŝ — UPPER bound on coverage" }
+        completeness_low:   { type: number, nullable: true }
+        completeness_high:  { type: number, nullable: true }
+        bias_corrected:     { type: boolean, description: "true when the f2 = 0 Chao1 form was used" }
+        band:
+          type: string
+          enum: [under_sampled, moderate, well_sampled, no_data]
+        summary:            { type: string, description: "human framing — always 'at most' + unseen count" }
+
+    CoverageClass:
+      allOf:
+        - $ref: "#/components/schemas/CoverageEstimate"
+        - type: object
+          properties:
+            class: { type: string }
+
+    CoverageReport:
+      type: object
+      properties:
+        method:      { type: string, description: "chao1_good_turing" }
+        framing:     { type: string, description: "upper_bound" }
+        scope_note:  { type: string }
+        overall:     { $ref: "#/components/schemas/CoverageEstimate" }
+        classes:
+          type: array
+          items: { $ref: "#/components/schemas/CoverageClass" }
+        under_sampled_classes: { type: array, items: { type: string } }
+        well_sampled_classes:  { type: array, items: { type: string } }
+        evaluated_at: { type: string }
 
     TopGapItem:
       allOf:

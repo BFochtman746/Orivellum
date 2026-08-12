@@ -304,7 +304,7 @@ export default function WorkIntelligence() {
               : "—"
           }
           sub={
-            gaps?.coverage?.overall?.unseen_est != null && gaps.coverage.overall.unseen_est > 0
+            gaps?.coverage?.overall?.unseen_est != null
               ? `~${Math.round(gaps.coverage.overall.unseen_est)} entities unseen (upper bound)`
               : "entity coverage, upper bound"
           }

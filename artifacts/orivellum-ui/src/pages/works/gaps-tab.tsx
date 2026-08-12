@@ -321,7 +321,7 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
                   >
                     {c.class}
                     {" ≤"}{c.completeness != null ? `${Math.round(c.completeness * 100)}%` : "—"}
-                    {c.unseen_est != null && c.unseen_est > 0 && ` · ~${Math.round(c.unseen_est)} unseen`}
+                    {c.unseen_est != null && ` · ~${Math.round(c.unseen_est)} unseen`}
                     {c.band === "under_sampled" && " · under-sampled"}
                     {c.band === "well_sampled" && " · well-sampled"}
                   </span>
