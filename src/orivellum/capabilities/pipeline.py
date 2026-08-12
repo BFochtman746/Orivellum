@@ -174,6 +174,12 @@ def _explode_zip_into_documents(
                 _child_clf = _classify(basename, kind=kind, source_path=name)
                 _child_tier = _child_clf.tier.value
 
+                from orivellum.capabilities.classify import (
+                    classify_doc_type as _classify_dt,
+                )
+
+                _child_dt = _classify_dt(basename, kind=kind, source_path=name)
+
                 doc = db.create_document(
                     title=title,
                     source=str(file_path),
@@ -189,6 +195,8 @@ def _explode_zip_into_documents(
                     },
                     tier=_child_tier,
                     collection_id=collection_id,
+                    doc_type=_child_dt.doc_type.value,
+                    doc_type_by=f"rule:{_child_dt.rule}",
                 )
                 children.append(doc["id"])
 
@@ -717,8 +725,22 @@ def _process_document_reserved(
         # Step 2: chunk and index
         chunk_and_store(result, doc_id, db)
 
-        # Step 3: harvest knowledge (rule-based, always runs)
-        harvest(result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db)
+        # Step 2.5: doc_type gate — unknown/generated/correspondence documents
+        # are stored, chunked, and searchable but never harvested as knowledge.
+        # Checked here (not just inside harvest) so a refused doc still reaches
+        # readiness "ready" instead of being marked as a pipeline error.
+        from orivellum.capabilities.knowledge_harvest import assert_doc_type_harvestable
+
+        _harvestable = True
+        try:
+            assert_doc_type_harvestable(db, doc_id)
+        except ValueError as _refusal:
+            _harvestable = False
+            logger.info("Doc %s — harvest refused: %s", doc_id, _refusal)
+
+        # Step 3: harvest knowledge (rule-based, always runs for harvestable docs)
+        if _harvestable:
+            harvest(result, doc_id=doc_id, work_id=work_id, doc_title=title, db=db)
 
         # The Work's knowledge just changed (stale items pruned + fresh
         # harvest), so any cached gap/coverage result was computed against a
@@ -906,7 +928,7 @@ def _process_document_reserved(
         # Chapter-structured documents (novels, books with ≥2 extracted chapters)
         # use the fiction-aware per-chapter harvest; unstructured documents fall
         # back to the original page/segment based extraction.
-        if db.get_setting("ai_extraction_enabled", "false").lower() == "true":
+        if _harvestable and db.get_setting("ai_extraction_enabled", "false").lower() == "true":
             if _has_chapters:
                 logger.info(
                     "AI extraction enabled — chapter-aware harvest for doc %s (%d chapters)",

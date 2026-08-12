@@ -244,6 +244,10 @@ def _import_file(
         shutil.copy2(file_path, dest)
 
         kind = _KIND_MAP.get(file_path.suffix.lower(), "file")
+        from orivellum.capabilities.classify import classify_doc_type, classify_object
+
+        _tier = classify_object(file_path.name, kind=kind, source_path=str(file_path))
+        _dt = classify_doc_type(file_path.name, kind=kind, source_path=str(file_path))
         doc = db.create_document(
             source=str(dest.relative_to(lib_root)),
             title=file_path.name,
@@ -252,6 +256,9 @@ def _import_file(
             sha256=sha256,
             work_id=work_id,
             collection_id=collection_id,
+            tier=_tier.tier.value,
+            doc_type=_dt.doc_type.value,
+            doc_type_by=f"rule:{_dt.rule}",
         )
         if collection_id:
             try:

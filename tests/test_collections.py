@@ -288,7 +288,10 @@ class TestBatchDemotionMigration:
     def test_verified_backup_written_before_migration(self, tmp_path: Path) -> None:
         db_path, _, _, db2 = self._run_demotion(tmp_path)
         db2.close()
-        backups = list((tmp_path / "backups").glob("pre-migration-v144-*.db"))
+        # The backup is named after the HIGHEST pending migration version, so
+        # the exact number moves forward as new migrations land — assert the
+        # guarantee (a verified backup exists), not the version label.
+        backups = list((tmp_path / "backups").glob("pre-migration-v*.db"))
         assert backups, "pre-migration backup must exist"
         # The backup itself must be a valid database containing the corpus.
         conn = sqlite3.connect(f"file:{backups[0]}?mode=ro", uri=True)

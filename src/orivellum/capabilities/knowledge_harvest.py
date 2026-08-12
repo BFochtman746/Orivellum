@@ -78,6 +78,30 @@ def _cap_phrases(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+class HarvestRefused(ValueError):
+    """Raised when a document's doc_type refuses knowledge harvest."""
+
+
+def assert_doc_type_harvestable(db: OrivellumDB, doc_id: str) -> None:
+    """Refuse harvest for unknown/generated/correspondence documents.
+
+    A doc_type in HARVEST_REFUSED_DOC_TYPES means "no pipeline may treat
+    this as narrative source" — unclassified residue, machine-produced
+    output, and mail must never seed knowledge.  Legacy docs with NULL
+    doc_type pass (the backfill classifies them; refusing NULL would halt
+    every pre-existing corpus at once).
+    """
+    from orivellum.capabilities.classify import HARVEST_REFUSED_DOC_TYPES
+
+    doc = db.get_document(doc_id)
+    doc_type = (doc or {}).get("doc_type")
+    if doc_type and any(doc_type == t.value for t in HARVEST_REFUSED_DOC_TYPES):
+        raise HarvestRefused(
+            f"Document {doc_id} has doc_type {doc_type!r} — "
+            "knowledge harvest is refused for unknown/generated/correspondence documents."
+        )
+
+
 def harvest(
     result: ExtractionResult, doc_id: str, work_id: str | None, doc_title: str, db: OrivellumDB
 ) -> int:
@@ -87,8 +111,10 @@ def harvest(
 
     Refuses a collection id as *work_id* — a collection is import
     provenance, never a subject, and may never scope a knowledge harvest.
+    Refuses documents whose doc_type is unknown/generated/correspondence.
     """
     db.assert_not_collection(work_id, "scope a knowledge harvest")
+    assert_doc_type_harvestable(db, doc_id)
     created = 0
 
     # 1. Document-level summary node
@@ -389,6 +415,7 @@ def llm_harvest(
     from orivellum.api._deps import get_config  # noqa: PLC0415
 
     db.assert_not_collection(work_id, "scope a knowledge harvest")
+    assert_doc_type_harvestable(db, doc_id)
 
     try:
         cfg = get_config()
@@ -638,6 +665,7 @@ def llm_harvest_by_chapters(
     drops the Work's warm gap/coverage cache — same rule as :func:`llm_harvest`.
     """
     db.assert_not_collection(work_id, "scope a knowledge harvest")
+    assert_doc_type_harvestable(db, doc_id)
     try:
         return _llm_harvest_by_chapters_inner(doc_id, work_id, doc_title, db)
     except BaseException:

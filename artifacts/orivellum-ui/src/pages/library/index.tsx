@@ -82,6 +82,41 @@ function LifecycleBadge({ lifecycle }: { lifecycle?: string }) {
   );
 }
 
+// ─── Doc-type badge — which ontology / pipeline applies ──────────────────────
+
+const DOC_TYPE_CFG: Record<string, { label: string; cls: string }> = {
+  manuscript: { label: "manuscript", cls: "border-primary/30 text-primary" },
+  reference: { label: "reference", cls: "border-border text-muted-foreground" },
+  doctrine: { label: "doctrine", cls: "border-border text-muted-foreground" },
+  test_catalog: { label: "test catalog", cls: "border-border text-muted-foreground" },
+  code: { label: "code", cls: "border-border text-muted-foreground" },
+  workbook: { label: "workbook", cls: "border-border text-muted-foreground" },
+  correspondence: { label: "mail", cls: "border-border text-muted-foreground opacity-70" },
+  generated: { label: "generated", cls: "border-border text-muted-foreground opacity-70" },
+  unknown: { label: "unclassified", cls: "border-dashed border-border text-muted-foreground opacity-70" },
+};
+
+export function DocTypeBadge({ docType, by }: { docType?: string | null; by?: string | null }) {
+  if (!docType) return null;
+  const cfg = DOC_TYPE_CFG[docType];
+  if (!cfg) return null;
+  const provenance = by?.startsWith("rule:")
+    ? `Classified by rule (${by.slice(5)})`
+    : by === "model"
+    ? "Proposed by model"
+    : by === "author"
+    ? "Classified by you"
+    : undefined;
+  return (
+    <span
+      title={provenance}
+      className={`text-[10px] font-mono flex items-center gap-0.5 rounded px-1.5 py-0.5 border ${cfg.cls}`}
+    >
+      {cfg.label}
+    </span>
+  );
+}
+
 // ─── Near-duplicates banner ───────────────────────────────────────────────────
 
 type DupePair = {
@@ -1612,6 +1647,7 @@ export default function Library() {
                                 <Badge variant="secondary" className="font-mono text-[10px] uppercase">{doc.kind ?? "file"}</Badge>
                                 <ReadinessBadge readiness={readiness} />
                                 <LifecycleBadge lifecycle={doc.lifecycle} />
+                                <DocTypeBadge docType={doc.doc_type} by={doc.doc_type_by} />
                                 {listenProgress[doc.id] && (
                                   <ResumeListeningBadge
                                     prog={listenProgress[doc.id]}
@@ -1696,6 +1732,7 @@ export default function Library() {
                           </Badge>
                           <ReadinessBadge readiness={readiness} />
                           <LifecycleBadge lifecycle={doc.lifecycle} />
+                          <DocTypeBadge docType={doc.doc_type} by={doc.doc_type_by} />
                           {listenProgress[doc.id] && (
                             <ResumeListeningBadge
                               prog={listenProgress[doc.id]}

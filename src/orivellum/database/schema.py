@@ -3634,4 +3634,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
          WHERE type = 'work' AND id IN (SELECT id FROM collection)
     """,
     ),
+    # v145 — Document doc_type dimension (THE RE-PROJECTION Phase 3)
+    #
+    # Tier answers "may this become a Work"; doc_type answers "which ontology
+    # and which pipeline apply".  doc_type_by records provenance:
+    # 'rule:<name>' (deterministic), 'model' (LLM proposal), 'author' (human).
+    # pending_reclassify grows proposal columns so tier/doc_type backfill runs
+    # as reviewable proposals ratified in the Review Queue — never a direct
+    # mutation of classification.  Provenance is PER PROPOSED FIELD (a tier
+    # proposal from a rule and a doc_type proposal from the model can share
+    # one row without overwriting each other's origin).
+    (
+        145,
+        "Document doc_type + doc_type_by; pending_reclassify proposal columns",
+        """
+        ALTER TABLE documents ADD COLUMN doc_type TEXT;
+        ALTER TABLE documents ADD COLUMN doc_type_by TEXT;
+        CREATE INDEX IF NOT EXISTS docs_doc_type ON documents(doc_type);
+        ALTER TABLE pending_reclassify ADD COLUMN proposed_tier TEXT;
+        ALTER TABLE pending_reclassify ADD COLUMN proposed_doc_type TEXT;
+        ALTER TABLE pending_reclassify ADD COLUMN proposed_tier_by TEXT;
+        ALTER TABLE pending_reclassify ADD COLUMN proposed_doc_type_by TEXT
+    """,
+    ),
 ]

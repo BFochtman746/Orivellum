@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import PurePosixPath
 
 
@@ -125,6 +125,195 @@ _READABLE_EXT = {
     ".csv",
     ".html",
 }
+
+
+class DocType(StrEnum):
+    """The finer dimension: which ontology and which pipeline apply.
+
+    Tier answers "may this become a Work"; doc_type answers "what may touch
+    this".  test_catalog and reference are both SOURCE — only one of them
+    should ever be harvested as narrative.
+    """
+
+    MANUSCRIPT = "manuscript"  # chapter prose, drafts — may become a Book
+    REFERENCE = "reference"  # handbooks, lexica, commentaries
+    DOCTRINE = "doctrine"  # specs, engine contracts, policies
+    TEST_CATALOG = "test_catalog"  # rp016-test-catalog.json and kin
+    CODE = "code"  # .py, .ts, .tsx, …
+    WORKBOOK = "workbook"  # .xlsx / tabular data
+    CORRESPONDENCE = "correspondence"  # mail, chat exports
+    GENERATED = "generated"  # reports/exports this system produced
+    UNKNOWN = "unknown"  # residue — refuses harvest
+
+
+# The single most protective rule: these doc_types refuse to be harvested.
+# `unknown` alone would have prevented 88,891 knowledge items being extracted
+# from unclassified material.
+HARVEST_REFUSED_DOC_TYPES = frozenset({DocType.UNKNOWN, DocType.GENERATED, DocType.CORRESPONDENCE})
+
+VALID_DOC_TYPES = frozenset(t.value for t in DocType)
+
+# ── doc_type deterministic rule tables ─────────────────────────────────────────
+
+_CODE_EXT = {
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cs",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".swift",
+    ".kt",
+    ".sh",
+    ".bash",
+    ".ps1",
+    ".psm1",
+    ".bat",
+    ".sql",
+    ".css",
+    ".scss",
+    ".vue",
+    ".svelte",
+}
+
+_WORKBOOK_EXT = {".xlsx", ".xls", ".xlsm", ".csv", ".tsv", ".ods"}
+
+_MAIL_EXT = {".eml", ".msg", ".mbox"}
+
+# Filename conventions already in the corpus: rp###-test-catalog, baselines,
+# qualification/regression suites, fixtures.
+_TEST_CATALOG_NAME = re.compile(
+    r"(rp[-_ ]?\d{2,}[-_ ]?test[-_ ]?catalog"
+    r"|test[-_ ]?catalog"
+    r"|test[-_ ]?suite"
+    r"|test[-_ ]?cases?\b"
+    r"|\bqualification\b|\bregression\b|\bfixture\b|\bbaseline\b)",
+    re.I,
+)
+
+# JSON test catalogs have a recognisable key set even when the name doesn't say so.
+_TEST_CATALOG_KEYS = re.compile(
+    r"\"(test_id|test_case|testcase_id|expected_result|expected_output|"
+    r"assertion|pass_criteria|test_steps)\"",
+    re.I,
+)
+
+_DOCTRINE_NAME = re.compile(
+    r"(\bspec(ification)?s?\b|\bdoctrine\b|\bpolic(y|ies)\b|\bcontract\b"
+    r"|\bcharter\b|\bgovernance\b|\bstandards?\b|\bprotocol\b"
+    r"|engine[-_ ]?contract|acceptance[-_ ]?criteria)",
+    re.I,
+)
+
+_GENERATED_NAME = re.compile(
+    r"(\breport\b|\bexport\b|\bdigest\b|\bsummary[-_ ]?output\b"
+    r"|\bgenerated\b|\bautogen\b|orivellum[-_ ](report|export|plan)"
+    r"|^tts clip\b)",
+    re.I,
+)
+
+# ≥2 "Chapter N" headings at line starts = manuscript structure.
+_CHAPTER_HEADING = re.compile(r"^\s{0,4}(chapter|ch\.?)\s+([0-9ivxlc]+)\b", re.I | re.M)
+
+_REFERENCE_EXT = {".pdf", ".docx", ".doc", ".odt", ".rtf", ".epub", ".md", ".txt", ".html", ".htm"}
+
+# meta keys any of which mark a file this system itself wrote
+_GENERATED_META_KEYS = ("generated_by", "system_generated", "workshop_run", "forge_build")
+
+
+@dataclass(frozen=True)
+class DocTypeClassification:
+    doc_type: DocType
+    rule: str  # short rule name; doc_type_by becomes 'rule:<name>'
+    confidence: float  # 1.0 deterministic; <0.6 fallback
+
+
+def classify_doc_type(  # noqa: C901 — flat, ordered rule table
+    name: str,
+    *,
+    kind: str | None = None,
+    sample_text: str | None = None,
+    source_path: str | None = None,
+    meta: dict | None = None,
+) -> DocTypeClassification:
+    """Deterministic doc_type rules — first match wins, no model call ever.
+
+    Ambiguous residue returns UNKNOWN (which refuses harvest); a model may
+    later PROPOSE a type through the review queue, never apply one.
+    """
+    raw = (name or "").strip()
+    low = raw.lower()
+    # Underscores/hyphens are word characters, so "style_policy" would defeat
+    # every \b-anchored rule — normalise separators for name-based matching.
+    norm = re.sub(r"[_\-]+", " ", low)
+    path = (source_path or name or "").lower()
+    ext = PurePosixPath(low).suffix
+    text = (sample_text or "")[:20000]
+
+    # 1. Files this system itself produced.
+    if meta and any(meta.get(k) for k in _GENERATED_META_KEYS):
+        return DocTypeClassification(DocType.GENERATED, "system-meta", 1.0)
+    if _GENERATED_NAME.search(norm):
+        return DocTypeClassification(DocType.GENERATED, "generated-name", 0.9)
+
+    # 2. Mail / chat exports.
+    if ext in _MAIL_EXT or kind == "email" or path.startswith("mail:"):
+        return DocTypeClassification(DocType.CORRESPONDENCE, "mail", 1.0)
+    if _CONVERSATION_NAME.search(low):
+        return DocTypeClassification(DocType.CORRESPONDENCE, "conversation-export", 0.95)
+
+    # 3. Test catalogs — by name, or by JSON key shape.
+    if _TEST_CATALOG_NAME.search(norm):
+        return DocTypeClassification(DocType.TEST_CATALOG, "catalog-name", 1.0)
+    if (ext == ".json" or kind == "json") and text and _TEST_CATALOG_KEYS.search(text):
+        return DocTypeClassification(DocType.TEST_CATALOG, "catalog-json-keys", 0.95)
+
+    # 4. Code and workbooks by extension.
+    if ext in _CODE_EXT:
+        return DocTypeClassification(DocType.CODE, "code-extension", 1.0)
+    if ext in _WORKBOOK_EXT or kind in ("excel", "csv"):
+        return DocTypeClassification(DocType.WORKBOOK, "workbook-extension", 1.0)
+
+    # 5. Doctrine — governance/spec naming.
+    if _DOCTRINE_NAME.search(norm):
+        return DocTypeClassification(DocType.DOCTRINE, "doctrine-name", 0.9)
+
+    # 6. Manuscript — canonical name markers, or ≥2 Chapter-N headings in text.
+    if _CANON_NAME.search(low) or _CANON_PATH.search(path):
+        return DocTypeClassification(DocType.MANUSCRIPT, "canon-name", 0.95)
+    if text and len(_CHAPTER_HEADING.findall(text)) >= 2:
+        return DocTypeClassification(DocType.MANUSCRIPT, "chapter-structure", 0.9)
+
+    # 7. Readable document with none of the above → reference.
+    if ext in _REFERENCE_EXT or (kind and kind in {"pdf", "docx", "text", "markdown", "html"}):
+        return DocTypeClassification(DocType.REFERENCE, "readable-document", 0.8)
+
+    # 8. Residue — unknown, refuses harvest until a human classifies it.
+    return DocTypeClassification(DocType.UNKNOWN, "fallback", 0.3)
+
+
+def assert_tier_may_become_work(tier: str | None, context: str = "become a Work") -> None:
+    """Raise ValueError when *tier* is excluded from Work creation.
+
+    ARTIFACT and SYSTEM objects must never produce a Work — this is the
+    enforced refusal, not documentation.
+    """
+    if tier and any(tier == t.value for t in EXCLUDED_FROM_WORKS):
+        raise ValueError(
+            f"A {tier!r}-tier object may never {context} — "
+            "migration/build artifacts and system files are excluded from Works."
+        )
 
 
 @dataclass(frozen=True)

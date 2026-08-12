@@ -15,6 +15,7 @@ defer snoozes the item for 7 days via the review_deferrals table.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -114,7 +115,10 @@ def review_queue(limit: int = 200):
     with db._lock:
         rows = db._conn.execute(
             """SELECT pr.id, pr.doc_id, pr.reason, pr.created_at,
+                      pr.proposed_tier, pr.proposed_doc_type,
+                      pr.proposed_tier_by, pr.proposed_doc_type_by,
                       d.title AS doc_title, d.kind, d.classification, d.work_id,
+                      d.tier AS current_tier, d.doc_type AS current_doc_type,
                       w.title AS work_title
                FROM pending_reclassify pr
                JOIN documents d ON d.id = pr.doc_id
@@ -138,6 +142,12 @@ def review_queue(limit: int = 200):
                     "doc_title": r["doc_title"],
                     "current_kind": r["kind"],
                     "current_classification": r["classification"],
+                    "current_tier": r["current_tier"],
+                    "current_doc_type": r["current_doc_type"],
+                    "proposed_tier": r["proposed_tier"],
+                    "proposed_doc_type": r["proposed_doc_type"],
+                    "proposed_tier_by": r["proposed_tier_by"],
+                    "proposed_doc_type_by": r["proposed_doc_type_by"],
                 },
                 "created_at": r["created_at"],
             }
@@ -563,6 +573,43 @@ def _resolve_reclassify(
         raise HTTPException(409, "Item was already resolved by another request")
 
     reprocess_queued = False
+    applied: dict = {}
+    if body.decision == "approve" and (row["proposed_tier"] or row["proposed_doc_type"]):
+        # Proposal ratification (RE-PROJECTION Phase 3): the classification
+        # backfill and the model only ever PROPOSE — approval here is the one
+        # place a proposed tier/doc_type is applied.  Applied doc_type carries
+        # provenance 'author' because a human ratified it.
+        sets, params = [], []
+        if row["proposed_tier"]:
+            sets.append("tier=?")
+            params.append(row["proposed_tier"])
+            applied["tier"] = row["proposed_tier"]
+        if row["proposed_doc_type"]:
+            sets.extend(["doc_type=?", "doc_type_by='author'"])
+            params.append(row["proposed_doc_type"])
+            applied["doc_type"] = row["proposed_doc_type"]
+        params.append(doc_id)
+        with db._lock:
+            db._conn.execute(f"UPDATE documents SET {', '.join(sets)} WHERE id=?", params)
+            db._conn.commit()
+        _by = ", ".join(
+            f"{field}: {row[col] or 'system'}"
+            for field, col, present in (
+                ("tier", "proposed_tier_by", row["proposed_tier"]),
+                ("doc_type", "proposed_doc_type_by", row["proposed_doc_type"]),
+            )
+            if present
+        )
+        with contextlib.suppress(Exception):
+            db.audit(
+                "document.reclassified",
+                object_id=doc_id,
+                object_type="document",
+                actor="user",
+                detail=f"ratified {applied} (proposed by {_by})",
+            )
+        return {"ok": True, "decision": body.decision, "applied": applied}
+
     if body.decision == "approve":
         # Approving means: yes, re-extract/classify this document.
         doc = db.get_document(doc_id)
@@ -828,6 +875,27 @@ def _resolve_domain_node(db, item_id: str, body: ResolveBody) -> dict:
     return {"ok": True, "decision": body.decision, "status": status}
 
 
+def _gate_work_assignment_approval(db, decision: str, kind: str, meta: dict) -> None:
+    """Tier gate (RE-PROJECTION Phase 3): an ARTIFACT/SYSTEM archive may never
+    produce a Work.  Enforced at approval too, so stale or hand-crafted
+    suggestions can't slip past the creation-time check.  Runs BEFORE the
+    atomic claim so a 422 leaves the suggestion queued."""
+    if decision != "approve" or kind != "work_assignment":
+        return
+    from orivellum.capabilities.classify import assert_tier_may_become_work
+
+    archive_doc_id = meta.get("archive_doc_id")
+    doc_ids = meta.get("doc_ids") or []
+    for gid in [i for i in ([archive_doc_id] + list(doc_ids)) if i]:
+        gdoc = db.get_document(gid)
+        if not gdoc:
+            continue
+        try:
+            assert_tier_may_become_work(gdoc.get("tier"), "be assigned to a Work")
+        except ValueError as tier_exc:
+            raise HTTPException(422, str(tier_exc)) from tier_exc
+
+
 def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:
     with db._lock:
         row = db._conn.execute("SELECT * FROM suggestions WHERE id=?", (item_id,)).fetchone()
@@ -835,6 +903,11 @@ def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:
         raise HTTPException(404, f"Suggestion {item_id!r} not found")
     kind = row["kind"]
     meta = _jload(row["meta"], {})
+
+    # Validation BEFORE the claim: a rejected approval (422) must leave the
+    # suggestion queued so it can be corrected or reviewed — validation
+    # failures never resolve an item.
+    _gate_work_assignment_approval(db, body.decision, kind, meta)
 
     # Atomic claim: delete first; only the caller whose DELETE removes the row
     # applies side effects, so concurrent approvals cannot both create a Work.

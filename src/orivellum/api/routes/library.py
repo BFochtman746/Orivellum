@@ -915,6 +915,10 @@ def _ingest_file(
 
     import sqlite3 as _sqlite3
 
+    from orivellum.capabilities.classify import classify_doc_type, classify_object
+
+    _tier_clf = classify_object(name, kind=kind, source_path=str(file_path))
+    _dt_clf = classify_doc_type(name, kind=kind, source_path=str(file_path), meta=meta)
     try:
         doc = db.create_document(
             title=name,
@@ -924,6 +928,9 @@ def _ingest_file(
             work_id=work_id,
             content_path=str(file_path.relative_to(lib_root)),
             meta=meta,
+            tier=_tier_clf.tier.value,
+            doc_type=_dt_clf.doc_type.value,
+            doc_type_by=f"rule:{_dt_clf.rule}",
         )
     except _sqlite3.IntegrityError:
         # A concurrent identical upload won the race on the unique sha256
@@ -1718,6 +1725,48 @@ def library_reprocess_all(
     """
     db = get_db()
     return queue_library_reprocess(db, background_tasks, force=force)
+
+
+@router.post("/library/classify-backfill")
+def library_classify_backfill(propose_via_model: bool = True, model_limit: int = 100):
+    """Backfill classification for every existing document (Phase 3).
+
+    Deterministic pass runs synchronously: assigns orphaned docs to the
+    "Manual imports" collection, applies rule-based doc_types with
+    ``rule:<name>`` provenance, and files tier disagreements as
+    pending_reclassify PROPOSALS for the Review Queue (never a direct tier
+    mutation).  Ambiguous residue stays ``unknown`` — which refuses harvest —
+    and, when ``propose_via_model`` is set, gets doc_type PROPOSALS from the
+    local model in the background (also ratified via the Review Queue).
+    """
+    from orivellum.capabilities.classify_backfill import (
+        backfill_classification,
+        propose_doc_types_via_model,
+    )
+
+    db = get_db()
+    report = backfill_classification(db)
+
+    model_queued = False
+    if propose_via_model and report["doc_type_residue"] > 0:
+        from orivellum.api._deps import get_config
+        from orivellum.api.executor import submit_bg
+
+        try:
+            cfg = get_config()
+
+            def _model_pass() -> None:
+                try:
+                    result = propose_doc_types_via_model(db, cfg, limit=model_limit)
+                    logger.info("doc_type model proposals: %s", result)
+                except Exception as exc:  # background — surface in logs only
+                    logger.warning("doc_type model proposal pass failed: %s", exc)
+
+            model_queued = submit_bg(_model_pass, label="classify-backfill-model")
+        except Exception as exc:
+            logger.warning("could not queue model proposal pass: %s", exc)
+    report["model_proposals_queued"] = bool(model_queued)
+    return report
 
 
 @router.post("/library/smart-organize")

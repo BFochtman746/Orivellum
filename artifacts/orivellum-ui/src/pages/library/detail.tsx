@@ -29,6 +29,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
+import { DocTypeBadge } from "./index";
 import { useReadAloud } from "@/lib/read-aloud";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -1573,6 +1574,7 @@ export default function DocumentDetail() {
                 {doc.kind ?? "file"}
               </Badge>
               <ReadinessBadge readiness={readiness} />
+              <DocTypeBadge docType={doc.doc_type} by={doc.doc_type_by} />
               {/* Lifecycle badge + inline picker */}
               <Select value={docLifecycle} onValueChange={handleSetLifecycle}>
                 <SelectTrigger

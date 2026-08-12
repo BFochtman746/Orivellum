@@ -2511,6 +2511,8 @@ class OrivellumDB:
         meta: dict | None = None,
         tier: str = "source",
         collection_id: str | None = None,
+        doc_type: str | None = None,
+        doc_type_by: str | None = None,
     ) -> dict:
         oid = _uuid()
         now = _now()
@@ -2530,8 +2532,8 @@ class OrivellumDB:
             )
             self._conn.execute(
                 """INSERT INTO documents(id,work_id,title,source,sha256,kind,readiness,
-                   content_path,meta,tier,collection_id,created_at)
-                   VALUES(?,?,?,?,?,?,'imported',?,?,?,?,?)""",
+                   content_path,meta,tier,collection_id,doc_type,doc_type_by,created_at)
+                   VALUES(?,?,?,?,?,?,'imported',?,?,?,?,?,?,?)""",
                 (
                     oid,
                     work_id,
@@ -2543,6 +2545,8 @@ class OrivellumDB:
                     _jdump(meta or {}),
                     tier,
                     collection_id,
+                    doc_type,
+                    doc_type_by,
                     now,
                 ),
             )
