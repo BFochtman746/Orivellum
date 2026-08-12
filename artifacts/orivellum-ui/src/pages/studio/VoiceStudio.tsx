@@ -1135,6 +1135,68 @@ function CastSampleButton({ voiceId, docId, cloneUsable, globalAudio }: {
   );
 }
 
+// Inline "try your own line" editor for a Chapter Voices row — identical
+// contract to CustomLinePreview: POST /studio/tts one-off, 200-char cap,
+// never cached, clone failures surface the server's detail verbatim.
+function CastCustomLine({ voiceId, docId, globalAudio, onClose }: {
+  voiceId: string;
+  docId: string;
+  globalAudio: ReturnType<typeof useGlobalAudio>;
+  onClose: () => void;
+}) {
+  const [line, setLine] = useState("");
+  const key = `custom:${voiceId}`;
+  const isLoading = globalAudio.loadingId === key;
+  const isPlaying = globalAudio.playingId === key;
+  const trimmed = line.trim();
+
+  function play() {
+    if (!trimmed && !isPlaying) return;
+    globalAudio.playCustomLine(voiceId, trimmed);
+  }
+
+  return (
+    <div
+      className="flex items-center gap-2 px-2.5 pb-2.5"
+      data-testid={`cast-custom-line-${docId}`}
+    >
+      <Input
+        value={line}
+        maxLength={CUSTOM_LINE_MAX}
+        placeholder="Type a line from this chapter…"
+        onChange={e => setLine(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") play(); }}
+        className="h-8 text-sm"
+        autoFocus
+      />
+      <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
+        {line.length}/{CUSTOM_LINE_MAX}
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={play}
+        disabled={isLoading || (!trimmed && !isPlaying)}
+        title="Hear this chapter's voice speak your line"
+        className="h-8 shrink-0"
+        data-testid={`button-cast-custom-play-${docId}`}
+      >
+        {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+         isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-8 w-8 p-0 shrink-0 text-muted-foreground"
+        onClick={onClose}
+        title="Close"
+      >
+        <X className="w-3.5 h-3.5" />
+      </Button>
+    </div>
+  );
+}
+
 function AudiobookTab({
   selectedVoice,
   voices,
@@ -1254,6 +1316,8 @@ function AudiobookTab({
   const [castDocs, setCastDocs] = useState<{ id: string; title: string; kind?: string }[]>([]);
   const [castMap, setCastMap] = useState<Record<string, string>>({});
   const [castDirty, setCastDirty] = useState(false);
+  // Chapter row whose "try your own line" editor is open (one at a time).
+  const [castLineFor, setCastLineFor] = useState<string | null>(null);
   const [castSaving, setCastSaving] = useState(false);
   const [castSuggesting, setCastSuggesting] = useState(false);
   const [castHints, setCastHints] = useState<Record<string, { character: string; rationale: string }>>({});
@@ -1312,9 +1376,11 @@ function AudiobookTab({
       narratorSync.reset();
       setCastDocs([]); setCastMap({}); setCastDirty(false);
       setCastHints({}); setCastAnalysis("");
+      setCastLineFor(null);
       return;
     }
     setCastHints({}); setCastAnalysis("");
+    setCastLineFor(null);
     let cancelled = false;
     apiFetch(`${BASE}/studio/works/${workId}/casting`)
       .then(async r => {
@@ -2069,7 +2135,8 @@ function AudiobookTab({
             )}
             <div className="rounded-xl border border-border/50 divide-y divide-border/40">
               {castDocs.map(d => (
-                <div key={d.id} className="flex items-center gap-3 p-2.5">
+                <div key={d.id}>
+                <div className="flex items-center gap-3 p-2.5">
                   <span className="text-sm flex-1 min-w-0 truncate" title={d.title}>
                     {d.title}
                     {d.kind === "chapter" && (
@@ -2114,6 +2181,42 @@ function AudiobookTab({
                     cloneUsable={cloneUsable}
                     globalAudio={globalAudio}
                   />
+                  {castMap[d.id] ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className={`h-8 w-8 p-0 shrink-0 ${castLineFor === d.id ? "text-primary" : "text-muted-foreground"}`}
+                      onClick={() => setCastLineFor(prev => (prev === d.id ? null : d.id))}
+                      // Fail closed exactly like CastSampleButton: disabled only
+                      // when we KNOW the clone can't speak right now.
+                      disabled={
+                        castMap[d.id].startsWith("clone:") &&
+                        cloneUsable !== null &&
+                        !cloneUsable[castMap[d.id]]
+                      }
+                      title={
+                        castMap[d.id].startsWith("clone:") &&
+                        cloneUsable !== null &&
+                        !cloneUsable[castMap[d.id]]
+                          ? "This cloned voice can't be previewed right now"
+                          : "Try your own line in this voice"
+                      }
+                      data-testid={`button-cast-custom-${d.id}`}
+                    >
+                      <AudioLines className="w-3.5 h-3.5" />
+                    </Button>
+                  ) : (
+                    <div className="w-8 shrink-0" aria-hidden="true" />
+                  )}
+                </div>
+                {castLineFor === d.id && castMap[d.id] && (
+                  <CastCustomLine
+                    voiceId={castMap[d.id]}
+                    docId={d.id}
+                    globalAudio={globalAudio}
+                    onClose={() => setCastLineFor(null)}
+                  />
+                )}
                 </div>
               ))}
             </div>
