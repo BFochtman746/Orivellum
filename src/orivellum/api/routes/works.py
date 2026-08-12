@@ -198,7 +198,9 @@ def works_delete(work_id: str):
 #   delete — clear the DB path FIRST, then unlink files.
 # A failure mid-sequence can only leave an orphan file (harmless), never a
 # dangling DB reference. Soft-deleting a Work deliberately keeps its cover on
-# disk so restoring the Work restores its artwork.
+# disk so restoring the Work restores its artwork. DECISION: covers are only
+# ever orphaned if Works are hard-purged, which no code path does today; if a
+# purge is ever added it must also unlink covers/<work_id>.* (all extensions).
 
 _COVER_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 _COVER_MAGIC: dict[str, list[tuple[bytes, int]]] = {
@@ -214,11 +216,49 @@ _COVER_MEDIA_TYPES = {
     ".webp": "image/webp",
 }
 _MAX_COVER_BYTES = 10 * 1024 * 1024  # 10 MB is plenty for a cover image
+_MAX_COVER_EDGE_PX = 8000  # sane ceiling for a cover; also bounds decode cost
+_COVER_PIL_FORMATS = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}
 
 # Serializes upload/replace/delete so interleaved requests can't unlink a file
 # the DB is about to reference. Global (not per-Work) — this is a single-user
 # local server and cover writes are rare, so contention is a non-issue.
 _COVER_MUTATION_LOCK = threading.Lock()
+
+
+def _validate_cover_image(data: bytes, ext: str) -> None:
+    """Fully decode the upload server-side; raise HTTPException when it isn't a real image.
+
+    Magic bytes alone let corrupt or payload-appended files through — they only
+    fail later, as a broken image in the browser. Decoding here means a 200
+    response guarantees a renderable cover. Dimensions are checked from the
+    header BEFORE pixel decode so an absurd canvas never costs a full decode.
+    """
+    import io
+
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            fmt = (img.format or "").upper()
+            if fmt != _COVER_PIL_FORMATS[ext]:
+                raise HTTPException(
+                    415,
+                    f"File content is {fmt or 'not a recognized image'}, "
+                    f"which does not match its extension ({ext}).",
+                )
+            width, height = img.size
+            if width > _MAX_COVER_EDGE_PX or height > _MAX_COVER_EDGE_PX:
+                raise HTTPException(
+                    422,
+                    f"Cover is {width}×{height}px; the maximum is {_MAX_COVER_EDGE_PX}px per edge.",
+                )
+            img.load()  # decode pixel data — catches truncated/corrupt payloads
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            415, "The file could not be decoded as an image. It may be corrupt."
+        ) from exc
 
 
 def _covers_dir():
@@ -254,6 +294,11 @@ async def works_upload_cover(work_id: str, file: UploadFile):
             f"File content does not match its extension ({ext}). "
             "The file may be corrupt or misnamed.",
         )
+    # Magic bytes are only a cheap pre-filter — fully decode in a worker thread
+    # (CPU-bound; must not block the event loop).
+    from starlette.concurrency import run_in_threadpool
+
+    await run_in_threadpool(_validate_cover_image, data, ext)
     covers = _covers_dir()
     target = covers / f"{work_id}{ext}"
     with _COVER_MUTATION_LOCK:

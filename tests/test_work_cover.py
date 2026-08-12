@@ -12,11 +12,13 @@ Covers:
 
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from tests.conftest import AUTH_HEADERS
 
@@ -25,7 +27,17 @@ _PNG_BYTES = bytes.fromhex(
     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
     "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
 )
-_JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 32 + b"\xff\xd9"
+
+
+def _real_image(fmt: str, size: tuple[int, int] = (1, 1)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", size, "red").save(buf, fmt)
+    return buf.getvalue()
+
+
+_JPEG_BYTES = _real_image("JPEG")
+# Correct JPEG magic bytes, but no decodable image behind them
+_FAKE_JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 32 + b"\xff\xd9"
 
 
 def _make_app(tmp: str):
@@ -127,6 +139,44 @@ class TestWorkCover(unittest.TestCase):
             )
             self.assertEqual(r.status_code, 415)
 
+            # Correct magic bytes, but garbage behind them — must fail the decode
+            r = client.post(
+                f"/api/works/{work['id']}/cover",
+                files={
+                    "file": ("evil.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, "image/png"),
+                },
+                headers=AUTH_HEADERS,
+            )
+            self.assertEqual(r.status_code, 415, "magic-prefixed garbage must not pass")
+
+            # JPEG magic + JFIF marker but no decodable payload
+            r = client.post(
+                f"/api/works/{work['id']}/cover",
+                files={"file": ("evil.jpg", _FAKE_JPEG_BYTES, "image/jpeg")},
+                headers=AUTH_HEADERS,
+            )
+            self.assertEqual(r.status_code, 415)
+
+            # Truncated real PNG (headers OK, pixel data cut off)
+            r = client.post(
+                f"/api/works/{work['id']}/cover",
+                files={"file": ("trunc.png", _PNG_BYTES[:24], "image/png")},
+                headers=AUTH_HEADERS,
+            )
+            self.assertEqual(r.status_code, 415)
+
+            # Valid image whose dimensions exceed the per-edge ceiling
+            r = client.post(
+                f"/api/works/{work['id']}/cover",
+                files={"file": ("huge.png", _real_image("PNG", (8001, 1)), "image/png")},
+                headers=AUTH_HEADERS,
+            )
+            self.assertEqual(r.status_code, 422)
+
+            # Nothing above may have left a file or a cover_path behind
+            self.assertIsNone(db.get_work(work["id"])["cover_path"])
+            self.assertEqual(list((Path(tmp) / "covers").glob("*")), [])
+
             # Empty file
             r = client.post(
                 f"/api/works/{work['id']}/cover",
@@ -144,6 +194,62 @@ class TestWorkCover(unittest.TestCase):
             self.assertEqual(r.status_code, 404)
             r = client.get("/api/works/nope/cover", headers=AUTH_HEADERS)
             self.assertEqual(r.status_code, 404)
+            db.close()
+
+    def test_concurrent_upload_delete_never_leaves_dangling_path(self):
+        """Interleaved uploads and deletes serialize on _COVER_MUTATION_LOCK.
+
+        Invariant after any interleaving: cover_path is either None or points
+        at a file that exists on disk — never a dangling reference.
+        """
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            app, db = _make_app(tmp)
+            work = db.create_work(title="Raced")
+            client = TestClient(app)
+            errors: list[str] = []
+            barrier = threading.Barrier(4)
+
+            def upload(ext: str, payload: bytes, mime: str):
+                barrier.wait()
+                for _ in range(5):
+                    r = client.post(
+                        f"/api/works/{work['id']}/cover",
+                        files={"file": (f"c{ext}", payload, mime)},
+                        headers=AUTH_HEADERS,
+                    )
+                    if r.status_code != 200:
+                        errors.append(f"upload {ext}: {r.status_code}")
+
+            def delete():
+                barrier.wait()
+                for _ in range(5):
+                    r = client.delete(f"/api/works/{work['id']}/cover", headers=AUTH_HEADERS)
+                    if r.status_code != 200:
+                        errors.append(f"delete: {r.status_code}")
+
+            threads = [
+                threading.Thread(target=upload, args=(".png", _PNG_BYTES, "image/png")),
+                threading.Thread(target=upload, args=(".jpg", _JPEG_BYTES, "image/jpeg")),
+                threading.Thread(target=delete),
+                threading.Thread(target=delete),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            self.assertEqual(errors, [])
+            cover_path = db.get_work(work["id"])["cover_path"]
+            if cover_path is not None:
+                self.assertTrue(
+                    (Path(tmp) / cover_path).is_file(),
+                    f"cover_path {cover_path!r} must never dangle",
+                )
+                # And a GET must actually serve it
+                r = client.get(f"/api/works/{work['id']}/cover", headers=AUTH_HEADERS)
+                self.assertEqual(r.status_code, 200)
             db.close()
 
 
