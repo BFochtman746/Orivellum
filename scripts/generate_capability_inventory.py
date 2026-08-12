@@ -73,9 +73,30 @@ def collect_operations() -> list[dict]:
     return ops
 
 
-def registered_schema_ops() -> set[tuple[str, str]]:
-    """(METHOD, normalized path) for every route REGISTERED on the app."""
+def _walk_included(routes, prefix: str):
+    """Yield (APIRoute, accumulated prefix) through FastAPI's lazy included routers."""
+    from fastapi.routing import APIRoute
+
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route, prefix
+        elif hasattr(route, "original_router") and hasattr(route, "include_context"):
+            child = prefix + (route.include_context.prefix or "")
+            yield from _walk_included(route.original_router.routes, child)
+
+
+def registered_app_ops() -> set[tuple[str, str]]:
+    """(METHOD, normalized path) for every route REGISTERED on the app.
+
+    Derived from app.routes directly (NOT app.openapi()) so routes hidden with
+    include_in_schema=False are still covered.  When the same router object is
+    included under multiple prefixes (app.py deliberately re-mounts every
+    router under /orivellum-ui, schema-hidden), only the shortest-prefix mount
+    is counted — the duplicates are the same operations, not new ones.
+    """
     with tempfile.TemporaryDirectory() as tmp:
+        from fastapi.routing import APIRoute
+
         from orivellum.api import _deps
         from orivellum.api.app import app
         from orivellum.configuration.config import OrivellumConfig
@@ -83,19 +104,33 @@ def registered_schema_ops() -> set[tuple[str, str]]:
 
         db = OrivellumDB(str(pathlib.Path(tmp) / "inventory.db"))
         _deps.init(db=db, cfg=OrivellumConfig(data_dir=tmp))
-        schema = app.openapi()
-    ops: set[tuple[str, str]] = set()
-    for path, item in (schema.get("paths") or {}).items():
-        for method in item:
-            if method.upper() in METHODS:
-                ops.add((method.upper(), _norm(path)))
+
+        ops: set[tuple[str, str]] = set()
+        primary: dict[int, tuple] = {}  # id(router) -> (router, shortest prefix)
+        for route in app.routes:
+            if isinstance(route, APIRoute):
+                for method in sorted(route.methods & METHODS):
+                    ops.add((method, _norm(route.path)))
+            elif hasattr(route, "original_router") and hasattr(route, "include_context"):
+                router = route.original_router
+                prefix = route.include_context.prefix or ""
+                kept = primary.get(id(router))
+                if kept is None or len(prefix) < len(kept[1]):
+                    primary[id(router)] = (router, prefix)
+        for router, prefix in primary.values():
+            for api_route, acc_prefix in _walk_included(router.routes, prefix):
+                for method in sorted(api_route.methods & METHODS):
+                    ops.add((method, _norm(acc_prefix + api_route.path)))
     return ops
 
 
-def cross_check(ops: list[dict]) -> list[str]:
+def registration_problems(
+    ops: list[dict], app_ops: set[tuple[str, str]] | None = None
+) -> list[str]:
     """Module walk vs app registration — return human-readable discrepancies."""
-    app_ops = registered_schema_ops()
-    walk_ops = {(o["method"], _norm(o["path"])) for o in ops if o["in_schema"]}
+    if app_ops is None:
+        app_ops = registered_app_ops()
+    walk_ops = {(o["method"], _norm(o["path"])) for o in ops}
     problems = []
     for method, path in sorted(walk_ops - app_ops):
         problems.append(f"router module defines {method} {path} but the app never registers it")
@@ -108,7 +143,7 @@ def main() -> int:
     # The app configures logging to stdout at import — keep our stdout pure JSON.
     with contextlib.redirect_stdout(sys.stderr):
         ops = collect_operations()
-        problems = cross_check(ops)
+        problems = registration_problems(ops)
     if problems:
         for p in problems:
             print(f"INVENTORY MISMATCH: {p}", file=sys.stderr)

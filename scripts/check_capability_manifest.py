@@ -36,9 +36,14 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from generate_capability_inventory import _norm, collect_operations  # noqa: E402
+from generate_capability_inventory import (  # noqa: E402
+    _norm,
+    collect_operations,
+    registration_problems,
+)
 
 MANIFEST = ROOT / "scripts" / "capability_manifest.json"
+BACKLOG_BASELINE = ROOT / "scripts" / "capability_contract_backlog_baseline.json"
 SPEC = ROOT / "lib" / "api-spec" / "openapi.yaml"
 APP_TSX = ROOT / "artifacts" / "orivellum-ui" / "src" / "App.tsx"
 SPEC_METHODS = {"get", "post", "put", "patch", "delete"}
@@ -116,31 +121,61 @@ def _check_entry(
     return problems
 
 
+def _load_defaults(manifest, live, spec_ops, ui_routes, backlog_baseline):
+    """Fill any inputs the caller (production: none) did not inject."""
+    if manifest is None:
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    if spec_ops is None:
+        spec_ops = load_spec_ops()
+    if ui_routes is None:
+        ui_routes = load_ui_routes()
+    if backlog_baseline is None:
+        baseline_doc = json.loads(BACKLOG_BASELINE.read_text(encoding="utf-8"))
+        backlog_baseline = set(baseline_doc["baseline"])
+    if live is None:
+        with contextlib.redirect_stdout(sys.stderr):
+            live = collect_operations()
+    return manifest, live, spec_ops, ui_routes, backlog_baseline
+
+
 def check(
     *,
     manifest: dict | None = None,
     live: list[dict] | None = None,
     spec_ops: set[tuple[str, str]] | None = None,
     ui_routes: set[str] | None = None,
+    registered_ops: set[tuple[str, str]] | None = None,
+    backlog_baseline: set[str] | None = None,
 ) -> list[str]:
     """Return all violations. Args exist for tests; production passes none."""
-    if manifest is None:
-        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    fixture_mode = live is not None  # unit tests inject a synthetic router table
+    manifest, live, spec_ops, ui_routes, backlog_baseline = _load_defaults(
+        manifest, live, spec_ops, ui_routes, backlog_baseline
+    )
     statuses = set(manifest["statuses"])
     entries: dict[str, dict] = manifest["operations"]
     backlog = manifest.get("contract_backlog", [])
-    if spec_ops is None:
-        spec_ops = load_spec_ops()
-    if ui_routes is None:
-        ui_routes = load_ui_routes()
-    if live is None:
+
+    problems: list[str] = []
+    # 0. the module walk must match the app's REAL registered router table —
+    #    an unregistered router module, or a route defined outside the routes
+    #    package (even schema-hidden), makes the whole inventory a lie.
+    if registered_ops is not None or not fixture_mode:
         with contextlib.redirect_stdout(sys.stderr):
-            live = collect_operations()
+            for p in registration_problems(live, registered_ops):
+                problems.append(f"REGISTRATION: {p}")
 
     live_keys = {f"{o['method']} {o['path']}": o for o in live}
     seen_backlog = set(backlog)
 
-    problems = _check_coverage(live_keys, entries)
+    problems += _check_coverage(live_keys, entries)
+    # shrink-only: the backlog may never gain entries beyond the frozen baseline
+    for key in sorted(seen_backlog - backlog_baseline):
+        problems.append(
+            f"BACKLOG GROWTH: {key} is not in the frozen baseline "
+            "(scripts/capability_contract_backlog_baseline.json) — new shipped "
+            "operations must be added to lib/api-spec/openapi.yaml, not backlogged"
+        )
     if len(seen_backlog) != len(backlog):
         problems.append("BACKLOG: contract_backlog contains duplicate entries")
 

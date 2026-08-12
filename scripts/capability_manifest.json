@@ -7,8 +7,9 @@
   "experimental (built but not wired to any UI \u2014 awaiting a product decision),",
   "archived (kept as reference, slated for removal).",
   "contract_backlog: pwa operations not yet in the typed OpenAPI contract",
-  "(lib/api-spec/openapi.yaml). SHRINK-ONLY: new pwa operations must be added",
-  "to the contract; entries leave this list by being specced, never join it.",
+  "(lib/api-spec/openapi.yaml). SHRINK-ONLY, enforced against the frozen",
+  "baseline in capability_contract_backlog_baseline.json: entries leave by",
+  "being specced; the gate fails any key not in the baseline.",
   "Verified bidirectionally by scripts/check_capability_manifest.py (CI).",
   "Add missing entries with: python scripts/generate_capability_inventory.py --seed"
  ],

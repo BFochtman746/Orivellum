@@ -37,8 +37,17 @@ def _live(*ops: tuple[str, str, str]) -> list[dict]:
 UI_ROUTES = {"/", "/canon", "/works/:workId"}
 
 
-def _run(manifest, live, spec_ops=frozenset(), ui_routes=frozenset(UI_ROUTES)):
-    return check(manifest=manifest, live=live, spec_ops=set(spec_ops), ui_routes=set(ui_routes))
+def _run(manifest, live, spec_ops=frozenset(), ui_routes=frozenset(UI_ROUTES), baseline=None):
+    if baseline is None:
+        # by default, treat the fixture's own backlog as the frozen baseline
+        baseline = set(manifest.get("contract_backlog", []))
+    return check(
+        manifest=manifest,
+        live=live,
+        spec_ops=set(spec_ops),
+        ui_routes=set(ui_routes),
+        backlog_baseline=set(baseline),
+    )
 
 
 class TestGateRules:
@@ -140,6 +149,48 @@ class TestGateRules:
         )
         problems = _run(manifest, live)
         assert any("duplicate" in p for p in problems)
+
+    def test_backlog_growth_beyond_frozen_baseline_fails(self):
+        live = _live(("GET", "/api/x", "m"))
+        manifest = _manifest(
+            {"GET /api/x": {"status": "pwa", "module": "m", "ui_route": "/canon"}},
+            backlog=["GET /api/x"],
+        )
+        # the frozen baseline does NOT contain the key → growth is refused
+        problems = _run(manifest, live, baseline=set())
+        assert any("BACKLOG GROWTH" in p and "GET /api/x" in p for p in problems)
+
+    def test_registration_mismatch_fails(self):
+        live = _live(("GET", "/api/x", "m"))
+        manifest = _manifest({"GET /api/x": {"status": "pwa", "module": "m", "ui_route": "/canon"}})
+        # app registers an op the module walk never saw (defined outside routes pkg)
+        problems = check(
+            manifest=manifest,
+            live=live,
+            spec_ops={("GET", "/api/x")},
+            ui_routes=set(UI_ROUTES),
+            backlog_baseline=set(),
+            registered_ops={("GET", "/api/x"), ("POST", "/api/rogue")},
+        )
+        assert any("REGISTRATION" in p and "outside the routes package" in p for p in problems)
+
+    def test_unregistered_router_module_fails(self):
+        live = _live(("GET", "/api/x", "m"), ("GET", "/api/dead", "dead"))
+        manifest = _manifest(
+            {
+                "GET /api/x": {"status": "pwa", "module": "m", "ui_route": "/canon"},
+                "GET /api/dead": {"status": "internal", "module": "dead"},
+            }
+        )
+        problems = check(
+            manifest=manifest,
+            live=live,
+            spec_ops={("GET", "/api/x")},
+            ui_routes=set(UI_ROUTES),
+            backlog_baseline=set(),
+            registered_ops={("GET", "/api/x")},
+        )
+        assert any("REGISTRATION" in p and "never registers it" in p for p in problems)
 
     def test_contract_op_classified_internal_is_contradicted(self):
         live = _live(("GET", "/api/x", "m"))
