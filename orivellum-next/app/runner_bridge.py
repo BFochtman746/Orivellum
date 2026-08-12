@@ -65,16 +65,20 @@ def _runner_dispatch(action: dict, *, executor=None) -> dict:
     if executor is not None:
         result = executor(action)
         d = result if isinstance(result, dict) else {}
-        # Require an explicit success signal — default to False so an executor
-        # that returns {status: "error"} or an empty dict is never treated as
-        # a success.  Accepted signals: ok=True, or status="done".
-        if "ok" in d:
-            ok = bool(d["ok"])
+        # Require an EXACT boolean True as the success signal.  bool() is
+        # intentionally avoided because it would coerce truthy strings like
+        # "false" or integers like 1 into True — defeating the contract.
+        # If the executor does not set 'ok', fall back to status="done".
+        if d.get("ok") is True:
+            ok = True
         elif "status" in d:
             ok = d["status"] == "done"
         else:
             ok = False
-        return {"source": "executor", "ok": ok, **d}
+        # Construct the descriptor so canonical 'ok' and 'source' always WIN
+        # over whatever the executor returned — even if its dict contained
+        # its own 'ok' key with a raw/string value.
+        return {**d, "source": "executor", "ok": ok}
 
     if _HAS_RUNNER:
         try:

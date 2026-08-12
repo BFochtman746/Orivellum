@@ -876,6 +876,43 @@ class TestN5Chain(Base):
             self.assertEqual(row["state"], "failed",
                              f"action {aid} should be 'failed' after LLM failure; got {row['state']!r}")
 
+    def test_executor_string_false_is_not_treated_as_success(self):
+        """N5 contract: executor ok='false' (truthy string) must NOT become ok=True."""
+        acts = [self._cheap_action("str-false", recommended=True),
+                self._cheap_action("str-false-2")]
+        stored = self._offer(acts, thread="str-false-t")
+        aid = stored[0]["id"]
+        result = runner_bridge.enqueue(self.db, aid,
+                                       executor=lambda a: {"ok": "false"})
+        self.assertFalse(result["unit"]["ok"],
+                         "ok='false' (string) must not be treated as success")
+        row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+        self.assertNotEqual(row["state"], "done",
+                            "action must not be done when executor signals failure")
+
+    def test_executor_null_ok_is_not_treated_as_success(self):
+        """N5 contract: executor ok=None must NOT become ok=True."""
+        acts = [self._cheap_action("null-ok", recommended=True),
+                self._cheap_action("null-ok-2")]
+        stored = self._offer(acts, thread="null-ok-t")
+        aid = stored[0]["id"]
+        result = runner_bridge.enqueue(self.db, aid,
+                                       executor=lambda a: {"ok": None})
+        self.assertFalse(result["unit"]["ok"],
+                         "ok=None must not be treated as success")
+
+    def test_executor_integer_one_ok_is_not_treated_as_success(self):
+        """N5 contract: executor ok=1 (integer truthy) must NOT become ok=True.
+        Only the exact boolean True is accepted."""
+        acts = [self._cheap_action("int-ok", recommended=True),
+                self._cheap_action("int-ok-2")]
+        stored = self._offer(acts, thread="int-ok-t")
+        aid = stored[0]["id"]
+        result = runner_bridge.enqueue(self.db, aid,
+                                       executor=lambda a: {"ok": 1})
+        self.assertFalse(result["unit"]["ok"],
+                         "ok=1 (integer) must not be treated as success; only exact True")
+
     def test_pending_for_you_shows_all_queued_items_with_reasons(self):
         """N5: pending_for_you() lists every non-auto item with waits_because filled."""
         acts = [
