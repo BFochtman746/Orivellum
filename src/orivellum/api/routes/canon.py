@@ -47,6 +47,20 @@ class RetractBody(BaseModel):
     reason: str = ""
 
 
+class RatifyBody(BaseModel):
+    author: str
+    classification: str | None = None
+    statement: str | None = None
+    source_ref: str | None = None
+    work_id: str | None = None
+    parent_ids: list[str] | None = None
+
+
+class RatifyApprovedBody(BaseModel):
+    author: str
+    work_id: str | None = None
+
+
 @router.get("/facts")
 def list_facts(
     work_id: str | None = Query(default=None),
@@ -134,6 +148,81 @@ def create_fact(req: FactCreate, db=_DB):
     except CanonFactError as e:
         raise HTTPException(422, str(e)) from e
     return fact
+
+
+@router.post("/proposals/{proposal_id}/ratify")
+def ratify_proposal(proposal_id: str, req: RatifyBody, db=_DB):
+    """Turn one Writing Architect proposal into a signed canon fact.
+
+    Claims the proposal row (proposed or approved → ratified) and writes
+    the fact in one governed transaction; a ratified proposal can never
+    be ratified twice.
+    """
+    author = (req.author or "").strip()
+    if not author:
+        raise HTTPException(422, "Ratification requires your signature (author)")
+    try:
+        result = CanonStore(db).ratify_proposal(
+            proposal_id,
+            decision="approve",
+            author=author,
+            classification=req.classification,
+            statement=req.statement,
+            source_ref=req.source_ref,
+            work_id=req.work_id,
+            parent_ids=req.parent_ids,
+        )
+    except CanonFactError as e:
+        raise HTTPException(422, str(e)) from e
+    if result["result"] == "not_found":
+        raise HTTPException(404, f"Proposal {proposal_id!r} not found")
+    if result["result"] == "conflict":
+        raise HTTPException(409, "Proposal was already ratified or rejected")
+    return {"ok": True, "fact": result["fact"]}
+
+
+@router.post("/proposals/ratify-approved")
+def ratify_approved_proposals(req: RatifyApprovedBody, db=_DB):
+    """Batch-ratify every approved Writing Architect proposal.
+
+    Each proposal is claimed and written in its OWN governed transaction
+    (one claim + one fact per write), so one refused fact never blocks the
+    rest.  Refusals (e.g. a non-series scope that needs an explicit Work,
+    or an INFERRED fact without parents) are reported per proposal, and
+    those rows stay 'approved' for the author to ratify individually.
+    """
+    author = (req.author or "").strip()
+    if not author:
+        raise HTTPException(422, "Ratification requires your signature (author)")
+    store = CanonStore(db)
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT id FROM wa_canon_proposals WHERE status='approved' "
+            "ORDER BY source_path, source_location"
+        ).fetchall()
+    ids = [r["id"] for r in rows]
+    ratified: list[str] = []
+    refused: list[dict] = []
+    skipped: list[str] = []
+    for pid in ids:
+        try:
+            result = store.ratify_proposal(
+                pid, decision="approve", author=author, work_id=req.work_id
+            )
+        except CanonFactError as e:
+            refused.append({"id": pid, "error": str(e)})
+            continue
+        if result["result"] == "ok":
+            ratified.append(pid)
+        else:
+            skipped.append(pid)  # raced: someone else claimed it meanwhile
+    return {
+        "ok": True,
+        "ratified": ratified,
+        "refused": refused,
+        "skipped": skipped,
+        "counts": {"ratified": len(ratified), "refused": len(refused), "skipped": len(skipped)},
+    }
 
 
 @router.post("/facts/{fact_id}/retract")

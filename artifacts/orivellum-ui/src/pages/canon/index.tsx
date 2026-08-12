@@ -194,6 +194,13 @@ function FactCard({
         {fact.parent_ids.length > 0 && (
           <span className="font-mono text-[11px]">from {fact.parent_ids.length} parent fact(s)</span>
         )}
+        {fact.origin === "wa_archive" && (
+          <span className="inline-flex items-center gap-1 text-[11px]"
+                style={{ color: "var(--gilt)" }}
+                data-testid={`fact-origin-archive-${fact.id}`}>
+            <ScrollText className="w-3 h-3" />ratified from archive
+          </span>
+        )}
         {fact.signed_by && (
           <span className="inline-flex items-center gap-1">
             <ShieldCheck className="w-3 h-3" />signed {fact.signed_by}

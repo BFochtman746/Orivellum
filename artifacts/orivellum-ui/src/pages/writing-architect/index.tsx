@@ -69,6 +69,7 @@ interface Proposal {
   source_location: string;
   status: string;
   decided_at: string | null;
+  ratified_fact_id: string | null;
 }
 
 type Tab = "archive" | "doctrine" | "proposals";
@@ -460,6 +461,10 @@ function DoctrineCard({
 function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () => void }) {
   const [statusFilter, setStatusFilter] = useState<string>("proposed");
   const [deciding, setDeciding] = useState<string | null>(null);
+  const [ratifying, setRatifying] = useState<string | null>(null); // proposal id or "__all__"
+  const [signature, setSignature] = useState<string>(
+    () => localStorage.getItem("wa-ratify-signature") ?? "",
+  );
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery<{ items: Proposal[] }>({
@@ -495,6 +500,76 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
     }
   };
 
+  const requireSignature = (): string | null => {
+    const sig = signature.trim();
+    if (!sig) {
+      toast.error("Enter your signature first — canon facts must be author-signed.");
+      return null;
+    }
+    localStorage.setItem("wa-ratify-signature", sig);
+    return sig;
+  };
+
+  const afterRatify = () => {
+    qc.invalidateQueries({ queryKey: ["wa-proposals"] });
+    qc.invalidateQueries({ queryKey: ["canon-facts"] });
+    qc.invalidateQueries({ queryKey: ["canon-counts"] });
+    onDecided();
+  };
+
+  const ratifyOne = async (id: string) => {
+    const sig = requireSignature();
+    if (!sig) return;
+    setRatifying(id);
+    try {
+      const r = await apiFetch(`${BASE}/canon/proposals/${id}/ratify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ author: sig }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        throw new Error(j?.detail || `Ratification failed (${r.status})`);
+      }
+      toast.success("Fact ratified into canon");
+      afterRatify();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ratification failed");
+    } finally {
+      setRatifying(null);
+    }
+  };
+
+  const ratifyAllApproved = async () => {
+    const sig = requireSignature();
+    if (!sig) return;
+    setRatifying("__all__");
+    try {
+      const r = await apiFetch(`${BASE}/canon/proposals/ratify-approved`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ author: sig }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        throw new Error(j?.detail || `Ratification failed (${r.status})`);
+      }
+      const j = await r.json();
+      const { ratified, refused } = j.counts ?? { ratified: 0, refused: 0 };
+      if (ratified > 0) toast.success(`${ratified} fact${ratified === 1 ? "" : "s"} ratified into canon`);
+      if (refused > 0) {
+        const first = j.refused?.[0]?.error ?? "";
+        toast.error(`${refused} refused — ratify those individually. ${first}`);
+      }
+      if (ratified === 0 && refused === 0) toast.info("No approved proposals to ratify.");
+      afterRatify();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ratification failed");
+    } finally {
+      setRatifying(null);
+    }
+  };
+
   if (!hasRun) {
     return <EmptyRunHint text="Canon proposals appear here after a decomposition run." />;
   }
@@ -504,7 +579,7 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-1.5">
-        {["proposed", "approved", "rejected", "all"].map((s) => (
+        {["proposed", "approved", "ratified", "rejected", "all"].map((s) => (
           <button key={s}
                   onClick={() => setStatusFilter(s)}
                   className={`px-2.5 py-1 rounded-md text-xs border capitalize transition-colors ${
@@ -520,6 +595,28 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
         <p className="ml-auto text-[11px] text-muted-foreground">
           Approving is a disposition — facts still enter canon only through ratification.
         </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border p-3"
+           style={{ borderColor: "var(--line-2)" }}>
+        <Landmark className="w-4 h-4 shrink-0" style={{ color: "var(--gilt)" }} />
+        <span className="text-xs text-muted-foreground">Sign as</span>
+        <input
+          value={signature}
+          onChange={(e) => setSignature(e.target.value)}
+          placeholder="Your name"
+          className="h-7 w-36 rounded-md border bg-transparent px-2 text-xs outline-none focus:ring-1"
+          style={{ borderColor: "var(--line-2)" }}
+          data-testid="wa-ratify-signature"
+        />
+        <Button size="sm" variant="outline" className="h-7 px-2 gap-1 ml-auto"
+                style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                disabled={ratifying !== null}
+                onClick={ratifyAllApproved}
+                data-testid="wa-ratify-all">
+          {ratifying === "__all__" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Landmark className="w-3 h-3" />}
+          Ratify all approved into canon
+        </Button>
       </div>
 
       {isLoading ? (
@@ -549,12 +646,18 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
                            style={{ borderColor: "var(--line-2)", color: "var(--ink-soft)" }}>
                       {p.scope}
                     </Badge>
-                    {p.status !== "proposed" && (
+                    {p.status === "ratified" ? (
+                      <Badge variant="outline" className="gap-1 text-[10px]"
+                             style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }}
+                             data-testid={`wa-ratified-badge-${p.id}`}>
+                        <Landmark className="w-3 h-3" />In canon
+                      </Badge>
+                    ) : p.status !== "proposed" ? (
                       <Badge variant="outline" className="text-[10px] capitalize"
                              style={{ borderColor: "var(--line-2)", color: "var(--ink-soft)" }}>
                         {p.status}
                       </Badge>
-                    )}
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     {p.status === "proposed" ? (
@@ -576,14 +679,26 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
                           Reject
                         </Button>
                       </>
-                    ) : (
-                      <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-muted-foreground"
-                              disabled={deciding === p.id}
-                              onClick={() => decide(p.id, "proposed")}
-                              data-testid={`wa-reopen-${p.id}`}>
-                        <RotateCcw className="w-3 h-3" />
-                        Re-open
-                      </Button>
+                    ) : p.status === "ratified" ? null : (
+                      <>
+                        {p.status === "approved" && (
+                          <Button size="sm" variant="outline" className="h-7 px-2 gap-1"
+                                  style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                                  disabled={ratifying !== null}
+                                  onClick={() => ratifyOne(p.id)}
+                                  data-testid={`wa-ratify-${p.id}`}>
+                            {ratifying === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Landmark className="w-3 h-3" />}
+                            Ratify into canon
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-muted-foreground"
+                                disabled={deciding === p.id}
+                                onClick={() => decide(p.id, "proposed")}
+                                data-testid={`wa-reopen-${p.id}`}>
+                          <RotateCcw className="w-3 h-3" />
+                          Re-open
+                        </Button>
+                      </>
                     )}
                   </div>
                 </div>

@@ -172,7 +172,11 @@ def list_canon_proposals(
 def decide_canon_proposal(proposal_id: str, body: ProposalDecisionBody):
     if body.status not in ("approved", "rejected", "proposed"):
         raise HTTPException(status_code=422, detail="status must be approved|rejected|proposed")
-    row = WAStore(get_db()).decide_proposal(proposal_id, body.status)
+    try:
+        row = WAStore(get_db()).decide_proposal(proposal_id, body.status)
+    except ValueError as e:
+        # Ratified proposals are final — their fact is already in canon.
+        raise HTTPException(status_code=409, detail=str(e)) from e
     if row is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     return row

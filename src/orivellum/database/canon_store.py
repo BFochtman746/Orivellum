@@ -646,11 +646,15 @@ class CanonStore:
     ) -> dict:
         """Ratify (approve/reject) one machine-proposed fact.
 
-        Approve creates a canon_fact signed by the ratifying author; the
-        author may reclassify or edit the statement/source in the same act.
+        Approve creates a canon_fact signed by the ratifying author and
+        moves the proposal to the terminal 'ratified' status with a forward
+        link to the fact (ratified_fact_id); the author may reclassify or
+        edit the statement/source in the same act.  Both 'proposed' and
+        'approved' rows are claimable — an /architect approval is only a
+        disposition, and this is the one bridge that turns it into canon.
 
         The claim (conditional UPDATE of the proposal row) and the fact
-        insert run in ONE transaction: an approved proposal can never exist
+        insert run in ONE transaction: a ratified proposal can never exist
         without its canon fact, a refused fact automatically releases the
         claim (rollback), and two concurrent ratifications can never both
         write canon.
@@ -663,31 +667,40 @@ class CanonStore:
             raise CanonFactError("Refused: ratification requires the author's signature.")
         db = self._db
         fact_id: str | None = None
-        outcome = "ok"
-        with db.governed_write(
-            operation="canon.proposal_ratified",
-            event_type="canon.proposal_ratified",
-            object_id=proposal_id,
-            object_type="canon_proposal",
-            actor=author.strip(),
-            detail=f"decision={decision}"
-            + (f" reclass={classification}" if classification else ""),
-        ):
-            prop = db._conn.execute(
-                "SELECT * FROM wa_canon_proposals WHERE id=?", (proposal_id,)
+        # Existence pre-check OUTSIDE the governed write — an unknown id must
+        # never emit an audit/outbox event (same pattern as retract_fact).
+        with db._lock:
+            exists = db._conn.execute(
+                "SELECT 1 FROM wa_canon_proposals WHERE id=?", (proposal_id,)
             ).fetchone()
-            if not prop:
-                outcome = "not_found"
-            else:
-                new_status = "approved" if decision == "approve" else "rejected"
+        if not exists:
+            return {"result": "not_found", "fact": None}
+        try:
+            with db.governed_write(
+                operation="canon.proposal_ratified",
+                event_type="canon.proposal_ratified",
+                object_id=proposal_id,
+                object_type="canon_proposal",
+                actor=author.strip(),
+                detail=f"decision={decision}"
+                + (f" reclass={classification}" if classification else ""),
+            ):
+                prop = db._conn.execute(
+                    "SELECT * FROM wa_canon_proposals WHERE id=?", (proposal_id,)
+                ).fetchone()
+                if not prop:
+                    raise _RatifyAbort("not_found")
+                new_status = "ratified" if decision == "approve" else "rejected"
                 cur = db._conn.execute(
                     "UPDATE wa_canon_proposals SET status=?, decided_at=? "
-                    "WHERE id=? AND status='proposed'",
+                    "WHERE id=? AND status IN ('proposed','approved')",
                     (new_status, _now(), proposal_id),
                 )
                 if cur.rowcount == 0:
-                    outcome = "conflict"
-                elif decision == "approve":
+                    # Already ratified/rejected (or raced): roll back so the
+                    # no-op emits NO successful audit/outbox event.
+                    raise _RatifyAbort("conflict")
+                if decision == "approve":
                     fact_id = self._ratify_insert(
                         dict(prop),
                         proposal_id,
@@ -698,8 +711,12 @@ class CanonStore:
                         work_id=work_id,
                         parent_ids=parent_ids,
                     )
-        if outcome != "ok":
-            return {"result": outcome, "fact": None}
+                    db._conn.execute(
+                        "UPDATE wa_canon_proposals SET ratified_fact_id=? WHERE id=?",
+                        (fact_id, proposal_id),
+                    )
+        except _RatifyAbort as abort:
+            return {"result": abort.outcome, "fact": None}
         return {"result": "ok", "fact": self.get_fact(fact_id) if fact_id else None}
 
     def _ratify_insert(
@@ -769,6 +786,15 @@ class CanonStore:
             f"Refused: proposal scope {scope!r} is not series-wide — pick the "
             "Work this fact belongs to before ratifying."
         )
+
+
+class _RatifyAbort(Exception):
+    """Internal sentinel: ratification claim failed — roll back the governed
+    write so no audit/outbox event is emitted for a no-op."""
+
+    def __init__(self, outcome: str) -> None:
+        super().__init__(outcome)
+        self.outcome = outcome
 
 
 class _RetractConflict(Exception):

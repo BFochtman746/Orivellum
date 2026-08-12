@@ -3763,4 +3763,24 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE graph_inconsistency ADD COLUMN disposition_note TEXT NOT NULL DEFAULT ''
     """,
     ),
+    # v150 — WA proposal ratification bridge. 'ratified' becomes a terminal
+    # proposal status meaning "this proposal's fact is IN canon", with a
+    # forward link to the fact. Backfill: proposals already ratified through
+    # the review inbox (canon_fact.proposal_id points at them) get the
+    # status + link so they can't be double-ratified through the new bridge.
+    (
+        150,
+        "wa_canon_proposals.ratified_fact_id + backfill ratified status from canon_fact",
+        """
+        ALTER TABLE wa_canon_proposals ADD COLUMN ratified_fact_id TEXT;
+        UPDATE wa_canon_proposals
+           SET status='ratified',
+               ratified_fact_id=(
+                   SELECT cf.id FROM canon_fact cf
+                   WHERE cf.proposal_id = wa_canon_proposals.id
+                   ORDER BY cf.created_at ASC LIMIT 1)
+         WHERE EXISTS (SELECT 1 FROM canon_fact cf
+                       WHERE cf.proposal_id = wa_canon_proposals.id)
+    """,
+    ),
 ]

@@ -22,7 +22,7 @@ from typing import Any
 
 logger = logging.getLogger("orivellum.wa.store")
 
-PROPOSAL_STATUSES = ("proposed", "approved", "rejected")
+PROPOSAL_STATUSES = ("proposed", "approved", "rejected", "ratified")
 
 
 class WAStore:
@@ -175,22 +175,35 @@ class WAStore:
         return [dict(r) for r in self._read().execute(q, args).fetchall()]
 
     def decide_proposal(self, proposal_id: str, status: str) -> dict | None:
-        """Author ratification: atomically move proposed → approved/rejected.
+        """Author disposition: atomically move proposed → approved/rejected.
 
         Conditional UPDATE claims the row; a decided proposal can be
         re-decided (author may change their mind) but the transition is
         always explicit and audited by the returned row.
+
+        A RATIFIED proposal is final — its fact is already in canon, so its
+        disposition can never change here (raises ValueError; undoing canon
+        means retracting the fact, not flipping the proposal).
         """
         if status not in ("approved", "rejected", "proposed"):
             raise ValueError(f"invalid proposal status {status!r}")
         with self._lock():
             c = self._conn()
             cur = c.execute(
-                "UPDATE wa_canon_proposals SET status=?, decided_at=? WHERE id=?",
+                "UPDATE wa_canon_proposals SET status=?, decided_at=? "
+                "WHERE id=? AND status != 'ratified'",
                 (status, self._now() if status != "proposed" else None, proposal_id),
             )
             c.commit()
             if cur.rowcount == 0:
+                exists = c.execute(
+                    "SELECT status FROM wa_canon_proposals WHERE id=?", (proposal_id,)
+                ).fetchone()
+                if exists and exists["status"] == "ratified":
+                    raise ValueError(
+                        "proposal is already ratified into canon — retract the "
+                        "canon fact instead of re-deciding the proposal"
+                    )
                 return None
             row = c.execute(
                 "SELECT * FROM wa_canon_proposals WHERE id=?", (proposal_id,)
