@@ -62,7 +62,22 @@ def route_list_scenes(
     chapter_id: Optional[str] = Query(default=None),
     db=Depends(get_db),
 ):
-    return {"scenes": list_scenes(db, work_id, chapter_id=chapter_id)}
+    """List scenes for a work, each augmented with its latest stored metrics."""
+    from orivellum.capabilities.pacing import get_scene_metrics  # already imported above; re-import for clarity
+    scenes = list_scenes(db, work_id, chapter_id=chapter_id)
+    for sc in scenes:
+        sc["latest_metrics"] = get_scene_metrics(db, sc["id"])
+    return {"scenes": scenes}
+
+
+@router.get("/pacing/scenes/{scene_id}/metrics")
+def route_get_scene_metrics(scene_id: str, db=Depends(get_db)):
+    """Return the latest stored metrics for a single scene."""
+    from orivellum.capabilities.pacing import get_scene_metrics
+    m = get_scene_metrics(db, scene_id)
+    if m is None:
+        raise _not_found(f"No metrics for scene {scene_id!r}")
+    return {"metrics": m}
 
 
 @router.patch("/pacing/scenes/{scene_id}")

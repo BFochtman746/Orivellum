@@ -309,13 +309,17 @@ def extract_scenes(
             if not start_quote:
                 continue
 
-            # Ground the start quote
+            # Ground the start quote — discard any proposal whose start is not
+            # verifiable verbatim in the chapter text.  Storing offset 0 as a
+            # fallback contaminates segmentation with fabricated boundaries.
             start_result = ground_quote_span(start_quote, text)
             if start_result is None:
-                # Try first 60 chars of the chapter as a fallback for the first scene
-                start_offset = 0
-            else:
-                start_offset = start_result[0]
+                logger.debug(
+                    "Scene proposal discarded: start_quote not grounded in chapter %s: %r",
+                    cid, start_quote[:40],
+                )
+                continue
+            start_offset = start_result[0]
 
             # Ground the end quote
             if end_quote:
@@ -372,15 +376,27 @@ def get_scene(db: "OrivellumDB", scene_id: str) -> dict:
 
 
 def list_scenes(db: "OrivellumDB", work_id: str, *, chapter_id: str | None = None) -> list[dict]:
+    """Return scenes in narrative order.
+
+    For single-chapter queries: ordered by scene.seq within that chapter.
+    For full-work queries: ordered by (chapter.seq, scene.seq) so scenes
+    from chapter 2 always follow chapter 1 regardless of the per-chapter seq values.
+    """
     with db._lock:
         if chapter_id:
             rows = db._conn.execute(
-                "SELECT * FROM scenes WHERE work_id=? AND chapter_id=? ORDER BY seq",
+                """SELECT s.* FROM scenes s
+                   WHERE s.work_id=? AND s.chapter_id=?
+                   ORDER BY s.seq""",
                 (work_id, chapter_id),
             ).fetchall()
         else:
             rows = db._conn.execute(
-                "SELECT * FROM scenes WHERE work_id=? ORDER BY seq", (work_id,)
+                """SELECT s.* FROM scenes s
+                   JOIN book_chapters bc ON bc.id = s.chapter_id
+                   WHERE s.work_id=?
+                   ORDER BY bc.seq, s.seq""",
+                (work_id,),
             ).fetchall()
     return [dict(r) for r in rows]
 

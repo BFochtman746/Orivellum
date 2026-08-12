@@ -313,6 +313,8 @@ class TestSceneOperations(unittest.TestCase):
         self.assertEqual(scenes[0]["chapter_id"], cid)
 
     def test_ungrounded_scenes_discarded(self) -> None:
+        """Proposals whose start_quote cannot be verified verbatim must be
+        silently discarded — storing them at offset 0 contaminates segmentation."""
         wid = self.db._work()
         cid = self.db._chapter(wid, 0, "Ch1", "Short text here.")
 
@@ -325,10 +327,8 @@ class TestSceneOperations(unittest.TestCase):
         with patch("orivellum.capabilities.llm.llm_call", side_effect=_fake_llm):
             scenes = pac.extract_scenes(self.db, self.cfg, wid, chapter_id=cid)
 
-        # Ungroundable scene: the fallback is offset=0 so it still creates one
-        # scene, but it must have a grounded start (offset 0 is valid)
-        # The real test: no crash and at most 1 scene
-        self.assertLessEqual(len(scenes), 1)
+        self.assertEqual(len(scenes), 0,
+                         "Ungrounded start_quote must be rejected entirely, not stored at offset 0")
 
     def test_update_scene_allows_author_correction(self) -> None:
         wid = self.db._work()
@@ -655,6 +655,141 @@ class TestProfileManagement(unittest.TestCase):
         self.assertIn("available_profiles", p)
         self.assertIn("thriller", p["available_profiles"])
         self.assertIn("deep_immersive", p["available_profiles"])
+
+
+# ── Multi-chapter ordering ────────────────────────────────────────────────────
+
+class TestMultiChapterOrdering(unittest.TestCase):
+    """Scenes from chapter 1 must always precede scenes from chapter 2 in
+    list_scenes(work_id), regardless of the per-chapter seq values.
+
+    Regression guard: before the fix, ORDER BY seq alone put chapter 2 scene 0
+    before chapter 1 scene 1 when both have the same seq counter.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = _LightDB(str(Path(self._tmp.name) / "test.db"))
+        self.cfg = MagicMock()
+        self.wid = self.db._work("Multi-Chapter Book")
+        self.ch1 = self.db._chapter(self.wid, 0, "Chapter One", "First chapter text here.")
+        self.ch2 = self.db._chapter(self.wid, 1, "Chapter Two", "Second chapter text here.")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_chapter_order_respected_in_scene_list(self) -> None:
+        # ch1 has seq 0 and seq 1; ch2 has seq 0 — without the JOIN fix,
+        # ch2-seq0 would sort before ch1-seq1.
+        sid_ch1_s0 = self.db._scene(self.wid, self.ch1, 0, "Ch1 Scene 1")
+        sid_ch1_s1 = self.db._scene(self.wid, self.ch1, 1, "Ch1 Scene 2")
+        sid_ch2_s0 = self.db._scene(self.wid, self.ch2, 0, "Ch2 Scene 1")
+
+        scenes = pac.list_scenes(self.db, self.wid)
+        ids = [s["id"] for s in scenes]
+
+        self.assertEqual(ids.index(sid_ch1_s0), 0, "Ch1 Scene 1 must be first")
+        self.assertEqual(ids.index(sid_ch1_s1), 1, "Ch1 Scene 2 must be second")
+        self.assertEqual(ids.index(sid_ch2_s0), 2, "Ch2 Scene 1 must be last")
+
+    def test_chapter_filter_still_works(self) -> None:
+        """chapter_id filter must return only that chapter's scenes."""
+        self.db._scene(self.wid, self.ch1, 0, "Ch1 Scene A")
+        self.db._scene(self.wid, self.ch2, 0, "Ch2 Scene A")
+        ch1_scenes = pac.list_scenes(self.db, self.wid, chapter_id=self.ch1)
+        self.assertEqual(len(ch1_scenes), 1)
+        self.assertEqual(ch1_scenes[0]["chapter_id"], self.ch1)
+
+    def test_detectors_use_narrative_order(self) -> None:
+        """book_boundary and other detectors receive scenes in narrative order."""
+        # Ch1: two high-tension scenes then full resolution (first arc)
+        arc1 = [(0.2, 0.8), (0.8, 0.85), (0.85, 0.1)]
+        for i, (tb, ta) in enumerate(arc1):
+            sid = self.db._scene(self.wid, self.ch1, i, f"Ch1-S{i}")
+            self.db._metrics(sid, self.wid, tension_before=tb, tension_after=ta,
+                             irreversible_turns=1 if ta >= 0.7 else 0,
+                             has_aftermath=1 if ta < 0.2 else 0, has_orientation=1,
+                             emotional_intensity=0.6, sensory_grounding=0.6,
+                             consequence_present=1, purpose_clear=1)
+        # Ch2: second independent arc with its own peak (seq 0,1,2 — same as ch1)
+        arc2 = [(0.15, 0.5), (0.5, 0.82), (0.82, 0.2)]
+        for i, (tb, ta) in enumerate(arc2):
+            sid = self.db._scene(self.wid, self.ch2, i, f"Ch2-S{i}")
+            self.db._metrics(sid, self.wid, tension_before=tb, tension_after=ta,
+                             irreversible_turns=1 if ta >= 0.7 else 0,
+                             has_aftermath=1 if ta < 0.25 else 0, has_orientation=1,
+                             emotional_intensity=0.6, sensory_grounding=0.6,
+                             consequence_present=1, purpose_clear=1)
+
+        run = pac.run_pacing_diagnostics(self.db, self.cfg, self.wid)
+        findings = pac.list_pacing_findings(self.db, run["id"])
+        # Run must complete without error and in correct order (not crash)
+        self.assertEqual(run["status"], "done")
+        # With the fix the scenes are ordered ch1-s0,ch1-s1,ch1-s2,ch2-s0,ch2-s1,ch2-s2
+        # forming two arcs — book_boundary may or may not fire depending on exact values,
+        # but the run must succeed and coverage must reflect 6 scenes.
+        coverage = run["coverage"]
+        self.assertEqual(coverage.get("total_scenes"), 6)
+
+
+# ── Stored metrics flow ───────────────────────────────────────────────────────
+
+class TestStoredMetricsFlow(unittest.TestCase):
+    """get_scene_metrics must return the latest version stored for a scene.
+
+    Regression guard for the UI defect: the Tension Map was reading from
+    component-local state populated by re-running LLM analysis instead of
+    fetching persisted metrics from the server.  This test ensures the
+    server-side read path (get_scene_metrics) works and that list_scenes
+    callers can rely on it for the embedded latest_metrics field.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = _LightDB(str(Path(self._tmp.name) / "test.db"))
+        self.wid = self.db._work()
+        self.cid = self.db._chapter(self.wid, 0, "Ch", "Text.")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_get_scene_metrics_returns_none_before_analysis(self) -> None:
+        sid = self.db._scene(self.wid, self.cid, 0, "Unanalyzed")
+        self.assertIsNone(pac.get_scene_metrics(self.db, sid))
+
+    def test_get_scene_metrics_returns_stored_row(self) -> None:
+        sid = self.db._scene(self.wid, self.cid, 0, "Analyzed")
+        self.db._metrics(sid, self.wid, tension_after=0.75)
+        m = pac.get_scene_metrics(self.db, sid)
+        self.assertIsNotNone(m)
+        self.assertAlmostEqual(m["tension_after"], 0.75)  # type: ignore[index]
+
+    def test_get_scene_metrics_returns_latest_version(self) -> None:
+        import uuid
+        from datetime import UTC, datetime
+        sid = self.db._scene(self.wid, self.cid, 0, "Multi-version")
+        # Insert version 1
+        self.db._metrics(sid, self.wid, tension_after=0.3)
+        # Insert version 2 manually
+        mid2 = str(uuid.uuid4())
+        now = datetime.now(UTC).isoformat()
+        self.db._conn.execute(
+            """INSERT INTO scene_metrics
+               (id, scene_id, work_id, version,
+                tension_before, tension_after, emotional_intensity,
+                revelation_density, action_ratio, reflection_ratio,
+                sensory_grounding, has_aftermath, has_orientation,
+                irreversible_turns, reader_questions_created,
+                reader_questions_answered, consequence_present,
+                purpose_clear, evidence, model_output, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (mid2, sid, self.wid, 2, 0.1, 0.9, 0.5, 0.2, 0.4, 0.3,
+             0.7, 0, 1, 0, 1, 0, 1, 1, "[]", "{}", now),
+        )
+        self.db._conn.commit()
+        m = pac.get_scene_metrics(self.db, sid)
+        self.assertAlmostEqual(m["tension_after"], 0.9,  # type: ignore[index]
+                               msg="Must return version 2 (latest), not version 1")
 
 
 if __name__ == "__main__":

@@ -56,6 +56,8 @@ type Scene = {
   setting: string | null;
   word_count: number;
   status: "proposed" | "confirmed" | "dismissed";
+  /** Latest persisted metrics, null if no analysis run yet. */
+  latest_metrics: SceneMetrics | null;
 };
 
 type SceneMetrics = {
@@ -232,9 +234,6 @@ function OverviewPanel({ workId }: { workId: string }) {
   const scenesQ = useScenes(workId);
   const scenes: Scene[] = scenesQ.data?.scenes ?? [];
 
-  const [sceneMetrics, setSceneMetrics] = useState<Record<string, SceneMetrics>>({});
-  const [analyzing, setAnalyzing] = useState(false);
-
   const extractMut = useMutation({
     mutationFn: () =>
       apiFetch(`${API}/works/${workId}/pacing/scenes/extract`, {
@@ -252,34 +251,26 @@ function OverviewPanel({ workId }: { workId: string }) {
   const analyzeMut = useMutation({
     mutationFn: () =>
       apiFetch(`${API}/works/${workId}/pacing/analyze-all`, { method: "POST" }).then((r) => r.json()),
-    onSuccess: () => toast.success("Scene analysis queued"),
+    onSuccess: (data) => {
+      // Analysis runs in the background; poll the scene list until metrics arrive.
+      let polls = 0;
+      const poll = () => {
+        polls++;
+        qc.invalidateQueries({ queryKey: ["pacing-scenes", workId] });
+        if (polls < 15) setTimeout(poll, 4000);
+      };
+      setTimeout(poll, 4000);
+      toast.success(`Analyzing ${data.queued ?? "all"} scenes — results will appear as they complete`);
+    },
     onError: () => toast.error("Analysis failed"),
   });
 
-  // Load metrics for visible scenes
-  const loadMetrics = async (sceneIds: string[]) => {
-    setAnalyzing(true);
-    const fetched: Record<string, SceneMetrics> = {};
-    await Promise.all(
-      sceneIds.map(async (sid) => {
-        try {
-          const r = await apiFetch(`${API}/pacing/scenes/${sid}/analyze`, { method: "POST" });
-          if (r.ok) {
-            const d = await r.json();
-            if (d.metrics) fetched[sid] = d.metrics;
-          }
-        } catch { /* ok */ }
-      })
-    );
-    setSceneMetrics((prev) => ({ ...prev, ...fetched }));
-    setAnalyzing(false);
-  };
-
-  // Build chart data from scenes that have metrics
+  // Build chart data from scenes that have persisted metrics (server-sourced).
+  const analyzedCount = scenes.filter((sc) => sc.latest_metrics).length;
   const chartData = scenes
-    .filter((sc) => sceneMetrics[sc.id])
+    .filter((sc) => sc.latest_metrics)
     .map((sc, i) => {
-      const m = sceneMetrics[sc.id];
+      const m = sc.latest_metrics!;
       return {
         name: sc.title || `S${i + 1}`,
         tension: m.tension_after ?? 0,
@@ -310,8 +301,7 @@ function OverviewPanel({ workId }: { workId: string }) {
         )}
         <span className="text-xs text-muted-foreground">
           {scenes.length} scene{scenes.length !== 1 ? "s" : ""}
-          {Object.keys(sceneMetrics).length > 0 &&
-            ` · ${Object.keys(sceneMetrics).length} analyzed`}
+          {analyzedCount > 0 && ` · ${analyzedCount} analyzed`}
         </span>
       </div>
 
@@ -368,7 +358,7 @@ function OverviewPanel({ workId }: { workId: string }) {
           <SceneCard
             key={sc.id}
             scene={sc}
-            metrics={sceneMetrics[sc.id] ?? null}
+            metrics={sc.latest_metrics}
           />
         ))}
       </div>
