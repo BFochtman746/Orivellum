@@ -61,7 +61,6 @@ _PERMISSION_ROOTS = [
 # Modules imported by a root but temporarily exempt from the floor.
 # Format: dotted module -> "YYYY-MM-DD — reason".  Every entry is debt.
 FLOOR_ALLOWLIST: dict[str, str] = {}
-_FLOOR_ALLOWLIST_MAX = 0  # ratchet — lower this when entries are removed
 
 # Rule 2: (module path relative to src/orivellum, public name) -> dated reason.
 # _G = grandfathered when the rule was introduced.  These are public names with
@@ -159,8 +158,32 @@ ZERO_CALLER_ALLOWLIST: dict[tuple[str, str], str] = {
     ("capabilities/finishing/gateway.py", "Gateway"): _G,
     ("capabilities/mail/models.py", "MailRecord"): _G,
     ("capabilities/assay/metrics.py", "diction_fingerprints"): _G,
+    # Surfaced when the rule became symbol-aware (attribute references now
+    # resolve to the owning module; monkeypatch string targets don't count):
+    ("capabilities/constory.py", "is_running"): _G,
+    ("capabilities/position.py", "claimed_stage"): _G,
+    ("capabilities/corpus_hygiene.py", "finding_key"): _G,
+    ("capabilities/pklos/authority_resolver.py", "is_prohibited_source"): _G,
+    ("capabilities/finishing/atelier.py", "list_series"): _G,
+    ("capabilities/finishing/atelier.py", "get_series"): _G,
+    ("capabilities/finishing/atelier.py", "list_books"): _G,
+    ("capabilities/finishing/atelier.py", "get_spec"): _G,
+    ("capabilities/finishing/press.py", "output_dir"): _G,
+    ("capabilities/finishing/press.py", "list_distribution"): _G,
+    ("capabilities/finishing/press.py", "get_ledger"): _G,
 }
-_ZERO_CALLER_ALLOWLIST_MAX = 84  # ratchet — lower this when entries are removed
+# Tamper-evident snapshot of the grandfathered baseline.  The hygiene test
+# recomputes the hash of the live allowlist keys and compares: ANY addition,
+# removal, or substitution forces an edit of this literal — a loud,
+# deliberate act the diff makes obvious.  Shrinking is encouraged (delete the
+# entry, recompute with scripts: see the test's failure message); growing or
+# swapping requires justification in review.
+_ZERO_CALLER_BASELINE_SHA256 = (
+    "e870af3c7b2ef18b35071db02afe9a2e3b8cbb250abcc1ab6dbd014184101edb"  # 95 entries
+)
+_FLOOR_BASELINE_SHA256 = (
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # empty
+)
 
 
 # ── AST helpers ───────────────────────────────────────────────────────────────
@@ -236,22 +259,82 @@ def _resolve_import_from(
     return None
 
 
-def _identifiers_of(path: Path) -> set[str]:
-    """All identifiers a file actually uses: names, attributes, import aliases.
+def _references_of(path: Path) -> set[tuple[str, str]]:
+    """Symbol-aware references: {(dotted module, name)} a file actually uses.
 
-    Comments, docstrings, and string literals do NOT contribute — a mention
-    in prose never satisfies the zero-caller rule.
+    A reference counts ONLY when it provably resolves to the target module:
+      * ``from orivellum.x.y import name``            → (orivellum.x.y, name)
+      * ``import orivellum.x.y`` + ``orivellum.x.y.name(...)``
+      * ``import orivellum.x.y as z`` + ``z.name(...)``
+      * ``from orivellum.x import y`` (y a module) + ``y.name(...)``
+    An unrelated local variable or ``other_object.name`` with the same
+    spelling never satisfies the rule; nor do comments, docstrings, or
+    string literals (so ``monkeypatch.setattr(mod, "name", ...)`` does not
+    count — patching is not calling).
     """
-    idents: set[str] = set()
-    for node in ast.walk(_parsed(path)):
-        if isinstance(node, ast.Name):
-            idents.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            idents.add(node.attr)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                idents.add(alias.name.split(".")[-1])
-    return idents
+    refs: set[tuple[str, str]] = set()
+    aliases: dict[str, str] = {}  # local binding -> dotted module
+    tree = _parsed(path)
+    for node in ast.walk(tree):
+        _collect_import_bindings(node, path, aliases, refs)
+    for node in ast.walk(tree):
+        _collect_attribute_ref(node, aliases, refs)
+    return refs
+
+
+def _collect_import_bindings(
+    node: ast.AST, path: Path, aliases: dict[str, str], refs: set[tuple[str, str]]
+) -> None:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if not (alias.name == "orivellum" or alias.name.startswith("orivellum.")):
+                continue
+            if alias.asname:
+                aliases[alias.asname] = alias.name
+            else:
+                # `import orivellum.x.y` binds the ROOT name; attribute
+                # chains starting at `orivellum` are resolved separately.
+                aliases.setdefault("orivellum", "orivellum")
+    elif isinstance(node, ast.ImportFrom):
+        module = _resolve_import_from(node, path, _dotted_for(path))
+        if module is None:
+            return
+        for alias in node.names:
+            local = alias.asname or alias.name
+            if _module_file(f"{module}.{alias.name}") is not None:
+                aliases[local] = f"{module}.{alias.name}"  # imported a module
+            else:
+                refs.add((module, alias.name))  # imported a symbol
+
+
+def _collect_attribute_ref(
+    node: ast.AST, aliases: dict[str, str], refs: set[tuple[str, str]]
+) -> None:
+    if not isinstance(node, ast.Attribute):
+        return
+    chain = _attr_chain(node)
+    if not chain or chain[0] not in aliases:
+        return
+    parts = aliases[chain[0]].split(".") + chain[1:]
+    # Longest prefix that is a real module; next component is the name.
+    for i in range(len(parts) - 1, 0, -1):
+        dotted = ".".join(parts[:i])
+        if _module_file(dotted) is not None:
+            refs.add((dotted, parts[i]))
+            return
+
+
+def _attr_chain(node: ast.Attribute) -> list[str] | None:
+    """Flatten ``a.b.c`` to ['a','b','c']; None when the base isn't a Name."""
+    parts = [node.attr]
+    cur = node.value
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if not isinstance(cur, ast.Name):
+        return None
+    parts.append(cur.id)
+    return list(reversed(parts))
 
 
 def _production_files() -> list[Path]:
@@ -319,17 +402,29 @@ def test_allowlist_entries_are_dated_and_ratcheted():
         assert re.match(r"^\d{4}-\d{2}-\d{2} — ", reason), (
             f"ZERO_CALLER_ALLOWLIST[{key!r}] must start with 'YYYY-MM-DD — reason'"
         )
-    # Shrink-only: growing an allowlist requires raising the constant, which
-    # is a loud, reviewable act — not a quiet dict entry.
-    assert len(FLOOR_ALLOWLIST) <= _FLOOR_ALLOWLIST_MAX, (
-        f"FLOOR_ALLOWLIST grew to {len(FLOOR_ALLOWLIST)} entries "
-        f"(ratchet: {_FLOOR_ALLOWLIST_MAX}). Write the missing tests instead."
+    # Tamper-evident baseline: hash of the live allowlist keys must match the
+    # hardcoded snapshot.  Any addition, removal, OR substitution changes the
+    # hash and forces an edit of the baseline literal — nobody can quietly
+    # swap one exemption for another under a stable count.
+    floor_hash = _allowlist_hash(sorted(FLOOR_ALLOWLIST))
+    assert floor_hash == _FLOOR_BASELINE_SHA256, (
+        f"FLOOR_ALLOWLIST changed (hash {floor_hash}). If you SHRANK it, "
+        "update _FLOOR_BASELINE_SHA256 to this value. Growing it needs "
+        "review justification — prefer writing the missing tests."
     )
-    assert len(ZERO_CALLER_ALLOWLIST) <= _ZERO_CALLER_ALLOWLIST_MAX, (
-        f"ZERO_CALLER_ALLOWLIST grew to {len(ZERO_CALLER_ALLOWLIST)} entries "
-        f"(ratchet: {_ZERO_CALLER_ALLOWLIST_MAX}). Wire, delete, or test the "
-        "new name instead of allowlisting it."
+    zc_hash = _allowlist_hash(sorted(f"{a}::{b}" for a, b in ZERO_CALLER_ALLOWLIST))
+    assert zc_hash == _ZERO_CALLER_BASELINE_SHA256, (
+        f"ZERO_CALLER_ALLOWLIST changed (hash {zc_hash}). If you SHRANK it, "
+        "update _ZERO_CALLER_BASELINE_SHA256 to this value. Growing or "
+        "swapping entries needs review justification — prefer wiring, "
+        "deleting, or testing the name."
     )
+
+
+def _allowlist_hash(keys) -> str:
+    import hashlib
+
+    return hashlib.sha256("\n".join(keys).encode("utf-8")).hexdigest()
 
 
 # ── Rule 2: zero callers ──────────────────────────────────────────────────────
@@ -366,22 +461,89 @@ def test_zero_caller_rule_every_capability_module_is_imported():
 
 
 def test_zero_caller_rule_every_public_capability_entry_point_is_referenced():
-    """Level (b): a public entry point that appears as an identifier in
-    neither production code nor tests is dead code and fails the build."""
+    """Level (b): a public entry point that no production code or test
+    provably imports/uses (symbol-aware, not same-spelling) is dead code
+    and fails the build."""
     all_files = _production_files() + _test_files()
-    idents: dict[Path, set[str]] = {p: _identifiers_of(p) for p in all_files}
+    refs: set[tuple[str, str]] = set()
+    for p in all_files:
+        for module, name in _references_of(p):
+            if p != _module_file(module):  # self-references don't count
+                refs.add((module, name))
 
     orphans: list[str] = []
     for mod in _capability_files():
         rel = str(mod.relative_to(SRC))
+        dotted = _dotted_for(mod)
         for name in _public_entry_points(mod):
             if (rel, name) in ZERO_CALLER_ALLOWLIST:
                 continue
-            if not any(name in ids for p, ids in idents.items() if p != mod):
+            if (dotted, name) not in refs:
                 orphans.append(f"{rel}:{name}")
 
     assert not orphans, (
-        "Public capability entry points with ZERO references outside their own "
-        f"module (dead code or an unfinished wire): {orphans}. "
+        "Public capability entry points with ZERO resolved references outside "
+        f"their own module (dead code or an unfinished wire): {orphans}. "
         "Wire them, delete them, or add a dated ZERO_CALLER_ALLOWLIST entry."
+    )
+
+
+# ── The rule checks itself: adversarial reference-resolution tests ───────────
+
+
+def _refs_from_source(tmp_path: Path, source: str) -> set[tuple[str, str]]:
+    f = tmp_path / "sample_ref_probe.py"
+    f.write_text(source, encoding="utf-8")
+    _parsed.cache_clear()
+    try:
+        return _references_of(f)
+    finally:
+        _parsed.cache_clear()
+
+
+def test_reference_resolution_counts_only_the_real_module(tmp_path):
+    target = ("orivellum.capabilities.cluster", "run_clustering")
+    # Direct symbol import counts.
+    assert target in _refs_from_source(
+        tmp_path, "from orivellum.capabilities.cluster import run_clustering\n"
+    )
+    # Module alias attribute counts.
+    assert target in _refs_from_source(
+        tmp_path,
+        "import orivellum.capabilities.cluster as cl\ncl.run_clustering(None)\n",
+    )
+    # Full dotted chain counts.
+    assert target in _refs_from_source(
+        tmp_path,
+        "import orivellum.capabilities.cluster\n"
+        "orivellum.capabilities.cluster.run_clustering(None)\n",
+    )
+    # `from package import module` then attribute counts.
+    assert target in _refs_from_source(
+        tmp_path,
+        "from orivellum.capabilities import cluster\ncluster.run_clustering(None)\n",
+    )
+
+
+def test_reference_resolution_rejects_same_spelled_impostors(tmp_path):
+    target = ("orivellum.capabilities.cluster", "run_clustering")
+    # A local variable with the same name is NOT a reference.
+    assert target not in _refs_from_source(tmp_path, "run_clustering = 1\nrun_clustering\n")
+    # An attribute on an unrelated object is NOT a reference.
+    assert target not in _refs_from_source(
+        tmp_path, "class Other: pass\nOther().run_clustering\n"
+    )
+    # The same attribute reached through a DIFFERENT orivellum module is not
+    # a reference to cluster.
+    assert target not in _refs_from_source(
+        tmp_path,
+        "import orivellum.capabilities.custodian as c\nc.run_clustering\n",
+    )
+    # A string literal / patch target is NOT a reference.
+    assert target not in _refs_from_source(
+        tmp_path,
+        "import orivellum.capabilities.cluster as cl\n"
+        "x = 'cl.run_clustering'\n"
+        "def patch(o, n, v): pass\n"
+        "patch(cl, 'run_clustering', None)\n",
     )
