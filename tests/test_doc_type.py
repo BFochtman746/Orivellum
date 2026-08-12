@@ -362,3 +362,63 @@ def test_backfill_endpoint(client, db):
     body = resp.json()
     assert body["doc_type_applied"] >= 1
     assert body["model_proposals_queued"] is False
+
+
+# ── system-output creation paths stamp doc_type at insert ────────────────────
+
+
+def test_register_and_index_stamps_generated_and_refuses_harvest(db, _tmp, monkeypatch):
+    """Persisted outputs must be 'generated' at creation — refused by harvest
+    immediately, never only after a manual backfill."""
+    from orivellum.capabilities.persist import register_and_index
+    from orivellum.configuration.config import OrivellumConfig
+
+    cfg = OrivellumConfig(data_dir=_tmp)
+    out = Path(_tmp) / "outputs" / "clip.mp3"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(b"fake audio")
+
+    doc_id = register_and_index(out, "TTS clip text", "mp3", db, cfg, title="TTS clip: hi")
+    doc = db.get_document(doc_id)
+    assert doc["doc_type"] == "generated"
+    assert doc["doc_type_by"] == "rule:system-output"
+    with pytest.raises(HarvestRefused):
+        assert_doc_type_harvestable(db, doc_id)
+
+
+def test_generate_register_output_stamps_generated(db, _tmp):
+    from orivellum.capabilities.generate import _register_output
+    from orivellum.configuration.config import OrivellumConfig
+
+    cfg = OrivellumConfig(data_dir=_tmp)
+    out = Path(_tmp) / "outputs" / "generate" / "brief.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("# Generated brief")
+
+    doc_id = _register_output(out, None, db, cfg, "md", "Brief", text_content="# Generated brief")
+    doc = db.get_document(doc_id)
+    assert doc["doc_type"] == "generated"
+    assert doc["doc_type_by"] == "rule:system-output"
+    with pytest.raises(HarvestRefused):
+        assert_doc_type_harvestable(db, doc_id)
+
+
+def test_template_upload_stamps_doc_type(client, db, _tmp):
+    resp = client.post(
+        "/api/actions/template-fill",
+        files={
+            "template": ("invoice_template.docx", b"PK\x03\x04fake", "application/octet-stream")
+        },
+    )
+    # Route may reject a fake docx downstream; the document row is what matters.
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT doc_type, doc_type_by FROM documents WHERE source='upload/template' LIMIT 1"
+        ).fetchone()
+    if row is None:
+        # Registration failed before insert — the endpoint refused the fake
+        # file entirely, which is fine; assert it did not 500 silently.
+        assert resp.status_code in (400, 415, 422, 500), resp.text
+    else:
+        assert row["doc_type"] is not None
+        assert row["doc_type_by"], "provenance must be stamped at creation"

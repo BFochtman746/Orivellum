@@ -253,6 +253,9 @@ async def template_fill_upload(
     # Register template as a library document
     sha = hashlib.sha256(content).hexdigest()
     rel = str(tpl_path.relative_to(data_dir))
+    from orivellum.capabilities.classify import classify_doc_type
+
+    _cls = classify_doc_type(template.filename or "template.docx", kind=suffix.lstrip("."))
     try:
         tpl_doc = db.create_document(
             title=f"Template: {template.filename or 'uploaded'}",
@@ -263,6 +266,8 @@ async def template_fill_upload(
             content_path=rel,
             meta={"is_template": True},
             tier="artifact",
+            doc_type=_cls.doc_type.value,
+            doc_type_by=f"rule:{_cls.rule}",
         )
         tpl_doc_id = tpl_doc["id"]
     except Exception as exc:

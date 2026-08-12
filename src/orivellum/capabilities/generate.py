@@ -90,6 +90,8 @@ def _register_output(
             "code_version": _code_version(),
         },
         tier="artifact",
+        doc_type="generated",
+        doc_type_by="rule:system-output",
     )
     doc_id = doc["id"]
 

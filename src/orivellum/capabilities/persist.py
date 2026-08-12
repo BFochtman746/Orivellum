@@ -261,6 +261,11 @@ def register_and_index(
                 "generated_at": _now(),
             },
             tier=tier,
+            # Persisted outputs are things this system itself produced —
+            # stamp them 'generated' at creation so the harvest refusal
+            # policy applies immediately, not after a manual backfill.
+            doc_type="generated",
+            doc_type_by="rule:system-output",
         )
         doc_id = doc["id"]
     except Exception as exc:
