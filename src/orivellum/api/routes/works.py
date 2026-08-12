@@ -406,6 +406,64 @@ def works_get_collections(work_id: str):
     return {"collections": db.get_work_collections(work_id)}
 
 
+@router.get("/works/{work_id}/scopes")
+def works_scopes(work_id: str):
+    """The Book Workspace scope switcher's data — everything this book
+    participates in: its series (with all three order dimensions), the
+    collections holding it, the canon domains serving it, and canon counts
+    per scope.  Read-only."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.database.series_store import SeriesStore
+    from orivellum.database.structure_store import CollectionStore, DomainStore
+
+    conn = db.read_conn()
+    sfw = SeriesStore(db).series_for_work(work_id)
+    series = {"id": sfw["series_id"], "title": sfw["series_title"]} if sfw else None
+    member = None
+    if series:
+        member = next(
+            (m for m in SeriesStore(db).list_members(series["id"]) if m["work_id"] == work_id),
+            None,
+        )
+    collections = CollectionStore(db).collections_for_work(work_id)
+    domains = DomainStore(db).domains_for_work(work_id)
+
+    def _count(sql: str, args: tuple) -> int:
+        return int(conn.execute(sql, args).fetchone()["n"])
+
+    canon_counts = {
+        "book": _count(
+            "SELECT COUNT(*) AS n FROM canon_fact WHERE work_id=? AND status='active'",
+            (work_id,),
+        ),
+        "series": (
+            _count(
+                "SELECT COUNT(*) AS n FROM canon_fact WHERE series_id=? AND status='active'",
+                (series["id"],),
+            )
+            if series
+            else 0
+        ),
+        "domain": sum(
+            _count(
+                "SELECT COUNT(*) AS n FROM canon_fact WHERE domain_id=? AND status='active'",
+                (d["id"],),
+            )
+            for d in domains
+        ),
+    }
+    return {
+        "work_id": work_id,
+        "series": series,
+        "membership": member,
+        "collections": collections,
+        "domains": domains,
+        "canon_counts": canon_counts,
+    }
+
+
 @router.get("/works/{work_id}/duplicates")
 def works_duplicates(work_id: str, resolved: bool = False):
     """Return near-duplicate document pairs where at least one doc belongs to this Work."""

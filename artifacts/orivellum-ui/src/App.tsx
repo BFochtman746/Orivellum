@@ -17,6 +17,8 @@ import WorkIntelligence from '@/pages/works/intelligence';
 import GapOraclePage from '@/pages/works/gap-oracle';
 import SeriesList from '@/pages/series/index';
 import SeriesDetail from '@/pages/series/detail';
+import CollectionsPage from '@/pages/collections/index';
+import CollectionDetail from '@/pages/collections/detail';
 import { useParams, useLocation } from 'wouter';
 import Chat from '@/pages/chat/index';
 import Library from '@/pages/library/index';
@@ -146,6 +148,8 @@ function RoutedPages() {
         <Route path="/works/:workId/gap-oracle">{() => <RouteWithBoundary component={GapOraclePage} />}</Route>
         <Route path="/series">{() => <RouteWithBoundary component={SeriesList} />}</Route>
         <Route path="/series/:seriesId">{() => <RouteWithBoundary component={SeriesDetail} />}</Route>
+        <Route path="/collections">{() => <RouteWithBoundary component={CollectionsPage} />}</Route>
+        <Route path="/collections/:collectionId">{() => <RouteWithBoundary component={CollectionDetail} />}</Route>
         <Route path="/chat">{() => <RouteWithBoundary component={Chat} />}</Route>
         <Route path="/notes">{() => <RouteWithBoundary component={NotesPage} />}</Route>
         <Route path="/library">{() => <RouteWithBoundary component={Library} />}</Route>

@@ -1413,6 +1413,152 @@ function ContinuityPanel({ workId }: { workId: string }) {
   );
 }
 
+// ── Scope switcher — This Book / Series / Canon / Collection ────────────────
+
+interface WorkScopes {
+  series: { id: string; title: string } | null;
+  membership: {
+    volume: number;
+    chronology_order?: number | null;
+    publication_order?: number | null;
+    relationship_type?: string | null;
+  } | null;
+  collections: { id: string; title: string; collection_type: string }[];
+  domains: { id: string; title: string; domain_type: string }[];
+  canon_counts: { book: number; series: number; domain: number };
+}
+
+function ScopeStrip({ workId }: { workId: string }) {
+  const [scope, setScope] = useState<"book" | "series" | "canon" | "collection">("book");
+  const { data } = useQuery<WorkScopes>({
+    queryKey: ["work-scopes", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/scopes`);
+      if (!r.ok) throw new Error("Failed to load scopes");
+      return r.json();
+    },
+    enabled: !!workId,
+    staleTime: 30_000,
+  });
+  if (!data) return null;
+  const tabs: { key: typeof scope; label: string; show: boolean }[] = [
+    { key: "book", label: "This Book", show: true },
+    { key: "series", label: data.series ? `Series` : "Series", show: true },
+    { key: "canon", label: "Canon", show: true },
+    { key: "collection", label: "Collection", show: true },
+  ];
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-1 flex-wrap" role="tablist" aria-label="Book scope">
+        {tabs.filter((t) => t.show).map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={scope === t.key}
+            onClick={() => setScope(t.key)}
+            data-testid={`scope-tab-${t.key}`}
+            className={`text-[11px] font-mono uppercase tracking-widest px-3 py-1.5 rounded-full border transition-colors ${
+              scope === t.key
+                ? "border-primary/50 text-primary bg-primary/[0.06]"
+                : "border-border/50 text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {scope === "series" && (
+        <Card>
+          <CardContent className="p-4 text-sm space-y-2">
+            {data.series ? (
+              <>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Link href={`/series/${data.series.id}`} className="font-medium underline underline-offset-2">
+                    {data.series.title}
+                  </Link>
+                  {data.membership && (
+                    <>
+                      <Badge variant="outline">Volume {data.membership.volume} — reading order</Badge>
+                      {data.membership.chronology_order ? (
+                        <Badge variant="outline">Chronology #{data.membership.chronology_order}</Badge>
+                      ) : null}
+                      {data.membership.publication_order ? (
+                        <Badge variant="outline">Published #{data.membership.publication_order}</Badge>
+                      ) : null}
+                      {data.membership.relationship_type && data.membership.relationship_type !== "volume" ? (
+                        <Badge variant="outline">{data.membership.relationship_type}</Badge>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+                <p className="text-muted-foreground text-xs">
+                  Reading order (volume) is the authority order — canon from earlier
+                  volumes binds this book. Chronology and publication order are
+                  descriptive and freely editable on the series page.
+                </p>
+              </>
+            ) : (
+              <p className="text-muted-foreground">
+                A standalone book. Converting to a series is one reversible step —
+                nothing is lost and no canon is promoted without your approval.{" "}
+                <Link href="/series" className="underline underline-offset-2">Series</Link>
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {scope === "canon" && (
+        <Card>
+          <CardContent className="p-4 text-sm space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="outline">{data.canon_counts.book} book-scoped fact{data.canon_counts.book === 1 ? "" : "s"}</Badge>
+              <Badge variant="outline">{data.canon_counts.series} series fact{data.canon_counts.series === 1 ? "" : "s"}</Badge>
+              <Badge variant="outline">{data.canon_counts.domain} shared-universe fact{data.canon_counts.domain === 1 ? "" : "s"}</Badge>
+            </div>
+            {data.domains.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+                Served by:
+                {data.domains.map((d) => (
+                  <Badge key={d.id} variant="outline">{d.title}</Badge>
+                ))}
+              </div>
+            )}
+            <p className="text-muted-foreground text-xs">
+              Facts bind exactly one scope — this book, its series, or a shared
+              universe. Promotion to a wider scope is per-fact and reversible.{" "}
+              <Link href="/canon" className="underline underline-offset-2">Open Canon</Link>
+            </p>
+          </CardContent>
+        </Card>
+      )}
+      {scope === "collection" && (
+        <Card>
+          <CardContent className="p-4 text-sm space-y-2">
+            {data.collections.length === 0 ? (
+              <p className="text-muted-foreground">
+                Not in any collection. Collections group books for readers and
+                production — branding only, never canon or reading order.{" "}
+                <Link href="/collections" className="underline underline-offset-2">Collections</Link>
+              </p>
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap">
+                {data.collections.map((c) => (
+                  <Link key={c.id} href={`/collections/${c.id}`}>
+                    <Badge variant="outline" className="cursor-pointer">{c.title}</Badge>
+                  </Link>
+                ))}
+                <span className="text-xs text-muted-foreground">
+                  Branding and production grouping — no effect on canon or order.
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export function BookTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [settingCanonical, setSettingCanonical] = useState<string | null>(null);
@@ -1482,6 +1628,9 @@ export function BookTab({ workId }: { workId: string }) {
 
   return (
     <div className="space-y-8">
+      {/* Scope switcher — where this book sits: series, canon, collections */}
+      <ScopeStrip workId={workId} />
+
       {/* Production pipeline lifecycle tracker */}
       <PipelinePanel workId={workId} />
 

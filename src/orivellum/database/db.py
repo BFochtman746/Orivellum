@@ -162,6 +162,15 @@ class OrivellumDB:
         if not self._path or self._path == ":memory:":
             return self._conn
 
+        # Inside THIS thread's open atomic() transaction, a separate read
+        # connection would only see committed data — the transaction's own
+        # in-flight writes would be invisible, so a store method that writes
+        # then re-reads (create → get) would silently return stale/None.
+        # The thread already holds the DB lock for the whole atomic block,
+        # so handing it the shared writer connection is safe.
+        if self._in_atomic():
+            return self._conn
+
         conn = getattr(self._local, "_read_conn", None)
         if conn is None:
             conn = sqlite3.connect(self._path, check_same_thread=False)
@@ -702,6 +711,14 @@ class OrivellumDB:
             self._suspend_commit = True
             self._txn_owner = threading.get_ident()
             try:
+                # Open the transaction EXPLICITLY.  Relying on pysqlite's
+                # implicit BEGIN is a trap: if the first write inside the
+                # block is a governed_write, its SAVEPOINT statement would
+                # itself open the SQLite transaction — and RELEASE of an
+                # outermost savepoint COMMITS, silently flushing partial
+                # state that the rollback below could never undo.
+                if not self._conn.in_transaction:
+                    self._conn.execute("BEGIN IMMEDIATE")
                 yield
                 self._conn.commit()
             except BaseException:

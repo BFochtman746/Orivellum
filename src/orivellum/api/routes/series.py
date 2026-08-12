@@ -44,6 +44,12 @@ class MemberPatch(BaseModel):
     volume: int = Field(ge=1)
 
 
+class MemberOrdersPatch(BaseModel):
+    chronology_order: int | None = Field(default=None, ge=0)
+    publication_order: int | None = Field(default=None, ge=0)
+    relationship_type: str | None = None
+
+
 @router.get("")
 def list_series():
     db = get_db()
@@ -131,6 +137,87 @@ def set_member_volume(series_id: str, work_id: str, req: MemberPatch):
         return SeriesStore(db).set_member_volume(series_id, work_id, volume=req.volume)
     except SeriesError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@router.patch("/{series_id}/members/{work_id}/orders")
+def patch_member_orders(series_id: str, work_id: str, req: MemberOrdersPatch):
+    """Set chronology/publication order and relationship type — descriptive
+    dimensions that never touch the authority (volume) order."""
+    db = get_db()
+    try:
+        return SeriesStore(db).set_member_orders(
+            series_id,
+            work_id,
+            chronology_order=req.chronology_order,
+            publication_order=req.publication_order,
+            relationship_type=req.relationship_type,
+        )
+    except SeriesError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.get("/{series_id}/reorder-preview")
+def reorder_preview(series_id: str, work_id: str, volume: int):
+    """Every downstream impact of moving a member to a new volume — shown
+    BEFORE any commit.  Reordering is refused outright once ANY member
+    canon exists (order is authority); this endpoint says so honestly and
+    lists what the move would touch when it IS allowed."""
+    db = get_db()
+    store = SeriesStore(db)
+    s = store.get_series(series_id)
+    if not s:
+        raise HTTPException(404, f"Series {series_id!r} not found")
+    members = store.list_members(series_id)
+    me = next((m for m in members if m["work_id"] == work_id), None)
+    if not me:
+        raise HTTPException(404, "That Work is not a member of this series")
+    conn = db.read_conn()
+    blockers: list[str] = []
+    canon_rows = conn.execute(
+        """SELECT w.title, COUNT(*) AS n FROM canon_fact f
+           JOIN series_member m ON m.work_id = f.work_id AND m.series_id=?
+           JOIN works w ON w.id = f.work_id
+           WHERE f.status='active' GROUP BY f.work_id""",
+        (series_id,),
+    ).fetchall()
+    for r in canon_rows:
+        blockers.append(
+            f"{r['title']} has {r['n']} established canon fact(s) — reordering "
+            "would rewrite which facts bind which book."
+        )
+    series_facts = conn.execute(
+        "SELECT COUNT(*) AS n FROM canon_fact WHERE series_id=? AND status='active'",
+        (series_id,),
+    ).fetchone()
+    taken = next((m for m in members if m["volume"] == int(volume)), None)
+    if taken and taken["work_id"] != work_id:
+        blockers.append(f"Volume {volume} is already taken by {taken.get('title', taken['work_id'])!r}.")
+    # Impacts (only meaningful when the move is allowed)
+    impacts: list[str] = []
+    old_vol = int(me["volume"])
+    if int(volume) != old_vol:
+        impacts.append(f"Reading order changes: volume {old_vol} → {volume}.")
+        impacts.append(
+            "Persona and voice-baseline inheritance re-resolves — later books "
+            "inherit from the nearest EARLIER volume, so what counts as "
+            "'earlier' changes."
+        )
+        impacts.append("Next-book labels, numbering, and exports follow the new order.")
+        earlier_after = [m for m in members if m["work_id"] != work_id and m["volume"] < int(volume)]
+        impacts.append(
+            f"After the move, {len(earlier_after)} volume(s) would bind this book "
+            "with their established state."
+        )
+    return {
+        "series_id": series_id,
+        "work_id": work_id,
+        "from_volume": old_vol,
+        "to_volume": int(volume),
+        "allowed": not blockers,
+        "blockers": blockers,
+        "series_fact_count": int(series_facts["n"]),
+        "impacts": impacts,
+    }
 
 
 @router.get("/{series_id}/overview")

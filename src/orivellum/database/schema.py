@@ -3845,4 +3845,109 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         )
     """,
     ),
+    # v153 — Collections, canon domains, multi-order series members, and the
+    # conversion ledger (task: keep collections, series, and shared canon
+    # distinct — with safe book conversions).
+    #
+    # book_collection — the reader/production Collection entity (branding
+    #   family, shared-universe grouping, anthology...).  DELIBERATELY a
+    #   different table from `collection` (v144), which is import provenance
+    #   only and may never become a subject (db.assert_not_collection).
+    # book_collection_member — many-to-many: a collection holds whole series
+    #   AND standalone books.  A series or book can appear in more than one
+    #   collection.
+    # canon_domain — a shared universe / evidence domain.  It can serve one
+    #   series, multiple series, a whole collection, or a single standalone
+    #   book, via canon_domain_member.
+    # series_member gains chronology_order / publication_order /
+    #   relationship_type — three SEPARATE order dimensions.  `volume`
+    #   remains the reading/authority order that canon binding flows along;
+    #   the new columns are descriptive and never overload it.
+    # canon_fact gains domain_id — a fact scoped to a canon domain binds
+    #   every book served by that domain (see FACT_VISIBILITY_SQL).
+    # conversion_ledger — every classification/conversion decision
+    #   (standalone→series, link-to-collection, canon promotion) is recorded
+    #   with enough payload to reverse it explicitly.
+    (
+        153,
+        "Collections + canon domains + multi-order series members + conversion ledger",
+        """
+        CREATE TABLE IF NOT EXISTS book_collection (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            collection_type TEXT NOT NULL DEFAULT 'branded-theme'
+                CHECK (collection_type IN ('branded-theme','shared-universe',
+                                           'anthology','educational',
+                                           'author-backlist','other')),
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('concept','active','paused','archived')),
+            reader_promise TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT 'author',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            meta TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS book_collection_member (
+            collection_id TEXT NOT NULL
+                REFERENCES book_collection(id) ON DELETE CASCADE,
+            member_kind TEXT NOT NULL CHECK (member_kind IN ('series','work')),
+            member_id TEXT NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            added_by TEXT NOT NULL DEFAULT 'author',
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (collection_id, member_kind, member_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_bcm_member
+            ON book_collection_member(member_kind, member_id);
+        CREATE TABLE IF NOT EXISTS canon_domain (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            domain_type TEXT NOT NULL DEFAULT 'fictional'
+                CHECK (domain_type IN ('fictional','historical','biblical',
+                                       'mixed','research')),
+            created_by TEXT NOT NULL DEFAULT 'author',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            meta TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS canon_domain_member (
+            domain_id TEXT NOT NULL
+                REFERENCES canon_domain(id) ON DELETE CASCADE,
+            member_kind TEXT NOT NULL
+                CHECK (member_kind IN ('series','work','collection')),
+            member_id TEXT NOT NULL,
+            added_by TEXT NOT NULL DEFAULT 'author',
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (domain_id, member_kind, member_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cdm_member
+            ON canon_domain_member(member_kind, member_id);
+        ALTER TABLE series_member ADD COLUMN chronology_order INTEGER;
+        ALTER TABLE series_member ADD COLUMN publication_order INTEGER;
+        ALTER TABLE series_member ADD COLUMN relationship_type TEXT
+            NOT NULL DEFAULT 'volume';
+        ALTER TABLE series_member ADD COLUMN added_by TEXT
+            NOT NULL DEFAULT 'author';
+        ALTER TABLE canon_fact ADD COLUMN domain_id TEXT
+            REFERENCES canon_domain(id);
+        CREATE INDEX IF NOT EXISTS idx_canon_fact_domain
+            ON canon_fact(domain_id, status);
+        CREATE TABLE IF NOT EXISTS conversion_ledger (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            subject_kind TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            payload TEXT NOT NULL DEFAULT '{}',
+            actor TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reversed_by TEXT,
+            reversed_at TEXT,
+            reversal_of TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_conversion_subject
+            ON conversion_ledger(subject_kind, subject_id)
+    """,
+    ),
 ]

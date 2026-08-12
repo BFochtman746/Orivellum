@@ -50,14 +50,19 @@ class CanonFactError(ValueError):
 # list_facts and by every drafting/verification query (LOOM retrieval,
 # knowledge horizons).  A fact is visible to a Work when it is:
 #   - the Work's own,
-#   - legacy global (work_id NULL, series_id NULL),
-#   - scoped to the Work's series, or
-#   - established by an EARLIER volume of the Work's series
+#   - legacy global (work_id NULL, series_id NULL, domain_id NULL),
+#   - scoped to the Work's series,
+#   - established by an EARLIER volume of the Work's series, or
+#   - scoped to a canon DOMAIN that serves this Work (directly, via its
+#     series, or via a collection that holds this Work or its series)
 # and NOT actively overridden by this Work (the override row itself is
 # visible — it IS this book's version of the fact).
+#
+# Precedence is domain → series → book: the broader scopes bind unless the
+# book explicitly overrides them; supersession never crosses scopes.
 FACT_VISIBILITY_SQL = """(
     work_id = ?
-    OR (work_id IS NULL AND series_id IS NULL)
+    OR (work_id IS NULL AND series_id IS NULL AND domain_id IS NULL)
     OR (work_id IS NULL AND series_id IN (
         SELECT series_id FROM series_member WHERE work_id=?))
     OR work_id IN (
@@ -65,6 +70,16 @@ FACT_VISIBILITY_SQL = """(
         JOIN series_member m2
           ON m2.series_id=m1.series_id AND m2.volume < m1.volume
         WHERE m1.work_id=?)
+    OR (work_id IS NULL AND domain_id IS NOT NULL AND domain_id IN (
+        SELECT dm.domain_id FROM canon_domain_member dm
+        WHERE (dm.member_kind='work' AND dm.member_id=?)
+           OR (dm.member_kind='series' AND dm.member_id IN (
+                SELECT series_id FROM series_member WHERE work_id=?))
+           OR (dm.member_kind='collection' AND dm.member_id IN (
+                SELECT bcm.collection_id FROM book_collection_member bcm
+                WHERE (bcm.member_kind='work' AND bcm.member_id=?)
+                   OR (bcm.member_kind='series' AND bcm.member_id IN (
+                        SELECT series_id FROM series_member WHERE work_id=?))))))
 )
 AND id NOT IN (
     SELECT overrides FROM canon_fact
@@ -73,7 +88,31 @@ AND id NOT IN (
 
 def fact_visibility_args(work_id: str) -> list[str]:
     """Positional args matching FACT_VISIBILITY_SQL, in order."""
-    return [work_id, work_id, work_id, work_id]
+    return [work_id] * 8
+
+
+# Membership expansion for "does this domain serve this Work" — shared by
+# the override-target guard and any caller that needs a yes/no answer
+# without the full visibility clause.
+DOMAIN_SERVES_WORK_SQL = """SELECT 1 FROM canon_domain_member dm
+    WHERE dm.domain_id = ?
+      AND ((dm.member_kind='work' AND dm.member_id=?)
+        OR (dm.member_kind='series' AND dm.member_id IN (
+             SELECT series_id FROM series_member WHERE work_id=?))
+        OR (dm.member_kind='collection' AND dm.member_id IN (
+             SELECT bcm.collection_id FROM book_collection_member bcm
+             WHERE (bcm.member_kind='work' AND bcm.member_id=?)
+                OR (bcm.member_kind='series' AND bcm.member_id IN (
+                     SELECT series_id FROM series_member WHERE work_id=?)))))
+    LIMIT 1"""
+
+
+def domain_serves_work(conn: Any, domain_id: str, work_id: str) -> bool:
+    """True when the canon domain binds this Work (any membership path)."""
+    row = conn.execute(
+        DOMAIN_SERVES_WORK_SQL, (domain_id, work_id, work_id, work_id, work_id)
+    ).fetchone()
+    return row is not None
 
 
 def _now() -> str:
@@ -176,13 +215,15 @@ class CanonStore:
         proposal_id: str | None = None,
         series_id: str | None = None,
         overrides: str | None = None,
+        domain_id: str | None = None,
     ) -> None:
         conn.execute(
             """INSERT INTO canon_fact
                (id, work_id, statement, classification, source_ref, parent_ids,
                 established_chapter, established_offset, supersedes, status,
-                signed_by, origin, proposal_id, series_id, overrides, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,'active',?,?,?,?,?,?)""",
+                signed_by, origin, proposal_id, series_id, overrides, domain_id,
+                created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,'active',?,?,?,?,?,?,?)""",
             (
                 fact_id,
                 work_id,
@@ -198,6 +239,7 @@ class CanonStore:
                 proposal_id,
                 series_id,
                 overrides,
+                domain_id,
                 _now(),
             ),
         )
@@ -206,16 +248,40 @@ class CanonStore:
 
     @staticmethod
     def _check_series_scope(
-        conn: Any, *, work_id: str | None, series_id: str | None, overrides: str | None
+        conn: Any,
+        *,
+        work_id: str | None,
+        series_id: str | None,
+        overrides: str | None,
+        domain_id: str | None = None,
     ) -> None:
-        """Enforce the series-scope rules INSIDE the write transaction.
+        """Enforce the scope rules INSIDE the write transaction.
 
         - series_id requires work_id NULL (a fact is book-scoped OR
           series-scoped, never both) and the series must exist.
+        - domain_id requires work_id NULL AND series_id NULL (a fact is
+          scoped to exactly ONE of book / series / domain) and the domain
+          must exist.
         - overrides requires a book-scoped fact whose target is an ACTIVE
-          series/global fact VISIBLE to that book, with no other active
-          override of the same target by the same book.
+          series/global/domain fact VISIBLE to that book, with no other
+          active override of the same target by the same book.
         """
+        if domain_id is not None:
+            if work_id is not None or series_id is not None:
+                raise CanonFactError(
+                    "Refused: a fact is scoped to exactly one of book, "
+                    "series, or canon domain — pass work_id, series_id, or "
+                    "domain_id, never a combination."
+                )
+            if overrides is not None:
+                raise CanonFactError(
+                    "Refused: a domain-scoped fact cannot be an override — "
+                    "overrides are per-book by definition."
+                )
+            if not conn.execute(
+                "SELECT 1 FROM canon_domain WHERE id=?", (domain_id,)
+            ).fetchone():
+                raise CanonFactError(f"Refused: canon domain {domain_id!r} does not exist.")
         if series_id is not None:
             if work_id is not None:
                 raise CanonFactError(
@@ -240,21 +306,22 @@ class CanonStore:
         work_id: str | None,
         series_id: str | None,
         overrides: str | None,
-    ) -> tuple[str | None, str | None]:
+        domain_id: str | None = None,
+    ) -> tuple[str | None, str | None, str | None]:
         """A revision KEEPS its predecessor's scope — supersede is for
         changing what a fact SAYS, never where it applies.
 
         Without this, a revision could quietly move series canon to global
         or another book, destroying the original authority scope.  Rescoping
         = retract, then establish anew.  Returns the effective
-        ``(series_id, overrides)`` after inheritance.
+        ``(series_id, overrides, domain_id)`` after inheritance.
         """
         old = conn.execute(
-            "SELECT work_id, series_id, overrides FROM canon_fact WHERE id=?",
+            "SELECT work_id, series_id, overrides, domain_id FROM canon_fact WHERE id=?",
             (supersedes,),
         ).fetchone()
         if old is None:
-            return series_id, overrides
+            return series_id, overrides, domain_id
         if work_id != old["work_id"]:
             raise CanonFactError(
                 "Refused: a revision keeps its predecessor's scope — it "
@@ -266,6 +333,13 @@ class CanonStore:
         elif series_id != old["series_id"]:
             raise CanonFactError(
                 "Refused: a revision keeps its predecessor's series scope. "
+                "Retract and re-establish to rescope canon."
+            )
+        if domain_id is None:
+            domain_id = old["domain_id"]
+        elif domain_id != old["domain_id"]:
+            raise CanonFactError(
+                "Refused: a revision keeps its predecessor's domain scope. "
                 "Retract and re-establish to rescope canon."
             )
         # Override lifecycle: superseding an override REVISES the book's
@@ -286,7 +360,7 @@ class CanonStore:
                 "Refused: a revision cannot turn an ordinary fact into an "
                 "override — retract it and create the override explicitly."
             )
-        return series_id, overrides
+        return series_id, overrides, domain_id
 
     @staticmethod
     def _check_override_target(conn: Any, *, work_id: str | None, overrides: str) -> None:
@@ -301,7 +375,7 @@ class CanonStore:
                 "belong to a real book."
             )
         target = conn.execute(
-            "SELECT status, work_id, series_id FROM canon_fact WHERE id=?",
+            "SELECT status, work_id, series_id, domain_id FROM canon_fact WHERE id=?",
             (overrides,),
         ).fetchone()
         if not target:
@@ -313,9 +387,9 @@ class CanonStore:
             )
         if target["work_id"] is not None:
             raise CanonFactError(
-                "Refused: only a series-scoped or global fact can be "
-                "overridden — book-scoped facts are revised with "
-                "supersedes, not overrides."
+                "Refused: only a series-scoped, domain-scoped, or global "
+                "fact can be overridden — book-scoped facts are revised "
+                "with supersedes, not overrides."
             )
         if target["series_id"] is not None:
             member = conn.execute(
@@ -327,6 +401,13 @@ class CanonStore:
                     "Refused: this Work is not a member of the series the "
                     "target fact is scoped to — it cannot override it."
                 )
+        if target["domain_id"] is not None and not domain_serves_work(
+            conn, target["domain_id"], work_id
+        ):
+            raise CanonFactError(
+                "Refused: this Work is not served by the canon domain the "
+                "target fact is scoped to — it cannot override it."
+            )
         dup = conn.execute(
             "SELECT 1 FROM canon_fact WHERE overrides=? AND work_id=? AND status='active'",
             (overrides, work_id),
@@ -355,15 +436,17 @@ class CanonStore:
         proposal_id: str | None = None,
         series_id: str | None = None,
         overrides: str | None = None,
+        domain_id: str | None = None,
     ) -> dict:
         """Insert one canon fact, enforcing the authority rules.
 
         When ``supersedes`` is given, the referenced fact must be active; it
         flips to 'superseded' in the same transaction (explicit revision —
         never a silent overwrite).  ``series_id`` scopes the fact to a whole
-        series (work_id must be NULL); ``overrides`` names a series/global
-        fact this BOOK-scoped fact replaces for this book only.  Raises
-        CanonFactError on refusal.
+        series (work_id must be NULL); ``domain_id`` scopes it to a canon
+        domain (work_id AND series_id must be NULL); ``overrides`` names a
+        series/global/domain fact this BOOK-scoped fact replaces for this
+        book only.  Raises CanonFactError on refusal.
         """
         parents = list(parent_ids or [])
         classification = (classification or "").strip().upper()
@@ -385,15 +468,17 @@ class CanonStore:
             detail=f"{classification} {statement[:80]}"
             + (f" supersedes={supersedes}" if supersedes else "")
             + (f" series={series_id}" if series_id else "")
+            + (f" domain={domain_id}" if domain_id else "")
             + (f" overrides={overrides}" if overrides else ""),
         ):
             if supersedes:
-                series_id, overrides = self._check_supersede_scope(
+                series_id, overrides, domain_id = self._check_supersede_scope(
                     db._conn,
                     supersedes,
                     work_id=work_id,
                     series_id=series_id,
                     overrides=overrides,
+                    domain_id=domain_id,
                 )
                 cur = db._conn.execute(
                     "UPDATE canon_fact SET status='superseded' WHERE id=? AND status='active'",
@@ -408,7 +493,11 @@ class CanonStore:
             # override does not trip the one-active-override-per-book check
             # against the row it just superseded.
             self._check_series_scope(
-                db._conn, work_id=work_id, series_id=series_id, overrides=overrides
+                db._conn,
+                work_id=work_id,
+                series_id=series_id,
+                overrides=overrides,
+                domain_id=domain_id,
             )
             self._insert_row(
                 db._conn,
@@ -426,6 +515,7 @@ class CanonStore:
                 proposal_id=proposal_id,
                 series_id=series_id,
                 overrides=overrides,
+                domain_id=domain_id,
             )
         return self.get_fact(fact_id)  # type: ignore[return-value]
 
@@ -461,13 +551,19 @@ class CanonStore:
                 statement = str(row["statement"])
                 work_id = row.get("work_id")
                 series_id = row.get("series_id")
+                domain_id = row.get("domain_id")
                 self._check_series_scope(
-                    db._conn, work_id=work_id, series_id=series_id, overrides=None
+                    db._conn,
+                    work_id=work_id,
+                    series_id=series_id,
+                    overrides=None,
+                    domain_id=domain_id,
                 )
                 existing = db._conn.execute(
                     "SELECT id FROM canon_fact WHERE statement=? AND classification=? "
-                    "AND status='active' AND work_id IS ? AND series_id IS ?",
-                    (statement.strip(), classification, work_id, series_id),
+                    "AND status='active' AND work_id IS ? AND series_id IS ? "
+                    "AND domain_id IS ?",
+                    (statement.strip(), classification, work_id, series_id, domain_id),
                 ).fetchone()
                 if existing:
                     fact_ids.append(existing["id"])
@@ -495,6 +591,7 @@ class CanonStore:
                     signed_by=signed_by,
                     origin=origin,
                     series_id=series_id,
+                    domain_id=domain_id,
                 )
                 fact_ids.append(fact_id)
                 batch_ids.add(fact_id)
@@ -523,6 +620,7 @@ class CanonStore:
         include_series: bool = True,
         series_only: bool = False,
         series_id: str | None = None,
+        domain_id: str | None = None,
         classification: str | None = None,
         status: str | None = None,
         limit: int = 1000,
@@ -531,18 +629,23 @@ class CanonStore:
 
         With ``work_id`` and ``include_series`` (the default), a book's
         resolved canon includes, in addition to its own facts:
-        - legacy global facts (work_id NULL, series_id NULL),
+        - legacy global facts (work_id NULL, series_id NULL, domain_id NULL),
         - facts scoped to its series (series_id),
         - facts established by EARLIER volumes of its series (a fact from
           book 1 binds book 3; visibility never flows backward),
+        - facts scoped to a canon domain that serves this book,
         MINUS any fact this book has actively overridden (the override row
         itself is included — it IS this book's version of the fact).
 
-        ``series_id`` filters to facts scoped to exactly that series.
+        ``series_id`` filters to facts scoped to exactly that series;
+        ``domain_id`` to facts scoped to exactly that domain.
         """
         q = "SELECT * FROM canon_fact WHERE 1=1"
         args: list = []
-        if series_id:
+        if domain_id:
+            q += " AND domain_id=?"
+            args.append(domain_id)
+        elif series_id:
             q += " AND series_id=?"
             args.append(series_id)
         elif series_only:

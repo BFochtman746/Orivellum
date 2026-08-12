@@ -166,6 +166,7 @@ class SeriesStore:
         conn = self._db.read_conn()
         rows = conn.execute(
             """SELECT m.work_id, m.volume, m.created_at,
+                      m.chronology_order, m.publication_order, m.relationship_type,
                       w.title AS work_title, w.work_type, w.status AS work_status
                FROM series_member m JOIN works w ON w.id=m.work_id
                WHERE m.series_id=? ORDER BY m.volume""",
@@ -368,6 +369,63 @@ class SeriesStore:
                     raise SeriesError("Refused: that Work is not a member of this series.")
         except sqlite3.IntegrityError as exc:
             raise SeriesError(f"Refused: volume {volume} is already taken in this series.") from exc
+        return self.get_series(series_id)  # type: ignore[return-value]
+
+    def set_member_orders(
+        self,
+        series_id: str,
+        work_id: str,
+        *,
+        chronology_order: int | None = None,
+        publication_order: int | None = None,
+        relationship_type: str | None = None,
+        actor: str = "author",
+    ) -> dict:
+        """Set the DESCRIPTIVE order dimensions of a member.
+
+        chronology_order / publication_order / relationship_type never
+        affect authority — `volume` alone is the reading/continuity order
+        canon binding flows along (changed only via set_member_volume,
+        which is refused once canon exists).  These fields are therefore
+        freely editable and never guarded by canon state.
+        """
+        sets: list[str] = []
+        args: list = []
+        if chronology_order is not None:
+            if int(chronology_order) < 0:
+                raise SeriesError("chronology_order must be >= 0 (0 clears it).")
+            sets.append("chronology_order=?")
+            args.append(int(chronology_order) or None)
+        if publication_order is not None:
+            if int(publication_order) < 0:
+                raise SeriesError("publication_order must be >= 0 (0 clears it).")
+            sets.append("publication_order=?")
+            args.append(int(publication_order) or None)
+        if relationship_type is not None:
+            allowed = ("volume", "prequel", "sequel", "novella", "companion", "side-story")
+            if relationship_type not in allowed:
+                raise SeriesError(f"relationship_type must be one of {', '.join(allowed)}")
+            sets.append("relationship_type=?")
+            args.append(relationship_type)
+        if not sets:
+            raise SeriesError("Nothing to change.")
+        args.extend([series_id, work_id])
+        db = self._db
+        with db.governed_write(
+            operation="series.member_orders_set",
+            event_type="series.member_orders_set",
+            object_id=series_id,
+            object_type="series",
+            actor=actor,
+            detail=f"work={work_id}",
+        ):
+            cur = db._conn.execute(
+                f"UPDATE series_member SET {', '.join(sets)} "
+                "WHERE series_id=? AND work_id=?",
+                args,
+            )
+            if not cur.rowcount:
+                raise SeriesError("Refused: that Work is not a member of this series.")
         return self.get_series(series_id)  # type: ignore[return-value]
 
 
