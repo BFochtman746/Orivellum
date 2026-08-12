@@ -385,7 +385,7 @@ def _build_knowledge_cases(db: Any, limit: int = 10) -> list[dict]:
         with db._lock:
             rows = db._conn.execute(
                 "SELECT text, subject FROM knowledge "
-                "WHERE review_status != 'rejected' AND length(text) > 30 "
+                "WHERE review_status NOT IN ('rejected','quarantined_reprojection') AND length(text) > 30 "
                 "ORDER BY confidence DESC, created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()

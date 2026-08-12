@@ -3705,4 +3705,35 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS work_collections_work ON work_collections(work_id)
     """,
     ),
+    # v147 — Quarantine the pre-reprojection harvest (THE RE-PROJECTION Phase 6)
+    #
+    # The existing machine-extracted knowledge (review_status 'auto'/'ai_auto')
+    # was harvested from unclassified documents under one global fiction
+    # ontology, scoped to import batches.  It cannot be salvaged by
+    # relabelling.  It is NOT deleted — it is evidence of what the old harvest
+    # did — but it is quarantined: excluded from chat context, search, review
+    # queue, and question/answer grounding.  The prior status is preserved in
+    # meta.pre_quarantine_status so the evidence remains interpretable.
+    #
+    # Human-approved items survive and follow their documents: their work_id
+    # is re-pointed to the source document's CURRENT Work (ratification may
+    # have re-grouped the documents since the item was approved).
+    #
+    # Substrate invariant: this migration touches ONLY the knowledge
+    # projection — zero document, chunk, or vector rows change.
+    (
+        147,
+        "quarantine pre-reprojection machine knowledge; re-point approved items",
+        """
+        UPDATE knowledge
+           SET meta = json_set(COALESCE(meta,'{}'), '$.pre_quarantine_status', review_status),
+               review_status = 'quarantined_reprojection'
+         WHERE review_status IN ('auto','ai_auto');
+        UPDATE knowledge
+           SET work_id = (SELECT d.work_id FROM documents d WHERE d.id = knowledge.source_doc_id)
+         WHERE review_status = 'approved'
+           AND source_doc_id IS NOT NULL
+           AND EXISTS (SELECT 1 FROM documents d WHERE d.id = knowledge.source_doc_id)
+    """,
+    ),
 ]

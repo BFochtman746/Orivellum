@@ -1553,7 +1553,7 @@ def _pass_knowledge_semantic_dedup(db: OrivellumDB, report: list[str]) -> None:
                          ON v.object_id = k.id AND v.object_type = 'knowledge'
                        WHERE k.work_id = ?
                          AND k.source_doc_id IS NOT NULL
-                         AND k.review_status NOT IN ('rejected', 'superseded_duplicate')
+                         AND k.review_status NOT IN ('rejected', 'superseded_duplicate', 'quarantined_reprojection')
                        ORDER BY k.created_at ASC
                        LIMIT ?""",
                     (wid, _MAX_PER_WORK),
@@ -1738,7 +1738,7 @@ def _pass_cold_item_detection(db: OrivellumDB, report: list[str]) -> None:
                           MAX(kr.retrieved_at) AS last_retrieved
                    FROM knowledge k
                    LEFT JOIN knowledge_retrievals kr ON kr.knowledge_id = k.id
-                   WHERE k.review_status NOT IN ('rejected', 'superseded_duplicate')
+                   WHERE k.review_status NOT IN ('rejected', 'superseded_duplicate', 'quarantined_reprojection')
                      AND k.created_at < ?
                    GROUP BY k.id
                    HAVING last_retrieved IS NULL OR last_retrieved < ?

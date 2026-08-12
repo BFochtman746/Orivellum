@@ -13,18 +13,10 @@ import {
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { apiFetch } from "@/lib/auth";
 import { useGdDark } from "@/lib/useGdDark";
+import { useDomainKindChips } from "@/lib/ontology-kinds";
 import { useListWorks } from "@workspace/api-client-react";
 
 const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-
-// Entity kind filter config
-const ENTITY_KINDS = [
-  { value: "concept",   label: "Concepts",   color: "#8b5cf6" },
-  { value: "person",    label: "People",     color: "#6366f1" },
-  { value: "place",     label: "Places",     color: "#10b981" },
-  { value: "theme",     label: "Themes",     color: "#f59e0b" },
-  { value: "scripture", label: "Scripture",  color: "#ef4444" },
-];
 
 export default function GraphPage() {
   const gdDark = useGdDark();
@@ -35,6 +27,12 @@ export default function GraphPage() {
 
   const { data: worksData } = useListWorks();
   const works = worksData?.works ?? [];
+
+  // Domain-derived filter chips: when a ratified (domain-set) Work is
+  // selected, its closed ontology drives the kinds; otherwise legacy set.
+  const selectedDomain =
+    workId !== "all" ? ((works.find(w => w.id === workId) as any)?.domain ?? null) : null;
+  const kindChips = useDomainKindChips(selectedDomain);
 
   // Build query params
   const params = new URLSearchParams({ limit: "250" });
@@ -126,7 +124,7 @@ export default function GraphPage() {
         {/* Entity type filter chips */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] font-mono uppercase tracking-wider shrink-0" style={{ color: 'var(--ink-faint)' }}>Show</span>
-          {ENTITY_KINDS.map(({ value, label, color }) => {
+          {kindChips.map(({ value, label, color }) => {
             const on = !hiddenKinds.has(value);
             return (
               <button

@@ -264,7 +264,7 @@ def ai_assist(doc_id: str, body: AIAssistRequest):
         # Scope to the document's Work so canon never leaks across books
         # (audit D-10); unlinked documents fall back to the global base.
         # Order by confidence so the strongest facts are offered first.
-        where = "k.review_status != 'rejected'"
+        where = "k.review_status NOT IN ('rejected','quarantined_reprojection')"
         params: tuple = ()
         if doc_work_id:
             where += " AND k.work_id = ?"

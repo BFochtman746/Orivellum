@@ -19,6 +19,8 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from orivellum.capabilities.ontology import is_kind_allowed, work_domain
+
 if TYPE_CHECKING:
     from orivellum.capabilities.extraction import ExtractionResult
     from orivellum.database.db import OrivellumDB
@@ -116,37 +118,47 @@ def harvest(
     db.assert_not_collection(work_id, "scope a knowledge harvest")
     assert_doc_type_harvestable(db, doc_id)
     created = 0
+    discarded = 0
+
+    # Ontology gate (THE RE-PROJECTION Phase 5): a domain-set Work accepts
+    # only kinds in its closed domain ontology.  Off-schema items are
+    # discarded and counted, never coerced.  Works without a ratified domain
+    # are ungated (legacy behaviour).
+    _domain = work_domain(db, work_id)
+
+    def _write(kind: str, **kw) -> str | None:
+        nonlocal created, discarded
+        if not is_kind_allowed(kind, _domain):
+            discarded += 1
+            return None
+        kid = db.create_knowledge_item(work_id=work_id, kind=kind, source_doc_id=doc_id, **kw)
+        created += 1
+        return kid
 
     # 1. Document-level summary node
     summary = f"{doc_title} — {result.kind.upper()} document, {result.word_count:,} words."
-    db.create_knowledge_item(
-        work_id=work_id,
-        kind="summary",
+    _write(
+        "summary",
         text=summary,
         subject=doc_title,
         predicate="is",
         obj=f"{result.kind} document",
         confidence=1.0,
-        source_doc_id=doc_id,
     )
-    created += 1
 
     # 2. Section headings → concept items
     for heading in result.headings[:30]:
         heading = heading.strip()
         if not heading or len(heading) > 200:
             continue
-        db.create_knowledge_item(
-            work_id=work_id,
-            kind="concept",
+        _write(
+            "concept",
             text=heading,
             subject=heading,
             predicate="section in",
             obj=doc_title,
             confidence=0.85,
-            source_doc_id=doc_id,
         )
-        created += 1
 
     # 3. Key sentence excerpts — from the first few pages
     excerpts_saved = 0
@@ -157,18 +169,15 @@ def harvest(
             if excerpts_saved >= _MAX_EXCERPTS:
                 break
             if _is_good_sentence(sent) and len(sent) < 600:
-                db.create_knowledge_item(
-                    work_id=work_id,
-                    kind="excerpt",
+                _write(
+                    "excerpt",
                     text=sent,
                     subject=doc_title,
                     predicate="states",
                     obj=None,
                     confidence=0.65,
-                    source_doc_id=doc_id,
                 )
                 excerpts_saved += 1
-                created += 1
 
     # 4. Capitalised proper-noun phrases → entity mentions
     # Full text — novels are stored without truncation (see pipeline.py)
@@ -180,19 +189,18 @@ def harvest(
         # Skip if same as doc title or very short
         if phrase.lower() == doc_title.lower() or len(phrase) < 4:
             continue
-        # create_knowledge_item() returns a str (the item ID), not a dict.
-        kid = db.create_knowledge_item(
-            work_id=work_id,
-            kind="entity",
+        # _write() returns the item ID (str) or None when discarded off-schema.
+        kid = _write(
+            "entity",
             text=phrase,
             subject=phrase,
             predicate="mentioned in",
             obj=doc_title,
             confidence=0.5,
-            source_doc_id=doc_id,
         )
         entities_saved += 1
-        created += 1
+        if kid is None:
+            continue
         # Also persist to the entities table so the graph layer has real rows
         try:
             eid = db.upsert_entity(phrase, "concept")
@@ -200,7 +208,14 @@ def harvest(
         except Exception as _e:
             logger.debug("entity graph write non-fatal: %s", _e)
 
-    logger.info("Harvested %d knowledge items for doc %s (work=%s)", created, doc_id, work_id)
+    logger.info(
+        "Harvested %d knowledge items for doc %s (work=%s, domain=%s, discarded_off_schema=%d)",
+        created,
+        doc_id,
+        work_id,
+        _domain,
+        discarded,
+    )
     return created
 
 
@@ -491,6 +506,10 @@ def _llm_harvest_chunks(
     """
     _shield_wrap = shield_wrap
     created = 0
+    discarded = 0
+    # Ontology gate: off-schema kinds for a domain-set Work are discarded and
+    # counted, never coerced (THE RE-PROJECTION Phase 5).
+    _domain = work_domain(db, work_id)
     for chunk_text in _chunk_texts:
         chunk_text = chunk_text.strip()
         if not chunk_text:
@@ -528,6 +547,9 @@ def _llm_harvest_chunks(
             if not name:
                 continue
             text = f"{name}: {desc}" if desc else name
+            if not is_kind_allowed("entity", _domain):
+                discarded += 1
+                continue
             # create_knowledge_item() returns a str (the item ID), not a dict.
             kid = db.create_knowledge_item(
                 work_id=work_id,
@@ -558,6 +580,9 @@ def _llm_harvest_chunks(
             text = (claim.get("text") or "").strip()
             if not text:
                 continue
+            if not is_kind_allowed("claim", _domain):
+                discarded += 1
+                continue
             db.create_knowledge_item(
                 work_id=work_id,
                 kind="claim",
@@ -580,6 +605,9 @@ def _llm_harvest_chunks(
             predicate = (rel.get("predicate") or "").strip()
             obj = (rel.get("object") or "").strip()
             if not (subject and predicate and obj):
+                continue
+            if not is_kind_allowed("relationship", _domain):
+                discarded += 1
                 continue
             text = f"{subject} {predicate} {obj}"
             db.create_knowledge_item(
@@ -605,6 +633,13 @@ def _llm_harvest_chunks(
             except Exception as _e:
                 logger.debug("llm relationship graph write non-fatal: %s", _e)
 
+    if discarded:
+        logger.info(
+            "llm_harvest: discarded %d off-schema items for doc %s (domain=%s)",
+            discarded,
+            doc_id,
+            _domain,
+        )
     return created
 
 
@@ -732,6 +767,11 @@ def _llm_harvest_by_chapters_inner(
 
     _llm_meta = {"source": "llm", "extraction": "chapter"}
     total_created = 0
+    total_discarded = 0
+    # Ontology gate: a domain-set Work accepts only kinds from its closed
+    # domain ontology; off-schema kinds are discarded and counted, never
+    # coerced (THE RE-PROJECTION Phase 5).
+    _domain = work_domain(db, work_id)
 
     for ch_row in chapter_rows:
         chapter_id = ch_row["id"]
@@ -773,6 +813,7 @@ def _llm_harvest_by_chapters_inner(
             ]
 
         created = 0
+        discarded = 0
 
         for _chunk_idx, chapter_text in enumerate(_ch_chunks):
             chapter_text = chapter_text.strip()
@@ -816,6 +857,9 @@ def _llm_harvest_by_chapters_inner(
                 role = (char.get("role") or "supporting").strip()
                 if not name:
                     continue
+                if not is_kind_allowed("character", _domain):
+                    discarded += 1
+                    continue
                 text = f"{name} ({role}): {desc}" if desc else f"{name} ({role})"
                 kid = db.create_knowledge_item(
                     work_id=work_id,
@@ -855,6 +899,9 @@ def _llm_harvest_by_chapters_inner(
                 significance = (evt.get("significance") or "minor").strip()
                 if not text:
                     continue
+                if not is_kind_allowed("event", _domain):
+                    discarded += 1
+                    continue
                 db.create_knowledge_item(
                     work_id=work_id,
                     kind="event",
@@ -877,6 +924,9 @@ def _llm_harvest_by_chapters_inner(
                 name = (setting.get("name") or "").strip()
                 desc = (setting.get("description") or "").strip()
                 if not name:
+                    continue
+                if not is_kind_allowed("setting", _domain):
+                    discarded += 1
                     continue
                 text = f"{name}: {desc}" if desc else name
                 db.create_knowledge_item(
@@ -902,6 +952,9 @@ def _llm_harvest_by_chapters_inner(
                 pred = (rel.get("predicate") or "").strip()
                 obj = (rel.get("object") or "").strip()
                 if not (subj and pred and obj):
+                    continue
+                if not is_kind_allowed("relationship", _domain):
+                    discarded += 1
                     continue
                 text = f"{subj} {pred} {obj}"
                 db.create_knowledge_item(
@@ -935,6 +988,9 @@ def _llm_harvest_by_chapters_inner(
                 text = (theme.get("text") or "").strip()
                 if not text:
                     continue
+                if not is_kind_allowed("theme", _domain):
+                    discarded += 1
+                    continue
                 db.create_knowledge_item(
                     work_id=work_id,
                     kind="theme",
@@ -956,6 +1012,9 @@ def _llm_harvest_by_chapters_inner(
                     continue
                 text = (fsh.get("text") or "").strip()
                 if not text:
+                    continue
+                if not is_kind_allowed("foreshadowing", _domain):
+                    discarded += 1
                     continue
                 db.create_knowledge_item(
                     work_id=work_id,
@@ -982,12 +1041,16 @@ def _llm_harvest_by_chapters_inner(
                 chapter_title[:40],
             )
         total_created += created
+        total_discarded += discarded
 
     logger.info(
-        "llm_harvest_by_chapters: %d total items, %d chapters, doc %s",
+        "llm_harvest_by_chapters: %d total items, %d chapters, doc %s"
+        " (domain=%s, discarded_off_schema=%d)",
         total_created,
         len(chapter_rows),
         doc_id,
+        _domain,
+        total_discarded,
     )
     # Same rule as llm_harvest: new items must drop the Work's warm
     # gap/coverage cache so the next read reflects what the book now knows.

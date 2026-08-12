@@ -190,7 +190,7 @@ def mention_frequencies(db: OrivellumDB, work_id: str | None = None) -> dict[str
     sql = (
         "SELECT kind, COUNT(*) AS cnt FROM knowledge "
         f"WHERE kind IN ({placeholders}) "
-        "AND COALESCE(review_status,'') != 'rejected' "
+        "AND COALESCE(review_status,'') NOT IN ('rejected','quarantined_reprojection') "
     )
     params: list = list(MENTION_CLASSES)
     if work_id is not None:

@@ -632,7 +632,7 @@ def _check_data_quality(db: OrivellumDB) -> list[dict]:
     try:
         with db._lock:
             row = db._conn.execute(
-                "SELECT AVG(confidence), COUNT(*) FROM knowledge WHERE review_status != 'rejected'"
+                "SELECT AVG(confidence), COUNT(*) FROM knowledge WHERE review_status NOT IN ('rejected','quarantined_reprojection')"
             ).fetchone()
         avg_conf = round((row[0] or 0) * 100, 1)
         total = row[1] or 0

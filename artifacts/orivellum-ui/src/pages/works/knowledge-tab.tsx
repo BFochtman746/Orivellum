@@ -165,6 +165,174 @@ function RescoreButton({ workId, onDone }: { workId: string; onDone: () => void 
   );
 }
 
+// ─── Domain re-harvest panel (THE RE-PROJECTION Phases 5-6) ──────────────────
+// Run one ratified Work under its closed domain ontology, read the report
+// (including off-schema discards), sample the fresh output, and sign off on
+// the pilot to unlock batch re-harvest.
+function ReharvestPanel({ workId, domain }: { workId: string; domain: string | null }) {
+  const API = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+  const queryClient = useQueryClient();
+  const [signAuthor, setSignAuthor] = useState("");
+  const [showSample, setShowSample] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const { data: rep } = useQuery({
+    queryKey: ["reharvestReport", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${API}/works/${workId}/reharvest/report`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<{
+        status: { state: string };
+        report: any | null;
+        pilot_work_id: string | null;
+        pilot_signed_by: string | null;
+      }>;
+    },
+    enabled: !!domain,
+    refetchInterval: (q) => (q.state.data?.status?.state === "running" ? 3000 : false),
+  });
+
+  const { data: sample } = useQuery({
+    queryKey: ["reharvestSample", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${API}/works/${workId}/reharvest/sample?limit=100`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<{ items: any[]; count: number }>;
+    },
+    enabled: showSample,
+  });
+
+  if (!domain) return null; // re-harvest exists only for ratified Works
+
+  const running = rep?.status?.state === "running";
+  const report = rep?.report;
+  const isPilot = rep?.pilot_work_id === workId;
+  const signed = !!rep?.pilot_signed_by;
+  const pilotElsewhere = !signed && !!rep?.pilot_work_id && !isPilot;
+
+  const post = async (path: string, body?: any, okMsg?: string) => {
+    setBusy(true);
+    try {
+      const r = await apiFetch(`${API}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.detail || `HTTP ${r.status}`);
+      if (okMsg) toast.success(okMsg);
+      queryClient.invalidateQueries({ queryKey: ["reharvestReport", workId] });
+      queryClient.invalidateQueries({ queryKey: getGetWorkKnowledgeQueryKey(workId, {}) });
+    } catch (e: any) {
+      toast.error(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border/60 p-3 space-y-2 bg-muted/20">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Sparkles className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+        <span className="text-xs font-medium">Domain re-harvest</span>
+        <Badge variant="outline" className="text-[10px]">{domain}</Badge>
+        {running && (
+          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Loader2 className="w-3 h-3 animate-spin" /> Running…
+          </span>
+        )}
+        <div className="flex-1" />
+        <Button
+          size="sm" variant="outline" className="h-7 text-xs gap-1"
+          disabled={busy || running || pilotElsewhere}
+          onClick={() => post(`/works/${workId}/reharvest`, undefined, "Re-harvest started")}
+        >
+          <RefreshCw className="w-3 h-3" />
+          {report ? "Re-run" : signed ? "Re-harvest" : "Run pilot"}
+        </Button>
+        {report && (
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowSample(true)}>
+            Read output
+          </Button>
+        )}
+      </div>
+      {pilotElsewhere && (
+        <p className="text-[11px] text-muted-foreground">
+          The pilot re-harvest is scoped to another Work. Read and sign off on its output first.
+        </p>
+      )}
+      {report && (
+        <div className="flex items-center gap-3 flex-wrap text-[11px] text-muted-foreground font-mono">
+          <span>state: {report.state}</span>
+          <span>docs: {report.docs_processed}</span>
+          <span>created: {report.items_created}</span>
+          <span className={report.items_discarded_off_schema > 0 ? "text-amber-600" : ""}>
+            off-schema discarded: {report.items_discarded_off_schema}
+          </span>
+          {report.docs_skipped_doc_type > 0 && <span>skipped (doc type): {report.docs_skipped_doc_type}</span>}
+          {report.llm_calls_failed > 0 && <span className="text-red-500">LLM failures: {report.llm_calls_failed}</span>}
+        </div>
+      )}
+      {isPilot && !signed && report?.state === "done" && (
+        <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border/40">
+          <span className="text-[11px] text-muted-foreground">
+            Read the output, then sign off to unlock re-harvesting every ratified Work:
+          </span>
+          <Input
+            value={signAuthor}
+            onChange={(e) => setSignAuthor(e.target.value)}
+            placeholder="Your name"
+            className="h-7 w-36 text-xs"
+          />
+          <Button
+            size="sm" variant="outline" className="h-7 text-xs"
+            disabled={busy || !signAuthor.trim()}
+            onClick={() => post("/reharvest/pilot-signoff", { author: signAuthor.trim() }, "Pilot signed off")}
+          >
+            Sign off
+          </Button>
+        </div>
+      )}
+      {signed && (
+        <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border/40">
+          <span className="text-[11px] text-muted-foreground">
+            Pilot signed by {rep?.pilot_signed_by}.
+          </span>
+          <Button
+            size="sm" variant="ghost" className="h-7 text-xs"
+            disabled={busy}
+            onClick={() => post("/reharvest/all", undefined, "Batch re-harvest queued")}
+          >
+            Re-harvest all ratified Works
+          </Button>
+        </div>
+      )}
+      <Dialog open={showSample} onOpenChange={setShowSample}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Re-harvested knowledge sample</DialogTitle>
+            <DialogDescription>
+              Fresh machine-extracted items ({sample?.count ?? 0}) — every kind comes from the
+              “{domain}” ontology. Approve or dismiss them in the list below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] overflow-y-auto space-y-2">
+            {(sample?.items ?? []).map((it) => (
+              <div key={it.id} className="rounded border border-border/50 p-2 text-xs">
+                <Badge variant="outline" className="text-[10px] mr-2">{it.kind}</Badge>
+                {it.text}
+              </div>
+            ))}
+            {sample && sample.items.length === 0 && (
+              <p className="text-xs text-muted-foreground">No re-harvested items yet.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 type KnowledgeFilter = "all" | "pending" | "approved" | "rejected";
 type KnowledgeKindFilter = "all" | "entity" | "claim" | "relationship" | "summary";
 type KnowledgeConfFilter = "all" | "high" | "med" | "low";
@@ -192,6 +360,10 @@ export function KnowledgeTab({ workId }: { workId: string }) {
   const apiSeqRef = useRef(0); // monotonic counter to discard stale responses
 
   const deleteKnowledge = useDeleteKnowledgeItem();
+  const { data: workResp } = useGetWork(workId, {
+    query: { enabled: !!workId, queryKey: getGetWorkQueryKey(workId) },
+  });
+  const workDomain: string | null = ((workResp as any)?.domain ?? null) || null;
   const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, {
     query: { enabled: !!workId, queryKey: getGetWorkKnowledgeQueryKey(workId, {}) },
   });
@@ -400,6 +572,7 @@ export function KnowledgeTab({ workId }: { workId: string }) {
 
   return (
     <div className="space-y-4">
+      <ReharvestPanel workId={workId} domain={workDomain} />
       {showAddForm && (
         <form onSubmit={handleAddKnowledge} className="flex gap-2 p-3 rounded-lg border border-primary/20 bg-primary/[0.02]">
           <select

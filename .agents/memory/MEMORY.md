@@ -121,3 +121,4 @@
 - [Doc-type classification](orivellum-doc-type.md) — doc_type/doc_type_by provenance; harvest refusal gates; proposal-only backfill; per-field reclassify provenance; \b rules need separator-normalized names.
 - [Security test floor](orivellum-security-floor.md) — floor + zero-caller CI rules with shrink-only dated allowlists; bare _set_setting never commits — use set_setting_unaudited for secret settings.
 - [Work proposals & ratification](orivellum-work-proposals.md) — Works only via signed ratification; claim+side effects in one db.atomic(); snapshot row post-claim; conditional-UPDATE re-points; bump chunk cache post-commit.
+- [RE-PROJECTION quarantine & re-harvest](orivellum-reprojection.md) — quarantined_reprojection must be excluded at EVERY scattered raw-SQL read; closed ontologies discard, never coerce; token-fenced run claims; atomic pilot CAS.

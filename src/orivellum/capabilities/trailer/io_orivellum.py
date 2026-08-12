@@ -60,7 +60,7 @@ def book_text_from_work(db, work_id: str) -> str:
     with db._lock:
         ki_rows = db._conn.execute(
             """SELECT k.kind, k.text FROM knowledge k
-               WHERE k.work_id=? AND k.review_status != 'rejected'
+               WHERE k.work_id=? AND k.review_status NOT IN ('rejected','quarantined_reprojection')
                ORDER BY k.kind, k.created_at""",
             (work_id,),
         ).fetchall()

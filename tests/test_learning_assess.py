@@ -41,6 +41,9 @@ def _seed(db):
         kind="fact",
         text="The sky appears blue because of Rayleigh scattering of sunlight.",
         confidence=1.0,
+        # Only human-approved knowledge may ground questions/answers
+        # (RE-PROJECTION Phase 6) — machine statuses fail closed to recall.
+        review_status="approved",
     )
     concept_id = str(uuid.uuid4())
     now = "2024-01-01T00:00:00+00:00"

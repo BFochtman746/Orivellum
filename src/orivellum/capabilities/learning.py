@@ -32,11 +32,12 @@ _SEED_LLM_BATCH = 60  # max NEW subjects sent to the LLM for ordering/prereqs pe
 _MAX_KN_CONTEXT = 5  # knowledge items to include in question/assess prompts
 
 # Review-status allowlist for anything that grounds a question or an answer
-# key.  'proposed' (web-derived research claims awaiting ratification) and
-# 'rejected' are excluded; unknown future statuses are excluded by default
-# (allowlist fails closed).  A web claim can only reach a question after a
-# human ratifies it to 'approved'.
-_QUESTION_SAFE_REVIEW = ("auto", "ai_auto", "approved")
+# key.  ONLY human-approved knowledge may ground a question or an answer key
+# (THE RE-PROJECTION Phase 6): 'auto'/'ai_auto' machine extractions,
+# 'proposed' research claims, quarantined pre-reprojection evidence, and
+# 'rejected' items are all excluded; unknown future statuses are excluded by
+# default (allowlist fails closed).
+_QUESTION_SAFE_REVIEW = ("approved",)
 
 # ── HLR (Half-Life Regression) spaced-repetition constants ───────────────────
 _HLR_MIN_HALF_LIFE = 0.5  # floor: 12 h (never schedule sooner than this)
@@ -323,7 +324,7 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
             _subj_rows = db._conn.execute(
                 """SELECT subject FROM knowledge
                    WHERE work_id=? AND subject IS NOT NULL AND TRIM(subject) != ''
-                     AND review_status IN ('auto','ai_auto','approved')
+                     AND review_status IN ('approved')
                    GROUP BY lower(subject) ORDER BY MIN(created_at) ASC""",
                 (work_id,),
             ).fetchall()

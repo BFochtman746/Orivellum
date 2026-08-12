@@ -240,7 +240,7 @@ def generate_suggestions(work_id: str | None = Body(None), limit: int = Body(6))
             """SELECT k.kind, k.text, w.title AS work_title
                FROM knowledge k
                LEFT JOIN works w ON w.id = k.work_id
-               WHERE k.review_status != 'rejected'
+               WHERE k.review_status NOT IN ('rejected','quarantined_reprojection')
                ORDER BY k.created_at DESC
                LIMIT 40""",
         ).fetchall()
@@ -1753,7 +1753,9 @@ def global_search(q: str, limit: int = 20, work_id: str | None = None):
                         FROM knowledge_fts f
                         JOIN knowledge k ON k.id = f.item_id
                         LEFT JOIN works w ON w.id = k.work_id
-                        WHERE knowledge_fts MATCH ?"""
+                        WHERE knowledge_fts MATCH ?
+                          AND k.review_status NOT IN
+                              ('rejected','superseded_duplicate','quarantined_reprojection')"""
             args = [q_sql]
             if work_id:
                 kn_base += " AND k.work_id=?"

@@ -1554,7 +1554,7 @@ async def recommend_voices(body: VoiceRecommendRequest):
     with db._lock:
         ki_rows = db._conn.execute(
             """SELECT subject, text FROM knowledge
-               WHERE work_id=? AND review_status != 'rejected'
+               WHERE work_id=? AND review_status NOT IN ('rejected','quarantined_reprojection')
                ORDER BY created_at DESC LIMIT 12""",
             (body.work_id,),
         ).fetchall()
@@ -2143,7 +2143,7 @@ def _casting_character_roster(db, work_id: str) -> list[str]:
     with db._lock:
         rows = db._conn.execute(
             """SELECT DISTINCT subject FROM knowledge
-               WHERE work_id=? AND kind='character' AND review_status != 'rejected'
+               WHERE work_id=? AND kind='character' AND review_status NOT IN ('rejected','quarantined_reprojection')
                LIMIT 40""",
             (work_id,),
         ).fetchall()

@@ -699,6 +699,7 @@ def create_app() -> FastAPI:
         pklos,
         position,
         projects,
+        reharvest,
         review,
         series,
         studio,
@@ -752,6 +753,7 @@ def create_app() -> FastAPI:
         series,
         autonomy,
         gaps,
+        reharvest,
     ]
     for module in _route_modules:
         app.include_router(module.router)

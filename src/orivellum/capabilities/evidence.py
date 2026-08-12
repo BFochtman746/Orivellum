@@ -117,7 +117,8 @@ def rescore_work(work_id: str, db: OrivellumDB, limit: int = 500) -> int:
                       k.confidence, k.source_doc_id, d.created_at AS src_created
                FROM knowledge k
                LEFT JOIN documents d ON d.id = k.source_doc_id
-               WHERE k.work_id = ? AND k.review_status != 'rejected'
+               WHERE k.work_id = ?
+                 AND k.review_status NOT IN ('rejected','quarantined_reprojection')
                LIMIT ?""",
             (work_id, limit),
         ).fetchall()
@@ -171,7 +172,7 @@ def detect_contradictions(work_id: str, db: OrivellumDB, limit: int = 400) -> in
     with db._lock:
         rows = db._conn.execute(
             """SELECT id, subject, predicate, object, text FROM knowledge
-               WHERE work_id = ? AND review_status != 'rejected'
+               WHERE work_id = ? AND review_status NOT IN ('rejected','quarantined_reprojection')
                  AND subject IS NOT NULL AND subject != ''
                LIMIT ?""",
             (work_id, limit),

@@ -104,23 +104,28 @@ import { GenesisTab }    from "./genesis-tab";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
+import { useDomainKindChips } from "@/lib/ontology-kinds";
 import { LearnTab } from "@/pages/learning/learn-tab";
 
 
 const API_BASE_GRAPH = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
-// Entity kind filter config for the Works graph tab
-const GRAPH_ENTITY_KINDS = [
-  { value: "concept",   label: "Concepts",   color: "#8b5cf6" },
-  { value: "person",    label: "People",     color: "#6366f1" },
-  { value: "place",     label: "Places",     color: "#10b981" },
-  { value: "theme",     label: "Themes",     color: "#f59e0b" },
-  { value: "scripture", label: "Scripture",  color: "#ef4444" },
-] as const;
-
 export function GraphTab({ workId }: { workId: string }) {
   const [, navigate]      = useLocation();
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
+
+  // Domain-derived filter chips: a ratified Work's closed ontology drives the
+  // kinds shown; legacy entity kinds are the fallback (no ratified domain).
+  const { data: graphWork } = useQuery({
+    queryKey: ["workDomain", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${API_BASE_GRAPH}/works/${workId}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<{ domain?: string | null }>;
+    },
+    staleTime: 60_000,
+  });
+  const kindChips = useDomainKindChips(graphWork?.domain);
 
   const { data: graphData, isLoading, error } = useQuery({
     queryKey: ["workGraph", workId],
@@ -152,7 +157,7 @@ export function GraphTab({ workId }: { workId: string }) {
       {!!graphData?.nodes?.length && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground font-medium">Show:</span>
-          {GRAPH_ENTITY_KINDS.map(({ value, label, color }) => {
+          {kindChips.map(({ value, label, color }) => {
             const on = !hiddenKinds.has(value);
             return (
               <button

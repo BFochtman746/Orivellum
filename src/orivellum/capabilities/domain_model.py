@@ -266,7 +266,7 @@ def corpus_evidence_count(db: OrivellumDB, work_id: str, term: str) -> int:
             """SELECT COUNT(*) AS n FROM knowledge_fts f
                JOIN knowledge k ON k.id = f.knowledge_id
                WHERE knowledge_fts MATCH ? AND k.work_id = ?
-                 AND k.review_status != 'rejected'""",
+                 AND k.review_status NOT IN ('rejected','quarantined_reprojection')""",
             (phrase, work_id),
         ).fetchone()["n"]
         c = db._conn.execute(

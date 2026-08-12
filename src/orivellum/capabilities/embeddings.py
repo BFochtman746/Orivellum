@@ -253,14 +253,16 @@ def count_embeddable_items(db: OrivellumDB) -> dict[str, int]:
             ).fetchone()[0]
             know_total = c.execute(
                 "SELECT COUNT(*) FROM knowledge"
-                " WHERE review_status NOT IN ('rejected','superseded_duplicate')"
+                " WHERE review_status NOT IN"
+                " ('rejected','superseded_duplicate','quarantined_reprojection')"
                 "  AND length(text) > 20"
             ).fetchone()[0]
             know_done = c.execute(
                 "SELECT COUNT(DISTINCT v.object_id) FROM vectors v"
                 " JOIN knowledge k ON k.id = v.object_id"
                 " WHERE v.object_type='knowledge'"
-                "  AND k.review_status NOT IN ('rejected','superseded_duplicate')"
+                "  AND k.review_status NOT IN"
+                " ('rejected','superseded_duplicate','quarantined_reprojection')"
                 "  AND length(k.text) > 20"
             ).fetchone()[0]
             cc_total = c.execute(
@@ -539,7 +541,8 @@ def backfill_embeddings(db: OrivellumDB, max_items: int = 200) -> int:
             """SELECT k.id, k.text, NULL as context_prefix FROM knowledge k
             LEFT JOIN vectors v ON v.object_id = k.id AND v.object_type='knowledge'
             WHERE v.id IS NULL
-              AND k.review_status NOT IN ('rejected','superseded_duplicate')
+              AND k.review_status NOT IN
+                ('rejected','superseded_duplicate','quarantined_reprojection')
               AND length(k.text) > 20 LIMIT ?""",
             False,
         ),
@@ -750,7 +753,8 @@ def semantic_search(
                      FROM vectors v JOIN knowledge k ON k.id = v.object_id
                      LEFT JOIN documents sd ON sd.id = k.source_doc_id
                      WHERE v.object_type='knowledge'
-                       AND k.review_status NOT IN ('rejected','superseded_duplicate')
+                       AND k.review_status NOT IN
+                         ('rejected','superseded_duplicate','quarantined_reprojection')
                        AND COALESCE(sd.quarantined, 0) = 0"""
     elif object_type == "conv_chunk":
         # Conversation exchange chunks — each row is one user+assistant turn.

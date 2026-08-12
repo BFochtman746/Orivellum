@@ -3237,6 +3237,8 @@ class OrivellumDB:
                     """SELECT id, kind, text, subject, predicate, object, confidence
                        FROM knowledge
                        WHERE work_id=? AND kind IN ('entity','relationship')
+                         AND review_status NOT IN
+                             ('rejected','superseded_duplicate','quarantined_reprojection')
                        LIMIT ?""",
                     (work_id, limit * 2),
                 ).fetchall()
@@ -3520,6 +3522,8 @@ class OrivellumDB:
                         """SELECT id, kind, text, subject, predicate, object
                            FROM knowledge
                            WHERE kind IN ('entity','relationship')
+                             AND review_status NOT IN
+                                 ('rejected','superseded_duplicate','quarantined_reprojection')
                            LIMIT ?""",
                         (limit * 2,),
                     ).fetchall()
@@ -3699,6 +3703,10 @@ class OrivellumDB:
         whose review_status is in the tuple are returned. Callers that ground
         questions or answers MUST pass an allowlist that excludes 'proposed'
         and 'rejected' (see learning._QUESTION_SAFE_REVIEW).
+
+        Quarantined pre-reprojection items ('quarantined_reprojection') are
+        excluded by default — they are evidence, not knowledge.  The only way
+        to read them is to name the status explicitly in ``review_status_in``.
         """
         q = "SELECT * FROM knowledge WHERE 1=1"
         args: list = []
@@ -3711,6 +3719,8 @@ class OrivellumDB:
         if review_status_in:
             q += f" AND review_status IN ({','.join('?' * len(review_status_in))})"
             args.extend(review_status_in)
+        else:
+            q += " AND review_status != 'quarantined_reprojection'"
         q += " ORDER BY created_at DESC LIMIT ?"
         args.append(limit)
         with self._lock:
@@ -3740,6 +3750,10 @@ class OrivellumDB:
         if review_status_in:
             q += f" AND k.review_status IN ({','.join('?' * len(review_status_in))})"
             args.extend(review_status_in)
+        else:
+            # Quarantined pre-reprojection evidence never surfaces in search
+            # unless a caller names the status explicitly.
+            q += " AND k.review_status != 'quarantined_reprojection'"
         q += f" LIMIT {min(limit, 50)}"
         with self._lock:
             try:
@@ -3798,6 +3812,8 @@ class OrivellumDB:
         else:
             # Plain scan (no FTS) — date-/kind-only queries
             q = f"SELECT k.* FROM knowledge k{_join_doc} WHERE 1=1"
+        # Quarantined pre-reprojection evidence is never searchable here.
+        q += " AND k.review_status != 'quarantined_reprojection'"
 
         if after_date:
             # COALESCE: document timestamp for doc-backed items, knowledge
@@ -5096,10 +5112,13 @@ class OrivellumDB:
         return True
 
     def delete_document_knowledge(
-        self, doc_id: str, preserve_statuses: tuple[str, ...] = ("approved",)
+        self,
+        doc_id: str,
+        preserve_statuses: tuple[str, ...] = ("approved", "quarantined_reprojection"),
     ) -> int:
         """Delete auto-derived knowledge sourced from *doc_id* plus its FTS
-        rows and vectors. Human-approved items are preserved by default.
+        rows and vectors. Human-approved items and quarantined
+        pre-reprojection evidence are preserved by default.
 
         Used before re-extracting a document whose text is about to change —
         otherwise stale facts from the old text stay searchable, and the
@@ -6088,7 +6107,7 @@ class OrivellumDB:
                 "SELECT COUNT(*) FROM documents WHERE readiness='ready'"
             ).fetchone()[0]
             knowledge_count = self._conn.execute(
-                "SELECT COUNT(*) FROM knowledge WHERE review_status != 'rejected'"
+                "SELECT COUNT(*) FROM knowledge WHERE review_status NOT IN ('rejected','quarantined_reprojection')"
             ).fetchone()[0]
             conv_count = self._conn.execute(
                 "SELECT COUNT(*) FROM conversations WHERE archived=0"

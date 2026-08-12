@@ -1090,6 +1090,18 @@ def _apply_work_proposal_approval(
         # Every proposed member became ineligible since generation — never
         # finalize an empty Work (raising rolls back the claim + Work).
         raise _ProposalObsolete
+    # Approved knowledge follows its documents (THE RE-PROJECTION Phase 6):
+    # human-approved items whose source doc just moved into this Work are
+    # re-pointed with it, so curated knowledge survives re-grouping.  Same
+    # transaction as the doc moves — no window where docs and their approved
+    # knowledge disagree.
+    with db._lock:
+        db._conn.execute(
+            """UPDATE knowledge SET work_id=?
+               WHERE review_status='approved'
+                 AND source_doc_id IN (SELECT id FROM documents WHERE work_id=?)""",
+            (work["id"], work["id"]),
+        )
     for cid, count in collection_counts.items():
         db.add_work_collection(work["id"], cid, count)
     db.finalize_work_proposal(item_id, work["id"], domain)

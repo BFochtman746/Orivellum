@@ -46,7 +46,11 @@ def _seed(db, *, knowledge_texts: list[str] | None = None, subjects: list[str] |
             "Rayleigh scattering fades for particles comparable to the wavelength (Mie regime).",
         ]
     ):
-        db.create_knowledge_item(work_id=work_id, kind="fact", text=text, confidence=1.0)
+        # Only human-approved knowledge may ground questions/answers
+        # (RE-PROJECTION Phase 6) — machine statuses fail closed to recall.
+        db.create_knowledge_item(
+            work_id=work_id, kind="fact", text=text, confidence=1.0, review_status="approved"
+        )
     now = "2024-01-01T00:00:00+00:00"
     cids = []
     for i, subject in enumerate(subjects or ["Rayleigh scattering"]):

@@ -73,8 +73,17 @@ async def learning_seed(work_id: str):
         db.assert_not_collection(work_id, "seed a curriculum")
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    if not db.get_work(work_id):
+    work = db.get_work(work_id)
+    if not work:
         raise HTTPException(404, f"Work {work_id!r} not found")
+    if not work.get("domain"):
+        # Learn seeds only from ratified Works — a Work without a ratified
+        # domain has no ontology, so its knowledge cannot ground a curriculum.
+        raise HTTPException(
+            409,
+            "This Work has no ratified domain. Ratify it (assigning a domain) "
+            "before seeding a curriculum from its knowledge.",
+        )
     base_url, model = _cfg()
     from orivellum.capabilities.learning import seed_concepts
 

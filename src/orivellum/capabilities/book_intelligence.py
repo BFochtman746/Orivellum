@@ -78,7 +78,10 @@ def _load_knowledge_texts(db: OrivellumDB, work_id: str) -> list[str]:
         rows = db._conn.execute(
             """SELECT lower(coalesce(text,'') || ' ' || coalesce(subject,'')
                             || ' ' || coalesce(object,'')) AS blob
-               FROM knowledge WHERE work_id=? LIMIT ?""",
+               FROM knowledge WHERE work_id=?
+                 AND review_status NOT IN
+                     ('rejected','superseded_duplicate','quarantined_reprojection')
+               LIMIT ?""",
             (work_id, _KNOWLEDGE_SCAN_CAP),
         ).fetchall()
     return [r["blob"] for r in rows]

@@ -138,7 +138,8 @@ def calculate_work_completeness(work_id: str, db: OrivellumDB) -> CompletenessRe
         # Knowledge items
         kn_rows = db._conn.execute(
             """SELECT review_status, source_doc_id
-               FROM knowledge WHERE work_id=?""",
+               FROM knowledge WHERE work_id=?
+                 AND review_status != 'quarantined_reprojection'""",
             (work_id,),
         ).fetchall()
 

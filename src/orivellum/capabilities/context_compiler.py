@@ -301,7 +301,7 @@ def _knowledge_source(db: OrivellumDB, work_id: str, budget: int) -> tuple[list[
     with db._lock:
         rows = db._conn.execute(
             """SELECT kind, text, subject FROM knowledge
-               WHERE work_id=? AND review_status != 'rejected'
+               WHERE work_id=? AND review_status NOT IN ('rejected','quarantined_reprojection')
                ORDER BY confidence DESC LIMIT 20""",
             (work_id,),
         ).fetchall()

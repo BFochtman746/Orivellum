@@ -371,7 +371,7 @@ def candidates_never_explained(work_id: str, db: OrivellumDB) -> list[dict]:
         kn_rows = db._conn.execute(
             "SELECT subject, kind, LENGTH(text) AS n FROM knowledge "
             "WHERE work_id=? AND subject IS NOT NULL AND subject != '' "
-            "AND review_status != 'rejected'",
+            "AND review_status NOT IN ('rejected','quarantined_reprojection')",
             (work_id,),
         ).fetchall()
         doc_rows = db._conn.execute(
@@ -480,7 +480,8 @@ def candidates_dead_end(work_id: str, db: OrivellumDB) -> list[dict]:
     with db._lock:
         rows = db._conn.execute(
             "SELECT id, text, source_doc_id FROM knowledge "
-            "WHERE work_id=? AND review_status != 'rejected' ORDER BY id",
+            "WHERE work_id=? AND review_status NOT IN "
+            "('rejected','quarantined_reprojection') ORDER BY id",
             (work_id,),
         ).fetchall()
     haystack = _library_haystack(db)
