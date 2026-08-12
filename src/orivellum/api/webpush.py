@@ -34,17 +34,38 @@ def _b64u(data: bytes) -> str:
 _MAX_ENDPOINT_LEN = 1024
 _MAX_KEY_LEN = 512
 
+# SSRF defense: the server makes outbound HTTPS requests to stored endpoints,
+# so only hosts operated by real browser push services are accepted.  Browsers
+# only ever hand out subscription endpoints from these providers, and an
+# attacker cannot control their DNS — which removes the rebinding surface
+# entirely (no DNS check of our own to race against).  This is deliberately an
+# allowlist, NOT a resolve-and-check: a preliminary or delivery-time DNS
+# lookup is always a TOCTOU race against the resolver used by the HTTP client.
+_ALLOWED_PUSH_HOSTS = frozenset(
+    {
+        "fcm.googleapis.com",  # Chrome / Chromium
+        "updates.push.services.mozilla.com",  # Firefox
+        "web.push.apple.com",  # Safari / iOS PWA
+    }
+)
+_ALLOWED_PUSH_HOST_SUFFIXES = (
+    ".push.apple.com",  # Apple regional endpoints
+    ".push.services.mozilla.com",  # Mozilla autopush shards
+    ".notify.windows.com",  # Edge (WNS)
+    ".fcm.googleapis.com",  # FCM regional endpoints
+)
+
+
+def _host_allowed(host: str) -> bool:
+    host = host.lower().rstrip(".")
+    return host in _ALLOWED_PUSH_HOSTS or host.endswith(_ALLOWED_PUSH_HOST_SUFFIXES)
+
 
 def validate_subscription(endpoint: str, p256dh: str, auth: str) -> str | None:
     """Return an error string when the subscription is not acceptable.
 
-    The server performs outbound requests to the stored endpoint, so an
-    unvalidated endpoint is an SSRF primitive: require HTTPS, no embedded
-    credentials, and a host that resolves only to global addresses (Web Push
-    provider endpoints are always public HTTPS URLs).  Resolution happens at
-    subscribe time; a later re-resolve to a private address (DNS rebinding)
-    would only reach pywebpush's HTTP client, which never returns response
-    bodies to the subscriber.
+    Requirements: HTTPS, default port, no embedded credentials, size caps,
+    and a hostname on the trusted Web Push provider allowlist (see above).
     """
     from urllib.parse import urlsplit
 
@@ -60,35 +81,13 @@ def validate_subscription(endpoint: str, p256dh: str, auth: str) -> str | None:
         return "Web Push endpoints must use https"
     if parts.username or parts.password:
         return "endpoint must not embed credentials"
+    if parts.port not in (None, 443):
+        return "endpoint must use the default https port"
     host = parts.hostname
     if not host:
         return "endpoint has no host"
-    return _resolve_check(host, parts.port or 443)
-
-
-def _resolve_check(host: str, port: int) -> str | None:
-    """Resolve *host* and refuse anything that is not a global address."""
-    import ipaddress
-    import socket
-
-    try:
-        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    except OSError:
-        return "endpoint host does not resolve"
-    for info in infos:
-        try:
-            addr = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return "endpoint resolves to an invalid address"
-        if (
-            addr.is_loopback
-            or addr.is_private
-            or addr.is_link_local
-            or addr.is_reserved
-            or addr.is_multicast
-            or addr.is_unspecified
-        ):
-            return "endpoint resolves to a private or local address"
+    if not _host_allowed(host):
+        return "endpoint host is not a recognized Web Push provider"
     return None
 
 
@@ -139,9 +138,9 @@ def send_to_all(db: OrivellumDB, payload: dict) -> dict:
     body = json.dumps(payload)
     sent = failed = pruned = 0
     for sub in subs:
-        # Re-validate at DELIVERY time, not just at subscribe time: a DNS
-        # rebinding after registration would otherwise turn an accepted public
-        # endpoint into a blind request against internal infrastructure.
+        # Re-check the allowlist at DELIVERY time too: prunes rows saved
+        # before the allowlist existed (or edited out-of-band) so no request
+        # ever leaves for a non-provider host.  Pure string check — no DNS.
         err = validate_subscription(sub["endpoint"], sub["p256dh"], sub["auth"])
         if err:
             logger.warning(

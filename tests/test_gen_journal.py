@@ -424,18 +424,9 @@ class TestPushEndpoints:
             data["vapid_public_key"]
         )
 
-    def test_subscribe_unsubscribe_roundtrip(self, db, client, monkeypatch):
-        import socket
-
-        # Pretend the endpoint host resolves publicly — the SSRF validator
-        # itself is exercised by test_subscribe_rejects_ssrf_endpoints.
-        monkeypatch.setattr(
-            socket,
-            "getaddrinfo",
-            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
-        )
+    def test_subscribe_unsubscribe_roundtrip(self, db, client):
         sub = {
-            "endpoint": "https://push.example/ep1",
+            "endpoint": "https://web.push.apple.com/QGdyEwnvZReVXQAKKVQTGA",
             "keys": {"p256dh": "pk", "auth": "ak"},
         }
         r = client.post("/api/system/push/subscribe", json=sub)
@@ -453,17 +444,21 @@ class TestPushEndpoints:
         assert db.list_push_subscriptions() == []
 
     def test_subscribe_rejects_ssrf_endpoints(self, db, client):
-        """The server sends outbound requests to stored endpoints — private,
-        non-HTTPS, or credentialed targets must be refused at intake."""
+        """The server sends outbound requests to stored endpoints — anything
+        that is not a trusted Web Push provider must be refused at intake."""
         keys = {"p256dh": "k", "auth": "a"}
         bad = [
-            "http://push.example.com/x",              # not https
-            "https://127.0.0.1/x",                    # loopback
-            "https://localhost/x",                    # resolves to loopback
-            "https://10.0.0.5/x",                     # RFC-1918
-            "https://192.168.1.10:9000/x",            # RFC-1918 with port
-            "https://user:pw@push.example.com/x",     # embedded credentials
-            "https://push.example.com/" + "a" * 1100,  # oversized URL
+            "http://web.push.apple.com/x",             # not https
+            "https://127.0.0.1/x",                     # loopback
+            "https://localhost/x",                     # local host
+            "https://10.0.0.5/x",                      # RFC-1918
+            "https://192.168.1.10:9000/x",             # RFC-1918 with port
+            "https://attacker.example.com/x",          # not a push provider
+            "https://evilpush.apple.com.attacker.io/x",  # suffix spoof
+            "https://notpush.apple.com/x",             # wrong provider subdomain
+            "https://web.push.apple.com:8443/x",       # non-default port
+            "https://user:pw@web.push.apple.com/x",    # embedded credentials
+            "https://web.push.apple.com/" + "a" * 1100,  # oversized URL
         ]
         for endpoint in bad:
             r = client.post(
@@ -473,28 +468,38 @@ class TestPushEndpoints:
             assert r.status_code == 422, f"accepted {endpoint!r}"
         assert db.list_push_subscriptions() == []
 
-    def test_send_to_all_revalidates_at_delivery_time(self, db, monkeypatch):
-        """DNS rebinding defense: an endpoint accepted at subscribe time must
-        be re-validated at DELIVERY time — if it now resolves privately, the
-        subscription is pruned and no outbound request is made."""
+    def test_push_ssrf_immune_to_dns_rebinding(self, db, client, monkeypatch):
+        """DNS answers must be irrelevant: an attacker host that resolves
+        publicly at validation time and privately at connect time still never
+        gets a request, because acceptance is a provider allowlist, not a
+        resolve-and-check."""
         import socket
 
         import pywebpush
 
         from orivellum.api import webpush
 
-        webpush.ensure_vapid_keys(db)
-        db.save_push_subscription("https://push.example.com/x", "pk", "ak")
-
-        # The host now resolves to loopback (rebound after registration).
+        # DNS lies: attacker host resolves to a public IP whenever asked.
         monkeypatch.setattr(
             socket,
             "getaddrinfo",
-            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))],
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
         )
+        r = client.post(
+            "/api/system/push/subscribe",
+            json={
+                "endpoint": "https://rebind.attacker.example/x",
+                "keys": {"p256dh": "k", "auth": "a"},
+            },
+        )
+        assert r.status_code == 422  # rejected regardless of the DNS answer
+
+        # Legacy/out-of-band row for a non-provider host: pruned at delivery,
+        # the outbound client is never invoked (no connect-time resolution).
+        webpush.ensure_vapid_keys(db)
+        db.save_push_subscription("https://rebind.attacker.example/x", "pk", "ak")
         called = []
         monkeypatch.setattr(pywebpush, "webpush", lambda **kw: called.append(kw))
-
         result = webpush.send_to_all(db, {"id": 0, "kind": "test", "url": "/system"})
         assert result == {"sent": 0, "failed": 0, "pruned": 1}
         assert called == []
@@ -504,7 +509,7 @@ class TestPushEndpoints:
         r = client.post(
             "/api/system/push/subscribe",
             json={
-                "endpoint": "https://push.example.com/x",
+                "endpoint": "https://web.push.apple.com/x",
                 "keys": {"p256dh": "k" * 600, "auth": "a"},
             },
         )
@@ -521,16 +526,9 @@ class TestPushEndpoints:
         r = client.post("/api/system/push/test")
         assert r.status_code == 409
 
-    def test_test_push_sends_via_webpush(self, db, client, monkeypatch):
-        import socket
-
-        monkeypatch.setattr(
-            socket,
-            "getaddrinfo",
-            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
-        )
+    def test_test_push_sends_via_webpush(self, db, client):
         client.get("/api/system/push/config")  # provision VAPID keys
-        db.save_push_subscription("https://push.example/ep2", "pk", "ak")
+        db.save_push_subscription("https://fcm.googleapis.com/fcm/send/ep2", "pk", "ak")
         with patch("pywebpush.webpush") as wp:
             r = client.post("/api/system/push/test")
         assert r.status_code == 200
@@ -540,18 +538,13 @@ class TestPushEndpoints:
         payload = json.loads(wp.call_args.kwargs.get("data") or wp.call_args[0][1])
         assert set(payload) <= {"id", "kind", "url"}
 
-    def test_dead_subscription_is_pruned(self, db, client, monkeypatch):
-        import socket
-
+    def test_dead_subscription_is_pruned(self, db, client):
         from pywebpush import WebPushException
 
-        monkeypatch.setattr(
-            socket,
-            "getaddrinfo",
-            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))],
-        )
         client.get("/api/system/push/config")  # provision VAPID keys
-        db.save_push_subscription("https://push.example/gone", "pk", "ak")
+        db.save_push_subscription(
+            "https://updates.push.services.mozilla.com/wpush/v2/gone", "pk", "ak"
+        )
 
         class _Resp:
             status_code = 410

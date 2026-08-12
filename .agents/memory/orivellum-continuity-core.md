@@ -6,41 +6,49 @@ description: Durable offline outbox, generation-event journal replay, and web pu
 # Continuity core
 
 ## Outbox (client, IndexedDB)
-- Op ID is generated BEFORE any network attempt and doubles as the server's
-  `client_msg_id` — that is the exactly-once mechanism; never invent a second id.
-- **Orphaned "sending" ops**: a page death (iOS kill, reload) mid-flush strands
-  ops in `sending`, which `listPendingOps` skips — they would never send again.
-  `flushOutbox` requeues every `sending` op at flush start (single-flight per
-  session makes this safe; cross-tab double-send is covered by idempotency).
-- **Queued-bubble drop race**: any UI check for "is something still queued"
-  must use `listOps()` (all undelivered ops), NOT `listPendingOps()` — mid-flush
-  an op is briefly `sending` and the bubble vanishes before delivery otherwise.
-- Chat page has a handoff effect that clears local optimistic bubbles when
-  server rows refetch: it must PRESERVE queued/failed/incomplete bubbles —
-  those have no server row, so clearing them makes the message disappear.
-- IDB `getAll()` returns key order; same-millisecond `createdAt` ties let later
-  ops overtake. Ordering needs a monotonic timestamp (`max(now, last+1)`).
+- The op ID is generated BEFORE any network attempt and doubles as the
+  server's `client_msg_id` — that is the exactly-once mechanism; never invent
+  a second id.
+- A page death mid-flush strands ops in a "sending" state that pending-only
+  listings skip; the flusher must requeue in-flight ops at start (safe:
+  single-flight per session, cross-tab covered by idempotency).
+- Any UI check for "is something still queued" must consider ALL undelivered
+  ops, not just pending ones — mid-flight ops briefly leave pending and the
+  optimistic bubble vanishes otherwise. Same lesson for handoff-to-server-rows
+  effects: they must preserve queued/failed/incomplete bubbles (no server row
+  exists for them yet).
+- IDB `getAll()` returns key order; same-millisecond timestamps let later ops
+  overtake. Ordering needs a monotonic timestamp (`max(now, last+1)`).
 
 ## Generation journal (server)
-- Pump task consumes the LLM generator independently of the HTTP tail, so a
-  dropped connection never kills generation. The job row is created on the
-  FIRST async iteration — sync routes have no running loop at call time.
-- `ON CONFLICT(dedupe_key)` against a PARTIAL unique index must repeat the
-  index predicate: `ON CONFLICT(dedupe_key) WHERE dedupe_key IS NOT NULL` —
-  bare form is an OperationalError.
-- Client replay: after the job finishes, the recovered bubble hands back to
-  refetched server rows (~800 ms) — the recovered badge persists via a
-  recovered-ids localStorage set keyed by server message id.
+- The pump task consumes the LLM generator independently of the HTTP tail —
+  a dropped connection never kills generation. The job row must be created on
+  the FIRST async iteration (sync routes have no running loop at call time).
+- The live relay to the tail must be bounded and detach when the tail closes
+  or stalls; the journal is the durable recovery path, never the relay.
+- **Idempotency settlement**: when generation is journalled, the route's
+  'processing' claim can only be settled where the pump ends — complete on a
+  persisted terminal assistant message, RELEASE on failure. Leaving the claim
+  open makes retries 409 until stale-timeout and then duplicate the reply.
+- `ON CONFLICT` against a PARTIAL unique index must repeat the index
+  predicate (`... WHERE col IS NOT NULL`) or SQLite raises OperationalError.
+- Client replay: the recovered bubble hands back to refetched server rows
+  shortly after the job finishes — recovered-state badges must be keyed by
+  server message id, not by the transient bubble.
 
 ## Web push
-- pywebpush imported lazily inside `send_to_all` so tests can
-  `patch("pywebpush.webpush")`. 404/410 subscriptions are pruned on send.
-- Payload carries only kind + deep link (no content) by design.
+- SSRF rule: subscription endpoints are accepted ONLY from an allowlist of
+  real push provider hosts (Apple/Google/Mozilla/Microsoft). Never use
+  resolve-and-check DNS validation — it is always a TOCTOU race (rebinding)
+  against the HTTP client's own resolution. Re-check the allowlist at
+  delivery time too (string check, prunes legacy rows).
+- Payload carries only kind + deep link (no content) by design; 404/410
+  subscriptions are pruned on send.
 
 ## Testing lessons
-- TestClient fixtures must re-init `_deps` AFTER entering the context —
-  lifespan overwrites it (pattern in tests/test_gen_journal.py).
-- Push endpoint tests must hit `/api/system/push/config` first to provision
-  VAPID keys or `send_to_all` silently no-ops.
+- TestClient fixtures must re-init app deps AFTER entering the context —
+  lifespan overwrites them.
+- Push endpoint tests must provision VAPID keys first or fan-out silently
+  no-ops. Import pywebpush lazily at send time so tests can patch it.
 - vitest outbox tests: fresh `new IDBFactory()` (fake-indexeddb) +
   `vi.resetModules()` per test.
