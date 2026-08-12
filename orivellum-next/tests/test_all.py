@@ -876,6 +876,97 @@ class TestN5Chain(Base):
             self.assertEqual(row["state"], "failed",
                              f"action {aid} should be 'failed' after LLM failure; got {row['state']!r}")
 
+    def test_run_chain_replay_does_not_charge_budget_for_done_actions(self):
+        """N5 replay: run_chain over already-done actions must not charge the budget.
+        A second pass with a tight budget (max_steps=1) over two done actions must
+        report steps_run=0 — no claim happened, so no budget was consumed.
+        """
+        acts = [
+            self._cheap_action("replay-a", recommended=True),
+            self._cheap_action("replay-b"),
+        ]
+        stored = self._offer(acts, thread="replay-t")
+        ids = [a["id"] for a in stored]
+        ok_exec = lambda act: {"ok": True}
+
+        # First pass — both actions dispatched; 2 steps consumed
+        report1 = runner_bridge.run_chain(
+            self.db, "replay-t", ids,
+            budget={"max_steps": 5, "max_minutes": 60, "max_units": 9999},
+            executor=ok_exec,
+        )
+        self.assertEqual(report1["steps_run"], 2)
+
+        # Second pass with tight budget — both actions are 'done', claim fails for each,
+        # chain is never charged, so budget is not exhausted and steps_run=0.
+        report2 = runner_bridge.run_chain(
+            self.db, "replay-t", ids,
+            budget={"max_steps": 1, "max_minutes": 60, "max_units": 9999},
+            executor=ok_exec,
+        )
+        self.assertEqual(
+            report2["steps_run"], 0,
+            "done actions must not charge the chain budget on replay",
+        )
+
+    def test_finish_does_not_overwrite_concurrent_state_change(self):
+        """N5 concurrent safety: finish() must only transition from 'running'.
+        If a concurrent caller (dismiss / expire) has already moved the action
+        away from 'running', finish() must leave that state intact and return False.
+        """
+        acts = [self._cheap_action("finish-guard", recommended=True),
+                self._cheap_action("fg2")]
+        stored = self._offer(acts, thread="fg-t")
+        aid = stored[0]["id"]
+
+        # Put the action into 'running' (simulating a successful claim)
+        self.db.conn.execute("UPDATE next_action SET state='running' WHERE id=?", (aid,))
+        self.db.conn.commit()
+
+        # Simulate a concurrent dismiss moving it back to 'queued'
+        self.db.conn.execute("UPDATE next_action SET state='queued' WHERE id=?", (aid,))
+        self.db.conn.commit()
+
+        # finish() must not overwrite 'queued' with 'done'
+        applied = runner_bridge.finish(self.db, aid, ok=True, detail="must be no-op")
+        self.assertFalse(applied,
+                         "finish() must return False when action is not in 'running' state")
+        row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+        self.assertEqual(row["state"], "queued",
+                         "concurrent non-running state must be preserved by finish()")
+
+    def test_run_chain_finish_preserves_concurrent_dismiss(self):
+        """N5 concurrent dismiss: if an action is moved out of 'running' while the runner
+        is executing, finish() must not overwrite the resulting state with 'done'/'failed'.
+        """
+        # Use an executor that simulates a concurrent dismiss mid-dispatch:
+        # while the action is in 'running', another caller sets it to 'queued'.
+        def dismissing_exec(act):
+            # Simulate concurrent dismiss by directly modifying the DB
+            # (in production this would be a separate request)
+            self.db.conn.execute(
+                "UPDATE next_action SET state='queued' WHERE id=?", (act["id"],)
+            )
+            self.db.conn.commit()
+            return {"ok": True}
+
+        acts = [self._cheap_action("dismiss-mid", recommended=True),
+                self._cheap_action("dismiss-mid2")]
+        stored = self._offer(acts, thread="dismiss-t")
+        aid = stored[0]["id"]
+
+        # run_chain dispatches the action; executor sets it to 'queued' mid-flight;
+        # finish() must detect state!='running' and leave 'queued' untouched.
+        runner_bridge.run_chain(
+            self.db, "dismiss-t", [aid],
+            budget={"max_steps": 5, "max_minutes": 60, "max_units": 9999},
+            executor=dismissing_exec,
+        )
+        row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+        # The concurrent dismiss set it to 'queued'; finish() must not overwrite.
+        self.assertEqual(row["state"], "queued",
+                         "finish() must preserve the concurrent dismiss state")
+
     def test_re_enqueue_of_done_action_does_not_redispatch(self):
         """N5 idempotency: calling enqueue() on a 'done' action must not re-run the runner."""
         dispatch_count = {"n": 0}

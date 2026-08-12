@@ -246,6 +246,9 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None,
                  detail=f"waits for you: {act['auto_reason']}")
         return {"queued": True, "auto": False, "why": act["auto_reason"]}
 
+    # Validate chain budget BEFORE the claim so we can bail cheaply.
+    # Do NOT charge here — charge only after a successful claim so that a
+    # replay over already-done actions never burns budget.
     if chain is not None:
         ok, why = chain.admit(act)
         if not ok:
@@ -254,7 +257,6 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None,
             db.event("queued", action_id=action_id, set_id=act["set_id"],
                      kind=act["kind"], detail=why)
             raise ChainExhausted(why)
-        chain.charge(act)
 
     # ── Atomic claim ────────────────────────────────────────────────────────
     # Only 'offered' or 'queued' states may transition to 'running'.  A single
@@ -275,6 +277,10 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None,
             "why": f"already in state '{state}'; not re-dispatched",
             "final_state": state, "unit": None,
         }
+
+    # Claim succeeded — now charge the chain (if any) and record the transition.
+    if chain is not None:
+        chain.charge(act)
     db.ledger(f"next:{s['thread_id']}", "action.autoqueued",
               {"action": action_id, "label": act["label"], "reason": act["auto_reason"]})
     db.conn.commit()
@@ -299,11 +305,23 @@ def enqueue(db: DB, action_id: str, chain: Chain | None = None,
             "result": result, "unit": unit}
 
 
-def finish(db: DB, action_id: str, ok: bool, detail: str = "") -> None:
-    db.conn.execute("UPDATE next_action SET state=? WHERE id=?",
-                    ("done" if ok else "failed", action_id))
+def finish(db: DB, action_id: str, ok: bool, detail: str = "") -> bool:
+    """Transition action from 'running' to 'done' or 'failed'.
+
+    Only acts when the action is currently in 'running' state.  Returns True
+    if the transition happened; False if the action was no longer 'running'
+    (e.g. concurrently dismissed, expired, or already finished).  Callers
+    should treat False as a no-op — the existing state is preserved.
+    """
+    target = "done" if ok else "failed"
+    rowcount = db.conn.execute(
+        "UPDATE next_action SET state=? WHERE id=? AND state='running'",
+        (target, action_id),
+    ).rowcount
     db.conn.commit()
-    db.event("done" if ok else "failed", action_id=action_id, detail=detail)
+    if rowcount:
+        db.event(target, action_id=action_id, detail=detail)
+    return bool(rowcount)
 
 
 def run_chain(db: DB, thread_id: str, action_ids: list[str],
