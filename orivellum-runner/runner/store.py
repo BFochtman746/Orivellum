@@ -94,12 +94,22 @@ def requeue_running(run_id):
         ).rowcount
 
 
-def finish_unit(uid, digest=None, err=None):
+def finish_unit(uid, digest=None, err=None) -> bool:
+    """Transition a unit from 'running' to 'done' or 'failed'.
+
+    Returns True if the update was applied; False if the unit was already in a
+    terminal state (e.g. the harness timed it out and marked it 'failed' before
+    the daemon thread's result arrived).  The conditional ``WHERE status='running'``
+    prevents a late-completing background worker from overwriting the timeout
+    failure record with a success commit.
+    """
     with conn() as c:
-        c.execute(
-            "UPDATE units SET status=?, digest=?, err=?, attempts=attempts+1, at=? WHERE id=?",
+        rowcount = c.execute(
+            "UPDATE units SET status=?, digest=?, err=?, attempts=attempts+1, at=?"
+            " WHERE id=? AND status='running'",
             ("failed" if err else "done", json.dumps(digest or {}), err, now(), uid),
-        )
+        ).rowcount
+    return bool(rowcount)
 
 
 def retry_unit(uid):

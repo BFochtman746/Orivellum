@@ -999,6 +999,27 @@ class TestN5Chain(Base):
         self.assertEqual(row["state"], "failed",
                          "action must be 'failed' after minute budget fires in-flight")
 
+        # Prove the worker's result never committed to the runner store.
+        #
+        # After an in-flight timeout the harness either marks the unit 'failed'
+        # (if retries exhausted) or re-queues it (if retries remain, which is
+        # the default).  In both cases the budget then fires at the next pre-unit
+        # check and the run stops.  The invariant that matters is:
+        #   - no unit is 'done' (worker result was NOT committed as success)
+        #   - store.finish_unit() is conditional (WHERE status='running'), so even
+        #     if the daemon thread's sleep(10) eventually finishes and assigns
+        #     result_box["digest"], that assignment is harmless — it never reaches
+        #     store.finish_unit() because the harness already moved past that point
+        #     and the unit is no longer 'running'.
+        run_id = unit.get("run_id")
+        if run_id:
+            from runner import store as _rs
+            counts = _rs.unit_counts(run_id)
+            # The unit must NOT be 'done' — that would mean the slow worker's
+            # "never reached" result was committed despite the timeout.
+            self.assertEqual(counts.get("done", 0), 0,
+                             "worker result must NOT be committed after a budget timeout")
+
     @unittest.skipUnless(runner_bridge._HAS_RUNNER, "orivellum-runner not installed")
     def test_action_cost_units_zero_stops_run_before_any_unit_executes(self):
         """N5 per-run budget enforcement: an action with cost_units=0 must be stopped

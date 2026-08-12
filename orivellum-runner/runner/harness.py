@@ -78,11 +78,23 @@ def execute(run_id, job, on_unit, on_finish=None, resume=False,
             break
         try:
             # Run the worker in a daemon thread and join with the remaining
-            # wall-clock budget as the timeout.  This enforces the minute cap
-            # during in-flight execution, not just between units.
+            # wall-clock budget as the timeout.
+            #
+            # Deadline propagation: the thread-local llm.set_deadline() call
+            # inside _worker ensures the httpx HTTP request timeout is also
+            # bounded by the remaining budget, so the LLM call is cancelled
+            # at the deadline — not just the harness wait.
+            #
+            # Late-commit guard: store.finish_unit() is conditional
+            # (WHERE status='running'), so if the daemon thread's on_unit()
+            # eventually returns after we've already marked the unit 'failed',
+            # the thread's result_box assignment is harmless — the store
+            # retains the timeout failure record.
             result_box: dict = {}
+            _deadline = b._deadline  # captured for the closure
 
             def _worker() -> None:
+                llm.set_deadline(_deadline)  # propagate to HTTP requests
                 try:
                     result_box["digest"] = on_unit(run_id, u)
                 except Exception as _exc:  # noqa: BLE001
@@ -93,7 +105,9 @@ def execute(run_id, job, on_unit, on_finish=None, resume=False,
             t.join(timeout=b.remaining_seconds)
 
             if t.is_alive():
-                # Worker still running — deadline fired.
+                # Worker still running — deadline fired.  Mark failed now;
+                # store.finish_unit is conditional, so the daemon thread's
+                # eventual return cannot overwrite this failure record.
                 raise TimeoutError(
                     f"unit exceeded time budget ({b._max_minutes} min)"
                 )
