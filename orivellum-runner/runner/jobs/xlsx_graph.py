@@ -73,7 +73,9 @@ class WorkbookGraph:
 
         for sheet, col, row, formula in cells:
             key = _key(sheet, col, row)
-            facts = fx.analyze(formula, sheet, g.names, g.tables, cell=(col, row))
+            facts = fx.analyze(
+                formula, sheet, g.names, g.tables, cell=(col, row), sheets=wbf.sheetnames
+            )
             g.formulas[key] = formula
             g.facts[key] = facts
             if facts["computed_ref"]:

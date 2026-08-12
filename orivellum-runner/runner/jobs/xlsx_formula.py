@@ -90,6 +90,22 @@ def _parse_area(ref):
     return (c, r, c, r, (bool(m.group(1)), bool(m.group(3)), bool(m.group(1)), bool(m.group(3))))
 
 
+def _sheet_span(ref_sheet, sheets):
+    """'S1:S3' + ordered sheet list → the exact member sheets, or None.
+    Endpoints must both exist; order in the workbook wins (Excel semantics)."""
+    if not sheets:
+        return None
+    lo, _, hi = ref_sheet.partition(":")
+    lo, hi = lo.strip().strip("'"), hi.strip().strip("'")
+    try:
+        i, j = sheets.index(lo), sheets.index(hi)
+    except ValueError:
+        return None  # endpoint sheet missing — refuse, don't guess
+    if i > j:
+        i, j = j, i
+    return list(sheets[i : j + 1])
+
+
 def _split_top(s):
     """Split on commas at bracket depth zero: '[#Headers],[Amt]' → 2 parts."""
     parts, depth, cur = [], 0, ""
@@ -219,7 +235,7 @@ def _table_area(table, spec, cell=None):
     ]
 
 
-def analyze(formula, sheet, names=None, tables=None, cell=None):
+def analyze(formula, sheet, names=None, tables=None, cell=None, sheets=None):
     """Structured facts about one formula.
 
     names:  {NAME_UPPER: [(sheet, "A1:B2"), ...]}       (workbook scope)
@@ -227,6 +243,9 @@ def analyze(formula, sheet, names=None, tables=None, cell=None):
     tables: {NAME_UPPER: (sheet, c1, r1, c2, r2, header_rows, [cols], totals)}
     cell:   (col, row) of the formula itself — required to resolve @ (this
             row) structured references exactly
+    sheets: ordered workbook sheet names — required to expand 3-D spans like
+            =SUM(S1:S3!A1) into exact per-sheet areas; without it such refs
+            are refused into unresolved_names (disclosed), never guessed
 
     Returns dict:
       functions     set of upper-case function names actually CALLED
@@ -296,6 +315,20 @@ def analyze(formula, sheet, names=None, tables=None, cell=None):
         area = _parse_area(rest)
         if area:
             c1, r1, c2, r2, anch = area
+            if ref_sheet and ":" in ref_sheet:
+                # 3-D span S1:S3!A1 — ':' is illegal inside a sheet name, so
+                # this is always a span. Expand it into one exact area per
+                # member sheet, or refuse (disclosed) when the workbook's
+                # sheet order is unknown or an endpoint doesn't exist.
+                span = _sheet_span(ref_sheet, sheets)
+                if span is None:
+                    out["unresolved_names"].append(operand)
+                    continue
+                for s3d in span:
+                    resolved = (s3d, c1, r1, c2, r2)
+                    out["areas"].append(resolved)
+                    out["anchors"].append((resolved, anch))
+                continue
             resolved = ((ref_sheet or sheet), c1, r1, c2, r2)
             out["areas"].append(resolved)
             out["anchors"].append((resolved, anch))

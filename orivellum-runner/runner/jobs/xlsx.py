@@ -211,7 +211,12 @@ def sheet_unit(run_id, payload):
             if isinstance(v, str) and v.startswith("="):
                 formulas[c.coordinate] = v
                 facts = graph.facts.get(f"{name}!{c.coordinate}") or fx.analyze(
-                    v, name, graph.names, graph.tables, cell=(c.column, c.row)
+                    v,
+                    name,
+                    graph.names,
+                    graph.tables,
+                    cell=(c.column, c.row),
+                    sheets=wbf.sheetnames,
                 )
                 for fn in facts["functions"]:
                     funcs[fn] += 1

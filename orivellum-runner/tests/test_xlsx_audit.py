@@ -507,6 +507,40 @@ def test_many_capped_rects_and_inputs_stay_fast(tmp_path, monkeypatch):
     assert digest["unread_inputs"] == 0
 
 
+def test_3d_sheet_span_resolves_per_sheet_never_false_unread(tmp_path):
+    """=SUM(S1:S3!A1) reads A1 on EVERY sheet in the span — those inputs must
+    never be reported unread, and the edges must be real per-sheet edges."""
+    from openpyxl import Workbook
+
+    # analyze-level: exact expansion with sheet order, refusal without it
+    facts = fx.analyze("=SUM(S1:S3!A1)", "Sum", sheets=["S1", "S2", "S3", "Sum"])
+    assert facts["areas"] == [("S1", 1, 1, 1, 1), ("S2", 1, 1, 1, 1), ("S3", 1, 1, 1, 1)]
+    blind = fx.analyze("=SUM(S1:S3!A1)", "Sum")
+    assert not blind["areas"] and blind["unresolved_names"] == ["S1:S3!A1"]
+    missing = fx.analyze("=SUM(S1:S9!A1)", "Sum", sheets=["S1", "S2", "S3"])
+    assert not missing["areas"] and missing["unresolved_names"] == ["S1:S9!A1"]
+    # quoted span with spaces
+    q = fx.analyze("=SUM('Q 1:Q 2'!B2)", "Sum", sheets=["Q 1", "Q 2"])
+    assert q["areas"] == [("Q 1", 2, 2, 2, 2), ("Q 2", 2, 2, 2, 2)]
+
+    # workbook-level: no false unread inputs, real per-sheet edges
+    wb = Workbook()
+    wb.active.title = "S1"
+    wb["S1"]["A1"] = 10
+    for n in ("S2", "S3"):
+        wb.create_sheet(n)["A1"] = 20
+    wb.create_sheet("Sum")["A1"] = "=SUM(S1:S3!A1)"
+    p = tmp_path / "threed.xlsx"
+    wb.save(p)
+    run_id = _make_run(p)
+    digest = xlsx.workbook_unit(run_id, {"target": str(p)})
+    assert digest["unread_inputs"] == 0
+    g = xlsx._graph(p)
+    assert {"S1!A1", "S2!A1", "S3!A1"} <= g.precedents["Sum!A1"]
+    assert not g.unresolved_names
+    assert not [f for f in store.findings(run_id) if f["code"] == "XL-GRAPH-PARTIAL"]
+
+
 def test_constant_defined_name_is_not_an_orphan(tmp_path):
     """A constant name (=0.21) has no cell destination but IS a used name —
     the audit must not call it orphaned, and must disclose partial graph."""
