@@ -68,9 +68,15 @@ def _runner_dispatch(action: dict, *, executor=None) -> dict:
         # Require an EXACT boolean True as the success signal.  bool() is
         # intentionally avoided because it would coerce truthy strings like
         # "false" or integers like 1 into True — defeating the contract.
-        # If the executor does not set 'ok', fall back to status="done".
-        if d.get("ok") is True:
-            ok = True
+        #
+        # Precedence:
+        #   - 'ok' key present (any value): exact-boolean True = success;
+        #     anything else (False, "false", 0, None) = failure.
+        #   - 'ok' key absent: fall back to status="done" as secondary signal.
+        # This prevents a contradictory {"ok": False, "status": "done"} from
+        # being treated as success.
+        if "ok" in d:
+            ok = d["ok"] is True
         elif "status" in d:
             ok = d["status"] == "done"
         else:

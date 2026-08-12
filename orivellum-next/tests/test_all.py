@@ -935,6 +935,70 @@ class TestN5Chain(Base):
         self.assertEqual(row["state"], "queued",
                          "concurrent non-running state must be preserved by finish()")
 
+    def test_executor_contradictory_ok_false_with_done_status_fails(self):
+        """N5 executor gate regression: explicit ok=False must always fail even when
+        status='done' is also present. Any non-True ok value must not be promoted."""
+        def contradictory_exec(act):
+            # Simulates a broken executor that sets ok=False alongside status="done".
+            return {"ok": False, "status": "done"}
+
+        acts = [self._cheap_action("contra-a", recommended=True),
+                self._cheap_action("contra-b")]
+        stored = self._offer(acts, thread="contra-t")
+        aid = stored[0]["id"]
+
+        result = runner_bridge.enqueue(self.db, aid, executor=contradictory_exec)
+        self.assertEqual(result.get("final_state"), "failed",
+                         "explicit ok=False must not be overridden by status='done'")
+        self.assertFalse(result.get("unit", {}).get("ok"),
+                         "ok in unit descriptor must be False")
+        row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+        self.assertNotEqual(row["state"], "done",
+                            "action state must not be 'done' when executor returned ok=False")
+
+    @unittest.skipUnless(runner_bridge._HAS_RUNNER, "orivellum-runner not installed")
+    def test_action_minute_budget_interrupts_in_flight_unit(self):
+        """N5 minute enforcement: a worker that exceeds cost_minutes is interrupted
+        by the harness thread deadline, not just at the next pre-unit check."""
+        import time
+        import unittest.mock
+
+        # Import the job module so we can patch its unit_worker
+        from runner.jobs import next_action as _nj
+
+        acts = [{"kind": "act", "label": "slow-unit",
+                  "prompt": "do something slow",
+                  "anchor": "budget test anchor", "anchor_ref": "budget.test:slow:1",
+                  "recommended": True, "rationale": "unblocks rest",
+                  "confidence": 0.9,
+                  "cost_units": 5,       # well within policy auto_run_max_units=200
+                  "cost_minutes": 0.03,  # ~1.8s wall-clock limit
+                  "reversible": True, "blocked_by": "", "needs_clarify": False},
+                 {"kind": "act", "label": "slow-unit-b",
+                  "prompt": "second", "anchor": "a", "anchor_ref": "a:b:1",
+                  "recommended": False, "rationale": "",
+                  "confidence": 0.9, "cost_units": 5, "cost_minutes": 1,
+                  "reversible": True, "blocked_by": "", "needs_clarify": False}]
+        sid = nextaction.offer(self.db, "minute-t", "msg", acts, POLICY_AUTO,
+                               no_recommendation_reason="")
+        aid = nextaction.read_set(self.db, sid)["actions"][0]["id"]
+
+        def slow_worker(run_id, unit):
+            time.sleep(10)  # far exceeds 0.03-min (~1.8s) budget
+            return {"result": "never reached"}
+
+        with unittest.mock.patch.object(_nj, "unit_worker", slow_worker):
+            result = runner_bridge.enqueue(self.db, aid)
+
+        self.assertEqual(result.get("final_state"), "failed",
+                         "in-flight minute budget must produce a failed run")
+        unit = result.get("unit") or {}
+        self.assertIn("budget", (unit.get("stop_reason") or "").lower(),
+                      "stop_reason must cite the budget: " + repr(unit.get("stop_reason")))
+        row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+        self.assertEqual(row["state"], "failed",
+                         "action must be 'failed' after minute budget fires in-flight")
+
     @unittest.skipUnless(runner_bridge._HAS_RUNNER, "orivellum-runner not installed")
     def test_action_cost_units_zero_stops_run_before_any_unit_executes(self):
         """N5 per-run budget enforcement: an action with cost_units=0 must be stopped

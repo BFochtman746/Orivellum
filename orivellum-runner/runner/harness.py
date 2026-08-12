@@ -5,6 +5,7 @@ reached, or an unrecoverable error. Each is recorded as a stop_reason so the
 report can say WHY it stopped rather than implying it finished.
 """
 
+import threading
 import time
 
 from . import llm, store
@@ -18,6 +19,13 @@ class Budget:
     global CFG defaults when provided.  Pass them from the action's declared
     cost so individual actions cannot exceed their own declared budget even if
     the global CFG allows more.
+
+    Minute enforcement is two-layered:
+    - ``check()`` fires before each unit if elapsed time has already exceeded
+      the budget (fast-fail before dispatch).
+    - ``remaining_seconds`` is used as a ``threading.Thread.join`` timeout so
+      in-flight workers are interrupted at the deadline, not just before the
+      next unit starts.
     """
 
     def __init__(self, max_units: int | None = None, max_minutes: int | None = None):
@@ -25,6 +33,12 @@ class Budget:
         self.units = 0
         self._max_units = max_units if max_units is not None else CFG.max_units
         self._max_minutes = max_minutes if max_minutes is not None else CFG.max_minutes
+        self._deadline = self.t0 + self._max_minutes * 60
+
+    @property
+    def remaining_seconds(self) -> float:
+        """Seconds remaining until the wall-clock deadline (≥ 0)."""
+        return max(0.0, self._deadline - time.time())
 
     def check(self):
         mins = (time.time() - self.t0) / 60
@@ -63,8 +77,29 @@ def execute(run_id, job, on_unit, on_finish=None, resume=False,
         if u is None:
             break
         try:
-            digest = on_unit(run_id, u)
-            store.finish_unit(u["id"], digest=digest)
+            # Run the worker in a daemon thread and join with the remaining
+            # wall-clock budget as the timeout.  This enforces the minute cap
+            # during in-flight execution, not just between units.
+            result_box: dict = {}
+
+            def _worker() -> None:
+                try:
+                    result_box["digest"] = on_unit(run_id, u)
+                except Exception as _exc:  # noqa: BLE001
+                    result_box["exc"] = _exc
+
+            t = threading.Thread(target=_worker, daemon=True)
+            t.start()
+            t.join(timeout=b.remaining_seconds)
+
+            if t.is_alive():
+                # Worker still running — deadline fired.
+                raise TimeoutError(
+                    f"unit exceeded time budget ({b._max_minutes} min)"
+                )
+            if "exc" in result_box:
+                raise result_box["exc"]
+            store.finish_unit(u["id"], digest=result_box["digest"])
         except Exception as e:  # noqa: BLE001
             msg = f"{type(e).__name__}: {e}"[:400]
             if u["attempts"] < CFG.max_unit_retries:
