@@ -103,6 +103,7 @@ import { TrailerTab }    from "./trailer-tab";
 import { GenesisTab }    from "./genesis-tab";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
+import { enqueueOp, isNetworkError } from "@/lib/outbox";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
 
@@ -110,13 +111,27 @@ import { LearnTab } from "@/pages/learning/learn-tab";
 const BASE_KN = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
 async function setKnowledgeReview(itemId: string, status: string, force = false): Promise<void> {
-  const resp = await apiFetch(`${BASE_KN}/knowledge/${itemId}/review`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    // force is required to deliberately flip an already-finalized decision;
-    // without it the API rejects stale/concurrent overwrites with 409.
-    body: JSON.stringify({ review_status: status, force }),
-  });
+  const url = `${BASE_KN}/knowledge/${itemId}/review`;
+  const body = { review_status: status, force };
+  let resp: Response;
+  try {
+    resp = await apiFetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      // force is required to deliberately flip an already-finalized decision;
+      // without it the API rejects stale/concurrent overwrites with 409.
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (isNetworkError(err)) {
+      // Offline — queue the decision on this device; latest decision per
+      // item wins when the outbox flushes on reconnect.
+      await enqueueOp("api_call", { method: "PATCH", url, body, label: "Knowledge review" },
+        { replaceKey: `kn-review-${itemId}` });
+      return;
+    }
+    throw err;
+  }
   if (!resp.ok) throw new Error("Review update failed");
 }
 

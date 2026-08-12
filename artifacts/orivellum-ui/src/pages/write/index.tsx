@@ -15,6 +15,7 @@ import React, {
   useCallback, useEffect, useRef, useState,
 } from 'react';
 import { apiFetch } from '@/lib/auth';
+import { enqueueOp, isNetworkError } from '@/lib/outbox';
 import { toast } from 'sonner';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -729,7 +730,21 @@ export default function WriteDeskPage() {
         });
         setDocs((prev) => prev.map((d) => d.id === updated.id ? updated : d));
         setActiveDoc((prev) => prev?.id === updated.id ? updated : prev);
-      } catch { /* silent — next save will retry */ }
+      } catch (err) {
+        if (isNetworkError(err)) {
+          // Offline — persist the newest content to the device outbox so it
+          // still reaches the server on reconnect (latest-wins per document).
+          try {
+            await enqueueOp('api_call', {
+              method: 'PATCH',
+              url: `${BASE}/write/documents/${activeDoc.id}`,
+              body: { content_json: json, content_text: text },
+              label: 'Draft save',
+            }, { replaceKey: `write-doc-${activeDoc.id}` });
+          } catch { /* IDB unavailable — next edit retries the network */ }
+        }
+        /* otherwise silent — next save will retry */
+      }
       finally { setSaving(false); }
     }, 1500);
   }, [activeDoc]);

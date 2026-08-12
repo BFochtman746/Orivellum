@@ -29,6 +29,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
+import { enqueueOp, isNetworkError } from "@/lib/outbox";
 import { DocTypeBadge } from "./index";
 import { useReadAloud } from "@/lib/read-aloud";
 
@@ -845,13 +846,27 @@ async function reprocessDoc(docId: string): Promise<void> {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 async function setKnowledgeReview(itemId: string, status: string, force = false): Promise<void> {
-  const resp = await apiFetch(`${BASE}/knowledge/${itemId}/review`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    // force is required to deliberately flip an already-finalized decision;
-    // without it the API rejects stale/concurrent overwrites with 409.
-    body: JSON.stringify({ review_status: status, force }),
-  });
+  const url = `${BASE}/knowledge/${itemId}/review`;
+  const body = { review_status: status, force };
+  let resp: Response;
+  try {
+    resp = await apiFetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      // force is required to deliberately flip an already-finalized decision;
+      // without it the API rejects stale/concurrent overwrites with 409.
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (isNetworkError(err)) {
+      // Offline — queue the decision on this device; latest decision per
+      // item wins when the outbox flushes on reconnect.
+      await enqueueOp("api_call", { method: "PATCH", url, body, label: "Knowledge review" },
+        { replaceKey: `kn-review-${itemId}` });
+      return;
+    }
+    throw err;
+  }
   if (!resp.ok) throw new Error("Review update failed");
 }
 

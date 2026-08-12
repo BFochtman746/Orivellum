@@ -41,6 +41,7 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+packages = ["cargo", "freetype", "glibcLocales", "lcms2", "libiconv", "libimagequant", "libjpeg", "libsndfile", "libtiff", "libwebp", "libxcrypt", "libyaml", "openjpeg", "openssl", "pkg-config", "poppler_utils", "rustc", "tcl", "tesseract", "tk", "zlib"]
 
 [userenv]
 

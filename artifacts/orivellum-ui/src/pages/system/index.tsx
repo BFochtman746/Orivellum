@@ -2981,6 +2981,9 @@ export default function System() {
       {/* Browser alerts (document / audiobook ready notifications) */}
       <BrowserAlertsCard />
 
+      {/* Web Push — delivery even when the PWA is closed (iPhone) */}
+      <WebPushCard />
+
       {/* AI Extraction Setting */}
       <Card>
         <CardContent className="p-6">
@@ -4384,6 +4387,168 @@ function BrowserAlertsCard() {
             disabled={!supported || permission === "denied"}
             data-testid="switch-browser-alerts"
           />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Web Push card ─────────────────────────────────────────────────────────────
+// True push delivery (VAPID) — notifications arrive even when the PWA is
+// closed, which the polling fallback above cannot do on iPhone. Payloads are
+// minimal (id + kind + deep link only); the in-app polling fallback always
+// stays active regardless of this setting.
+function webPushSupported(): boolean {
+  return typeof window !== "undefined" &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window;
+}
+
+/** base64url → ArrayBuffer (applicationServerKey wants raw bytes on Safari). */
+function b64uToBytes(b64u: string): ArrayBuffer {
+  const pad = "=".repeat((4 - (b64u.length % 4)) % 4);
+  const b64 = (b64u + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  const buf = new ArrayBuffer(raw.length);
+  const out = new Uint8Array(buf);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return buf;
+}
+
+function WebPushCard() {
+  const supported = webPushSupported();
+  const [subscribed, setSubscribed] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!supported) { setSubscribed(false); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (alive) setSubscribed(!!sub);
+      } catch {
+        if (alive) setSubscribed(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [supported]);
+
+  const handleToggle = async (next: boolean) => {
+    setBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (!next) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await apiFetch(`${API_BASE}/api/system/push/unsubscribe`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          });
+          await sub.unsubscribe();
+        }
+        setSubscribed(false);
+        toast.success("Push notifications off for this device");
+        return;
+      }
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        toast.error("Notifications are blocked in your browser", {
+          description: "Allow notifications for this site, then try again.",
+        });
+        return;
+      }
+      const cfgResp = await apiFetch(`${API_BASE}/api/system/push/config`);
+      if (!cfgResp.ok) throw new Error("push config unavailable");
+      const cfg = await cfgResp.json();
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: b64uToBytes(cfg.vapid_public_key as string),
+      });
+      const saveResp = await apiFetch(`${API_BASE}/api/system/push/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sub.toJSON()),
+      });
+      if (!saveResp.ok) throw new Error("subscribe failed");
+      setSubscribed(true);
+      toast.success("Push notifications on", {
+        description: "You'll get alerts even when the app is closed. Payloads carry only a kind and link — no content.",
+      });
+    } catch (e) {
+      toast.error("Could not update push subscription", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setBusy(true);
+    try {
+      const r = await apiFetch(`${API_BASE}/api/system/push/test`, { method: "POST" });
+      if (r.status === 409) {
+        toast.error("No push subscriptions on the server — enable push first.");
+      } else if (!r.ok) {
+        toast.error("Test push failed");
+      } else {
+        toast.success("Test push sent", { description: "It may take a few seconds to arrive." });
+      }
+    } catch {
+      toast.error("Test push failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card data-testid="web-push-card">
+      <CardContent className="p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <Bell className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">Push Notifications</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Deliver alerts even when the app is fully closed — needed on
+                iPhone, where the browser-alert polling above only works while
+                the app is open. Pushes carry only an event type and a link,
+                never message content.
+              </p>
+              {!supported && (
+                <p className="text-xs text-amber-500 mt-2">
+                  This browser doesn't support Web Push. On iPhone, add the app
+                  to your Home Screen first (Share → Add to Home Screen).
+                </p>
+              )}
+              {supported && subscribed && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3"
+                  onClick={handleTest}
+                  disabled={busy}
+                  data-testid="button-push-test"
+                >
+                  Send test push
+                </Button>
+              )}
+            </div>
+          </div>
+          {subscribed === null ? (
+            <Skeleton className="h-6 w-11 rounded-full" />
+          ) : (
+            <Switch
+              checked={!!subscribed}
+              onCheckedChange={handleToggle}
+              disabled={!supported || busy}
+              data-testid="switch-web-push"
+            />
+          )}
         </div>
       </CardContent>
     </Card>

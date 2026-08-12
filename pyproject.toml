@@ -38,6 +38,8 @@ dependencies = [
     "soundfile>=0.14.0",
     "youtube-transcript-api>=1.2.4",
     "faster-whisper>=1.2.1",
+    "pywebpush>=2.4.0",
+    "py-vapid>=1.9.4",
 ]
 
 [project.optional-dependencies]

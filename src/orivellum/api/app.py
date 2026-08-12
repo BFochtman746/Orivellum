@@ -282,6 +282,14 @@ async def lifespan(app: FastAPI):
     # Step 5: Wire deps
     _deps.init(db=db, cfg=cfg)
 
+    # Step 5+: Wire the durable notification ledger + Web Push fan-out
+    # (schema v152).  Until this runs, notifications.emit falls back to the
+    # in-memory ring; after it, events survive restarts and the polling
+    # cursor stays stable across boots.
+    from orivellum.api import notifications as _notif
+
+    _notif.configure(db)
+
     # Step 5a: Recover orphaned background jobs. Trailer generation runs as an
     # in-process task, so any row still 'running' now was lost to a restart —
     # mark it failed so the UI shows an actionable error instead of an

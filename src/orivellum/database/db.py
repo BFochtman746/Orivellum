@@ -2180,6 +2180,256 @@ class OrivellumDB:
             )
             self._maybe_commit()
 
+    # ── Generation job journal (iPhone continuity, schema v151) ──────────────
+    # High-frequency recovery buffer — plain writes under the lock, not
+    # governed_write (events are not user objects; the message row is the
+    # durable record).  All timestamps are epoch seconds (REAL columns).
+
+    def create_gen_job(
+        self,
+        conversation_id: str,
+        message_id: str | None = None,
+        client_msg_id: str | None = None,
+    ) -> str:
+        """Create a running generation job row; returns the job id.
+
+        Opportunistically prunes old completed jobs (and their events) so the
+        journal never grows unbounded without needing a separate scheduler.
+        """
+        import time as _t
+
+        job_id = _uuid()
+        now = _t.time()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO gen_jobs (id, conversation_id, message_id, client_msg_id,
+                                         state, created_at, updated_at)
+                   VALUES (?,?,?,?, 'running', ?, ?)""",
+                (job_id, conversation_id, message_id, client_msg_id, now, now),
+            )
+            # Prune: completed/failed jobs older than 24 h, and any job older
+            # than 7 days regardless of state (stale 'running' rows from a
+            # crashed process must not accumulate).
+            old = self._conn.execute(
+                """SELECT id FROM gen_jobs
+                    WHERE (state != 'running' AND updated_at < ?)
+                       OR created_at < ?""",
+                (now - 86_400, now - 7 * 86_400),
+            ).fetchall()
+            if old:
+                ids = [r[0] for r in old]
+                marks = ",".join("?" * len(ids))
+                self._conn.execute(f"DELETE FROM gen_events WHERE job_id IN ({marks})", ids)
+                self._conn.execute(f"DELETE FROM gen_jobs WHERE id IN ({marks})", ids)
+            self._maybe_commit()
+        return job_id
+
+    def set_gen_job_message(self, job_id: str, message_id: str) -> None:
+        """Attach the assistant message row once the stub exists."""
+        import time as _t
+
+        with self._lock:
+            self._conn.execute(
+                "UPDATE gen_jobs SET message_id=?, updated_at=? WHERE id=?",
+                (message_id, _t.time(), job_id),
+            )
+            self._maybe_commit()
+
+    def append_gen_event(self, job_id: str, kind: str, payload: str = "") -> int:
+        """Append a journal event with the next sequence number; returns seq."""
+        import time as _t
+
+        now = _t.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) FROM gen_events WHERE job_id=?", (job_id,)
+            ).fetchone()
+            seq = int(row[0]) + 1
+            self._conn.execute(
+                "INSERT INTO gen_events (job_id, seq, kind, payload, created_at)"
+                " VALUES (?,?,?,?,?)",
+                (job_id, seq, kind, payload, now),
+            )
+            self._conn.execute(
+                "UPDATE gen_jobs SET updated_at=? WHERE id=?", (now, job_id)
+            )
+            self._maybe_commit()
+        return seq
+
+    def finish_gen_job(self, job_id: str, state: str) -> None:
+        """Move a job to a terminal state ('done' or 'failed')."""
+        import time as _t
+
+        with self._lock:
+            self._conn.execute(
+                "UPDATE gen_jobs SET state=?, updated_at=? WHERE id=?",
+                (state, _t.time(), job_id),
+            )
+            self._maybe_commit()
+
+    def get_gen_job(self, job_id: str) -> dict | None:
+        """Fetch one job row (stale running jobs are reported as 'failed')."""
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT id, conversation_id, message_id, client_msg_id, state,
+                          created_at, updated_at
+                     FROM gen_jobs WHERE id=?""",
+                (job_id,),
+            ).fetchone()
+        return self._gen_job_row_to_dict(row) if row else None
+
+    def list_gen_jobs(self, conversation_id: str, active_only: bool = False) -> list[dict]:
+        """Jobs for a conversation, newest first (recent window only)."""
+        import time as _t
+
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, conversation_id, message_id, client_msg_id, state,
+                          created_at, updated_at
+                     FROM gen_jobs
+                    WHERE conversation_id=? AND created_at > ?
+                    ORDER BY created_at DESC LIMIT 20""",
+                (conversation_id, _t.time() - 86_400),
+            ).fetchall()
+        jobs = [self._gen_job_row_to_dict(r) for r in rows]
+        if active_only:
+            jobs = [j for j in jobs if j["state"] == "running"]
+        return jobs
+
+    def list_gen_events(self, job_id: str, after_seq: int = 0, limit: int = 500) -> list[dict]:
+        """Journal events after a sequence number, in order."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT seq, kind, payload, created_at FROM gen_events
+                    WHERE job_id=? AND seq > ? ORDER BY seq ASC LIMIT ?""",
+                (job_id, after_seq, limit),
+            ).fetchall()
+        return [
+            {"seq": r[0], "kind": r[1], "payload": r[2], "created_at": r[3]} for r in rows
+        ]
+
+    @staticmethod
+    def _gen_job_row_to_dict(row: Any) -> dict:
+        import time as _t
+
+        state = row[4]
+        # A 'running' job whose journal has been silent for 10+ minutes belongs
+        # to a crashed/restarted process — report it failed so clients stop
+        # polling it (lazy staleness: no scheduler needed).
+        if state == "running" and (_t.time() - float(row[6])) > 600:
+            state = "failed"
+        return {
+            "id": row[0],
+            "conversation_id": row[1],
+            "message_id": row[2],
+            "client_msg_id": row[3],
+            "state": state,
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
+
+    # ── Durable notification ledger + Web Push subscriptions (v152) ──────────
+
+    def add_notification(
+        self,
+        kind: str,
+        title: str,
+        body: str = "",
+        url: str = "",
+        dedupe_key: str | None = None,
+    ) -> int | None:
+        """Append to the durable ledger; returns the row id (None if deduped)."""
+        import time as _t
+
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO notif_ledger (kind, title, body, url, dedupe_key, created_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING""",
+                (kind, title[:120], body[:300], url[:500], dedupe_key, _t.time()),
+            )
+            self._maybe_commit()
+            return cur.lastrowid if cur.rowcount else None
+
+    def list_notifications(self, after_id: int = 0, limit: int = 100) -> tuple[list[dict], int]:
+        """(ledger rows newer than after_id, latest id) — mirrors the old feed."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT id, kind, title, body, url, created_at FROM notif_ledger
+                    WHERE id > ? ORDER BY id ASC LIMIT ?""",
+                (after_id, limit),
+            ).fetchall()
+            latest = self._conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM notif_ledger"
+            ).fetchone()[0]
+        events = [
+            {
+                "id": r[0],
+                "kind": r[1],
+                "title": r[2],
+                "body": r[3],
+                "url": r[4],
+                "created_at": r[5],
+            }
+            for r in rows
+        ]
+        return events, int(latest)
+
+    def save_push_subscription(self, endpoint: str, p256dh: str, auth: str) -> None:
+        import time as _t
+
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at)
+                   VALUES (?,?,?,?)
+                   ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,
+                                                       auth=excluded.auth""",
+                (endpoint, p256dh, auth, _t.time()),
+            )
+            self._maybe_commit()
+
+    def delete_push_subscription(self, endpoint: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM push_subscriptions WHERE endpoint=?", (endpoint,)
+            )
+            self._maybe_commit()
+            return cur.rowcount > 0
+
+    def list_push_subscriptions(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT endpoint, p256dh, auth, created_at, last_ok, last_error"
+                " FROM push_subscriptions"
+            ).fetchall()
+        return [
+            {
+                "endpoint": r[0],
+                "p256dh": r[1],
+                "auth": r[2],
+                "created_at": r[3],
+                "last_ok": r[4],
+                "last_error": r[5],
+            }
+            for r in rows
+        ]
+
+    def mark_push_result(self, endpoint: str, ok: bool, error: str = "") -> None:
+        import time as _t
+
+        with self._lock:
+            if ok:
+                self._conn.execute(
+                    "UPDATE push_subscriptions SET last_ok=?, last_error=NULL WHERE endpoint=?",
+                    (_t.time(), endpoint),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE push_subscriptions SET last_error=? WHERE endpoint=?",
+                    (error[:300], endpoint),
+                )
+            self._maybe_commit()
+
     def update_conversation(
         self,
         conv_id: str,

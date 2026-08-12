@@ -437,6 +437,35 @@ def delete_conversation(conv_id: str):
     return {"ok": True}
 
 
+# ── Generation job journal (iPhone continuity core) ─────────────────────────
+# A client that lost its SSE stream (iOS suspension, dead zone) discovers jobs
+# here and replays sequenced events after its last acknowledged sequence.
+
+
+@router.get("/conversations/{conv_id}/jobs")
+def list_generation_jobs(conv_id: str, active: bool = False):
+    """Recent generation jobs for a conversation (newest first, 24 h window)."""
+    db = get_db()
+    if not db.get_conversation(conv_id):
+        raise HTTPException(404, f"Conversation {conv_id!r} not found")
+    return {"jobs": db.list_gen_jobs(conv_id, active_only=active)}
+
+
+@router.get("/conversations/jobs/{job_id}/events")
+def get_generation_events(job_id: str, after: int = 0):
+    """Journal events after a sequence number, plus the job's current state.
+
+    The client polls this while ``job.state == 'running'`` and stops once the
+    job is terminal — every payload is the same JSON shape as the live SSE
+    frames, so the replay path reuses the streaming parser.
+    """
+    db = get_db()
+    job = db.get_gen_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Generation job {job_id!r} not found")
+    return {"job": job, "events": db.list_gen_events(job_id, after_seq=after)}
+
+
 @router.get("/memory")
 async def get_memory(
     q: str | None = None,
@@ -676,16 +705,26 @@ async def send_message(conv_id: str, body: MessageSend):
             pass  # capture is best-effort; never block the response
 
     if body.stream:
+        # Journalled job (iPhone continuity): the pump — not this HTTP
+        # response — consumes the generator, so a dropped connection never
+        # aborts generation; the client replays gen_events to recover.
+        from orivellum.api import genjournal
+
         return StreamingResponse(
-            _stream_response(
+            genjournal.wrap(
                 db,
-                conv,
-                body.text,
-                deep=body.deep,
-                scope=body.scope,
-                image_b64=body.image_b64,
-                image_media_type=body.image_media_type,
-                context_doc_ids=body.context_doc_ids or [],
+                conv_id,
+                _stream_response(
+                    db,
+                    conv,
+                    body.text,
+                    deep=body.deep,
+                    scope=body.scope,
+                    image_b64=body.image_b64,
+                    image_media_type=body.image_media_type,
+                    context_doc_ids=body.context_doc_ids or [],
+                ),
+                client_msg_id=body.client_msg_id,
             ),
             media_type="text/event-stream",
             headers={
@@ -1014,8 +1053,10 @@ async def continue_message(conv_id: str, body: ContinueBody):
         raise HTTPException(409, "No cut-short message found to continue")
 
     if body.stream:
+        from orivellum.api import genjournal
+
         return StreamingResponse(
-            _stream_continuation(db, conv, cut_short_msg),
+            genjournal.wrap(db, conv_id, _stream_continuation(db, conv, cut_short_msg)),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

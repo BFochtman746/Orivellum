@@ -34,6 +34,67 @@ def system_notifications(after: int = 0):
     return {"boot_id": notif.BOOT_ID, "latest_id": latest, "notifications": events}
 
 
+# ── Web Push (opt-in, iPhone continuity core) ────────────────────────────────
+# Minimal-payload push (event kind + deep link, no content).  Subscriptions
+# are stored server-side (schema v152); VAPID keys are generated on demand and
+# kept as secret settings.
+
+
+class PushSubscriptionBody(BaseModel):
+    endpoint: str
+    keys: dict[str, str]
+
+
+class PushUnsubscribeBody(BaseModel):
+    endpoint: str
+
+
+@router.get("/system/push/config")
+def push_config():
+    """Public VAPID key + current subscription count for the System card."""
+    from orivellum.api import webpush
+
+    db = get_db()
+    try:
+        pub = webpush.ensure_vapid_keys(db)
+    except Exception as exc:
+        raise internal_error("Could not provision VAPID keys", exc) from exc
+    return {
+        "vapid_public_key": pub,
+        "subscription_count": len(db.list_push_subscriptions()),
+    }
+
+
+@router.post("/system/push/subscribe")
+def push_subscribe(body: PushSubscriptionBody):
+    p256dh = body.keys.get("p256dh", "")
+    auth = body.keys.get("auth", "")
+    if not body.endpoint or not p256dh or not auth:
+        raise HTTPException(422, "Subscription must include endpoint and p256dh/auth keys")
+    db = get_db()
+    db.save_push_subscription(body.endpoint, p256dh, auth)
+    return {"ok": True, "subscription_count": len(db.list_push_subscriptions())}
+
+
+@router.post("/system/push/unsubscribe")
+def push_unsubscribe(body: PushUnsubscribeBody):
+    db = get_db()
+    removed = db.delete_push_subscription(body.endpoint)
+    return {"ok": True, "removed": removed}
+
+
+@router.post("/system/push/test")
+def push_test():
+    """Send a test push to every subscription (synchronous, small N)."""
+    from orivellum.api import webpush
+
+    db = get_db()
+    if not db.list_push_subscriptions():
+        raise HTTPException(409, "No push subscriptions registered")
+    result = webpush.send_to_all(db, {"id": 0, "kind": "test", "url": "/system"})
+    return {"ok": result["sent"] > 0, **result}
+
+
 @router.get("/system/health")
 def system_health():
     db = get_db()

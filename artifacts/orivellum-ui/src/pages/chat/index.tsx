@@ -3,6 +3,12 @@ import { useLocation } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { toast } from "sonner";
 import { apiFetch, buildAuthHeaders } from "@/lib/auth";
+import { enqueueOp, markOpState, removeOp, listOps, subscribeOutbox, isNetworkError, type ChatMessagePayload } from "@/lib/outbox";
+import {
+  setPendingGen, clearPendingGen, getPendingGen, fetchJobEvents,
+  foldEvents, emptyReplay, markRecovered, isRecovered,
+} from "@/lib/gen-replay";
+import { SyncStatusChip } from "@/components/sync-status";
 import { randomUUID, copyToClipboard } from "@/lib/uuid";
 import { useReadAloud, stripForSpeech } from "@/lib/read-aloud";
 import ReactMarkdown from "react-markdown";
@@ -43,10 +49,10 @@ import {
 } from "@/components/ui/select";
 import {
   MessageSquare, Plus, Send, Search, Bot, User, Copy, Check,
-  Trash2, Wifi, WifiOff, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
+  Trash2, Loader2, Cpu, Pencil, BookOpen, Archive, ArchiveRestore,
   AlertTriangle, FolderOpen, FileText, ChevronRight, ChevronLeft, X as XIcon, Zap, Brain,
   Globe, Paperclip, Download, Layers, HelpCircle, Compass, ChevronDown, ImageIcon, Square,
-  Sparkles, History, RefreshCw, ExternalLink, Mail, Volume2,
+  Sparkles, History, RefreshCw, ExternalLink, Mail, Volume2, CloudOff,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { VoiceControls } from "./voice-controls";
@@ -66,8 +72,10 @@ const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/
  * streaming    — assistant response is actively streaming tokens
  * complete     — assistant response finished (or message loaded from server)
  * failed       — network/server error; user can retry
+ * queued       — saved to the persistent outbox on this device; delivers
+ *                automatically (exactly once) when connectivity returns
  */
-type MessageStatus = "sending" | "acknowledged" | "streaming" | "complete" | "failed";
+type MessageStatus = "sending" | "acknowledged" | "streaming" | "complete" | "failed" | "queued";
 
 interface LocalMessage {
   id: string;
@@ -102,6 +110,9 @@ interface LocalMessage {
   thinking?: string;
   /** True while thinking tokens are still streaming in */
   thinkingStreaming?: boolean;
+
+  /** Rebuilt from the server-side generation journal after a lost connection */
+  recovered?: boolean;
 }
 
 /** Suffix appended by the backend when a streaming response is cut short by a timeout. */
@@ -114,6 +125,9 @@ const TIMEOUT_SENTINEL = "\x02TIMEOUT\x02";
 const INTENT_PREFIX = "\x02INTENT\x02";
 /** Sentinel prefix carrying reasoning/thinking tokens from <think> blocks or reasoning_content. */
 const THINKING_PREFIX = "\x02THINKING\x02";
+/** Sentinel carrying the server-side generation job id (first SSE frame) —
+ *  persisted so a lost connection can be recovered by journal replay. */
+const JOBID_PREFIX = "\x02JOBID\x02";
 
 // ─── Voice-mode sentence chunking ─────────────────────────────────────────────
 // While a reply streams in voice mode, completed sentences are flushed to the
@@ -762,11 +776,15 @@ async function* streamChat(
   convId: string, text: string, signal?: AbortSignal,
   deep = false, scope: "work" | "all" = "work",
   image_b64?: string, image_media_type?: string,
+  clientMsgId?: string,
 ): AsyncGenerator<string> {
   const resp = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...buildAuthHeaders() },
-    body: JSON.stringify({ text, stream: true, deep, scope, image_b64, image_media_type }),
+    body: JSON.stringify({
+      text, stream: true, deep, scope, image_b64, image_media_type,
+      ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
+    }),
     credentials: "same-origin",
     keepalive: true,
     signal,
@@ -797,6 +815,12 @@ async function* streamChat(
       if (data === "[DONE]") return;
       try {
         const parsed = JSON.parse(data);
+        // Journalled job id — always the first frame; carried out so the
+        // caller can persist a replay cursor before any token arrives.
+        if (parsed.job_id) {
+          yield `${JOBID_PREFIX}${parsed.job_id as string}`;
+          continue;
+        }
         if (parsed.event === "clarify") {
           yield `${CLARIFY_PREFIX}${parsed.question ?? "Could you clarify what you mean?"}`;
           return;
@@ -1555,7 +1579,15 @@ export default function Chat() {
   const linkedWorkTitle = linkedWorkResp?.work?.title ?? undefined;
 
   useEffect(() => { setLocalMessages([]); setDraft(""); }, [activeId]);
-  useEffect(() => { if (activeConv?.messages && !sending) setLocalMessages([]); }, [activeConv?.messages, sending]);
+  useEffect(() => {
+    // Hand local optimistic bubbles back to the refetched server rows — but
+    // keep anything not yet delivered (queued/failed/incomplete): those have
+    // no server row, so clearing them would make the message vanish.
+    if (activeConv?.messages && !sending) {
+      setLocalMessages((prev) =>
+        prev.length === 0 ? prev : prev.filter((m) => m.status === "queued" || m.status === "failed" || m.incomplete));
+    }
+  }, [activeConv?.messages, sending]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [localMessages, activeConv?.messages]);
 
   // ── Scroll-to-message when arriving from a search result ──────────────────
@@ -1764,6 +1796,128 @@ export default function Chat() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, sending, activeId, aiOnline]);
 
+  // ── Journal replay recovery (iPhone continuity core) ─────────────────────
+  // A generation that lost its SSE connection (backgrounded tab, killed PWA,
+  // dropped network) keeps running server-side and journals its events. On
+  // launch / foreground / reconnect we poll the journal and rebuild the reply
+  // exactly once, labeled "Recovered response".
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  const recoveringRef = useRef(false);
+  const recoverPendingGen = useCallback(async () => {
+    if (recoveringRef.current || sendingRef.current) return;
+    const pending = getPendingGen();
+    if (!pending) return;
+    recoveringRef.current = true;
+    const liveId = `recovered-${pending.jobId}`;
+    const upsertBubble = (patch: Partial<LocalMessage>) => {
+      if (activeIdRef.current !== pending.convId) return;
+      setLocalMessages((prev) => {
+        let base = prev;
+        if (base.length === 0) {
+          // Local list empty — seed from the cached server rows so the
+          // recovered bubble doesn't replace the whole thread.
+          const cached: any = queryClient.getQueryData(getGetConversationQueryKey(pending.convId));
+          base = ((cached?.messages ?? []) as any[]).map((m) => ({
+            id: m.id ?? randomUUID(),
+            role: m.role as "user" | "assistant",
+            text: m.text ?? "",
+            created_at: m.created_at ?? "",
+            meta: m.meta as Record<string, unknown> | undefined,
+          }));
+        }
+        const rest = base.filter((m) => m.id !== liveId);
+        return [...rest, {
+          id: liveId, role: "assistant" as const, text: "",
+          created_at: new Date().toISOString(), recovered: true, ...patch,
+        }];
+      });
+    };
+    try {
+      let acc = emptyReplay();
+      // Poll until the job leaves 'running' (~15 min cap); each pass fetches
+      // only events after the last seen seq.
+      for (let i = 0; i < 600; i++) {
+        let res;
+        try {
+          res = await fetchJobEvents(pending.jobId, acc.lastSeq);
+        } catch {
+          break; // offline again — the next foreground/online event retries
+        }
+        if (!res) { clearPendingGen(pending.jobId); break; } // pruned/unknown
+        acc = foldEvents(acc, res.events);
+        const running = res.job.state === "running";
+        if (acc.text || acc.thinking) {
+          upsertBubble({
+            text: acc.text,
+            thinking: acc.thinking || undefined,
+            status: running ? ("streaming" as const) : ("complete" as const),
+            streaming: running,
+          });
+        }
+        if (!running) {
+          const msgId = acc.messageId ?? res.job.message_id;
+          if (msgId && (acc.text || acc.thinking)) markRecovered(msgId);
+          clearPendingGen(pending.jobId);
+          queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(pending.convId) });
+          queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+          // Hand back to server data once the refetch has had a moment —
+          // the persisted row keeps its badge via the recovered-ids store.
+          setTimeout(() => {
+            if (!sendingRef.current && activeIdRef.current === pending.convId) {
+              setLocalMessages((prev) => prev.filter((m) => m.id !== liveId && (m.incomplete || m.status === "failed" || m.status === "queued")));
+            }
+          }, 800);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } finally {
+      recoveringRef.current = false;
+    }
+  }, [queryClient]);
+  const recoverPendingGenRef = useRef<typeof recoverPendingGen | null>(null);
+  recoverPendingGenRef.current = recoverPendingGen;
+
+  useEffect(() => {
+    // Recover on launch, on foreground, and on reconnect — never rely on the
+    // SSE stream surviving an iOS background suspension.
+    recoverPendingGen();
+    const onVisible = () => { if (document.visibilityState === "visible") recoverPendingGen(); };
+    const onOnline = () => recoverPendingGen();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [recoverPendingGen]);
+
+  useEffect(() => {
+    // When the app-level flusher delivers queued ops for this conversation,
+    // drop the local "queued" bubbles so the refetched server rows (user
+    // message + AI reply) take over.
+    const unsub = subscribeOutbox(() => {
+      void (async () => {
+        if (sendingRef.current) return;
+        try {
+          // listOps (not listPendingOps): mid-flush an op is briefly in
+          // "sending", which listPendingOps excludes — dropping the bubble
+          // then would make the message vanish before delivery. Delivered
+          // ops are removed from the store, so any op present is undelivered.
+          const ops = await listOps();
+          const stillQueued = ops.some((o) =>
+            o.type === "chat_message" && (o.payload as ChatMessagePayload).convId === activeIdRef.current);
+          if (!stillQueued) {
+            setLocalMessages((prev) =>
+              prev.some((m) => m.status === "queued") ? prev.filter((m) => m.status !== "queued") : prev);
+          }
+        } catch { /* IDB unavailable */ }
+      })();
+    });
+    return unsub;
+  }, []);
+
   // ── Core send logic (called by handleSend and the Re-send button) ────────
   const sendText = useCallback(
     async (text: string) => {
@@ -1823,6 +1977,28 @@ export default function Chat() {
       // Capture the effective model so the attribution label shows during streaming
       const effectiveModel = conv?.model || defaultModel || undefined;
 
+      // ── Persist to the outbox BEFORE any network attempt ─────────────────
+      // opId doubles as the server-side client_msg_id, so a later outbox
+      // flush of this exact op is idempotent (exactly-once delivery).
+      const opId = randomUUID();
+      try {
+        await enqueueOp("chat_message", {
+          convId, text, deep: deepMode, scope: scopeAll ? "all" : "work",
+          image_b64: capturedImage?.data, image_media_type: capturedImage?.type,
+        }, { opId });
+      } catch { /* IndexedDB unavailable (private mode) — proceed unpersisted */ }
+
+      if (!navigator.onLine) {
+        // Device offline — skip the network entirely; the message is saved on
+        // this device and the app-level flusher delivers it on reconnect.
+        setLocalMessages([...serverMsgs, { ...userMsg, status: "queued" }]);
+        sendingRef.current = false;
+        abortRef.current = null;
+        setSending(false);
+        setActivitySteps([]);
+        return;
+      }
+
       setLocalMessages([...serverMsgs, userMsg, { id: assistantId, role: "assistant", text: "", created_at: new Date().toISOString(), status: "streaming", streaming: true, meta: effectiveModel ? { model: effectiveModel } : undefined }]);
 
       // Use sendingRef (not stale-closure `sending`) so the RAF loop continues in background tabs
@@ -1836,13 +2012,21 @@ export default function Chat() {
 
       let streamedIntent: string | undefined;
       let streamedSources: KnowledgeSource[] | undefined;
+      let jobId: string | undefined;
       const SOURCES_PREFIX = "\x02SOURCES\x02";
       // On the first token we upgrade the user message from "sending" → "acknowledged"
       // so the "Sending…" indicator disappears as soon as the server starts responding.
       let userAcknowledged = false;
       let firstTextToken = true; // used to advance activity step to "Writing response"
       try {
-        for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type)) {
+        for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type, opId)) {
+          if (token.startsWith(JOBID_PREFIX)) {
+            // First frame: the server-side journal job. Persist a replay
+            // cursor NOW so a killed tab / dropped connection can recover.
+            jobId = token.slice(JOBID_PREFIX.length);
+            setPendingGen({ jobId, convId, startedAt: Date.now() });
+            continue;
+          }
           if (!userAcknowledged) {
             userAcknowledged = true;
             setLocalMessages((prev) => prev.map((m) =>
@@ -1946,10 +2130,16 @@ export default function Chat() {
               : m
           ));
         }
+        // Stream completed normally — the op is delivered and the journal
+        // record has served its purpose.
+        removeOp(opId).catch(() => {});
+        if (jobId) clearPendingGen(jobId);
       } catch (err: any) {
         if (err?.name === "AbortError") {
-          // Intentional cancellation (conversation switch or unmount)
-          // Mark with partial text if we received anything; backend saves the rest
+          // Intentional cancellation (conversation switch or unmount).
+          // Generation continues server-side; the pending-gen record stays so
+          // journal replay can pick the reply up when the user returns.
+          if (userAcknowledged) removeOp(opId).catch(() => {});
           const partialText = accumulatorRef.current;
           if (partialText) {
             setLocalMessages((prev) => prev.map((m) =>
@@ -1958,8 +2148,23 @@ export default function Chat() {
           } else {
             setLocalMessages((prev) => prev.filter((m) => m.id !== assistantId));
           }
+        } else if (jobId) {
+          // The server accepted the message and generation continues in its
+          // journal — recover the reply by replay instead of marking failed.
+          removeOp(opId).catch(() => {});
+          setLocalMessages((prev) => prev
+            .filter((m) => m.id !== assistantId)
+            .map((m) => (m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m)));
+          setTimeout(() => { void recoverPendingGenRef.current?.(); }, 50);
+        } else if (isNetworkError(err)) {
+          // Never reached the server — honest queued state; the app-level
+          // flusher will deliver the persisted op exactly once on reconnect.
+          setLocalMessages((prev) => prev
+            .filter((m) => m.id !== assistantId)
+            .map((m) => (m.id === userMsgId ? { ...m, status: "queued" as const } : m)));
         } else {
           const errMsg = err?.message ?? String(err);
+          markOpState(opId, "failed", errMsg).catch(() => {});
           const errLabel = (errMsg.includes("503") || errMsg.includes("Service Unavailable") || errMsg.includes("AI"))
             ? "AI service unavailable — check Engine Settings"
             : "Message failed to send";
@@ -2008,8 +2213,10 @@ export default function Chat() {
         queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
         // Clear local messages only if still viewing the same conversation
         // (otherwise the activeId-change effect already cleared them)
-        // Keep incomplete (truncated) and failed bubbles — both are meaningful states.
-        setLocalMessages((prev) => prev.filter((m) => m.incomplete || m.status === "failed"));
+        // Keep incomplete (truncated), failed, queued, and recovered bubbles —
+        // all are meaningful states the server refetch can't represent yet.
+        setLocalMessages((prev) => prev.filter((m) =>
+          m.incomplete || m.status === "failed" || m.status === "queued" || m.recovered));
       }
     },
     [activeId, deepMode, scopeAll, pendingImage, activeConv?.messages, flushAccumulator, queryClient, defaultModel, readAloud]
@@ -2287,13 +2494,7 @@ export default function Chat() {
               </Button>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 text-xs">
-            {aiOnline ? (
-              <><Wifi className="w-3 h-3" style={{ color: "var(--green-2)" }} /><span className="font-mono" style={{ color: "var(--green-2)" }}>AI connected</span></>
-            ) : (
-              <><WifiOff className="w-3 h-3 text-muted-foreground" /><span className="text-muted-foreground font-mono">AI offline</span></>
-            )}
-          </div>
+          <SyncStatusChip />
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <Input placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 h-8 text-xs bg-background" />
@@ -2453,8 +2654,10 @@ export default function Chat() {
                   )}
                 </div>
               </div>
-              {/* Right side: scope toggle + Files drawer + model picker */}
+              {/* Right side: sync state + scope toggle + Files drawer + model picker */}
               <div className="flex items-center gap-2">
+                {/* Sync chip lives here on mobile (sidebar is hidden) */}
+                <span className="md:hidden"><SyncStatusChip compact /></span>
                 {convWorkId && (
                   <button
                     onClick={() => setScopeAll(v => !v)}
@@ -2563,6 +2766,16 @@ export default function Chat() {
                             <span>Sending…</span>
                           </div>
                         )}
+                        {msg.role === "user" && msg.status === "queued" && (
+                          <div
+                            className="flex items-center gap-1 mt-1 justify-end text-[10px] font-mono"
+                            style={{ color: "var(--gilt)" }}
+                            data-testid="status-queued"
+                          >
+                            <CloudOff className="w-2.5 h-2.5" />
+                            <span>Queued — sends when connected</span>
+                          </div>
+                        )}
                         {msg.role === "user" && msg.status === "failed" && (
                           <div className="flex items-center gap-2 mt-1 justify-end">
                             <div className="flex items-center gap-1 text-[10px] font-mono text-destructive/70">
@@ -2652,6 +2865,18 @@ export default function Chat() {
                         {msg.role === "assistant" && (
                           <>
                           <div className="flex items-center gap-2 px-0.5 flex-wrap">
+                            {/* Recovered-response badge — reply rebuilt from the
+                                server-side journal after a lost connection */}
+                            {(msg.recovered || isRecovered(msg.id)) && (
+                              <span
+                                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono border"
+                                style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                                data-testid="badge-recovered"
+                              >
+                                <History className="w-2.5 h-2.5" />
+                                <span>Recovered response</span>
+                              </span>
+                            )}
                             {/* Intent badge */}
                             {msg.intent && INTENT_LABELS[msg.intent] && (
                               <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-primary/8 text-primary/70 border border-primary/15">
@@ -2800,7 +3025,7 @@ export default function Chat() {
                   <Textarea
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    placeholder={dragOver ? "Drop files to import…" : importing ? "Importing…" : aiOnline ? "Ask anything… or drop a file (Enter to send, Shift+Enter for newline)" : "AI offline — messages saved locally"}
+                    placeholder={dragOver ? "Drop files to import…" : importing ? "Importing…" : aiOnline ? "Ask anything… or drop a file (Enter to send, Shift+Enter for newline)" : "AI offline — messages will be delivered; replies resume when it returns"}
                     className="pr-56 resize-none py-3 text-base"
                     rows={2}
                     disabled={sending || importing}

@@ -3783,4 +3783,66 @@ MIGRATIONS: list[tuple[int, str, str]] = [
                        WHERE cf.proposal_id = wa_canon_proposals.id)
     """,
     ),
+    # v151 — Generation job journal (iPhone continuity core). Every streaming
+    # chat generation runs as a journalled job: sequenced events (chunk /
+    # thinking / sources / done / ...) are persisted so a client that lost the
+    # SSE stream (iOS suspension, dead zone, Wi-Fi handoff) can discover the
+    # job and replay events after its last acknowledged sequence.  Completed
+    # jobs are pruned on a schedule — the journal is a recovery buffer, not an
+    # archive (the finished message row is the durable record).
+    (
+        151,
+        "gen_jobs + gen_events — journalled generation with sequence replay",
+        """
+        CREATE TABLE IF NOT EXISTS gen_jobs (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            message_id TEXT,
+            client_msg_id TEXT,
+            state TEXT NOT NULL DEFAULT 'running',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gen_jobs_conv ON gen_jobs(conversation_id, state);
+        CREATE TABLE IF NOT EXISTS gen_events (
+            job_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            payload TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL,
+            PRIMARY KEY (job_id, seq)
+        )
+    """,
+    ),
+    # v152 — Durable notification ledger + Web Push subscriptions (iPhone
+    # continuity core).  Replaces reliance on the volatile in-memory feed:
+    # events the user cares about are written to notif_ledger (survives
+    # restarts; the polling cursor no longer resets), and opt-in Web Push
+    # subscriptions are stored for server fan-out of minimal payloads
+    # (event kind + deep link — no content).
+    (
+        152,
+        "notif_ledger + push_subscriptions — durable notifications and Web Push",
+        """
+        CREATE TABLE IF NOT EXISTS notif_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            url TEXT NOT NULL DEFAULT '',
+            dedupe_key TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_notif_ledger_dedupe
+            ON notif_ledger(dedupe_key) WHERE dedupe_key IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            endpoint TEXT PRIMARY KEY,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            last_ok REAL,
+            last_error TEXT
+        )
+    """,
+    ),
 ]

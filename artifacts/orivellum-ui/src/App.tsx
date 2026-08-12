@@ -7,6 +7,7 @@ import { CommandPalette } from '@/components/command-palette';
 import { ErrorBoundary, RouteErrorFallback } from '@/components/error-boundary';
 import { checkAuth, login } from '@/lib/auth';
 import { useBrowserNotifications } from '@/hooks/use-browser-notifications';
+import { useOutboxSync } from '@/hooks/use-outbox';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -109,6 +110,14 @@ function Shell({ children }: { children: React.ReactNode }) {
  * feed and shows browser alerts / toasts for finished documents & audiobooks. */
 function BrowserNotificationsWatcher() {
   useBrowserNotifications();
+  return null;
+}
+
+/** Mounted once (authenticated tree only): flushes the persistent outbox
+ * (queued chat messages / drafts / approvals) on reconnect, foreground and a
+ * slow interval — the client half of the iPhone continuity core. */
+function OutboxSyncWatcher() {
+  useOutboxSync();
   return null;
 }
 
@@ -312,6 +321,7 @@ function App() {
           </ReadAloudProvider>
           <CommandPalette />
           <BrowserNotificationsWatcher />
+          <OutboxSyncWatcher />
         </WouterRouter>
         {/* Sonner is the app's single toast system — every page's toast()
             renders through this one Toaster. Keep it mounted or all
