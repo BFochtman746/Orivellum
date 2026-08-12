@@ -250,7 +250,25 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
         ).fetchall()
     existing_subjects = {r["subject"].lower() for r in existing}
 
-    # Pull knowledge items to extract subjects (question-safe statuses only)
+    # Distinct subjects across the WHOLE corpus (question-safe statuses only,
+    # oldest first so early material seeds before late material).  This query
+    # is unbounded on rows scanned — coverage never depends on a top-N
+    # snapshot for subject-bearing knowledge.
+    corpus_subjects: list[str] = []
+    try:
+        with db._lock:
+            _subj_rows = db._conn.execute(
+                """SELECT subject FROM knowledge
+                   WHERE work_id=? AND subject IS NOT NULL AND TRIM(subject) != ''
+                     AND review_status IN ('auto','ai_auto','approved')
+                   GROUP BY lower(subject) ORDER BY MIN(created_at) ASC""",
+                (work_id,),
+            ).fetchall()
+        corpus_subjects = [r["subject"].strip() for r in _subj_rows]
+    except Exception:
+        corpus_subjects = []  # DB fakes without a knowledge table
+
+    # Recent rows still get scanned for subject-less items (text-derived).
     try:
         items = db.list_knowledge(
             work_id=work_id, limit=_SEED_KN_SCAN, review_status_in=_QUESTION_SAFE_REVIEW
@@ -258,11 +276,19 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
     except TypeError:  # older DB fakes without the review filter
         items = db.list_knowledge(work_id=work_id, limit=_SEED_KN_SCAN)
         items = [i for i in items if i.get("review_status", "auto") in _QUESTION_SAFE_REVIEW]
-    if not items:
+    if not items and not corpus_subjects:
         return list_concepts(db, work_id)
 
-    # Build a distinct subject list
+    # Build a distinct subject list: corpus-wide subjects first, then
+    # text-derived subjects from the recent scan.
     seen_subjects: list[str] = []
+    for subj in corpus_subjects:
+        if subj.lower() not in existing_subjects and subj.lower() not in {
+            s.lower() for s in seen_subjects
+        }:
+            seen_subjects.append(subj)
+        if len(seen_subjects) >= _MAX_SEED_SUBJ:
+            break
     for item in items:
         subj = (item.get("subject") or item.get("kind") or "").strip()
         if not subj:
@@ -357,12 +383,28 @@ def seed_concepts(db: Any, work_id: str, base_url: str, model: str) -> list[dict
         # Keep single prereq_id for backward compat (first prereq only)
         first_prereq = (multi_prereqs.get(subj) or [None])[0]
         prereq_id = subject_to_id.get(first_prereq.lower()) if first_prereq else None
+        # Guarded insert: the LLM call above leaves a window where a concurrent
+        # import/reseed may have inserted the same subject — the WHERE NOT
+        # EXISTS makes the check+insert atomic under the shared write lock.
         with db._lock:
-            db._conn.execute(
-                "INSERT INTO work_concepts(id,work_id,subject,description,prereq_id,created_at) VALUES(?,?,?,?,?,?)",
-                (cid, work_id, subj, desc, prereq_id, now),
+            cur = db._conn.execute(
+                """INSERT INTO work_concepts(id,work_id,subject,description,prereq_id,created_at)
+                   SELECT ?,?,?,?,?,?
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM work_concepts
+                       WHERE work_id=? AND lower(subject)=lower(?))""",
+                (cid, work_id, subj, desc, prereq_id, now, work_id, subj),
             )
             db._conn.commit()
+        if cur.rowcount == 0:
+            with db._lock:
+                row = db._conn.execute(
+                    "SELECT id FROM work_concepts WHERE work_id=? AND lower(subject)=lower(?)",
+                    (work_id, subj),
+                ).fetchone()
+            if row:
+                subject_to_id[subj.lower()] = row["id"]
+            continue
         try:
             db.audit(
                 "learning.concept_added",
@@ -515,23 +557,35 @@ def import_training_plan(db: Any, work_id: str, plan_items: list[dict]) -> dict:
         if isinstance(it, dict) and (it.get("topic") or "").strip() and it.get("question")
     ]
 
-    # Pass 1: concepts
+    # Pass 1: concepts.  Lookup + insert happen under ONE lock hold so a
+    # concurrent reseed/import cannot slip a duplicate subject in between.
     for it in valid_items:
         topic = it["topic"].strip()[:200]
         cid = subject_to_id.get(topic.lower())
         if cid:
             reused += 1
         else:
-            cid = _uuid()
+            new_id = _uuid()
             with db._lock:
-                db._conn.execute(
-                    "INSERT INTO work_concepts(id,work_id,subject,description,created_at) "
-                    "VALUES(?,?,?,?,?)",
-                    (cid, work_id, topic, (it.get("why") or "")[:500], now),
-                )
-                db._conn.commit()
+                row = db._conn.execute(
+                    "SELECT id FROM work_concepts WHERE work_id=? AND lower(subject)=lower(?)",
+                    (work_id, topic),
+                ).fetchone()
+                if row:
+                    cid = row["id"]
+                else:
+                    db._conn.execute(
+                        "INSERT INTO work_concepts(id,work_id,subject,description,created_at) "
+                        "VALUES(?,?,?,?,?)",
+                        (new_id, work_id, topic, (it.get("why") or "")[:500], now),
+                    )
+                    db._conn.commit()
+                    cid = new_id
             subject_to_id[topic.lower()] = cid
-            created += 1
+            if cid == new_id:
+                created += 1
+            else:
+                reused += 1
             try:
                 db.audit(
                     "learning.concept_imported",

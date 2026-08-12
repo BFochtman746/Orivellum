@@ -55,11 +55,19 @@ def import_research_digests(db: Any, work_id: str, digests: dict) -> dict:
             if not isinstance(cl, dict):
                 skipped += 1
                 continue
-            text = (cl.get("claim") or "").strip()
-            quote = (cl.get("quote") or "").strip()
-            srcs = [src_by_id[s] for s in (cl.get("sources") or []) if s in src_by_id]
+            text = str(cl.get("claim") or "").strip()[:2000]
+            quote = str(cl.get("quote") or "").strip()
+            # Provenance is mandatory: a usable source must carry a real URL
+            # AND a retrieval date — a bare source id is not provenance.
+            srcs = [
+                src_by_id[s]
+                for s in (cl.get("sources") or [])
+                if s in src_by_id
+                and str(src_by_id[s].get("url") or "").startswith(("http://", "https://"))
+                and src_by_id[s].get("retrieved")
+            ]
             if not text or not quote or not srcs:
-                skipped += 1  # unsourced — never stored
+                skipped += 1  # unsourced / undated — never stored
                 continue
             meta = {
                 "source": "research_run",
@@ -70,10 +78,10 @@ def import_research_digests(db: Any, work_id: str, digests: dict) -> dict:
                 "runner_confidence": cl.get("confidence", "low"),
                 "sources": [
                     {
-                        "url": s.get("url"),
-                        "title": (s.get("title") or "")[:200],
-                        "retrieved": s.get("retrieved"),
-                        "kind": s.get("kind", "web"),
+                        "url": str(s.get("url"))[:500],
+                        "title": str(s.get("title") or "")[:200],
+                        "retrieved": str(s.get("retrieved"))[:40],
+                        "kind": str(s.get("kind") or "web")[:40],
                     }
                     for s in srcs[:5]
                 ],

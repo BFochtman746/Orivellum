@@ -138,6 +138,13 @@ class TestWriteback:
         assert len(refreshed) == 1
         assert refreshed[0]["review_status"] == "approved"
 
+    def test_source_without_url_or_date_is_skipped(self, db, work_id):
+        dg = _digests()
+        dg["digests"][0]["sources"][0].pop("retrieved")  # undated source
+        result = import_research_digests(db, work_id, dg)
+        assert result["proposals_created"] == 0
+        assert result["skipped_unsourced"] == 2
+
     def test_claim_cap_refuses_oversized_import(self, db, work_id):
         dg = _digests()
         claim = dg["digests"][0]["claims"][0]

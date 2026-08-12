@@ -1225,35 +1225,40 @@ def _pass_reseed_concepts(db: OrivellumDB, cfg: OrivellumConfig, report: list[st
     """Incrementally re-seed learning concepts for Works with fresh knowledge.
 
     A Work qualifies when its newest question-safe knowledge item is newer
-    than its newest concept (or it has knowledge but no concepts yet).
+    than the durable per-work reseed cursor (a setting that advances only
+    after a successful seed) — so an already-processed Work never re-qualifies
+    night after night just because its subjects all have concepts already.
     Bounded to a few Works per night; seed_concepts is idempotent and ends
     with a prerequisite cycle check, so repeated runs converge.
     """
     _MAX_WORKS = 5
+    _CURSOR_KEY = "learning.reseed_cursor.{wid}"
     try:
         with db._lock:
             rows = db._conn.execute(
-                """SELECT k.work_id
+                """SELECT k.work_id, MAX(k.created_at) AS newest
                    FROM knowledge k
                    WHERE k.work_id IS NOT NULL
                      AND k.review_status IN ('auto','ai_auto','approved')
                    GROUP BY k.work_id
-                   HAVING MAX(k.created_at) > COALESCE(
-                       (SELECT MAX(c.created_at) FROM work_concepts c
-                        WHERE c.work_id = k.work_id), '')
-                   ORDER BY MAX(k.created_at) DESC
-                   LIMIT ?""",
-                (_MAX_WORKS,),
+                   ORDER BY MAX(k.created_at) DESC""",
             ).fetchall()
-        work_ids = [r["work_id"] for r in rows]
-        if not work_ids:
+        candidates: list[tuple[str, str]] = []
+        for r in rows:
+            cursor = db.get_setting(_CURSOR_KEY.format(wid=r["work_id"]), "")
+            if r["newest"] > cursor:
+                candidates.append((r["work_id"], r["newest"]))
+            if len(candidates) >= _MAX_WORKS:
+                break
+        if not candidates:
             return
         from orivellum.capabilities.learning import seed_concepts
 
         seeded = 0
-        for wid in work_ids:
+        for wid, newest in candidates:
             try:
                 seed_concepts(db, wid, cfg.serving.base_url, cfg.serving.workhorse_model)
+                db.set_setting(_CURSOR_KEY.format(wid=wid), newest)
                 seeded += 1
             except Exception as exc:
                 logger.warning("Concept re-seed failed for work %s: %s", wid, exc)
