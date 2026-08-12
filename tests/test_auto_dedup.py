@@ -81,6 +81,17 @@ class _StubDB:
         self.resolved_calls: list[tuple] = []
         self._conn = self
 
+    def atomic(self):
+        """Check+resolve run inside db.atomic() — mirror the real contract."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _cm():
+            with self._lock:
+                yield
+
+        return _cm()
+
     def execute(self, sql, params=()):
         rows = self._rows
 

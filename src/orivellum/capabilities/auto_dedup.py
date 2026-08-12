@@ -18,6 +18,13 @@ Action mapping by similarity tier:
 Safety guards:
   * Both docs canonical → skip (human decision required).
   * Either doc has ``lifecycle == 'deleted'`` → skip.
+  * Cross-type pairs (differing ``doc_type``) → skip.  A rulebook is never a
+    duplicate of a manuscript no matter how similar the shingles look.
+  * Either doc is a ``manuscript`` → skip.  Superseding a manuscript picks a
+    de-facto canonical version, and canonical designation on manuscripts is
+    an authored act — the system never signs it.
+  * Either doc's Work has a book production pipeline → skip.  Once a Work is
+    in production, its document set is under author control.
   * Configurable cap: ``auto_dedup_max_pairs`` (default 50/run).
 """
 
@@ -83,6 +90,34 @@ def _pick_canonical(doc_a: dict, doc_b: dict) -> str | None:
     return None
 
 
+def _pair_refusal(db: OrivellumDB, doc_a: dict, doc_b: dict) -> str | None:
+    """Return the reason this pair must NOT be auto-resolved, or None if OK.
+
+    Applied before ANY automatic action (supersede or version-link):
+      * differing doc_type — cross-type pairs are never duplicates;
+      * either doc is a manuscript — auto-resolution would designate a
+        de-facto canonical manuscript, which requires the author's signature;
+      * either doc's Work has a book production pipeline — those documents
+        are under author control.
+    """
+    type_a = doc_a.get("doc_type")
+    type_b = doc_b.get("doc_type")
+    if type_a != type_b:
+        return f"cross-type pair ({type_a!r} vs {type_b!r})"
+    if type_a == "manuscript":
+        return "manuscript pair — canonical designation requires the author"
+    for doc in (doc_a, doc_b):
+        work_id = doc.get("work_id")
+        if work_id:
+            try:
+                if db.get_book_pipeline_for_work(work_id):
+                    return f"work {work_id[:8]} has a book production pipeline"
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.warning("auto_dedup: pipeline lookup failed for %s: %s", work_id, exc)
+                return "pipeline lookup failed — refusing to guess"
+    return None
+
+
 def auto_resolve_duplicates(
     db: OrivellumDB,
     max_pairs: int | None = None,
@@ -133,53 +168,65 @@ def auto_resolve_duplicates(
 
         counters["processed"] += 1
         try:
-            doc_a = db.get_document(doc_a_id)
-            doc_b = db.get_document(doc_b_id)
-            if not doc_a or not doc_b:
-                logger.debug("auto_dedup: skipping %s — one doc missing", dupe_id)
-                counters["skipped"] += 1
-                continue
-
-            # Decide action based on similarity tier.
-            if kind == "near_duplicate":
-                canonical_id = _pick_canonical(doc_a, doc_b)
-                if canonical_id is None:
-                    logger.debug("auto_dedup: skipping %s — cannot auto-pick canonical", dupe_id)
+            # Check + resolve run in ONE transaction under the writer lock so a
+            # pipeline creation or manuscript designation cannot land between
+            # the refusal check and the mutation (TOCTOU).
+            with db.atomic():
+                doc_a = db.get_document(doc_a_id)
+                doc_b = db.get_document(doc_b_id)
+                if not doc_a or not doc_b:
+                    logger.debug("auto_dedup: skipping %s — one doc missing", dupe_id)
                     counters["skipped"] += 1
                     continue
-                result = db.resolve_near_duplicate(
-                    dupe_id,
-                    "mark_superseded",
-                    canonical_doc_id=canonical_id,
-                    actor="system",
-                )
-                if result and not result.get("already_resolved"):
-                    superseded_id = doc_b_id if canonical_id == doc_a_id else doc_a_id
-                    logger.info(
-                        "auto_dedup: superseded doc %s (kept %s) — similarity %.2f",
-                        superseded_id[:8],
-                        canonical_id[:8],
-                        row[3],
+
+                refusal = _pair_refusal(db, doc_a, doc_b)
+                if refusal:
+                    logger.debug("auto_dedup: skipping %s — %s", dupe_id, refusal)
+                    counters["skipped"] += 1
+                    continue
+
+                # Decide action based on similarity tier.
+                if kind == "near_duplicate":
+                    canonical_id = _pick_canonical(doc_a, doc_b)
+                    if canonical_id is None:
+                        logger.debug(
+                            "auto_dedup: skipping %s — cannot auto-pick canonical", dupe_id
+                        )
+                        counters["skipped"] += 1
+                        continue
+                    result = db.resolve_near_duplicate(
+                        dupe_id,
+                        "mark_superseded",
+                        canonical_doc_id=canonical_id,
+                        actor="system",
                     )
-                    counters["superseded"] += 1
+                    if result and not result.get("already_resolved"):
+                        superseded_id = doc_b_id if canonical_id == doc_a_id else doc_a_id
+                        logger.info(
+                            "auto_dedup: superseded doc %s (kept %s) — similarity %.2f",
+                            superseded_id[:8],
+                            canonical_id[:8],
+                            row[3],
+                        )
+                        counters["superseded"] += 1
+                    else:
+                        counters["skipped"] += 1
+
+                elif kind == "likely_revision":
+                    result = db.resolve_near_duplicate(dupe_id, "mark_versions", actor="system")
+                    if result and not result.get("already_resolved"):
+                        logger.info(
+                            "auto_dedup: version-linked docs %s ↔ %s — similarity %.2f",
+                            doc_a_id[:8],
+                            doc_b_id[:8],
+                            row[3],
+                        )
+                        counters["versioned"] += 1
+                    else:
+                        counters["skipped"] += 1
+
                 else:
                     counters["skipped"] += 1
-
-            elif kind == "likely_revision":
-                result = db.resolve_near_duplicate(dupe_id, "mark_versions", actor="system")
-                if result and not result.get("already_resolved"):
-                    logger.info(
-                        "auto_dedup: version-linked docs %s ↔ %s — similarity %.2f",
-                        doc_a_id[:8],
-                        doc_b_id[:8],
-                        row[3],
-                    )
-                    counters["versioned"] += 1
-                else:
-                    counters["skipped"] += 1
-
-            else:
-                counters["skipped"] += 1
 
         except Exception as exc:
             logger.warning("auto_dedup: error processing pair %s: %s", dupe_id, exc)
@@ -206,8 +253,10 @@ def auto_resolve_import_hits(
 
     for other_id, similarity, kind in hits:
         try:
-            # Look up the dupe row (either ordering).
-            with db._lock:
+            # Check + resolve in ONE transaction under the writer lock so the
+            # refusal predicates cannot go stale before the mutation (TOCTOU).
+            with db.atomic():
+                # Look up the dupe row (either ordering).
                 row = db._conn.execute(
                     """SELECT id FROM doc_dupes
                        WHERE resolved=0
@@ -216,41 +265,53 @@ def auto_resolve_import_hits(
                     (new_doc_id, other_id, other_id, new_doc_id),
                 ).fetchone()
 
-            if not row:
-                counters["skipped"] += 1
-                continue
+                if not row:
+                    counters["skipped"] += 1
+                    continue
 
-            dupe_id = row[0]
+                dupe_id = row[0]
 
-            if kind == "near_duplicate":
                 new_doc = db.get_document(new_doc_id)
                 other_doc = db.get_document(other_id)
                 if not new_doc or not other_doc:
                     counters["skipped"] += 1
                     continue
-                canonical_id = _pick_canonical(new_doc, other_doc)
-                if canonical_id is None:
+
+                refusal = _pair_refusal(db, new_doc, other_doc)
+                if refusal:
+                    logger.debug(
+                        "auto_dedup import: skipping pair (%s, %s) — %s",
+                        new_doc_id[:8],
+                        other_id[:8],
+                        refusal,
+                    )
                     counters["skipped"] += 1
                     continue
-                result = db.resolve_near_duplicate(
-                    dupe_id,
-                    "mark_superseded",
-                    canonical_doc_id=canonical_id,
-                    actor="system",
-                )
-                if result and not result.get("already_resolved"):
-                    counters["superseded"] += 1
-                else:
-                    counters["skipped"] += 1
 
-            elif kind == "likely_revision":
-                result = db.resolve_near_duplicate(dupe_id, "mark_versions", actor="system")
-                if result and not result.get("already_resolved"):
-                    counters["versioned"] += 1
+                if kind == "near_duplicate":
+                    canonical_id = _pick_canonical(new_doc, other_doc)
+                    if canonical_id is None:
+                        counters["skipped"] += 1
+                        continue
+                    result = db.resolve_near_duplicate(
+                        dupe_id,
+                        "mark_superseded",
+                        canonical_doc_id=canonical_id,
+                        actor="system",
+                    )
+                    if result and not result.get("already_resolved"):
+                        counters["superseded"] += 1
+                    else:
+                        counters["skipped"] += 1
+
+                elif kind == "likely_revision":
+                    result = db.resolve_near_duplicate(dupe_id, "mark_versions", actor="system")
+                    if result and not result.get("already_resolved"):
+                        counters["versioned"] += 1
+                    else:
+                        counters["skipped"] += 1
                 else:
                     counters["skipped"] += 1
-            else:
-                counters["skipped"] += 1
 
         except Exception as exc:
             logger.warning(

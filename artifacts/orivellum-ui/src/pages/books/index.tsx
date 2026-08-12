@@ -94,33 +94,86 @@ function formatWords(n: number): string {
 
 // ─── Promote button (Works without a pipeline) ────────────────────────────────
 
+interface PromotionEligibility {
+  eligible: boolean;
+  reasons: string[];
+  checks: Array<{ rule: string; label: string; ok: boolean; reason: string | null }>;
+}
+
 function PromoteButton({ workId, workTitle }: { workId: string; workTitle: string }) {
   const queryClient = useQueryClient();
+
+  // Refusals must state the specific unmet reason — never a bare disabled button.
+  const { data: elig, isLoading: eligLoading } = useQuery<PromotionEligibility>({
+    queryKey: ["promotion-eligibility", workId],
+    queryFn: () =>
+      apiFetch(`${BASE}/works/${workId}/promotion-eligibility`).then(r => {
+        if (!r.ok) throw new Error("eligibility check failed");
+        return r.json();
+      }),
+    staleTime: 30_000,
+  });
+
   const { mutate, isPending } = useMutation({
-    mutationFn: () =>
-      apiFetch(`${BASE}/works/${workId}/pipeline`, {
+    mutationFn: async () => {
+      const r = await apiFetch(`${BASE}/works/${workId}/pipeline`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: workTitle }),
-      }).then(r => { if (!r.ok) throw new Error("promote failed"); return r.json(); }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        const reasons: string[] | undefined = body?.detail?.reasons;
+        throw new Error(
+          Array.isArray(reasons) && reasons.length > 0
+            ? reasons.join(" ")
+            : "Could not start book pipeline",
+        );
+      }
+      return r.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["books"] });
       queryClient.invalidateQueries({ queryKey: getListWorksQueryKey({}) });
+      queryClient.invalidateQueries({ queryKey: ["promotion-eligibility", workId] });
       toast.success(`"${workTitle}" promoted to book pipeline`);
     },
-    onError: () => toast.error("Could not start book pipeline"),
+    onError: (e: Error) => toast.error(e.message),
   });
 
+  if (elig && !elig.eligible) {
+    return (
+      <div className="flex flex-col items-end gap-1 max-w-[240px] shrink-0">
+        <span
+          className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-md border"
+          style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+        >
+          <BookOpen className="w-3 h-3" /> Not ready for promotion
+        </span>
+        <ul className="space-y-0.5 text-right">
+          {elig.reasons.map((reason, i) => (
+            <li key={i} className="text-[10px] text-muted-foreground leading-snug">
+              {reason}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  // While eligibility is loading show a labelled pending state; if the check
+  // itself failed, keep the button usable — the POST refuses with specific
+  // reasons anyway, so there is never a bare disabled button.
   return (
     <Button
       size="sm"
       variant="outline"
       className="gap-1.5 text-xs font-mono"
-      disabled={isPending}
+      disabled={isPending || eligLoading}
       onClick={e => { e.preventDefault(); mutate(); }}
     >
       <Plus className="w-3 h-3" />
-      {isPending ? "Starting…" : "Promote to Book"}
+      {isPending ? "Starting…" : eligLoading ? "Checking eligibility…" : "Promote to Book"}
     </Button>
   );
 }

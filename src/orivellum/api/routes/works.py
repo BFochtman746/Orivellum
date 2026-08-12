@@ -1309,34 +1309,18 @@ def works_gaps(work_id: str, refresh: bool = False):
 
 @router.get("/works/{work_id}/completeness")
 def works_completeness(work_id: str):
-    """Return multi-dimensional completeness scoring for a Work."""
+    """Return the honest completeness report for a Work.
+
+    Predicates (true/false), observed counts, raw progress numbers (targets
+    only when author-set), and a Chao1/Good–Turing coverage upper bound.
+    No overall score, no assumed denominators.
+    """
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     from orivellum.capabilities.completeness import calculate_work_completeness
 
-    report = calculate_work_completeness(work_id, db)
-    return {
-        "work_id": report.work_id,
-        "work_title": report.work_title,
-        "overall": report.overall,
-        "readiness": report.readiness,
-        "summary": report.summary,
-        "evaluated_at": report.evaluated_at,
-        "dimensions": [
-            {
-                "name": d.name,
-                "label": d.label,
-                "score": d.score,
-                "current": d.current,
-                "target": d.target,
-                "unit": d.unit,
-                "rule": d.rule,
-                "evidence": d.evidence,
-            }
-            for d in report.dimensions
-        ],
-    }
+    return calculate_work_completeness(work_id, db)
 
 
 @router.patch("/works/{work_id}/compass")
@@ -1378,6 +1362,11 @@ def create_pipeline(
     Idempotent — calling multiple times returns the same pipeline.
     Orphan book_chapters already extracted for this Work are linked
     to the new pipeline automatically.
+
+    Promotion is gated: a NEW pipeline requires ≥1 manuscript document, a
+    ratified chapter structure (GENESIS G8), and an author-designated
+    canonical manuscript.  Refusals return 422 with the specific unmet
+    reasons — never a bare failure.
     """
     db = get_db()
     try:
@@ -1387,9 +1376,48 @@ def create_pipeline(
     work = db.get_work(work_id)
     if not work:
         raise HTTPException(404, f"Work {work_id!r} not found")
+
+    # The gate applies only to NEW promotions; an existing pipeline is
+    # returned as-is (idempotency).  Existing-check, eligibility check, and
+    # insert run atomically inside create_book_pipeline under the writer
+    # lock, so concurrent POSTs can never race into duplicate pipelines.
+    from orivellum.database.db import PromotionRefused
+
     title = (body.title or "").strip() or work.get("title") or "Book Pipeline"
-    pipeline = db.create_book_pipeline(work_id, title)
+    try:
+        pipeline = db.create_book_pipeline(work_id, title, require_ready=True)
+    except PromotionRefused as exc:
+        raise HTTPException(
+            422,
+            detail={
+                "message": "Work is not eligible for promotion to Book.",
+                "reasons": exc.eligibility.get("reasons", []),
+                "checks": exc.eligibility.get("checks", []),
+            },
+        ) from exc
     return {"pipeline": pipeline}
+
+
+@router.get("/works/{work_id}/promotion-eligibility")
+def get_promotion_eligibility(work_id: str):
+    """Report whether a Work may be promoted to Book, with per-rule reasons.
+
+    Never a bare boolean — every failed check carries the specific unmet
+    requirement so the UI can explain the refusal.
+    """
+    db = get_db()
+    work = db.get_work(work_id)
+    if not work:
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    if work.get("work_type") == "collection":
+        return {
+            "eligible": False,
+            "checks": [],
+            "reasons": ["Collections are provenance groupings — they cannot become books."],
+        }
+    from orivellum.capabilities.readiness import promotion_eligibility
+
+    return promotion_eligibility(db, work_id)
 
 
 @router.get("/works/{work_id}/pipeline")

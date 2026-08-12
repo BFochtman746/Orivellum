@@ -86,21 +86,21 @@ class TestDocumentLifecycleTransitions(unittest.TestCase):
 
     def test_set_lifecycle_canonical(self):
         _, doc_id = self._make_work_doc()
-        ok = self._db.update_document_lifecycle(doc_id, "canonical")
+        ok = self._db.update_document_lifecycle(doc_id, "canonical", actor="author")
         self.assertTrue(ok)
         fetched = self._db.get_document(doc_id)
         self.assertEqual(fetched["lifecycle"], "canonical")
 
     def test_set_lifecycle_superseded(self):
         _, doc_id = self._make_work_doc()
-        ok = self._db.update_document_lifecycle(doc_id, "superseded")
+        ok = self._db.update_document_lifecycle(doc_id, "superseded", actor="author")
         self.assertTrue(ok)
         fetched = self._db.get_document(doc_id)
         self.assertEqual(fetched["lifecycle"], "superseded")
 
     def test_set_lifecycle_reference(self):
         _, doc_id = self._make_work_doc()
-        ok = self._db.update_document_lifecycle(doc_id, "reference")
+        ok = self._db.update_document_lifecycle(doc_id, "reference", actor="author")
         self.assertTrue(ok)
         fetched = self._db.get_document(doc_id)
         self.assertEqual(fetched["lifecycle"], "reference")
@@ -114,7 +114,7 @@ class TestDocumentLifecycleTransitions(unittest.TestCase):
         doc_c = self._db.create_document(title="v3.pdf", kind="pdf", work_id=wid)
 
         # Promote doc_a to canonical
-        self._db.update_document_lifecycle(doc_a["id"], "canonical")
+        self._db.update_document_lifecycle(doc_a["id"], "canonical", actor="author")
 
         a = self._db.get_document(doc_a["id"])
         b = self._db.get_document(doc_b["id"])
@@ -131,10 +131,10 @@ class TestDocumentLifecycleTransitions(unittest.TestCase):
         doc_b = self._db.create_document(title="v2.pdf", kind="pdf", work_id=wid)
 
         # Mark doc_b as superseded first
-        self._db.update_document_lifecycle(doc_b["id"], "superseded")
+        self._db.update_document_lifecycle(doc_b["id"], "superseded", actor="author")
 
         # Now declare doc_a canonical
-        self._db.update_document_lifecycle(doc_a["id"], "canonical")
+        self._db.update_document_lifecycle(doc_a["id"], "canonical", actor="author")
 
         a = self._db.get_document(doc_a["id"])
         b = self._db.get_document(doc_b["id"])
@@ -148,10 +148,10 @@ class TestDocumentLifecycleTransitions(unittest.TestCase):
     def test_invalid_lifecycle_raises(self):
         _, doc_id = self._make_work_doc()
         with self.assertRaises(ValueError):
-            self._db.update_document_lifecycle(doc_id, "nonexistent_value")
+            self._db.update_document_lifecycle(doc_id, "nonexistent_value", actor="author")
 
     def test_unknown_doc_returns_false(self):
-        ok = self._db.update_document_lifecycle("no-such-id", "draft")
+        ok = self._db.update_document_lifecycle("no-such-id", "draft", actor="author")
         self.assertFalse(ok)
 
     def test_lifecycle_filter_in_list_documents(self):
@@ -160,7 +160,7 @@ class TestDocumentLifecycleTransitions(unittest.TestCase):
         wid = work["id"]
         doc_a = self._db.create_document(title="main.pdf", kind="pdf", work_id=wid)
         doc_b = self._db.create_document(title="draft.pdf", kind="pdf", work_id=wid)
-        self._db.update_document_lifecycle(doc_a["id"], "canonical")
+        self._db.update_document_lifecycle(doc_a["id"], "canonical", actor="author")
 
         canonical_docs = self._db.list_documents(work_id=wid, lifecycle="canonical")
         draft_docs = self._db.list_documents(work_id=wid, lifecycle="draft")
@@ -221,7 +221,7 @@ class TestLifecycleEndpoint(unittest.TestCase):
             client = TestClient(app, raise_server_exceptions=True, headers=AUTH_HEADERS)
             doc_a = db.create_document(title="canon.pdf", kind="pdf")
             doc_b = db.create_document(title="draft.pdf", kind="pdf")
-            db.update_document_lifecycle(doc_a["id"], "canonical")
+            db.update_document_lifecycle(doc_a["id"], "canonical", actor="author")
 
             resp = client.get("/api/library?lifecycle=canonical")
             self.assertEqual(resp.status_code, 200)

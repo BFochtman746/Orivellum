@@ -544,7 +544,9 @@ def library_set_lifecycle(doc_id: str, body: LifecycleUpdate):
             f"lifecycle must be one of: {', '.join(sorted(_VALID_DOC_LIFECYCLES))}",
         )
     db = get_db()
-    ok = db.update_document_lifecycle(doc_id, body.lifecycle)
+    # The lifecycle route is a human act through the UI — actor='author' is
+    # what makes canonical designation on manuscripts count as author-signed.
+    ok = db.update_document_lifecycle(doc_id, body.lifecycle, actor="author")
     if not ok:
         raise HTTPException(404, f"Document {doc_id!r} not found")
     return {"ok": True, "lifecycle": body.lifecycle, "document": db.get_document(doc_id)}

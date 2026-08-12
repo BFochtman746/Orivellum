@@ -437,41 +437,40 @@ export interface WorkGraph {
   edge_count?: number;
 }
 
-export interface CompletenessDimension {
-  /** structural | content | research | editorial | source */
+export interface CompletenessPredicate {
+  /** manuscript_document | chapter_structure_ratified | canonical_by_author */
   name?: string;
   label?: string;
-  /** 0-100 */
-  score?: number;
-  current?: number;
-  target?: number;
-  unit?: string;
-  rule?: string;
-  evidence?: string[];
+  value?: boolean;
+  detail?: string;
 }
 
-export interface CompletenessReport {
-  work_id?: string;
-  work_title?: string;
-  /** Weighted overall score 0-100 */
-  overall?: number;
-  /** Draft | Developing | Substantial | Near-Complete | Ready */
-  readiness?: string;
-  summary?: string;
-  evaluated_at?: string;
-  dimensions?: CompletenessDimension[];
+export interface CompletenessCount {
+  /** open_critical_findings | knowledge_reviewed */
+  name?: string;
+  label?: string;
+  detail?: string;
+  /** @nullable */
+  value?: number | null;
+  /** @nullable */
+  current?: number | null;
+  /** @nullable */
+  total?: number | null;
 }
 
-export type GapItemMetadata = { [key: string]: unknown };
-
-export interface GapItem {
-  /** undocumented_doc | uncovered_chapter | weak_coverage | missing_sources | orphaned_research | stale_source | duplicate_research | no_structure */
-  kind?: string;
-  title?: string;
-  description?: string;
-  /** high | medium | low */
-  severity?: string;
-  metadata?: GapItemMetadata;
+/**
+ * Raw observed numbers. Targets are present ONLY when the author set them (works.meta.completeness_targets) — never assumed defaults.
+ */
+export interface CompletenessProgress {
+  words?: number;
+  /** @nullable */
+  word_target?: number | null;
+  chapters?: number;
+  /** @nullable */
+  chapter_target?: number | null;
+  documents?: number;
+  /** @nullable */
+  note?: string | null;
 }
 
 export type CoverageEstimateBand = typeof CoverageEstimateBand[keyof typeof CoverageEstimateBand];
@@ -550,6 +549,49 @@ export interface CoverageReport {
   under_sampled_classes?: string[];
   well_sampled_classes?: string[];
   evaluated_at?: string;
+}
+
+/**
+ * Honest readiness report — predicates (true/false facts), observed counts, raw progress, and a Chao1/Good–Turing coverage upper bound. No overall score, no readiness label, no assumed denominators.
+ */
+export interface CompletenessReport {
+  work_id?: string;
+  work_title?: string;
+  evaluated_at?: string;
+  predicates?: CompletenessPredicate[];
+  counts?: CompletenessCount[];
+  progress?: CompletenessProgress;
+  coverage?: CoverageReport | null;
+}
+
+export interface PromotionCheck {
+  /** manuscript_document | chapter_structure_ratified | canonical_by_author */
+  rule?: string;
+  label?: string;
+  ok?: boolean;
+  /** @nullable */
+  reason?: string | null;
+}
+
+/**
+ * Whether a Work may be promoted to Book. Never a bare boolean — every failed check carries the specific unmet requirement.
+ */
+export interface PromotionEligibility {
+  eligible?: boolean;
+  checks?: PromotionCheck[];
+  reasons?: string[];
+}
+
+export type GapItemMetadata = { [key: string]: unknown };
+
+export interface GapItem {
+  /** undocumented_doc | uncovered_chapter | weak_coverage | missing_sources | orphaned_research | stale_source | duplicate_research | no_structure */
+  kind?: string;
+  title?: string;
+  description?: string;
+  /** high | medium | low */
+  severity?: string;
+  metadata?: GapItemMetadata;
 }
 
 export interface GapReport {

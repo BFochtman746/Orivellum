@@ -1,24 +1,29 @@
-"""Multi-dimensional completeness scoring for Works.
+"""Honest completeness reporting for Works (THE RE-PROJECTION Phases 7-8).
 
-Implements the MONARCH spec requirement: every completeness score must
-trace to explicit criteria, calculation rules, and evidence.  A single
-unexplained percentage is prohibited.
+The old report multiplied assumed denominators (10 chapters, 50,000 words)
+into percentage bars and a weighted "overall" score — a number that looked
+like measurement but was a guess.  This module refuses to guess:
 
-Dimensions:
-  structural   — chapters / sections present relative to expected
-  content      — total word count relative to a baseline
-  research     — chapters that have ≥ N knowledge items
-  editorial    — knowledge items that have been reviewed
-  source       — distinct source documents feeding the work
+* **Predicates** — facts that are true or false, never a percentage:
+  chapter structure ratified (GENESIS G8), canonical manuscript designated
+  by the author.
+* **Counts** — plain observed numbers with observed denominators:
+  open critical findings, knowledge items reviewed of total.
+* **Progress** — raw word/chapter counts.  A target appears ONLY when the
+  author set one on the Work (``meta.completeness_targets``); otherwise the
+  target is absent and no ratio is computed.
+* **Coverage** — where a genuine coverage figure is wanted, the Chao1 /
+  Good–Turing estimator (``coverage_estimate``) supplies an honest upper
+  bound with its own framing.
 
-Overall readiness label (never a bare number):
-  Draft | Developing | Substantial | Near-Complete | Ready
+No overall score, no readiness label, no default denominator anywhere.
 """
 
 from __future__ import annotations
 
+import datetime
+import json
 import logging
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,249 +31,172 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Tunables ──────────────────────────────────────────────────────────────────
 
-_CONTENT_BASELINE_WORDS = 50_000  # typical non-fiction manuscript
-_RESEARCH_MIN_ITEMS = 3  # items per chapter to be "covered"
-_EXPECTED_CHAPTERS_DEFAULT = 10  # assumed when no chapters extracted yet
+def _read_targets(work: dict) -> tuple[int | None, int | None]:
+    """Return the author-set (word_target, chapter_target) or (None, None).
 
-
-# ── Data types ────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class Dimension:
-    name: str
-    label: str
-    score: int  # 0-100
-    current: int | float
-    target: int | float
-    unit: str
-    rule: str  # plain-language calculation rule
-    evidence: list[str] = field(default_factory=list)
-
-
-@dataclass
-class CompletenessReport:
-    work_id: str
-    work_title: str
-    dimensions: list[Dimension]
-    overall: int  # weighted average 0-100
-    readiness: str  # "Draft" … "Ready"
-    summary: str
-    evaluated_at: str
-
-
-# ── Weights ───────────────────────────────────────────────────────────────────
-
-_WEIGHTS = {
-    "structural": 0.25,
-    "content": 0.25,
-    "research": 0.25,
-    "editorial": 0.15,
-    "source": 0.10,
-}
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
-
-
-def _read_targets(work: dict) -> tuple[int, int]:
-    """Return (word_target, chapter_target) for a Work.
-
-    Reads ``work.meta.completeness_targets`` when present; falls back to the
-    module-level defaults so existing Works are unaffected.
+    Only ``work.meta.completeness_targets`` counts.  There is NO default —
+    a Work without an author-set target has no denominator, and the report
+    shows raw counts instead of a ratio.
     """
-    import json as _json
-
     meta = work.get("meta") or {}
     if isinstance(meta, str):
         try:
-            meta = _json.loads(meta)
+            meta = json.loads(meta)
         except Exception:
             meta = {}
-
     targets = (meta.get("completeness_targets") or {}) if isinstance(meta, dict) else {}
 
-    try:
-        word_target = int(targets.get("word_target") or 0) or _CONTENT_BASELINE_WORDS
-    except (TypeError, ValueError):
-        word_target = _CONTENT_BASELINE_WORDS
+    def _pos_int(value) -> int | None:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return None
+        return n if n > 0 else None
 
-    try:
-        chapter_target = int(targets.get("chapter_target") or 0) or _EXPECTED_CHAPTERS_DEFAULT
-    except (TypeError, ValueError):
-        chapter_target = _EXPECTED_CHAPTERS_DEFAULT
-
-    return word_target, chapter_target
+    return _pos_int(targets.get("word_target")), _pos_int(targets.get("chapter_target"))
 
 
-def calculate_work_completeness(work_id: str, db: OrivellumDB) -> CompletenessReport:
-    """Calculate a multi-dimensional completeness report for a Work."""
-    import datetime
+def calculate_work_completeness(work_id: str, db: OrivellumDB) -> dict:
+    """Build the honest completeness report for a Work.
+
+    Returns a dict (the route serialises it verbatim):
+      work_id, work_title, predicates[], counts[], progress{}, coverage{},
+      evaluated_at.
+    """
+    from orivellum.capabilities.coverage_estimate import estimate_coverage
+    from orivellum.capabilities.readiness import (
+        author_canonical_manuscript,
+        chapter_structure_ratified,
+        manuscript_document_count,
+    )
 
     work = db.get_work(work_id) or {}
     work_title = work.get("title") or work_id[:8]
+    word_target, chapter_target = _read_targets(work)
 
-    # Per-Work custom targets (fall back to module defaults when not set)
-    _word_target, _chapter_target = _read_targets(work)
-
-    # ── Gather raw data ──────────────────────────────────────────────────────
-
+    # ── Observed raw data ────────────────────────────────────────────────────
     with db._lock:
-        # Documents linked to this work
         doc_rows = db._conn.execute(
             "SELECT id, word_count FROM documents WHERE work_id=? AND readiness='ready'",
             (work_id,),
         ).fetchall()
 
-        # Chapters across all documents
         doc_ids = [r["id"] for r in doc_rows]
-        chapters: list[dict] = []
+        total_chapters = 0
         if doc_ids:
             placeholders = ",".join("?" * len(doc_ids))
-            chapter_rows = db._conn.execute(
-                f"""SELECT bc.id, bc.source_doc_id,
-                       (length(coalesce(bc.text,'')) - length(replace(coalesce(bc.text,''),' ','')) + 1) as wc
-                    FROM book_chapters bc WHERE bc.source_doc_id IN ({placeholders})""",
+            row = db._conn.execute(
+                f"SELECT COUNT(*) AS n FROM book_chapters bc "
+                f"WHERE bc.source_doc_id IN ({placeholders})",
                 doc_ids,
-            ).fetchall()
-            chapters = [dict(r) for r in chapter_rows]
+            ).fetchone()
+            total_chapters = int(row["n"]) if row else 0
 
-        # Knowledge items
-        kn_rows = db._conn.execute(
-            """SELECT review_status, source_doc_id
+        kn_row = db._conn.execute(
+            """SELECT COUNT(*) AS total,
+                      SUM(CASE WHEN review_status IN ('approved','rejected')
+                          THEN 1 ELSE 0 END) AS reviewed
                FROM knowledge WHERE work_id=?
                  AND review_status != 'quarantined_reprojection'""",
             (work_id,),
-        ).fetchall()
+        ).fetchone()
 
     total_words = sum(r["word_count"] or 0 for r in doc_rows)
     total_docs = len(doc_rows)
-    total_chapters = len(chapters)
-    total_kn = len(kn_rows)
-    reviewed_kn = sum(1 for r in kn_rows if r["review_status"] in ("approved", "rejected"))
+    total_kn = int(kn_row["total"] or 0)
+    reviewed_kn = int(kn_row["reviewed"] or 0)
 
-    # Distinct source docs in knowledge
-    sourced_docs = len({r["source_doc_id"] for r in kn_rows if r["source_doc_id"]})
+    # Open critical/high findings on the Work and (if any) its pipeline —
+    # these are the blockers a reader actually needs to know about.
+    finding_ids = [work_id]
+    pipeline = db.get_book_pipeline_for_work(work_id)
+    if pipeline:
+        finding_ids.append(pipeline["id"])
+    open_critical = 0
+    for oid in finding_ids:
+        open_critical += len(
+            db.list_findings(
+                object_id=oid, state="open", min_severity=("high", "critical"), limit=100
+            )
+        )
 
-    # Chapters that have at least _RESEARCH_MIN_ITEMS knowledge items via source_doc_id
-    kn_by_doc: dict[str, int] = {}
-    for r in kn_rows:
-        sid = r["source_doc_id"]
-        if sid:
-            kn_by_doc[sid] = kn_by_doc.get(sid, 0) + 1
-    chapters_with_research = sum(
-        1 for ch in chapters if kn_by_doc.get(ch["source_doc_id"], 0) >= _RESEARCH_MIN_ITEMS
-    )
+    # ── Predicates (true/false facts, never percentages) ─────────────────────
+    ratified = chapter_structure_ratified(db, work_id)
+    canonical = author_canonical_manuscript(db, work_id)
+    ms_count = manuscript_document_count(db, work_id)
 
-    # ── Dimension calculations ───────────────────────────────────────────────
+    predicates = [
+        {
+            "name": "manuscript_document",
+            "label": "Manuscript document present",
+            "value": ms_count > 0,
+            "detail": f"{ms_count} manuscript document(s) in this Work.",
+        },
+        {
+            "name": "chapter_structure_ratified",
+            "label": "Chapter structure ratified",
+            "value": ratified,
+            "detail": (
+                "GENESIS Chapter Blueprint gate (G8) is signed PASSED."
+                if ratified
+                else "GENESIS Chapter Blueprint gate (G8) has not been passed — "
+                "extracted chapters alone are not ratification."
+            ),
+        },
+        {
+            "name": "canonical_by_author",
+            "label": "Canonical version set by author",
+            "value": canonical,
+            "detail": (
+                "An author-designated canonical manuscript exists."
+                if canonical
+                else "No manuscript has been designated canonical by the author."
+            ),
+        },
+    ]
 
-    # 1 — Structural
-    # Use the per-Work chapter target, but never let it be smaller than what
-    # has actually been extracted (a Work can't be more than 100% complete).
-    expected_ch = max(total_chapters, _chapter_target)
-    struct_score = min(100, round(total_chapters / expected_ch * 100))
-    structural = Dimension(
-        name="structural",
-        label="Structure",
-        score=struct_score,
-        current=total_chapters,
-        target=expected_ch,
-        unit="chapters",
-        rule=f"chapters extracted ÷ target ({expected_ch}) × 100",
-        evidence=[f"{total_chapters} chapter(s) found across {total_docs} document(s)"],
-    )
+    counts = [
+        {
+            "name": "open_critical_findings",
+            "label": "Open critical findings",
+            "value": open_critical,
+            "detail": (
+                "No open high/critical findings."
+                if open_critical == 0
+                else f"{open_critical} open high/critical finding(s) on this Work and its pipeline."
+            ),
+        },
+        {
+            "name": "knowledge_reviewed",
+            "label": "Knowledge reviewed",
+            "current": reviewed_kn,
+            "total": total_kn,
+            "detail": f"{reviewed_kn} of {total_kn} knowledge item(s) reviewed.",
+        },
+    ]
 
-    # 2 — Content
-    content_score = min(100, round(total_words / _word_target * 100))
-    content = Dimension(
-        name="content",
-        label="Content",
-        score=content_score,
-        current=total_words,
-        target=_word_target,
-        unit="words",
-        rule=f"total words ÷ {_word_target:,} target × 100",
-        evidence=[f"{total_words:,} words across {total_docs} document(s)"],
-    )
+    # ── Progress: raw counts; targets only when the author set them ──────────
+    progress = {
+        "words": total_words,
+        "word_target": word_target,  # None when the author has not set one
+        "chapters": total_chapters,
+        "chapter_target": chapter_target,  # None when the author has not set one
+        "documents": total_docs,
+        "note": (
+            None
+            if (word_target or chapter_target)
+            else "No author-set targets — raw counts only. Set targets on the Work "
+            "to see progress against them."
+        ),
+    }
 
-    # 3 — Research coverage
-    research_score = (
-        min(100, round(chapters_with_research / max(total_chapters, 1) * 100))
-        if total_chapters
-        else 0
-    )
-    research = Dimension(
-        name="research",
-        label="Research",
-        score=research_score,
-        current=chapters_with_research,
-        target=max(total_chapters, 1),
-        unit="chapters covered",
-        rule=f"chapters with ≥{_RESEARCH_MIN_ITEMS} knowledge items ÷ total chapters × 100",
-        evidence=[
-            f"{chapters_with_research} of {total_chapters} chapter(s) have "
-            f"≥{_RESEARCH_MIN_ITEMS} knowledge items",
-        ],
-    )
-
-    # 4 — Editorial review
-    editorial_score = min(100, round(reviewed_kn / max(total_kn, 1) * 100)) if total_kn else 0
-    editorial = Dimension(
-        name="editorial",
-        label="Editorial",
-        score=editorial_score,
-        current=reviewed_kn,
-        target=total_kn,
-        unit="items reviewed",
-        rule="reviewed knowledge items ÷ total knowledge items × 100",
-        evidence=[f"{reviewed_kn} of {total_kn} knowledge item(s) reviewed"],
-    )
-
-    # 5 — Source diversity
-    source_score = min(100, round(sourced_docs / max(total_docs, 1) * 100)) if total_docs else 0
-    source = Dimension(
-        name="source",
-        label="Sources",
-        score=source_score,
-        current=sourced_docs,
-        target=total_docs,
-        unit="source docs",
-        rule="distinct source documents cited in knowledge ÷ total documents × 100",
-        evidence=[f"{sourced_docs} document(s) cited in knowledge items"],
-    )
-
-    # ── Overall weighted score ───────────────────────────────────────────────
-
-    dims = [structural, content, research, editorial, source]
-    {d.name: d for d in dims}
-    overall = round(sum(_WEIGHTS[d.name] * d.score for d in dims))
-
-    readiness = (
-        "Ready"
-        if overall >= 80
-        else "Near-Complete"
-        if overall >= 60
-        else "Substantial"
-        if overall >= 40
-        else "Developing"
-        if overall >= 20
-        else "Draft"
-    )
-
-    summary = (
-        f"{work_title} is at '{readiness}' stage ({overall}% overall). "
-        f"{structural.current} chapters, {content.current:,} words, "
-        f"{research.current} chapters with research coverage."
-    )
-
-    return CompletenessReport(
-        work_id=work_id,
-        work_title=work_title,
-        dimensions=dims,
-        overall=overall,
-        readiness=readiness,
-        summary=summary,
-        evaluated_at=datetime.datetime.now(datetime.UTC).isoformat(),
-    )
+    return {
+        "work_id": work_id,
+        "work_title": work_title,
+        "predicates": predicates,
+        "counts": counts,
+        "progress": progress,
+        "coverage": estimate_coverage(db, work_id),
+        "evaluated_at": datetime.datetime.now(datetime.UTC).isoformat(),
+    }

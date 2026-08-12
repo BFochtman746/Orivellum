@@ -480,6 +480,7 @@ function PipelinePanel({ workId }: { workId: string }) {
     },
   });
 
+  const [promoteRefusal, setPromoteRefusal] = useState<string[] | null>(null);
   const createMutation = useMutation({
     mutationFn: async () => {
       const r = await apiFetch(`${BASE}/works/${workId}/pipeline`, {
@@ -487,10 +488,19 @@ function PipelinePanel({ workId }: { workId: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      if (!r.ok) throw new Error("Could not initialise pipeline");
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        const reasons: string[] | undefined = (body as any)?.detail?.reasons;
+        if (Array.isArray(reasons) && reasons.length > 0) {
+          setPromoteRefusal(reasons);
+          throw new Error("Work is not eligible for promotion yet");
+        }
+        throw new Error("Could not initialise pipeline");
+      }
       return r.json();
     },
     onSuccess: () => {
+      setPromoteRefusal(null);
       queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
       toast.success("Pipeline initialised at B0 — Intake");
     },
@@ -557,19 +567,35 @@ function PipelinePanel({ workId }: { workId: string }) {
   if (!pipeline) {
     return (
       <Card className="border-dashed border-primary/30">
-        <CardContent className="p-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Play className="w-4 h-4 text-primary/60 shrink-0" />
-            <div>
-              <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Production Pipeline</div>
-              <p className="text-sm text-muted-foreground mt-0.5">No pipeline started yet. Initialise to begin tracking this book through the B0–B17 lifecycle.</p>
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <Play className="w-4 h-4 text-primary/60 shrink-0" />
+              <div>
+                <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Production Pipeline</div>
+                <p className="text-sm text-muted-foreground mt-0.5">No pipeline started yet. Initialise to begin tracking this book through the B0–B17 lifecycle.</p>
+              </div>
             </div>
+            <Button size="sm" variant="outline" className="shrink-0 gap-1.5"
+              onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>
+              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+              Start Pipeline
+            </Button>
           </div>
-          <Button size="sm" variant="outline" className="shrink-0 gap-1.5"
-            onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>
-            {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-            Start Pipeline
-          </Button>
+          {/* Specific refusal reasons — the gate never fails silently */}
+          {promoteRefusal && (
+            <div
+              className="p-3 rounded-lg border text-sm space-y-1"
+              style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+            >
+              <p className="text-[10px] font-mono uppercase tracking-wider opacity-70">Not ready for promotion</p>
+              <ul className="space-y-0.5">
+                {promoteRefusal.map((reason, i) => (
+                  <li key={i} className="text-[11px] leading-snug">· {reason}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </CardContent>
       </Card>
     );

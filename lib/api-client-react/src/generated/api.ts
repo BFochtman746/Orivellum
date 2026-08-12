@@ -209,6 +209,7 @@ import type {
   ProbeEmbeddings200,
   ProbeVisionModel200,
   ProjectCreate,
+  PromotionEligibility,
   RebuildTopicsBody,
   ReprocessAllDocuments200,
   ResolveDashboardNudgeBody,
@@ -1809,7 +1810,7 @@ export const getGetWorkCompletenessUrl = (workId: string,) => {
 }
 
 /**
- * @summary Multi-dimensional completeness scoring for a Work
+ * @summary Honest completeness report for a Work (predicates + counts, no assumed denominators)
  */
 export const getWorkCompleteness = async (workId: string, options?: Parameters<typeof customFetch>[1]): Promise<CompletenessReport> => {
 
@@ -1856,7 +1857,7 @@ export type GetWorkCompletenessQueryError = ErrorType<void>
 
 
 /**
- * @summary Multi-dimensional completeness scoring for a Work
+ * @summary Honest completeness report for a Work (predicates + counts, no assumed denominators)
  */
 
 export function useGetWorkCompleteness<TData = Awaited<ReturnType<typeof getWorkCompleteness>>, TError = ErrorType<void>>(
@@ -1865,6 +1866,83 @@ export function useGetWorkCompleteness<TData = Awaited<ReturnType<typeof getWork
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetWorkCompletenessQueryOptions(workId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPromotionEligibilityUrl = (workId: string,) => {
+
+
+
+
+  return `/api/works/${workId}/promotion-eligibility`
+}
+
+/**
+ * @summary Report whether a Work may be promoted to Book, with per-rule reasons
+ */
+export const getPromotionEligibility = async (workId: string, options?: Parameters<typeof customFetch>[1]): Promise<PromotionEligibility> => {
+
+  return customFetch<PromotionEligibility>(getGetPromotionEligibilityUrl(workId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPromotionEligibilityQueryKey = (workId: string,) => {
+    return [
+    `/api/works/${workId}/promotion-eligibility`
+    ] as const;
+    }
+
+
+export const getGetPromotionEligibilityQueryOptions = <TData = Awaited<ReturnType<typeof getPromotionEligibility>>, TError = ErrorType<void>>(workId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPromotionEligibility>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPromotionEligibilityQueryKey(workId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPromotionEligibility>>> = ({ signal }) => getPromotionEligibility(workId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: workId !== null && workId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPromotionEligibility>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPromotionEligibilityQueryResult = NonNullable<Awaited<ReturnType<typeof getPromotionEligibility>>>
+export type GetPromotionEligibilityQueryError = ErrorType<void>
+
+
+/**
+ * @summary Report whether a Work may be promoted to Book, with per-rule reasons
+ */
+
+export function useGetPromotionEligibility<TData = Awaited<ReturnType<typeof getPromotionEligibility>>, TError = ErrorType<void>>(
+ workId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPromotionEligibility>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPromotionEligibilityQueryOptions(workId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

@@ -1,144 +1,48 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams, Link, useLocation, useSearch } from "wouter";
-import { ErrorBoundary } from "@/components/error-boundary";
-import {
-  useGetWork,
-  useGetWorkStats,
-  useUpdateWork,
-  useDeleteWork,
-  useDeleteKnowledgeItem,
-  useGetWorkDocuments,
-  useGetWorkKnowledge,
-  useGetWorkTasks,
-  useGetWorkConversations,
-  useCreateWorkTask,
-  useUpdateWorkTask,
-  useCreateConversation,
-  useListLibrary,
-  getGetWorkQueryKey,
-  getGetWorkStatsQueryKey,
-  getListWorksQueryKey,
-  getGetWorkTasksQueryKey,
-  getGetWorkDocumentsQueryKey,
-  getGetWorkKnowledgeQueryKey,
-  getGetWorkConversationsQueryKey,
-  getListConversationsQueryKey,
-  useGetEmbeddingsStatus,
-  getGetEmbeddingsStatusQueryKey,
-} from "@workspace/api-client-react";
-import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
-import { format } from "date-fns";
+/**
+ * Completeness tab — the honest readiness report for a Work.
+ *
+ * Predicates (true/false facts), observed counts, raw progress numbers
+ * (targets shown only when the author set them), and a Chao1/Good–Turing
+ * coverage upper bound. No overall score, no readiness label, no assumed
+ * denominators — the report refuses to guess.
+ */
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
-import { Card, CardContent } from "@/components/ui/card";
+import { useGetWork, useUpdateWork, getGetWorkQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import {
-  ArrowLeft,
-  FileText,
-  Network,
-  CheckSquare,
-  MessageSquare,
-  Plus,
-  Clock,
-  Loader2,
-  Sparkles,
-  ThumbsUp,
-  ThumbsDown,
-  Pencil,
-  Check,
-  X,
-  Trash2,
-  GraduationCap,
-  RefreshCw,
-  ChevronRight,
-  MessageSquarePlus,
-  Unlink,
-  Search,
-  BookOpen,
-  ChevronDown,
-  Trophy,
-  BarChart2,
-  AlertTriangle,
-  TrendingUp,
-  Lightbulb,
-  Brain,
-  Star,
-  GitBranch,
-  Share2,
-  FileSpreadsheet,
-  FileType,
-  Presentation,
-  Package,
-  Download,
-  Zap,
-  Film,
-  Scroll,
+  BarChart2, Check, CheckCircle2, Loader2, Pencil, X, AlertTriangle,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Textarea } from "@/components/ui/textarea";
-import { BookTab }       from "./book-tab";
-import { BrainstormTab } from "./brainstorm-tab";
-import { TrailerTab }    from "./trailer-tab";
-import { GenesisTab }    from "./genesis-tab";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
-import { LearnTab } from "@/pages/learning/learn-tab";
-
 
 const WORK_API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
-interface ComplDimension {
-  name: string; label: string; score: number;
-  current: number | string; target: number | string; unit: string;
-  rule: string; evidence: string[];
+interface ComplPredicate {
+  name: string; label: string; value: boolean; detail: string;
+}
+interface ComplCount {
+  name: string; label: string; detail: string;
+  value?: number; current?: number; total?: number;
+}
+interface ComplProgress {
+  words: number; word_target: number | null;
+  chapters: number; chapter_target: number | null;
+  documents: number; note: string | null;
+}
+interface CoverageOverall {
+  completeness: number | null;
+  unseen_est: number | null;
+  band?: string;
+  summary?: string;
 }
 interface ComplReport {
-  overall: number; readiness: string; summary: string; evaluated_at: string;
-  dimensions: ComplDimension[];
+  work_id: string; work_title: string; evaluated_at?: string;
+  predicates: ComplPredicate[]; counts: ComplCount[]; progress: ComplProgress;
+  coverage?: { overall?: CoverageOverall; scope_note?: string } | null;
 }
-
-// Five distinct completeness tiers — kept visually distinct across the VELLUM
-// palette. "Draft" stays neutral via muted classes.
-const READINESS_COLOR: Record<string, { cls: string; style?: React.CSSProperties }> = {
-  "Ready":          { cls: "", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } },
-  "Near-Complete":  { cls: "", style: { color: "var(--green-raw)", background: "color-mix(in srgb, var(--green-raw) 10%, transparent)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)" } },
-  "Substantial":    { cls: "", style: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--gilt) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gilt) 45%, var(--rust) 30%)" } },
-  "Developing":     { cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } },
-  "Draft":          { cls: "text-muted-foreground bg-muted border-border" },
-};
-
-// Five distinct dimension-bar colours — kept visually distinct.
-const DIM_BAR_COLOR: Record<string, string> = {
-  // Keep in sync with DIM_BAR in works/intelligence.tsx — same dimensions,
-  // same colors, so the two views read as one system.
-  structural: "var(--gilt)",
-  content:    "color-mix(in srgb, var(--gilt) 55%, var(--rust))",
-  research:   "var(--green-2)",
-  editorial:  "var(--green-raw)",
-  source:     "var(--rust)",
-};
 
 export function CompletenessTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
@@ -164,8 +68,7 @@ export function CompletenessTab({ workId }: { workId: string }) {
         return r.json();
       }),
     staleTime: 60_000,
-    // Poll every 10 s while the pipeline is advancing so progress bars stay live.
-    // Stops automatically when the pipeline reaches B17 or when no pipeline exists.
+    // Poll every 10 s while the pipeline is advancing so the report stays live.
     refetchInterval: pipelineActive ? 10_000 : false,
   });
 
@@ -187,28 +90,38 @@ export function CompletenessTab({ workId }: { workId: string }) {
   const [chapterInput, setChapterInput] = useState("");
 
   const openTargetEditor = () => {
-    setWordInput(String(savedTargets.word_target ?? 50000));
-    setChapterInput(String(savedTargets.chapter_target ?? 10));
+    // No defaults — an unset target stays blank; the author decides.
+    setWordInput(savedTargets.word_target ? String(savedTargets.word_target) : "");
+    setChapterInput(savedTargets.chapter_target ? String(savedTargets.chapter_target) : "");
     setEditingTargets(true);
   };
 
   const saveTargets = () => {
-    const wt = parseInt(wordInput, 10);
-    const ct = parseInt(chapterInput, 10);
-    if (!wt || !ct || wt < 1 || ct < 1) {
-      toast.error("Targets must be positive numbers");
+    const wt = wordInput.trim() === "" ? null : parseInt(wordInput, 10);
+    const ct = chapterInput.trim() === "" ? null : parseInt(chapterInput, 10);
+    if ((wt != null && (!wt || wt < 1)) || (ct != null && (!ct || ct < 1))) {
+      toast.error("Targets must be positive numbers (or left blank)");
       return;
     }
-    const mergedMeta = { ...currentMeta, completeness_targets: { word_target: wt, chapter_target: ct } };
+    const targets: Record<string, number> = {};
+    if (wt != null) targets.word_target = wt;
+    if (ct != null) targets.chapter_target = ct;
+    const mergedMeta = { ...currentMeta };
+    if (Object.keys(targets).length > 0) {
+      mergedMeta.completeness_targets = targets;
+    } else {
+      delete mergedMeta.completeness_targets;
+    }
     updateWork.mutate(
       { workId, data: { meta: mergedMeta } },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetWorkQueryKey(workId) });
-          // Invalidate completeness so it reruns with new targets
           queryClient.invalidateQueries({ queryKey: ["work-completeness", workId] });
           setEditingTargets(false);
-          toast.success("Targets saved — scores updated");
+          toast.success(
+            Object.keys(targets).length > 0 ? "Targets saved" : "Targets cleared — raw counts only",
+          );
         },
         onError: () => toast.error("Could not save targets"),
       }
@@ -230,19 +143,32 @@ export function CompletenessTab({ workId }: { workId: string }) {
     </div>
   );
 
-  const readinessCfg = READINESS_COLOR[data.readiness] ?? READINESS_COLOR["Draft"];
+  const predicatesMet = data.predicates.filter(p => p.value).length;
+  const allMet = predicatesMet === data.predicates.length;
+  const coverage = data.coverage?.overall ?? null;
 
   return (
     <div className="space-y-6">
-      {/* Overall banner */}
-      <div className={`flex items-center justify-between p-4 rounded-xl border ${readinessCfg.cls}`} style={readinessCfg.style}>
+      {/* Readiness banner — checks passed, never an invented percentage */}
+      <div
+        className="flex items-center justify-between p-4 rounded-xl border"
+        style={
+          allMet
+            ? { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }
+            : { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
+        }
+      >
         <div>
-          <p className="text-xs font-mono uppercase tracking-wider opacity-70 mb-0.5">Readiness</p>
-          <p className="text-2xl font-serif font-semibold">{data.readiness}</p>
-          <p className="text-xs font-mono mt-1 opacity-70">{data.summary}</p>
+          <p className="text-xs font-mono uppercase tracking-wider opacity-70 mb-0.5">Readiness checks</p>
+          <p className="text-2xl font-serif font-semibold">
+            {predicatesMet} of {data.predicates.length} passed
+          </p>
+          <p className="text-xs font-mono mt-1 opacity-70">
+            Facts and observed counts only — no assumed targets.
+          </p>
         </div>
         <div className="text-right shrink-0 ml-6">
-          <p className="text-4xl font-mono font-bold">{data.overall}%</p>
+          <p className="text-4xl font-mono font-bold">{predicatesMet}/{data.predicates.length}</p>
           <button
             onClick={() => refetch()}
             disabled={isFetching}
@@ -253,18 +179,86 @@ export function CompletenessTab({ workId }: { workId: string }) {
         </div>
       </div>
 
-      {/* Completeness targets editor */}
+      {/* Predicates */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+          Readiness predicates
+        </h3>
+        {data.predicates.map((p) => (
+          <div key={p.name} className="p-4 rounded-lg border border-border/50 bg-muted/10 flex items-start gap-3">
+            {p.value ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green-2)" }} />
+            ) : (
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--rust)" }} />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium text-sm">{p.label}</span>
+                <span
+                  className="text-xs font-mono font-semibold shrink-0"
+                  style={{ color: p.value ? "var(--green-2)" : "var(--rust)" }}
+                >
+                  {p.value ? "yes" : "no"}
+                </span>
+              </div>
+              <p className="text-[11px] font-mono text-muted-foreground mt-1">{p.detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Observed counts */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+          Observed counts
+        </h3>
+        {data.counts.map((c) => (
+          <div key={c.name} className="p-4 rounded-lg border border-border/50 bg-muted/10">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-sm">{c.label}</span>
+              <span className="text-sm font-mono font-semibold">
+                {c.total != null ? `${c.current ?? 0} of ${c.total}` : String(c.value ?? 0)}
+              </span>
+            </div>
+            <p className="text-[11px] font-mono text-muted-foreground mt-1">{c.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Coverage — Chao1 upper bound with its own honest framing */}
+      {coverage && (
+        <div className="p-4 rounded-lg border border-border/50 bg-muted/10">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium text-sm">Entity coverage (upper bound)</span>
+            <span className="text-sm font-mono font-semibold">
+              {coverage.completeness != null ? `≤${Math.round(coverage.completeness * 100)}%` : "—"}
+            </span>
+          </div>
+          <p className="text-[11px] font-mono text-muted-foreground mt-1">
+            {coverage.summary ?? "Chao1 / Good–Turing estimate from mention frequencies — true coverage is at most this."}
+          </p>
+        </div>
+      )}
+
+      {/* Progress + author-set targets */}
       <div className="p-4 rounded-lg border border-border/50 bg-muted/10">
         <div className="flex items-center justify-between mb-3">
           <div>
             <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
-              Completeness targets
+              Progress
             </h3>
             {!editingTargets && (
               <p className="text-[11px] text-muted-foreground/70 mt-0.5">
-                {savedTargets.word_target
-                  ? `${Number(savedTargets.word_target).toLocaleString()} words · ${savedTargets.chapter_target ?? 10} chapters`
-                  : "Using defaults (50,000 words · 10 chapters)"}
+                {savedTargets.word_target || savedTargets.chapter_target
+                  ? [
+                      savedTargets.word_target
+                        ? `${Number(savedTargets.word_target).toLocaleString()} word target`
+                        : null,
+                      savedTargets.chapter_target
+                        ? `${savedTargets.chapter_target} chapter target`
+                        : null,
+                    ].filter(Boolean).join(" · ")
+                  : "No targets set — raw counts only"}
               </p>
             )}
           </div>
@@ -273,13 +267,13 @@ export function CompletenessTab({ workId }: { workId: string }) {
               onClick={openTargetEditor}
               className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
             >
-              <Pencil className="w-3 h-3" /> Edit
+              <Pencil className="w-3 h-3" /> Edit targets
             </button>
           )}
         </div>
 
         {editingTargets && (
-          <div className="space-y-3">
+          <div className="space-y-3 mb-3">
             <div className="flex items-center gap-3 flex-wrap">
               <label className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
                 Word target
@@ -289,7 +283,7 @@ export function CompletenessTab({ workId }: { workId: string }) {
                   value={wordInput}
                   onChange={(e) => setWordInput(e.target.value)}
                   className="w-28 h-7 text-sm font-mono"
-                  placeholder="50000"
+                  placeholder="not set"
                 />
               </label>
               <label className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
@@ -300,10 +294,13 @@ export function CompletenessTab({ workId }: { workId: string }) {
                   value={chapterInput}
                   onChange={(e) => setChapterInput(e.target.value)}
                   className="w-20 h-7 text-sm font-mono"
-                  placeholder="10"
+                  placeholder="not set"
                 />
               </label>
             </div>
+            <p className="text-[10px] font-mono text-muted-foreground/60">
+              Leave blank to clear — no default is assumed for you.
+            </p>
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
@@ -329,92 +326,30 @@ export function CompletenessTab({ workId }: { workId: string }) {
           </div>
         )}
 
-        {/* ── Word-count + chapter progress bars ─────────────────────────── */}
-        {!editingTargets && (() => {
-          const contentDim = data.dimensions.find((d) => d.name === "content");
-          const structDim  = data.dimensions.find((d) => d.name === "structure");
-          if (!contentDim && !structDim) return null;
-
-          const barColor = (pct: number): string =>
-            pct >= 70 ? "var(--green-2)" : pct >= 30 ? "var(--gilt)" : "var(--rust)";
-
-          return (
-            <div className="mt-3 space-y-2.5">
-              {contentDim && Number(contentDim.target) > 0 && (() => {
-                const pct = Math.min(100, Math.round((Number(contentDim.current) / Number(contentDim.target)) * 100));
-                return (
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-mono text-muted-foreground">Words</span>
-                      <span className="text-[11px] font-mono text-muted-foreground">
-                        {Number(contentDim.current).toLocaleString()} / {Number(contentDim.target).toLocaleString()}
-                        <span className="ml-1.5 opacity-60">({pct}%)</span>
-                      </span>
-                    </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${pct}%`, background: barColor(pct) }}
-                      />
-                    </div>
-                  </div>
-                );
-              })()}
-              {structDim && Number(structDim.target) > 0 && (() => {
-                const pct = Math.min(100, Math.round((Number(structDim.current) / Number(structDim.target)) * 100));
-                return (
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-mono text-muted-foreground">Chapters</span>
-                      <span className="text-[11px] font-mono text-muted-foreground">
-                        {structDim.current} / {structDim.target}
-                        <span className="ml-1.5 opacity-60">({pct}%)</span>
-                      </span>
-                    </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${pct}%`, background: barColor(pct) }}
-                      />
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          );
-        })()}
-      </div>
-
-      {/* Dimension breakdown */}
-      <div className="space-y-3">
-        <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
-          Five dimensions
-        </h3>
-        {data.dimensions.map((dim) => (
-          <div key={dim.name} className="p-4 rounded-lg border border-border/50 bg-muted/10 space-y-2">
+        {/* Raw numbers; a bar appears ONLY against an author-set target */}
+        {!editingTargets && (
+          <div className="space-y-2.5">
+            <ProgressRow
+              label="Words"
+              current={data.progress.words}
+              target={data.progress.word_target}
+            />
+            <ProgressRow
+              label="Chapters"
+              current={data.progress.chapters}
+              target={data.progress.chapter_target}
+            />
             <div className="flex items-center justify-between">
-              <div>
-                <span className="font-medium text-sm">{dim.label}</span>
-                <span className="ml-2 text-[11px] font-mono text-muted-foreground">
-                  {Number(dim.current).toLocaleString()} / {Number(dim.target).toLocaleString()} {dim.unit}
-                </span>
-              </div>
-              <span className="text-sm font-mono font-semibold">{dim.score}%</span>
+              <span className="text-[11px] font-mono text-muted-foreground">Documents ready</span>
+              <span className="text-[11px] font-mono text-muted-foreground">
+                {data.progress.documents}
+              </span>
             </div>
-            {/* Progress bar */}
-            <div className="h-2 bg-muted rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${dim.score}%`, background: DIM_BAR_COLOR[dim.name] ?? "var(--primary)" }}
-              />
-            </div>
-            {/* Rule + evidence */}
-            <p className="text-[11px] font-mono text-muted-foreground">{dim.rule}</p>
-            {dim.evidence.map((ev, i) => (
-              <p key={i} className="text-[11px] text-muted-foreground/70 pl-2 border-l border-border/50">{ev}</p>
-            ))}
+            {data.progress.note && (
+              <p className="text-[10px] font-mono text-muted-foreground/60">{data.progress.note}</p>
+            )}
           </div>
-        ))}
+        )}
       </div>
 
       <p className="text-[10px] font-mono text-muted-foreground/50 text-right">
@@ -424,5 +359,41 @@ export function CompletenessTab({ workId }: { workId: string }) {
   );
 }
 
-// ─── Graph tab ────────────────────────────────────────────────────────────────
+/** Raw count row. Renders a ratio + bar only when the author set a target. */
+function ProgressRow({ label, current, target }: {
+  label: string; current: number; target: number | null;
+}) {
+  const barColor = (pct: number): string =>
+    pct >= 70 ? "var(--green-2)" : pct >= 30 ? "var(--gilt)" : "var(--rust)";
 
+  if (target == null) {
+    return (
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-mono text-muted-foreground">{label}</span>
+        <span className="text-[11px] font-mono text-muted-foreground">
+          {current.toLocaleString()}
+          <span className="ml-1.5 opacity-60">(no target set)</span>
+        </span>
+      </div>
+    );
+  }
+
+  const pct = Math.min(100, Math.round((current / target) * 100));
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[11px] font-mono text-muted-foreground">{label}</span>
+        <span className="text-[11px] font-mono text-muted-foreground">
+          {current.toLocaleString()} / {target.toLocaleString()}
+          <span className="ml-1.5 opacity-60">({pct}%)</span>
+        </span>
+      </div>
+      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-700"
+          style={{ width: `${pct}%`, background: barColor(pct) }}
+        />
+      </div>
+    </div>
+  );
+}

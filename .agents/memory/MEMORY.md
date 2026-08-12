@@ -122,3 +122,4 @@
 - [Security test floor](orivellum-security-floor.md) — floor + zero-caller CI rules with shrink-only dated allowlists; bare _set_setting never commits — use set_setting_unaudited for secret settings.
 - [Work proposals & ratification](orivellum-work-proposals.md) — Works only via signed ratification; claim+side effects in one db.atomic(); snapshot row post-claim; conditional-UPDATE re-points; bump chunk cache post-commit.
 - [RE-PROJECTION quarantine & re-harvest](orivellum-reprojection.md) — quarantined_reprojection must be excluded at EVERY scattered raw-SQL read; closed ontologies discard, never coerce; token-fenced run claims; atomic pilot CAS.
+- [Promotion gate & lifecycle provenance](orivellum-promotion-gate.md) — Promote-to-Book gate lives inside create_book_pipeline(require_ready=True) under the lock; lifecycle actor is explicit; dedup guards re-check inside db.atomic().

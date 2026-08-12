@@ -88,7 +88,7 @@ class BookIntelligenceTests(unittest.TestCase):
     def test_declared_canonical_wins(self):
         small = _seed_doc(self.db, self.work_id, "old.docx", "word " * 100)
         big = _seed_doc(self.db, self.work_id, "new.docx", "word " * 1000)
-        self.db.update_document_lifecycle(small, "canonical")
+        self.db.update_document_lifecycle(small, "canonical", actor="author")
         body = self._get()
         self.assertEqual(body["canonical"]["id"], small)
         self.assertEqual(body["canonical"]["canonical_source"], "declared")
@@ -99,8 +99,8 @@ class BookIntelligenceTests(unittest.TestCase):
         'canonical' — the Book view must honor the most recent declaration."""
         docx = _seed_doc(self.db, self.work_id, "book.docx", "word " * 1000, kind="docx")
         pdf = _seed_doc(self.db, self.work_id, "book.pdf", "word " * 800, kind="pdf")
-        self.db.update_document_lifecycle(docx, "canonical")
-        self.db.update_document_lifecycle(pdf, "canonical")  # later declaration
+        self.db.update_document_lifecycle(docx, "canonical", actor="author")
+        self.db.update_document_lifecycle(pdf, "canonical", actor="author")  # later declaration
         body = self._get()
         self.assertEqual(body["canonical"]["id"], pdf)
         self.assertEqual(body["canonical"]["canonical_source"], "declared")

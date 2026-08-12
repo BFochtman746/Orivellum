@@ -3736,4 +3736,18 @@ MIGRATIONS: list[tuple[int, str, str]] = [
            AND EXISTS (SELECT 1 FROM documents d WHERE d.id = knowledge.source_doc_id)
     """,
     ),
+    # v148 — Lifecycle designation provenance (THE RE-PROJECTION Phases 7-8)
+    #
+    # Canonical status is an authored act, not a computed one.  lifecycle_by
+    # records WHO set the document's current lifecycle: 'author' (a human via
+    # the UI) or 'system' (auto-dedup / pipeline machinery).  Legacy rows stay
+    # NULL — unknown provenance is NOT author provenance, so pre-existing
+    # canonical designations do not silently count as author-signed.
+    (
+        148,
+        "add documents.lifecycle_by — provenance of the current lifecycle designation",
+        """
+        ALTER TABLE documents ADD COLUMN lifecycle_by TEXT
+    """,
+    ),
 ]

@@ -38,6 +38,19 @@ class _CASConflict(Exception):
     """
 
 
+class PromotionRefused(Exception):
+    """Promote-to-Book refused — the Work fails the readiness predicates.
+
+    Carries the full eligibility report so callers can surface the specific
+    unmet reasons (never a bare failure).
+    """
+
+    def __init__(self, eligibility: dict):
+        self.eligibility = eligibility
+        reasons = eligibility.get("reasons") or []
+        super().__init__("; ".join(reasons) or "Work is not eligible for promotion")
+
+
 class VersionConflictError(Exception):
     """Raised when an optimistic-concurrency update is attempted with a stale
     expected_version.  The caller should re-fetch the object and retry.
@@ -1246,7 +1259,7 @@ class OrivellumDB:
             else:
                 superseded_id = dupe["doc_b_id"]  # default: doc_a is canonical
             try:
-                self.update_document_lifecycle(superseded_id, "superseded")
+                self.update_document_lifecycle(superseded_id, "superseded", actor=actor)
             except Exception as exc:
                 logger.debug("mark_superseded lifecycle update failed: %s", exc)
 
@@ -2457,11 +2470,18 @@ class OrivellumDB:
             self._conn.execute("DELETE FROM read_positions WHERE doc_id=?", (doc_id,))
             self._maybe_commit()
 
-    def update_document_lifecycle(self, doc_id: str, lifecycle: str) -> bool:
+    def update_document_lifecycle(self, doc_id: str, lifecycle: str, actor: str) -> bool:
         """Set the lifecycle state for a document.
 
         When marking 'canonical', all other docs in the same Work/kind group are
         moved to 'draft' unless they are already 'superseded' or 'deleted'.
+
+        ``actor`` is REQUIRED and records WHO made the designation
+        (documents.lifecycle_by): 'author' for a human acting through the UI,
+        'system' for automated machinery.  There is deliberately no default —
+        an omitted actor must never be silently recorded as author-signed.
+        Canonical designation of a manuscript is an authored act — a
+        non-author actor is refused, never silently accepted.
         """
         if lifecycle not in self._DOC_LIFECYCLES:
             raise ValueError(
@@ -2471,18 +2491,24 @@ class OrivellumDB:
         # Read the work/kind before the write transaction (read-only, no lock held).
         with self._lock:
             _meta_row = self._conn.execute(
-                "SELECT work_id, kind FROM documents WHERE id=?", (doc_id,)
+                "SELECT work_id, kind, doc_type FROM documents WHERE id=?", (doc_id,)
             ).fetchone()
         _work_id = _meta_row["work_id"] if _meta_row else None
         _kind = _meta_row["kind"] if _meta_row else None
+        _doc_type = _meta_row["doc_type"] if _meta_row else None
+        if lifecycle == "canonical" and _doc_type == "manuscript" and actor != "author":
+            raise ValueError(
+                "Canonical designation of a manuscript requires the author's signature — "
+                f"refused for actor {actor!r}."
+            )
         _changed = False
         with self.governed_write(
             operation="document.lifecycle_updated",
             event_type="document.lifecycle_updated",
             object_id=doc_id,
             object_type="document",
-            payload={"lifecycle": lifecycle, "work_id": _work_id},
-            actor="user",
+            payload={"lifecycle": lifecycle, "work_id": _work_id, "actor": actor},
+            actor=actor,
             detail=lifecycle,
         ):
             cur = self._conn.execute(
@@ -2490,6 +2516,10 @@ class OrivellumDB:
                 (lifecycle, now, doc_id),
             )
             _changed = cur.rowcount > 0
+            if _changed:
+                self._conn.execute(
+                    "UPDATE documents SET lifecycle_by=? WHERE id=?", (actor, doc_id)
+                )
             if lifecycle == "canonical" and _changed and _work_id and _kind:
                 # Demote all other same-work docs of same kind to 'draft'
                 self._conn.execute(
@@ -4374,23 +4404,47 @@ class OrivellumDB:
     # Book pipelines
     # -------------------------------------------------------------------------
 
-    def create_book_pipeline(self, work_id: str, title: str, config: dict | None = None) -> dict:
+    def create_book_pipeline(
+        self,
+        work_id: str,
+        title: str,
+        config: dict | None = None,
+        require_ready: bool = False,
+    ) -> dict:
         """Create a book pipeline for a Work at state B0.
 
         Idempotent: if a non-deleted pipeline already exists for the Work,
         the existing record is returned unchanged.  Orphan book_chapters
         rows (pipeline_id IS NULL, work_id matches) are linked to the new
         pipeline so they appear in the chapter count immediately.
+
+        With ``require_ready=True`` the promotion-eligibility predicates are
+        re-evaluated and the insert refused (:class:`PromotionRefused`) when
+        any is unmet.  The existing-pipeline check, the eligibility check,
+        and the insert all run under the single writer lock, so concurrent
+        eligible calls cannot race into duplicate pipelines and eligibility
+        cannot silently regress between check and creation.
         """
         import json as _json
 
-        existing = self.get_book_pipeline_for_work(work_id)
-        if existing:
-            return existing
+        with self._lock:
+            existing = self.get_book_pipeline_for_work(work_id)
+            if existing:
+                return existing
 
+            if require_ready:
+                from orivellum.capabilities.readiness import promotion_eligibility
+
+                eligibility = promotion_eligibility(self, work_id)
+                if not eligibility["eligible"]:
+                    raise PromotionRefused(eligibility)
+
+            return self._insert_book_pipeline(work_id, title, _json.dumps(config or {}))
+
+    def _insert_book_pipeline(self, work_id: str, title: str, cfg: str) -> dict:
+        """Insert the pipeline rows. Caller holds ``self._lock``."""
         oid = _uuid()
         now = _now()
-        cfg = _json.dumps(config or {})
 
         with self.governed_write(
             operation="book_pipeline.created",

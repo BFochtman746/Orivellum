@@ -497,7 +497,7 @@ export const GetWorkGraphResponse = zod.object({
 
 
 /**
- * @summary Multi-dimensional completeness scoring for a Work
+ * @summary Honest completeness report for a Work (predicates + counts, no assumed denominators)
  */
 export const GetWorkCompletenessParams = zod.object({
   "workId": zod.coerce.string()
@@ -506,21 +506,97 @@ export const GetWorkCompletenessParams = zod.object({
 export const GetWorkCompletenessResponse = zod.object({
   "work_id": zod.string().optional(),
   "work_title": zod.string().optional(),
-  "overall": zod.int().optional().describe('Weighted overall score 0-100'),
-  "readiness": zod.string().optional().describe('Draft | Developing | Substantial | Near-Complete | Ready'),
-  "summary": zod.string().optional(),
   "evaluated_at": zod.string().optional(),
-  "dimensions": zod.array(zod.object({
-  "name": zod.string().optional().describe('structural | content | research | editorial | source'),
+  "predicates": zod.array(zod.object({
+  "name": zod.string().optional().describe('manuscript_document | chapter_structure_ratified | canonical_by_author'),
   "label": zod.string().optional(),
-  "score": zod.int().optional().describe('0-100'),
-  "current": zod.number().optional(),
-  "target": zod.number().optional(),
-  "unit": zod.string().optional(),
-  "rule": zod.string().optional(),
-  "evidence": zod.array(zod.string()).optional()
-})).optional()
+  "value": zod.boolean().optional(),
+  "detail": zod.string().optional()
+})).optional(),
+  "counts": zod.array(zod.object({
+  "name": zod.string().optional().describe('open_critical_findings | knowledge_reviewed'),
+  "label": zod.string().optional(),
+  "detail": zod.string().optional(),
+  "value": zod.int().nullish(),
+  "current": zod.int().nullish(),
+  "total": zod.int().nullish()
+})).optional(),
+  "progress": zod.object({
+  "words": zod.int().optional(),
+  "word_target": zod.int().nullish(),
+  "chapters": zod.int().optional(),
+  "chapter_target": zod.int().nullish(),
+  "documents": zod.int().optional(),
+  "note": zod.string().nullish()
+}).optional().describe('Raw observed numbers. Targets are present ONLY when the author set them (works.meta.completeness_targets) — never assumed defaults.'),
+  "coverage": zod.object({
+  "method": zod.string().optional().describe('chao1_good_turing'),
+  "framing": zod.string().optional().describe('upper_bound'),
+  "scope_note": zod.string().optional(),
+  "overall": zod.object({
+  "n": zod.int().optional().describe('total mentions'),
+  "s_obs": zod.int().optional().describe('distinct items observed'),
+  "f1": zod.int().optional().describe('singletons'),
+  "f2": zod.int().optional().describe('doubletons'),
+  "s_est": zod.number().nullish().describe('Chao1 estimated richness (lower bound)'),
+  "s_est_low": zod.number().nullish(),
+  "s_est_high": zod.number().nullish(),
+  "unseen_est": zod.number().nullish().describe('estimated items NOT yet seen'),
+  "unseen_low": zod.number().nullish(),
+  "unseen_high": zod.number().nullish(),
+  "good_turing": zod.number().nullish().describe('sample coverage C = 1 − f1\/n'),
+  "completeness": zod.number().nullish().describe('S_obs\/Ŝ — UPPER bound on coverage'),
+  "completeness_low": zod.number().nullish(),
+  "completeness_high": zod.number().nullish(),
+  "bias_corrected": zod.boolean().optional().describe('true when the f2 = 0 Chao1 form was used'),
+  "band": zod.enum(['under_sampled', 'moderate', 'well_sampled', 'no_data']).optional(),
+  "summary": zod.string().optional().describe('human framing — always \'at most\' + unseen count')
+}).optional().describe('Unseen-species estimate over mention frequencies. completeness is an upper bound on true coverage (Chao1 is a lower bound on richness); surfaces must use \"at most\" framing and show unseen_est, never a bare percentage.'),
+  "classes": zod.array(zod.object({
+  "n": zod.int().optional().describe('total mentions'),
+  "s_obs": zod.int().optional().describe('distinct items observed'),
+  "f1": zod.int().optional().describe('singletons'),
+  "f2": zod.int().optional().describe('doubletons'),
+  "s_est": zod.number().nullish().describe('Chao1 estimated richness (lower bound)'),
+  "s_est_low": zod.number().nullish(),
+  "s_est_high": zod.number().nullish(),
+  "unseen_est": zod.number().nullish().describe('estimated items NOT yet seen'),
+  "unseen_low": zod.number().nullish(),
+  "unseen_high": zod.number().nullish(),
+  "good_turing": zod.number().nullish().describe('sample coverage C = 1 − f1\/n'),
+  "completeness": zod.number().nullish().describe('S_obs\/Ŝ — UPPER bound on coverage'),
+  "completeness_low": zod.number().nullish(),
+  "completeness_high": zod.number().nullish(),
+  "bias_corrected": zod.boolean().optional().describe('true when the f2 = 0 Chao1 form was used'),
+  "band": zod.enum(['under_sampled', 'moderate', 'well_sampled', 'no_data']).optional(),
+  "summary": zod.string().optional().describe('human framing — always \'at most\' + unseen count')
+}).describe('Unseen-species estimate over mention frequencies. completeness is an upper bound on true coverage (Chao1 is a lower bound on richness); surfaces must use \"at most\" framing and show unseen_est, never a bare percentage.').and(zod.object({
+  "class": zod.string().optional()
+}))).optional(),
+  "under_sampled_classes": zod.array(zod.string()).optional(),
+  "well_sampled_classes": zod.array(zod.string()).optional(),
+  "evaluated_at": zod.string().optional()
+}).nullish()
+}).describe('Honest readiness report — predicates (true\/false facts), observed counts, raw progress, and a Chao1\/Good–Turing coverage upper bound. No overall score, no readiness label, no assumed denominators.')
+
+
+/**
+ * @summary Report whether a Work may be promoted to Book, with per-rule reasons
+ */
+export const GetPromotionEligibilityParams = zod.object({
+  "workId": zod.coerce.string()
 })
+
+export const GetPromotionEligibilityResponse = zod.object({
+  "eligible": zod.boolean().optional(),
+  "checks": zod.array(zod.object({
+  "rule": zod.string().optional().describe('manuscript_document | chapter_structure_ratified | canonical_by_author'),
+  "label": zod.string().optional(),
+  "ok": zod.boolean().optional(),
+  "reason": zod.string().nullish()
+})).optional(),
+  "reasons": zod.array(zod.string()).optional()
+}).describe('Whether a Work may be promoted to Book. Never a bare boolean — every failed check carries the specific unmet requirement.')
 
 
 /**

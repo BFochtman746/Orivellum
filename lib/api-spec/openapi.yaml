@@ -397,7 +397,7 @@ paths:
   /works/{workId}/completeness:
     get:
       operationId: getWorkCompleteness
-      summary: Multi-dimensional completeness scoring for a Work
+      summary: Honest completeness report for a Work (predicates + counts, no assumed denominators)
       tags: [works]
       parameters:
         - name: workId
@@ -410,6 +410,25 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CompletenessReport" }
+        "404":
+          description: Work not found
+
+  /works/{workId}/promotion-eligibility:
+    get:
+      operationId: getPromotionEligibility
+      summary: Report whether a Work may be promoted to Book, with per-rule reasons
+      tags: [works]
+      parameters:
+        - name: workId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Eligibility report with per-rule checks and refusal reasons
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromotionEligibility" }
         "404":
           description: Work not found
 
@@ -4333,30 +4352,79 @@ components:
         node_count: { type: integer }
         edge_count: { type: integer }
 
-    CompletenessDimension:
+    CompletenessPredicate:
       type: object
       properties:
-        name: { type: string, description: "structural | content | research | editorial | source" }
+        name: { type: string, description: "manuscript_document | chapter_structure_ratified | canonical_by_author" }
         label: { type: string }
-        score: { type: integer, description: "0-100" }
-        current: { type: number }
-        target: { type: number }
-        unit: { type: string }
-        rule: { type: string }
-        evidence: { type: array, items: { type: string } }
+        value: { type: boolean }
+        detail: { type: string }
+
+    CompletenessCount:
+      type: object
+      properties:
+        name: { type: string, description: "open_critical_findings | knowledge_reviewed" }
+        label: { type: string }
+        detail: { type: string }
+        value: { type: integer, nullable: true }
+        current: { type: integer, nullable: true }
+        total: { type: integer, nullable: true }
+
+    CompletenessProgress:
+      type: object
+      description: >-
+        Raw observed numbers. Targets are present ONLY when the author set
+        them (works.meta.completeness_targets) — never assumed defaults.
+      properties:
+        words: { type: integer }
+        word_target: { type: integer, nullable: true }
+        chapters: { type: integer }
+        chapter_target: { type: integer, nullable: true }
+        documents: { type: integer }
+        note: { type: string, nullable: true }
 
     CompletenessReport:
       type: object
+      description: >-
+        Honest readiness report — predicates (true/false facts), observed
+        counts, raw progress, and a Chao1/Good–Turing coverage upper bound.
+        No overall score, no readiness label, no assumed denominators.
       properties:
         work_id: { type: string }
         work_title: { type: string }
-        overall: { type: integer, description: "Weighted overall score 0-100" }
-        readiness: { type: string, description: "Draft | Developing | Substantial | Near-Complete | Ready" }
-        summary: { type: string }
         evaluated_at: { type: string }
-        dimensions:
+        predicates:
           type: array
-          items: { $ref: "#/components/schemas/CompletenessDimension" }
+          items: { $ref: "#/components/schemas/CompletenessPredicate" }
+        counts:
+          type: array
+          items: { $ref: "#/components/schemas/CompletenessCount" }
+        progress: { $ref: "#/components/schemas/CompletenessProgress" }
+        coverage:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/CoverageReport" }]
+
+    PromotionCheck:
+      type: object
+      properties:
+        rule: { type: string, description: "manuscript_document | chapter_structure_ratified | canonical_by_author" }
+        label: { type: string }
+        ok: { type: boolean }
+        reason: { type: string, nullable: true }
+
+    PromotionEligibility:
+      type: object
+      description: >-
+        Whether a Work may be promoted to Book. Never a bare boolean — every
+        failed check carries the specific unmet requirement.
+      properties:
+        eligible: { type: boolean }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/PromotionCheck" }
+        reasons:
+          type: array
+          items: { type: string }
 
     GapItem:
       type: object

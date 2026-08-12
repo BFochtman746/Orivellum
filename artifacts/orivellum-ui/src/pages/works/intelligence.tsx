@@ -35,14 +35,25 @@ const WORKS_BASE = `${import.meta.env.BASE_URL}works`.replace(/\/+/g, "/").repla
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface ComplDimension {
-  name: string; label: string; score: number;
-  current: number | string; target: number | string; unit: string; rule: string;
-  evidence?: string[];
+// Honest completeness — predicates (true/false facts), observed counts, raw
+// progress numbers (targets only when author-set). No overall score, no
+// assumed denominators.
+interface ComplPredicate {
+  name: string; label: string; value: boolean; detail: string;
+}
+interface ComplCount {
+  name: string; label: string; detail: string;
+  value?: number; current?: number; total?: number;
+}
+interface ComplProgress {
+  words: number; word_target: number | null;
+  chapters: number; chapter_target: number | null;
+  documents: number; note: string | null;
 }
 interface ComplReport {
-  overall: number; readiness: string; summary: string; evaluated_at?: string;
-  dimensions: ComplDimension[];
+  work_id: string; work_title: string; evaluated_at?: string;
+  predicates: ComplPredicate[]; counts: ComplCount[]; progress: ComplProgress;
+  coverage?: { overall?: CoverageOverall } | null;
 }
 interface GapItem {
   kind: string; title: string; description: string; severity: string;
@@ -97,14 +108,6 @@ function scoreColor(score: number): string {
   return "var(--rust)";
 }
 
-// Five distinct completeness-dimension bar colours mapped onto the VELLUM palette.
-const DIM_BAR: Record<string, string> = {
-  structural: "var(--gilt)",
-  content:    "color-mix(in srgb, var(--gilt) 55%, var(--rust))",
-  research:   "var(--green-2)",
-  editorial:  "var(--green-raw)",
-  source:     "var(--rust)",
-};
 const GAP_ROW: Record<string, React.CSSProperties> = {
   high:   { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
   medium: { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
@@ -234,9 +237,12 @@ export default function WorkIntelligence() {
   const lowGaps   = gaps?.gaps.filter(g => g.severity === "low")     ?? [];
   const totalGaps = gaps?.gaps.length ?? 0;
 
-  // Research dimension
-  const researchDim = compl?.dimensions.find(d => d.name === "research");
-  const researchLow = researchDim != null && researchDim.score < 40;
+  // Readiness predicates
+  const predicatesTotal = compl?.predicates?.length ?? 0;
+  const predicatesMet = compl?.predicates?.filter(p => p.value).length ?? 0;
+  const reviewedCount = compl?.counts?.find(c => c.name === "knowledge_reviewed");
+  // Nudge toward importing sources while knowledge is thin.
+  const researchLow = compl != null && (reviewedCount?.total ?? 0) < 5;
 
   // Pipeline state
   const pipeline = pipelineResp?.pipeline ?? null;
@@ -290,11 +296,19 @@ export default function WorkIntelligence() {
       {/* ── Completeness + gaps metrics ───────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MetricCard
-          label="Overall"
-          value={compl ? `${compl.overall}%` : "—"}
-          sub={compl?.readiness ?? "loading…"}
+          label="Readiness"
+          value={compl ? `${predicatesMet}/${predicatesTotal}` : "—"}
+          sub={compl ? "checks passed" : "loading…"}
           loading={complLoading}
-          color={compl ? scoreColor(compl.overall) : "text-muted-foreground"}
+          color={
+            compl
+              ? predicatesMet === predicatesTotal
+                ? "var(--green-2)"
+                : predicatesMet > 0
+                  ? "var(--gilt)"
+                  : "var(--rust)"
+              : "text-muted-foreground"
+          }
         />
         <MetricCard
           label="Coverage"
@@ -399,7 +413,10 @@ export default function WorkIntelligence() {
         <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg border" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
           <div className="flex items-center gap-2 text-sm" style={{ color: "var(--gilt)" }}>
             <TrendingUp className="w-4 h-4 shrink-0" />
-            <span>Research coverage is low ({researchDim!.score}%). Import more primary sources to strengthen this Work.</span>
+            <span>
+              Only {reviewedCount?.total ?? 0} knowledge item{(reviewedCount?.total ?? 0) === 1 ? "" : "s"} extracted so far.
+              Import more primary sources to strengthen this Work.
+            </span>
           </div>
           <Button size="sm" variant="outline"
             className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
@@ -414,59 +431,67 @@ export default function WorkIntelligence() {
       {/* ── Completeness ─────────────────────────────────────────────────────── */}
       <Section id="completeness" label="Completeness" icon={BarChart2}
         open={open.has("completeness")} onToggle={() => toggle("completeness")}
-        badge={compl ? `${compl.overall}%` : undefined}>
+        badge={compl ? `${predicatesMet}/${predicatesTotal}` : undefined}>
         {complLoading ? (
           <div className="space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-10 w-full" />)}</div>
         ) : compl ? (
           <div className="space-y-4">
-            {compl.summary && (
-              <p className="text-sm text-muted-foreground border-l-2 border-primary/30 pl-3 italic leading-relaxed">
-                {compl.summary}
-              </p>
-            )}
-            {compl.dimensions.map((d) => (
-              <div key={d.name} className="space-y-1.5">
-                <div className="flex items-center justify-between text-sm">
-                  <div>
-                    <span className="font-medium">{d.label}</span>
-                    <span className="ml-2 text-[11px] font-mono text-muted-foreground">
-                      {Number(d.current).toLocaleString()} / {Number(d.target).toLocaleString()} {d.unit}
+            {/* Predicates — true/false facts, never percentages */}
+            <div className="space-y-2">
+              {compl.predicates.map((p) => (
+                <div key={p.name} className="flex items-start gap-2.5 text-sm">
+                  {p.value ? (
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green-2)" }} />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--rust)" }} />
+                  )}
+                  <div className="min-w-0">
+                    <span className="font-medium">{p.label}</span>
+                    <span className="ml-2 text-[11px] font-mono" style={{ color: p.value ? "var(--green-2)" : "var(--rust)" }}>
+                      {p.value ? "yes" : "no"}
                     </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-semibold text-sm" style={{ color: scoreColor(d.score) }}>{d.score}%</span>
-                    {/* Import CTA on the research bar */}
-                    {d.name === "research" && d.score < 40 && (
-                      <button
-                        className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80"
-                        style={{ color: "var(--gilt)" }}
-                        onClick={() => navigate(`${LIB}?import=1`)}
-                      >
-                        <UploadCloud className="w-3 h-3" />
-                        Import more sources
-                      </button>
-                    )}
+                    <p className="text-[10px] font-mono text-muted-foreground/70">{p.detail}</p>
                   </div>
                 </div>
-                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${d.score}%`, background: DIM_BAR[d.name] ?? "var(--primary)" }}
-                  />
+              ))}
+            </div>
+            {/* Observed counts */}
+            <div className="space-y-1.5 pt-1 border-t border-border/40">
+              {compl.counts.map((c) => (
+                <div key={c.name} className="flex items-center justify-between text-sm gap-3">
+                  <span className="font-medium">{c.label}</span>
+                  <span className="font-mono text-[12px] text-muted-foreground">
+                    {c.total != null ? `${c.current ?? 0} of ${c.total}` : String(c.value ?? 0)}
+                  </span>
                 </div>
-                <p className="text-[10px] font-mono text-muted-foreground/70">{d.rule}</p>
-                {d.evidence && d.evidence.length > 0 && (
-                  <ul className="space-y-0.5 mt-0.5">
-                    {d.evidence.map((ev, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-[10px] font-mono text-muted-foreground/60">
-                        <span className="shrink-0">·</span>
-                        <span>{ev}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))}
+              ))}
+              {/* Import CTA while knowledge is thin */}
+              {researchLow && (
+                <button
+                  className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80"
+                  style={{ color: "var(--gilt)" }}
+                  onClick={() => navigate(`${LIB}?import=1`)}
+                >
+                  <UploadCloud className="w-3 h-3" />
+                  Import more sources
+                </button>
+              )}
+            </div>
+            {/* Raw progress — targets only when the author set them */}
+            <div className="space-y-1 pt-1 border-t border-border/40 text-[12px] font-mono text-muted-foreground">
+              <p>
+                {compl.progress.words.toLocaleString()} words
+                {compl.progress.word_target != null && ` of ${compl.progress.word_target.toLocaleString()} target`}
+                {" · "}
+                {compl.progress.chapters} chapter{compl.progress.chapters === 1 ? "" : "s"}
+                {compl.progress.chapter_target != null && ` of ${compl.progress.chapter_target} target`}
+                {" · "}
+                {compl.progress.documents} document{compl.progress.documents === 1 ? "" : "s"}
+              </p>
+              {compl.progress.note && (
+                <p className="text-[10px] text-muted-foreground/60">{compl.progress.note}</p>
+              )}
+            </div>
             {compl.evaluated_at && (
               <p className="text-[10px] font-mono text-muted-foreground/40 text-right pt-1">
                 evaluated {new Date(compl.evaluated_at).toLocaleString()}
