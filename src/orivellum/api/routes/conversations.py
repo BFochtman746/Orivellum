@@ -2794,9 +2794,13 @@ async def _stream_response(
                 existing = tool_meta.get("sources", [])
                 tool_meta = {**tool_meta, "sources": [*existing, *sources]}
             # Persist before streaming (disconnect-safe)
-            db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
+            _intent_msg = db.add_message(conv_id, "assistant", tool_text, meta=tool_meta)
             _maybe_auto_title(db, conv, user_text)
             _stream_purpose = "chat.intent"
+            # Announce the persisted message id FIRST: the journal pump records
+            # it on the gen job so the idempotency claim settles as COMPLETED
+            # (without it, retries of the same client_msg_id would regenerate).
+            yield f"data: {json.dumps({'message_id': _intent_msg['id'], 'state': 'done'})}\n\n"
             # Background: embed + infer memory (intent path)
             from orivellum.api.executor import submit_bg as _submit_bg_intent
 
@@ -2842,9 +2846,15 @@ async def _stream_response(
                 clarify_meta: dict = {"model": model, "isClarification": True}
                 if sources:
                     clarify_meta["sources"] = sources
-                db.add_message(conv_id, "assistant", question, meta=clarify_meta)
+                _clarify_msg = db.add_message(conv_id, "assistant", question, meta=clarify_meta)
                 _maybe_auto_title(db, conv, user_text)
                 _stream_purpose = "chat.clarify"
+                # Journal the persisted id so idempotency settles as completed.
+                yield (
+                    "data: "
+                    + json.dumps({"message_id": _clarify_msg["id"], "state": "done"})
+                    + "\n\n"
+                )
                 # Background: embed + infer memory (clarify path)
                 from orivellum.api.executor import submit_bg as _submit_bg_clarify
 
@@ -2877,9 +2887,17 @@ async def _stream_response(
                     council_meta: dict = {"model": model, "council": True}
                     if sources:
                         council_meta["sources"] = sources
-                    db.add_message(conv_id, "assistant", council_reply, meta=council_meta)
+                    _council_msg = db.add_message(
+                        conv_id, "assistant", council_reply, meta=council_meta
+                    )
                     _maybe_auto_title(db, conv, user_text)
                     _stream_purpose = "chat.council"
+                    # Journal the persisted id so idempotency settles as completed.
+                    yield (
+                        "data: "
+                        + json.dumps({"message_id": _council_msg["id"], "state": "done"})
+                        + "\n\n"
+                    )
                     # Background: embed + infer memory (council path)
                     from orivellum.api.executor import submit_bg as _submit_bg_council
 

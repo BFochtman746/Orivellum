@@ -350,6 +350,88 @@ class TestPump:
         assert "failed" in kinds
 
 
+class TestStreamIdempotencyAllPaths:
+    """Every streamed terminal branch that persists an assistant reply must
+    settle the idempotency claim as COMPLETED — a retry with the same
+    client_msg_id returns the stored reply and never generates another."""
+
+    @staticmethod
+    def _assistant_count(db, conv_id: str) -> int:
+        with db._lock:
+            return db._conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant'",
+                (conv_id,),
+            ).fetchone()[0]
+
+    @staticmethod
+    def _slot(db, conv_id: str, cmid: str):
+        with db._lock:
+            return db._conn.execute(
+                """SELECT state, assistant_msg_id FROM message_idempotency
+                    WHERE conversation_id=? AND client_msg_id=?""",
+                (conv_id, cmid),
+            ).fetchone()
+
+    @pytest.mark.parametrize("path", ["intent", "clarify", "council"])
+    def test_streamed_terminal_branches_settle_completed(self, db, client, monkeypatch, path):
+        import time
+
+        conv = db.create_conversation(title="c")
+        cmid = f"cm-{path}"
+        payload: dict = {"text": "hello there", "stream": True, "client_msg_id": cmid}
+
+        if path == "intent":
+
+            async def fake_intent(*a, **k):
+                return ("tool reply", {"intent": "websearch", "model": "m"})
+
+            monkeypatch.setattr(
+                "orivellum.api.routes.conversations._maybe_dispatch_intent", fake_intent
+            )
+        else:
+
+            async def no_intent(*a, **k):
+                return None
+
+            monkeypatch.setattr(
+                "orivellum.api.routes.conversations._maybe_dispatch_intent", no_intent
+            )
+            payload["deep"] = True
+            import orivellum.capabilities.cognition as cog
+
+            if path == "clarify":
+                monkeypatch.setattr(cog, "classify", lambda *a, **k: "clarify")
+                monkeypatch.setattr(
+                    cog, "get_clarifying_question", lambda *a, **k: "what do you mean?"
+                )
+            else:
+                monkeypatch.setattr(cog, "classify", lambda *a, **k: "complex")
+                monkeypatch.setattr(cog, "deliberate", lambda *a, **k: "council reply")
+
+        r = client.post(f"/api/conversations/{conv['id']}/messages", json=payload)
+        assert r.status_code == 200
+        assert "message_id" in r.text, f"{path} branch emitted no message_id frame"
+        assert "[DONE]" in r.text
+
+        # The pump settles the claim in its finally block; poll briefly.
+        slot = None
+        for _ in range(150):
+            slot = self._slot(db, conv["id"], cmid)
+            if slot and slot[0] == "completed":
+                break
+            time.sleep(0.02)
+        assert slot is not None, f"{path}: idempotency slot missing"
+        assert slot[0] == "completed", f"{path}: slot left '{slot[0]}' — retries would duplicate"
+        assert slot[1], f"{path}: completed slot has no assistant message id"
+        assert self._assistant_count(db, conv["id"]) == 1
+
+        # Retry with the same client_msg_id: stored reply, NO new generation.
+        r2 = client.post(f"/api/conversations/{conv['id']}/messages", json=payload)
+        assert r2.status_code == 200
+        assert r2.json()["message"]["id"] == slot[1]
+        assert self._assistant_count(db, conv["id"]) == 1
+
+
 # ─── 3. HTTP endpoints ───────────────────────────────────────────────────────
 
 
