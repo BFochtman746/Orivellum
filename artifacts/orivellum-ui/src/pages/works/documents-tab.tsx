@@ -166,6 +166,19 @@ export function DocumentsTab({ workId }: { workId: string }) {
     (p: any) => !dismissedDupes.has(p.id)
   );
 
+  // Contributing collections (provenance for Works ratified from a proposal)
+  const { data: provResp } = useQuery({
+    queryKey: ["work-collections", workId],
+    queryFn: async () => {
+      const r = await apiFetch(`${DOC_BASE}/works/${workId}/collections`);
+      if (!r.ok) return { collections: [] };
+      return r.json() as Promise<{ collections: any[] }>;
+    },
+    enabled: !!workId,
+    staleTime: 60_000,
+  });
+  const provCollections = provResp?.collections ?? [];
+
   const handleDeclareCanonicaL = async (dupeId: string, canonicalDocId: string) => {
     setResolvingDupe(dupeId);
     try {
@@ -405,6 +418,27 @@ export function DocumentsTab({ workId }: { workId: string }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {provCollections.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--gilt)" }}>
+            <GitBranch className="w-4 h-4" />
+            <span>Contributed by</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {provCollections.map((c: any) => (
+              <span
+                key={c.collection_id}
+                className="text-[11px] font-mono rounded px-2 py-1 border"
+                style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+                title={c.source_kind ? `source: ${c.source_kind}` : undefined}
+              >
+                {c.label || "collection"} · {c.doc_count} doc{c.doc_count !== 1 ? "s" : ""}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 

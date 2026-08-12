@@ -120,3 +120,4 @@
 - [Collections & work-deletion cascades](orivellum-collections.md) — collection = provenance, never a subject; deleting works ghosts object-backed children (delete via objects rows); verified pre-migration backups.
 - [Doc-type classification](orivellum-doc-type.md) — doc_type/doc_type_by provenance; harvest refusal gates; proposal-only backfill; per-field reclassify provenance; \b rules need separator-normalized names.
 - [Security test floor](orivellum-security-floor.md) — floor + zero-caller CI rules with shrink-only dated allowlists; bare _set_setting never commits — use set_setting_unaudited for secret settings.
+- [Work proposals & ratification](orivellum-work-proposals.md) — Works only via signed ratification; claim+side effects in one db.atomic(); snapshot row post-claim; conditional-UPDATE re-points; bump chunk cache post-commit.

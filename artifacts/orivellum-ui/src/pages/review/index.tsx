@@ -34,7 +34,7 @@ const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/
 
 interface ReviewItem {
   id: string;
-  item_type: "knowledge" | "reclassify" | "suggestion" | "duplicate" | "quarantine" | "noteblock" | "canon_fact";
+  item_type: "knowledge" | "reclassify" | "suggestion" | "duplicate" | "quarantine" | "noteblock" | "canon_fact" | "work_proposal";
   title: string;
   description: string;
   confidence: number | null;
@@ -99,7 +99,15 @@ const TYPE_META: Record<ReviewItem["item_type"], {
     badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
     borderStyle: { borderLeftColor: 'var(--gilt)' },
   },
+  work_proposal: {
+    label: "Proposed Work", icon: Sparkles,
+    badgeCls: "border",
+    badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gilt)' },
+  },
 };
+
+const DOMAINS = ["narrative", "technical", "governance", "reference"] as const;
 
 const CLASSIFICATIONS = ["HISTORICAL", "INFERRED", "INVENTED"] as const;
 
@@ -217,6 +225,37 @@ function EvidenceLine({ item }: { item: ReviewItem }) {
         <span key="kinds" className="font-mono text-[11px]">{kinds.join(" · ")}</span>,
       );
     }
+  } else if (item.item_type === "work_proposal") {
+    parts.push(
+      <span key="size" className="font-mono text-[11px]">
+        {String(ev.size ?? "?")} docs · {String(ev.dominant_doc_type ?? "mixed")}
+      </span>,
+    );
+    const spread = ev.collection_spread as Record<string, number> | undefined;
+    if (spread) {
+      parts.push(
+        <span key="spread" className="font-mono text-[11px]">
+          {Object.keys(spread).length} collection(s)
+        </span>,
+      );
+    }
+    if (ev.cohesion != null) {
+      parts.push(
+        <span key="coh" className="font-mono text-[11px]">cohesion {String(ev.cohesion)}</span>,
+      );
+    }
+    if (ev.name_source) {
+      parts.push(
+        <span key="ns" className="font-mono text-[11px]">named: {String(ev.name_source)}</span>,
+      );
+    }
+    if (Array.isArray(ev.exemplar_titles) && ev.exemplar_titles.length > 0) {
+      parts.push(
+        <span key="ex" className="font-mono text-[11px] truncate max-w-[280px]">
+          e.g. {(ev.exemplar_titles as string[]).join(", ")}
+        </span>,
+      );
+    }
   }
 
   if (item.work_title && item.work_id) {
@@ -247,6 +286,8 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
   const [pending, setPending] = useState<"approve" | "reject" | "defer" | "reclassify" | null>(null);
   const isDupe = item.item_type === "duplicate";
   const isCanon = item.item_type === "canon_fact";
+  const isWorkProposal = item.item_type === "work_proposal";
+  const [domain, setDomain] = useState<string>("");
   const [canonical, setCanonical] = useState<string | null>(
     isDupe ? String(item.evidence?.doc_a_id ?? "") || null : null,
   );
@@ -262,6 +303,14 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
   const resolve = async (decision: "approve" | "reject" | "defer" | "reclassify") => {
     if (isCanon && decision !== "defer" && !author.trim()) {
       toast.error("Canon decisions need your signature — enter your name first");
+      return;
+    }
+    if (isWorkProposal && decision !== "defer" && !author.trim()) {
+      toast.error("Ratifying a Work needs your signature — enter your name first");
+      return;
+    }
+    if (isWorkProposal && decision === "approve" && !domain) {
+      toast.error("Pick a domain before creating the Work");
       return;
     }
     setPending(decision);
@@ -281,6 +330,12 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
                 ...(decision === "reclassify" ? { classification: reclass } : {}),
               }
             : {}),
+          ...(isWorkProposal
+            ? {
+                author: author.trim(),
+                ...(decision === "approve" ? { domain } : {}),
+              }
+            : {}),
         }),
       });
       if (!r.ok) {
@@ -290,7 +345,8 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
       toast.success(
         decision === "reject" ? "Rejected" :
         decision === "defer" ? "Deferred for 7 days" :
-        isCanon ? "Ratified into canon" : "Approved",
+        isCanon ? "Ratified into canon" :
+        isWorkProposal ? "Work created" : "Approved",
       );
       onResolved();
     } catch (e) {
@@ -350,6 +406,32 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
         </div>
       )}
 
+      {isWorkProposal && (
+        <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
+          <input
+            value={author}
+            onChange={(e) => setAuthor(e.target.value)}
+            placeholder="Sign as (author)"
+            className="h-8 px-2 rounded-md border bg-background text-xs w-40"
+            style={{ borderColor: 'var(--line-2)' }}
+            data-testid={`work-proposal-author-${item.id}`}
+          />
+          <span className="text-muted-foreground">Domain:</span>
+          <select
+            value={domain}
+            onChange={(e) => setDomain(e.target.value)}
+            className="h-8 px-2 rounded-md border bg-background text-xs"
+            style={{ borderColor: 'var(--line-2)' }}
+            data-testid={`work-proposal-domain-${item.id}`}
+          >
+            <option value="">Pick a domain…</option>
+            {DOMAINS.map(d => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {isCanon && (
         <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
           <input
@@ -391,7 +473,7 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
                 style={{ color: 'var(--green-2)', borderColor: 'var(--line-2)' }}
                 data-testid={`approve-${item.id}`}>
           {pending === "approve" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />}
-          {isCanon ? "Ratify" : "Approve"}
+          {isCanon || isWorkProposal ? "Ratify" : "Approve"}
         </Button>
         <Button size="sm" variant="outline" disabled={pending != null}
                 onClick={() => resolve("reject")}
@@ -422,6 +504,7 @@ const FILTERS: { key: TypeFilter; label: string }[] = [
   { key: "suggestion", label: "Suggestions" },
   { key: "duplicate",  label: "Duplicates" },
   { key: "reclassify", label: "Reclassify" },
+  { key: "work_proposal", label: "Proposed Works" },
 ];
 
 export default function ReviewPage() {

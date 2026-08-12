@@ -41,6 +41,7 @@ _VALID_TYPES = {
     "position",
     "loom_persona",
     "domain_node",
+    "work_proposal",
 }
 
 
@@ -62,6 +63,63 @@ def _jload(s, default=None):
         return json.loads(s) if s else (default if default is not None else {})
     except Exception:
         return default if default is not None else {}
+
+
+def _work_proposal_items(db, deferred: set[str]) -> list[dict]:
+    """Build review-queue entries for content-derived Work proposals."""
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT id, suggested_name, name_source, size, dominant_doc_type,
+                      collection_spread, cluster_stats, exemplar_doc_ids, created_at
+               FROM work_proposals
+               WHERE status='proposed'
+               ORDER BY size DESC, created_at ASC LIMIT 300""",
+        ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        key = f"work_proposal:{r['id']}"
+        if key in deferred:
+            continue
+        spread = _jload(r["collection_spread"], {})
+        stats = _jload(r["cluster_stats"], {})
+        exemplar_ids = _jload(r["exemplar_doc_ids"], [])
+        exemplar_titles: list[str] = []
+        if exemplar_ids:
+            ph = ",".join(["?"] * len(exemplar_ids))
+            with db._lock:
+                trows = db._conn.execute(
+                    f"SELECT id, title FROM documents WHERE id IN ({ph})", exemplar_ids
+                ).fetchall()
+            title_by_id = {t["id"]: t["title"] for t in trows}
+            exemplar_titles = [title_by_id.get(e, e) for e in exemplar_ids]
+        cohesion = stats.get("cohesion")
+        out.append(
+            {
+                "id": key,
+                "item_type": "work_proposal",
+                "title": f"Proposed Work: {r['suggested_name']}",
+                "description": (
+                    f"{r['size']} documents cluster around one subject across "
+                    f"{len(spread)} collection(s). Ratifying creates the Work, "
+                    "assigns these documents to it, and records which "
+                    "collections contributed. Nothing happens until you sign."
+                ),
+                # Higher cohesion = less uncertain (sorted later in the queue).
+                "confidence": round(float(cohesion), 3) if cohesion is not None else 0.5,
+                "work_id": None,
+                "work_title": None,
+                "evidence": {
+                    "size": r["size"],
+                    "dominant_doc_type": r["dominant_doc_type"],
+                    "name_source": r["name_source"],
+                    "collection_spread": spread,
+                    "cohesion": cohesion,
+                    "exemplar_titles": exemplar_titles,
+                },
+                "created_at": r["created_at"],
+            }
+        )
+    return out
 
 
 # ── Queue ─────────────────────────────────────────────────────────────────────
@@ -435,6 +493,11 @@ def review_queue(limit: int = 200):
             }
         )
 
+    # 11. Work proposals — content-derived subject clusters (RE-PROJECTION
+    # Phase 4).  No Work exists until the author ratifies with a signature
+    # and picks an ontology domain.
+    items.extend(_work_proposal_items(db, deferred))
+
     # Most uncertain first; None confidence treated as 0.5
     items.sort(key=lambda i: i["confidence"] if i["confidence"] is not None else 0.5)
     counts: dict[str, int] = {}
@@ -457,6 +520,8 @@ class ResolveBody(BaseModel):
     source_ref: str | None = None
     work_id: str | None = None
     parent_ids: list[str] | None = None
+    # work_proposal ratification: the author picks the ontology domain.
+    domain: str | None = None
 
 
 _PENDING_SQL = {
@@ -469,6 +534,7 @@ _PENDING_SQL = {
     "position": "SELECT 1 FROM position_proposal WHERE id=? AND status='proposed'",
     "loom_persona": "SELECT 1 FROM loom_persona WHERE id=? AND status='proposed'",
     "domain_node": "SELECT 1 FROM domain_node WHERE id=? AND status='proposed'",
+    "work_proposal": "SELECT 1 FROM work_proposals WHERE id=? AND status='proposed'",
 }
 
 
@@ -524,6 +590,7 @@ def review_resolve(
         "position": lambda: _resolve_position(db, item_id, body),
         "loom_persona": lambda: _resolve_loom_persona(db, item_id, body),
         "domain_node": lambda: _resolve_domain_node(db, item_id, body),
+        "work_proposal": lambda: _resolve_work_proposal(db, item_id, body),
     }
     if body.decision == "defer":
         result = _defer(db, item_type, item_id, body.reason)
@@ -873,6 +940,143 @@ def _resolve_domain_node(db, item_id: str, body: ResolveBody) -> dict:
         raise HTTPException(409, "Domain node was already resolved")
     status = "ratified" if body.decision == "approve" else "rejected"
     return {"ok": True, "decision": body.decision, "status": status}
+
+
+def _gate_work_proposal_resolution(body: ResolveBody) -> tuple[str, str]:
+    """Pre-claim validation for Work-proposal resolutions.
+
+    Contract: only approve/reject are meaningful (defer is handled upstream) —
+    any other decision, a missing signature, or a bad domain raises a 4xx
+    BEFORE any claim, so the proposal always stays queued.  Returns the
+    stripped ``(author, domain)``.
+    """
+    from orivellum.capabilities.work_proposals import VALID_DOMAINS
+
+    if body.decision not in ("approve", "reject"):
+        raise HTTPException(400, "work_proposal decisions must be approve or reject")
+    author = (body.author or "").strip()
+    if not author:
+        raise HTTPException(422, "Ratifying a Work proposal requires your signature (author)")
+    domain = (body.domain or "").strip()
+    if body.decision == "approve":
+        if not domain:
+            raise HTTPException(
+                422,
+                f"Ratifying a Work proposal requires a domain ({', '.join(sorted(VALID_DOMAINS))})",
+            )
+        if domain not in VALID_DOMAINS:
+            raise HTTPException(
+                422, f"Unknown domain {domain!r} — one of: {', '.join(sorted(VALID_DOMAINS))}"
+            )
+    return author, domain
+
+
+def _resolve_work_proposal(db, item_id: str, body: ResolveBody) -> dict:
+    """Ratify or reject a content-derived Work proposal (RE-PROJECTION Phase 4).
+
+    A Work only ever comes into existence through this signed ratification.
+    Validation (signature, domain) runs BEFORE the atomic claim, so a 422
+    always leaves the proposal queued.  Reject touches nothing but the
+    proposal row.  On approve: create the Work (with the chosen ontology
+    domain), re-point still-eligible member docs, and record which
+    collections contributed (provenance shown on the Work detail page).
+    """
+    author, domain = _gate_work_proposal_resolution(body)
+
+    if db.get_work_proposal(item_id) is None:
+        raise HTTPException(404, f"Work proposal {item_id!r} not found")
+
+    if body.decision == "reject":
+        if not db.claim_work_proposal(item_id, "rejected", author):
+            raise HTTPException(409, "Work proposal was already resolved")
+        return {"ok": True, "decision": "reject"}
+
+    # ── Approve: claim + all side effects in ONE transaction ───────────────
+    # The claim, Work creation, member re-points, provenance, and finalize
+    # commit together or not at all.  Any failure rolls the whole thing back,
+    # so there is never a ratified proposal with an orphaned Work or a
+    # half-assigned membership — the author simply retries.
+    try:
+        with db.atomic():
+            if not db.claim_work_proposal(item_id, "ratified", author):
+                raise _ProposalAlreadyResolved
+            # Snapshot the CLAIMED row inside this transaction — never a
+            # pre-claim read.  A concurrent generation pass could refresh a
+            # still-proposed row (same fingerprint) right up to the claim;
+            # reading here guarantees the Work is built from exactly the row
+            # that was ratified, so the persisted proposal and the Work it
+            # produced can never disagree.
+            proposal = db.get_work_proposal(item_id)
+            result = _apply_work_proposal_approval(db, item_id, proposal, author, domain)
+    except _ProposalAlreadyResolved:
+        raise HTTPException(409, "Work proposal was already resolved") from None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # db.atomic() already rolled everything back — claim included — so the
+        # proposal is still queued and the author can simply retry.
+        raise HTTPException(500, f"Ratification failed and was rolled back: {exc}") from exc
+
+    if result.get("linked"):
+        # Post-commit: the chunk vector cache carries d.work_id from its JOIN
+        # on documents, so work-scoped semantic search would keep seeing the
+        # re-pointed members as unassigned until invalidated.  One bump for
+        # the whole batch (update_document_work does this per call).
+        try:
+            from orivellum.capabilities.embeddings import bump_vector_cache_version
+
+            bump_vector_cache_version(db._path, "chunk")
+        except Exception:  # pragma: no cover
+            pass
+    return result
+
+
+class _ProposalAlreadyResolved(Exception):
+    """Internal sentinel: the atomic claim lost the race (rolls back the txn)."""
+
+
+def _apply_work_proposal_approval(
+    db, item_id: str, proposal: dict, author: str, domain: str
+) -> dict:
+    """Create the Work + re-point still-eligible members + record provenance.
+
+    Runs inside the caller's ``db.atomic()`` block, so every write here shares
+    one transaction with the claim.
+    """
+    work = db.create_work(
+        title=proposal["suggested_name"],
+        work_type="research",
+        description=(
+            f"Ratified from a content-derived subject cluster of "
+            f"{proposal['size']} documents (signed by {author})."
+        ),
+        domain=domain,
+    )
+    linked = 0
+    skipped = 0
+    collection_counts: dict[str, int] = {}
+    for did in proposal["member_doc_ids"]:
+        # Re-check eligibility and re-point in ONE atomic conditional write: a
+        # doc that gained a work_id / got re-tiered / was quarantined since the
+        # proposal was generated is skipped, never stolen.
+        assigned, cid = db.assign_document_to_work_if_eligible(did, work["id"])
+        if not assigned:
+            skipped += 1
+            continue
+        linked += 1
+        if cid:
+            collection_counts[cid] = collection_counts.get(cid, 0) + 1
+    for cid, count in collection_counts.items():
+        db.add_work_collection(work["id"], cid, count)
+    db.finalize_work_proposal(item_id, work["id"], domain)
+    return {
+        "ok": True,
+        "decision": "approve",
+        "work_id": work["id"],
+        "linked": linked,
+        "skipped": skipped,
+        "collections": len(collection_counts),
+    }
 
 
 def _gate_work_assignment_approval(db, decision: str, kind: str, meta: dict) -> None:

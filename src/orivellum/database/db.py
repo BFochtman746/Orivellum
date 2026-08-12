@@ -1321,6 +1321,7 @@ class OrivellumDB:
         work_type: str = "research",
         description: str | None = None,
         meta: dict | None = None,
+        domain: str | None = None,
     ) -> dict:
         oid = _uuid()
         now = _now()
@@ -1329,7 +1330,7 @@ class OrivellumDB:
             event_type="work.created",
             object_id=oid,
             object_type="work",
-            payload={"work_type": work_type},
+            payload={"work_type": work_type, "domain": domain},
             actor="user",
             detail=title[:120] if title else None,
         ):
@@ -1338,8 +1339,9 @@ class OrivellumDB:
                 (oid, "work", now, now),
             )
             self._conn.execute(
-                "INSERT INTO works(id,title,work_type,description,status,meta) VALUES(?,?,?,?,?,?)",
-                (oid, title, work_type, description, "active", _jdump(meta or {})),
+                "INSERT INTO works(id,title,work_type,description,status,meta,domain) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (oid, title, work_type, description, "active", _jdump(meta or {}), domain),
             )
         return self.get_work(oid)  # type: ignore[return-value]
 
@@ -2658,6 +2660,212 @@ class OrivellumDB:
                 f"{object_id!r} is an import collection — a collection records where "
                 f"documents came from and may never {context}"
             )
+
+    # -------------------------------------------------------------------------
+    # Work proposals (RE-PROJECTION Phase 4) — machine-derived subject clusters
+    # awaiting signed ratification.  A proposal's fingerprint is deterministic
+    # over its sorted member doc ids, so re-runs upsert rather than duplicate,
+    # and only rows still in status='proposed' may ever be updated by a re-run.
+    # -------------------------------------------------------------------------
+
+    def upsert_work_proposal(
+        self,
+        fingerprint: str,
+        suggested_name: str,
+        name_source: str,
+        member_doc_ids: list[str],
+        exemplar_doc_ids: list[str],
+        dominant_doc_type: str | None,
+        collection_spread: dict,
+        cluster_stats: dict,
+    ) -> dict | None:
+        """Insert or refresh a proposed Work cluster.
+
+        Returns the proposal row, or None when the fingerprint belongs to an
+        already-ratified/rejected proposal (re-runs never clobber decisions).
+        """
+        now = _now()
+        pid = _uuid()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO work_proposals(id,fingerprint,status,suggested_name,
+                       name_source,size,member_doc_ids,exemplar_doc_ids,
+                       dominant_doc_type,collection_spread,cluster_stats,
+                       created_at,updated_at)
+                   VALUES(?,?,'proposed',?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(fingerprint) DO UPDATE SET
+                       suggested_name=excluded.suggested_name,
+                       name_source=excluded.name_source,
+                       size=excluded.size,
+                       member_doc_ids=excluded.member_doc_ids,
+                       exemplar_doc_ids=excluded.exemplar_doc_ids,
+                       dominant_doc_type=excluded.dominant_doc_type,
+                       collection_spread=excluded.collection_spread,
+                       cluster_stats=excluded.cluster_stats,
+                       updated_at=excluded.updated_at
+                   WHERE work_proposals.status='proposed'""",
+                (
+                    pid,
+                    fingerprint,
+                    suggested_name,
+                    name_source,
+                    len(member_doc_ids),
+                    _jdump(member_doc_ids),
+                    _jdump(exemplar_doc_ids),
+                    dominant_doc_type,
+                    _jdump(collection_spread),
+                    _jdump(cluster_stats),
+                    now,
+                    now,
+                ),
+            )
+            self._maybe_commit()
+            row = self._conn.execute(
+                "SELECT * FROM work_proposals WHERE fingerprint=?", (fingerprint,)
+            ).fetchone()
+        if row is None:
+            return None
+        d = self._work_proposal_dict(row)
+        return d if d["status"] == "proposed" else None
+
+    @staticmethod
+    def _work_proposal_dict(row: Any) -> dict:
+        d = dict(row)
+        for key in ("member_doc_ids", "exemplar_doc_ids"):
+            d[key] = _jload(d.get(key), [])
+        for key in ("collection_spread", "cluster_stats"):
+            d[key] = _jload(d.get(key), {})
+        return d
+
+    def get_work_proposal(self, proposal_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM work_proposals WHERE id=?", (proposal_id,)
+            ).fetchone()
+        return self._work_proposal_dict(row) if row else None
+
+    def list_work_proposals(self, status: str | None = None, limit: int = 200) -> list[dict]:
+        q = "SELECT * FROM work_proposals"
+        args: list = []
+        if status:
+            q += " WHERE status=?"
+            args.append(status)
+        q += " ORDER BY size DESC, created_at ASC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._conn.execute(q, args).fetchall()
+        return [self._work_proposal_dict(r) for r in rows]
+
+    def claim_work_proposal(self, proposal_id: str, new_status: str, resolved_by: str) -> bool:
+        """Atomically claim a proposed row (proposed → ratified/rejected).
+
+        Only the caller whose UPDATE flips the status applies side effects, so
+        concurrent ratifications can never both create a Work.
+        """
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE work_proposals
+                   SET status=?, resolved_by=?, resolved_at=?, updated_at=?
+                   WHERE id=? AND status='proposed'""",
+                (new_status, resolved_by, now, now, proposal_id),
+            )
+            self._maybe_commit()
+        claimed = cur.rowcount == 1
+        if claimed:
+            self.audit(
+                "work_proposal.resolved",
+                object_id=proposal_id,
+                object_type="work_proposal",
+                actor="user",
+                detail=f"{new_status} by {resolved_by}",
+            )
+        return claimed
+
+    def finalize_work_proposal(self, proposal_id: str, work_id: str, domain: str) -> None:
+        """Record the created Work + chosen domain on a ratified proposal."""
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE work_proposals SET work_id=?, domain=?, updated_at=? WHERE id=?",
+                (work_id, domain, now, proposal_id),
+            )
+            self._maybe_commit()
+
+    def add_work_collection(self, work_id: str, collection_id: str, doc_count: int) -> None:
+        """Record that a collection contributed documents to a Work."""
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO work_collections(work_id, collection_id, doc_count, created_at)
+                   VALUES(?,?,?,?)
+                   ON CONFLICT(work_id, collection_id) DO UPDATE SET
+                     doc_count=excluded.doc_count""",
+                (work_id, collection_id, doc_count, now),
+            )
+            self._maybe_commit()
+
+    def get_work_collections(self, work_id: str) -> list[dict]:
+        """Collections that contributed documents to this Work (provenance)."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT wc.collection_id, wc.doc_count, wc.created_at,
+                          c.label, c.source_kind
+                   FROM work_collections wc
+                   LEFT JOIN collection c ON c.id = wc.collection_id
+                   WHERE wc.work_id=?
+                   ORDER BY wc.doc_count DESC""",
+                (work_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def assign_document_to_work_if_eligible(
+        self, doc_id: str, work_id: str
+    ) -> tuple[bool, str | None]:
+        """Atomically re-point a document to a Work, but only if it is STILL
+        eligible at write time.
+
+        A single conditional UPDATE checks — in the same statement that does
+        the write — that the document is unassigned, live, not quarantined,
+        not an excluded tier, and not a generated output.  This closes the
+        TOCTOU window a separate read-then-write would leave open: a document
+        that gained a work_id or was re-tiered since a proposal was generated
+        is never stolen from its owner.
+
+        Returns ``(assigned, collection_id)`` — ``collection_id`` is the
+        document's collection when the assignment succeeded, else ``None``.
+        """
+        from orivellum.capabilities.classify import EXCLUDED_FROM_WORKS
+
+        excluded = tuple(t.value for t in EXCLUDED_FROM_WORKS)
+        placeholders = ",".join(["?"] * len(excluded))
+        assigned = False
+        collection_id: str | None = None
+        with self.governed_write(
+            operation="document.work_assigned",
+            event_type="document.work_assigned",
+            object_id=doc_id,
+            object_type="document",
+            actor="user",
+            detail=work_id,
+        ):
+            cur = self._conn.execute(
+                f"""UPDATE documents SET work_id=?
+                    WHERE id=?
+                      AND work_id IS NULL
+                      AND COALESCE(quarantined, 0) = 0
+                      AND (tier IS NULL OR tier NOT IN ({placeholders}))
+                      AND COALESCE(doc_type, '') != 'generated'
+                      AND id IN (SELECT id FROM objects WHERE lifecycle != 'deleted')""",
+                (work_id, doc_id, *excluded),
+            )
+            assigned = cur.rowcount > 0
+            if assigned:
+                row = self._conn.execute(
+                    "SELECT collection_id FROM documents WHERE id=?", (doc_id,)
+                ).fetchone()
+                collection_id = row["collection_id"] if row else None
+        return assigned, collection_id
 
     def update_document_work(self, doc_id: str, work_id: str | None) -> bool:
         """Re-assign (or unlink) a document from a work."""

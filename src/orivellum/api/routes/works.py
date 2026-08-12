@@ -152,6 +152,32 @@ def works_create(body: WorkCreate):
     return {"work": work}
 
 
+@router.get("/works/proposals")
+def works_list_proposals(status: str | None = None):
+    """Machine-derived Work proposals (RE-PROJECTION Phase 4)."""
+    db = get_db()
+    return {"proposals": db.list_work_proposals(status=status)}
+
+
+@router.post("/works/proposals/generate")
+def works_generate_proposals():
+    """Run the content-clustering pass and upsert Work proposals.
+
+    Deterministic and idempotent — re-runs refresh still-proposed rows and
+    never touch ratified/rejected proposals.  Nothing here creates a Work:
+    ratification happens only in the review queue with an author signature.
+    """
+    from orivellum.api._deps import get_config
+    from orivellum.capabilities.work_proposals import generate_work_proposals
+
+    db = get_db()
+    try:
+        cfg = get_config()
+    except Exception:  # pragma: no cover — cfg optional for naming only
+        cfg = None
+    return generate_work_proposals(db, cfg)
+
+
 @router.get("/works/{work_id}")
 def works_get(work_id: str):
     db = get_db()
@@ -369,6 +395,15 @@ def works_documents(work_id: str):
         raise HTTPException(404, f"Work {work_id!r} not found")
     docs = db.list_documents(work_id=work_id)
     return {"documents": docs, "count": len(docs)}
+
+
+@router.get("/works/{work_id}/collections")
+def works_get_collections(work_id: str):
+    """Collections that contributed documents to this Work (provenance)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    return {"collections": db.get_work_collections(work_id)}
 
 
 @router.get("/works/{work_id}/duplicates")

@@ -3657,4 +3657,52 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE pending_reclassify ADD COLUMN proposed_doc_type_by TEXT
     """,
     ),
+    # v146 — Work proposals + collection provenance (THE RE-PROJECTION Phase 4)
+    #
+    # Real subjects are DERIVED from content clusters and land in the review
+    # queue as work_proposals rows.  A Work is only ever created through a
+    # signed ratification of one of these proposals (or the pre-existing
+    # manual creation path).  fingerprint is a deterministic hash of the
+    # sorted member doc ids so re-running the clustering pass upserts the
+    # same proposal instead of stacking duplicates — and a ratified or
+    # rejected row is never clobbered by a re-run.
+    # work_collections records which import collections contributed documents
+    # to a ratified Work (provenance shown on the Work detail page).
+    # works.domain is the author-chosen ontology domain picked at ratification
+    # (narrative | technical | governance | reference).
+    (
+        146,
+        "work_proposals + work_collections provenance + works.domain",
+        """
+        ALTER TABLE works ADD COLUMN domain TEXT;
+        CREATE TABLE IF NOT EXISTS work_proposals (
+            id TEXT PRIMARY KEY,
+            fingerprint TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'proposed',
+            suggested_name TEXT NOT NULL,
+            name_source TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            member_doc_ids TEXT NOT NULL,
+            exemplar_doc_ids TEXT NOT NULL,
+            dominant_doc_type TEXT,
+            collection_spread TEXT NOT NULL,
+            cluster_stats TEXT NOT NULL,
+            domain TEXT,
+            work_id TEXT,
+            resolved_by TEXT,
+            resolved_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS work_proposals_status ON work_proposals(status);
+        CREATE TABLE IF NOT EXISTS work_collections (
+            work_id TEXT NOT NULL,
+            collection_id TEXT NOT NULL,
+            doc_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (work_id, collection_id)
+        );
+        CREATE INDEX IF NOT EXISTS work_collections_work ON work_collections(work_id)
+    """,
+    ),
 ]
