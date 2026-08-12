@@ -229,6 +229,13 @@ class MessageSend(BaseModel):
     # prepended to the knowledge-injection block regardless of semantic score.
     # Allows users to "pin" specific files from the work-files drawer.
     context_doc_ids: list[str] | None = None
+    # General file attachment (PDF, DOCX, XLSX, CSV, TXT …).  The client
+    # sends the file as base64 with its original filename and MIME type.
+    # The server extracts text via extraction.py and injects it into the
+    # AI context for this message only.  Not stored in the DB.
+    file_b64: str | None = None
+    file_name: str | None = None
+    file_media_type: str | None = None
 
 
 class ContinueBody(BaseModel):
@@ -251,6 +258,76 @@ class ContinueBody(BaseModel):
 #   thousands per conversation.
 _THUMBNAIL_MAX_PX: int = 200  # longest dimension in pixels after resize
 _THUMBNAIL_MAX_KB: int = 20  # hard upper-bound on base64-decoded JPEG bytes
+
+
+def _extract_file_attachment(
+    file_b64: str,
+    file_name: str,
+    file_media_type: str | None = None,
+) -> str:
+    """Decode a base64-encoded file attachment and extract its text content.
+
+    Dispatches to the appropriate extraction backend in
+    ``orivellum.capabilities.extraction`` based on the file extension.
+    Returns up to 20 000 characters of extracted text, or an empty string
+    when extraction fails or yields no readable content.
+    """
+    import base64
+    import tempfile
+    from pathlib import Path as _Path
+
+    try:
+        from orivellum.capabilities.extraction import (
+            _extract_csv,
+            _extract_docx,
+            _extract_excel,
+            _extract_pdf,
+            _extract_text,
+        )
+    except ImportError:
+        logger.warning("extraction module unavailable — file attachment ignored")
+        return ""
+
+    try:
+        raw = base64.b64decode(file_b64)
+        suffix = _Path(file_name).suffix.lower() if file_name else ""
+        if not suffix and file_media_type:
+            _mime_map = {
+                "application/pdf": ".pdf",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+                "application/msword": ".doc",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+                "application/vnd.ms-excel": ".xls",
+                "text/csv": ".csv",
+                "text/plain": ".txt",
+            }
+            suffix = _mime_map.get(file_media_type, "")
+
+        with tempfile.NamedTemporaryFile(suffix=suffix or ".bin", delete=False) as fh:
+            fh.write(raw)
+            tmp_path = _Path(fh.name)
+
+        try:
+            if suffix == ".pdf":
+                result = _extract_pdf(tmp_path)
+            elif suffix in (".docx", ".doc"):
+                result = _extract_docx(tmp_path)
+            elif suffix in (".xlsx", ".xls"):
+                result = _extract_excel(tmp_path)
+            elif suffix == ".csv":
+                result = _extract_csv(tmp_path)
+            else:
+                result = _extract_text(tmp_path)
+
+            if result and result.ok:
+                return result.full_text[:20_000]
+            return ""
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    except Exception as exc:
+        logger.debug("File attachment extraction failed (%s): %s", file_name, exc)
+        return ""
 
 
 def _make_thumbnail_b64(
@@ -574,16 +651,39 @@ async def send_message(conv_id: str, body: MessageSend):
     if not conv:
         raise HTTPException(404, f"Conversation {conv_id!r} not found")
 
+    # ── File attachment extraction ─────────────────────────────────────────────
+    # Extract text from an attached file (PDF/DOCX/XLSX/CSV/TXT) and inject it
+    # into the AI context.  We do this BEFORE computing stored_text so the
+    # display label can reflect the filename.  The raw file bytes are never
+    # written to the DB.
+    _attached_file_name: str | None = body.file_name
+    _original_user_text: str = body.text  # preserved for stored_text
+    if body.file_b64 and body.file_name:
+        _file_text = _extract_file_attachment(body.file_b64, body.file_name, body.file_media_type)
+        if _file_text:
+            _augmented = (
+                f'<attachment name="{body.file_name}">\n{_file_text}\n</attachment>'
+                + ("\n\n" + body.text if body.text.strip() else "")
+            )
+            body = body.model_copy(update={"text": _augmented, "file_b64": None, "file_name": None})
+
     # Store user message first so it appears immediately
-    stored_text = body.text or "What is in this image?"
-    if body.image_b64 and not body.text:
+    if _attached_file_name and _original_user_text.strip():
+        stored_text = f"[File: {_attached_file_name}] {_original_user_text}"
+    elif _attached_file_name:
+        stored_text = f"[File: {_attached_file_name}]"
+    elif body.image_b64 and not _original_user_text:
         stored_text = "[Image attached]"
     elif body.image_b64:
-        stored_text = f"[Image] {body.text}"
+        stored_text = f"[Image] {_original_user_text}"
+    else:
+        stored_text = _original_user_text or "What is in this image?"
 
     # Build meta for the user message — include a compact thumbnail so mobile
     # can show the image in history after the session ends (no local URI).
     user_meta: dict = {}
+    if _attached_file_name:
+        user_meta["file_name"] = _attached_file_name
     if body.image_b64:
         thumb = _make_thumbnail_b64(body.image_b64, body.image_media_type)
         if thumb:
@@ -1017,6 +1117,100 @@ async def predict_completion(conv_id: str, body: PredictBody):
         pass
 
     return {"ghost": ghost, "sources": sources}
+
+
+@router.post("/conversations/{conv_id}/messages/{msg_id}/export")
+async def export_message(conv_id: str, msg_id: str, fmt: str = "docx"):
+    """Export an assistant message as a downloadable DOCX or plain-text file.
+
+    GET params:
+        fmt  — "docx" (default) | "txt"
+
+    Returns the file as an attachment download.
+    """
+    import io
+
+    from fastapi import Response as _Resp
+
+    db = get_db()
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT role, text, created_at FROM messages WHERE id=? AND conversation_id=?",
+            (msg_id, conv_id),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Message not found")
+    role, text, created_at = row
+    if role != "assistant":
+        raise HTTPException(400, "Only assistant messages can be exported")
+    content_text: str = text or ""
+
+    # ── Plain-text export ──────────────────────────────────────────────────────
+    if fmt == "txt":
+        return _Resp(
+            content=content_text.encode("utf-8"),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="chat-reply.txt"'},
+        )
+
+    # ── DOCX export ────────────────────────────────────────────────────────────
+    try:
+        from docx import Document  # python-docx
+        from docx.shared import Pt, RGBColor
+    except ImportError:
+        raise HTTPException(503, "python-docx is not installed")
+
+    try:
+        doc = Document()
+        normal_style = doc.styles["Normal"]
+        normal_style.font.name = "Georgia"
+        normal_style.font.size = Pt(11)
+
+        # Title
+        title_para = doc.add_heading("Chat Reply", level=1)
+
+        # Metadata line (timestamp)
+        if created_at:
+            try:
+                from datetime import datetime, timezone
+
+                _dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                _date_str = _dt.astimezone(timezone.utc).strftime("%B %d, %Y at %H:%M UTC")
+            except Exception:
+                _date_str = created_at
+            meta = doc.add_paragraph(_date_str)
+            for run in meta.runs:
+                run.font.size = Pt(9)
+                run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+
+        doc.add_paragraph()  # spacer
+
+        # Body — split double-newline blocks into paragraphs; detect markdown headings
+        for block in content_text.split("\n\n"):
+            block = block.strip()
+            if not block:
+                continue
+            if block.startswith("#"):
+                hashes = len(block) - len(block.lstrip("#"))
+                heading_text = block.lstrip("# ").strip()
+                doc.add_heading(heading_text, level=min(hashes, 3))
+            else:
+                doc.add_paragraph(block)
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+
+        return _Resp(
+            content=buf.read(),
+            media_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".wordprocessingml.document"
+            ),
+            headers={"Content-Disposition": 'attachment; filename="chat-reply.docx"'},
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"DOCX generation failed: {exc}") from exc
 
 
 @router.post("/conversations/{conv_id}/continue")

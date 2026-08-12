@@ -777,6 +777,7 @@ async function* streamChat(
   deep = false, scope: "work" | "all" = "work",
   image_b64?: string, image_media_type?: string,
   clientMsgId?: string,
+  file_b64?: string, file_name?: string, file_media_type?: string,
 ): AsyncGenerator<string> {
   const resp = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
     method: "POST",
@@ -784,6 +785,7 @@ async function* streamChat(
     body: JSON.stringify({
       text, stream: true, deep, scope, image_b64, image_media_type,
       ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
+      ...(file_b64 ? { file_b64, file_name, file_media_type } : {}),
     }),
     credentials: "same-origin",
     keepalive: true,
@@ -1458,6 +1460,7 @@ export default function Chat() {
   });
   const [sending, setSending] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ data: string; type: string } | null>(null);
+  const [pendingFile, setPendingFile] = useState<{ name: string; size: number; type: string; data: string } | null>(null);
   // ── Voice mode ─────────────────────────────────────────────────────────────
   // readAloud lives up here (not by the message list) because sendText streams
   // reply sentences into its live TTS queue when a voice turn is active.
@@ -1468,7 +1471,8 @@ export default function Chat() {
   const voiceTurnRef = useRef(false);   // speak the currently-streaming reply
   const spokenIdxRef = useRef(0);       // accumulator chars already queued for speech
   const [autoListenNonce, setAutoListenNonce] = useState(0);
-  const imgInputRef = useRef<HTMLInputElement>(null);
+  const imgInputRef  = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [localMessages, setLocalMessages] = useState<LocalMessage[]>([]);
   const localOverride = localMessages.length > 0;
 
@@ -1961,6 +1965,8 @@ export default function Chat() {
 
       const capturedImage = pendingImage;
       setPendingImage(null);
+      const capturedFile = pendingFile;
+      setPendingFile(null);
       const userMsgId = randomUUID();
       userMsgIdRef.current = userMsgId;
       const userMsg: LocalMessage = {
@@ -1989,6 +1995,7 @@ export default function Chat() {
         await enqueueOp("chat_message", {
           convId, text, deep: deepMode, scope: scopeAll ? "all" : "work",
           image_b64: capturedImage?.data, image_media_type: capturedImage?.type,
+          ...(capturedFile ? { file_b64: capturedFile.data, file_name: capturedFile.name, file_media_type: capturedFile.type } : {}),
         }, { opId });
       } catch {
         opPersisted = false; // proceed with a live attempt only
@@ -2030,7 +2037,7 @@ export default function Chat() {
       let userAcknowledged = false;
       let firstTextToken = true; // used to advance activity step to "Writing response"
       try {
-        for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type, opId)) {
+        for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type, opId, capturedFile?.data, capturedFile?.name, capturedFile?.type)) {
           if (token.startsWith(JOBID_PREFIX)) {
             // First frame: the server-side journal job. Persist a replay
             // cursor NOW so a killed tab / dropped connection can recover.
@@ -2232,20 +2239,20 @@ export default function Chat() {
           m.incomplete || m.status === "failed" || m.status === "queued" || m.recovered));
       }
     },
-    [activeId, deepMode, scopeAll, pendingImage, activeConv?.messages, flushAccumulator, queryClient, defaultModel, readAloud]
+    [activeId, deepMode, scopeAll, pendingImage, pendingFile, activeConv?.messages, flushAccumulator, queryClient, defaultModel, readAloud]
   );
 
   const handleSend = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
       const text = draft.trim();
-      if (!text && !pendingImage) return;
+      if (!text && !pendingImage && !pendingFile) return;
       setDraft("");
       setPrediction(null);
       predictAbortRef.current?.abort();
       sendText(text);
     },
-    [draft, pendingImage, sendText]
+    [draft, pendingImage, pendingFile, sendText]
   );
 
   // ── Voice mode handlers ────────────────────────────────────────────────────
@@ -2391,6 +2398,39 @@ export default function Chat() {
       const comma = dataUrl.indexOf(",");
       const b64 = dataUrl.slice(comma + 1);
       setPendingImage({ data: b64, type: file.type });
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  // Attach a non-image file (PDF, DOCX, XLSX, CSV, TXT) to the next message.
+  // The file is read as base64 here; the server extracts its text and injects
+  // it into the AI context for that message only.
+  const handleFileAttach = useCallback((file: File) => {
+    const ALLOWED = [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+      "text/csv",
+      "text/plain",
+    ];
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const allowedExt = ["pdf", "docx", "doc", "xlsx", "xls", "csv", "txt"];
+    if (!ALLOWED.includes(file.type) && !allowedExt.includes(ext)) {
+      toast.error(`Unsupported file type: ${file.name}`);
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error("File too large — maximum 20 MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      const comma = dataUrl.indexOf(",");
+      const b64 = dataUrl.slice(comma + 1);
+      setPendingFile({ name: file.name, size: file.size, type: file.type, data: b64 });
     };
     reader.readAsDataURL(file);
   }, []);
@@ -2921,6 +2961,29 @@ export default function Chat() {
                             {!msg.streaming && !!(msg.text ?? "").trim() && (
                               <button
                                 onClick={() => {
+                                  const url = `${API_BASE}/conversations/${conv?.id ?? ""}/messages/${msg.id}/export?fmt=docx`;
+                                  fetch(url, { headers: buildAuthHeaders(), credentials: "same-origin" })
+                                    .then(r => {
+                                      if (!r.ok) throw new Error(String(r.status));
+                                      return r.blob();
+                                    })
+                                    .then(b => {
+                                      const a = document.createElement("a");
+                                      a.href = URL.createObjectURL(b);
+                                      a.download = "chat-reply.docx";
+                                      a.click();
+                                    })
+                                    .catch(() => toast.error("Export failed"));
+                                }}
+                                className="chat-icon-btn text-muted-foreground/30 hover:text-muted-foreground/70 transition-colors"
+                                title="Save as DOCX"
+                              >
+                                <Download className="w-3 h-3" />
+                              </button>
+                            )}
+                            {!msg.streaming && !!(msg.text ?? "").trim() && (
+                              <button
+                                onClick={() => {
                                   const speech = stripForSpeech(msg.text ?? "");
                                   if (!speech) { toast.error("Nothing to read aloud"); return; }
                                   void readAloud.startText({
@@ -2990,6 +3053,14 @@ export default function Chat() {
                 className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); e.target.value = ""; }}
               />
+              {/* Hidden general file input (PDF, DOCX, XLSX, CSV, TXT) */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileAttach(f); e.target.value = ""; }}
+              />
               <form
                 onSubmit={handleSend}
                 className={`max-w-3xl mx-auto relative transition-colors rounded-lg ${dragOver ? "ring-2 ring-primary/40 bg-primary/5" : ""}`}
@@ -2997,6 +3068,26 @@ export default function Chat() {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
               >
+                {/* Pending file preview chip */}
+                {pendingFile && (
+                  <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+                    <div className="flex items-center gap-2 rounded border border-border bg-muted/40 px-3 py-1.5">
+                      <FileText className="w-4 h-4 text-primary/60 shrink-0" />
+                      <span className="font-mono text-xs text-muted-foreground truncate max-w-[200px]">{pendingFile.name}</span>
+                      <span className="text-xs text-muted-foreground/50 shrink-0">
+                        {pendingFile.size < 1024 * 1024 ? `${(pendingFile.size / 1024).toFixed(0)} KB` : `${(pendingFile.size / (1024 * 1024)).toFixed(1)} MB`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPendingFile(null)}
+                        className="ml-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <span className="text-xs text-muted-foreground/50">Ask anything, or say "turn into Excel", "summarize", "fix errors"…</span>
+                  </div>
+                )}
                 {/* Pending image preview strip */}
                 {pendingImage && (
                   <div className="flex items-center gap-2 px-3 pt-2 pb-1">
@@ -3085,6 +3176,17 @@ export default function Chat() {
                       ${pendingImage ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
                   >
                     <ImageIcon className="w-4 h-4" />
+                  </button>
+                  {/* File attach (PDF, DOCX, XLSX, CSV, TXT) */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach a file — PDF, DOCX, XLSX, CSV, TXT"
+                    disabled={sending || importing}
+                    className={`chat-icon-btn h-8 w-8 rounded flex items-center justify-center transition-colors
+                      ${pendingFile ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+                  >
+                    <Paperclip className="w-4 h-4" />
                   </button>
                   {/* Mail context toggle — only shown when Mail Steward is connected */}
                   {mailConnected && activeId && (
@@ -3177,7 +3279,7 @@ export default function Chat() {
                       <Square className="w-3.5 h-3.5 fill-current" />
                     </Button>
                   ) : (
-                    <Button type="submit" size="icon" disabled={!draft.trim() && !pendingImage} className="chat-icon-btn h-8 w-8">
+                    <Button type="submit" size="icon" disabled={!draft.trim() && !pendingImage && !pendingFile} className="chat-icon-btn h-8 w-8">
                       <Send className="w-4 h-4" />
                     </Button>
                   )}

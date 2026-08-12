@@ -302,6 +302,116 @@ def workshop_plan(body: WorkshopPlanRequest):
     return session
 
 
+class GenerateWorkbookRequest(BaseModel):
+    description: str
+    work_id: str | None = None
+
+
+@router.post("/generate/workbook")
+def generate_workbook_from_prompt(body: GenerateWorkbookRequest):
+    """Generate an XLSX workbook from a plain-English description.
+
+    Uses the LLM to plan sheet structure (columns + sample rows), then
+    writes the workbook with openpyxl.  Returns a download URL.
+    """
+    from fastapi.responses import JSONResponse
+
+    if not body.description.strip():
+        raise HTTPException(422, "description must not be empty")
+
+    db = get_db()
+    cfg = get_config()
+
+    try:
+        import json as _json
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from orivellum.capabilities.llm import llm_call
+
+        # ── Step 1: Ask the LLM to design the workbook structure ─────────────
+        plan_prompt = (
+            "You are a spreadsheet designer. Based on the user's request, design an Excel "
+            "workbook. Reply ONLY with valid JSON matching this exact schema — no markdown, "
+            "no commentary:\n"
+            '{"title": "Workbook name", "sheets": [{"name": "Sheet name", '
+            '"columns": ["Col1", "Col2", ...], "rows": [["val", "val", ...], ...]}, ...]}\n'
+            "Include 3–8 realistic sample data rows per sheet. Max 3 sheets. "
+            "Column names must be concise. Values should be realistic for the context.\n\n"
+            f"User request: {body.description.strip()}"
+        )
+
+        raw = llm_call(
+            prompt=plan_prompt,
+            base_url=cfg.serving.base_url,
+            model=cfg.serving.workhorse_model,
+            max_tokens=2048,
+            temperature=0.3,
+        )
+        # Strip markdown code fences if the model wrapped it anyway
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = "\n".join(cleaned.split("\n")[1:]).rstrip("`").strip()
+
+        plan = _json.loads(cleaned)
+        sheets_plan = plan.get("sheets", [])
+        wb_title = plan.get("title", "Generated Workbook")
+
+        # ── Step 2: Build the XLSX with openpyxl ─────────────────────────────
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)  # remove default blank sheet
+
+        HEADER_FILL = PatternFill("solid", fgColor="2D5F5D")
+        HEADER_FONT = Font(color="FFFFFF", bold=True)
+
+        for sheet_def in sheets_plan[:3]:
+            ws = wb.create_sheet(title=str(sheet_def.get("name", "Sheet"))[:31])
+            columns = sheet_def.get("columns", [])
+            rows = sheet_def.get("rows", [])
+
+            # Header row
+            for col_idx, col_name in enumerate(columns, 1):
+                cell = ws.cell(row=1, column=col_idx, value=col_name)
+                cell.fill = HEADER_FILL
+                cell.font = HEADER_FONT
+                cell.alignment = Alignment(horizontal="left")
+                ws.column_dimensions[
+                    openpyxl.utils.get_column_letter(col_idx)
+                ].width = max(12, len(str(col_name)) + 2)
+
+            # Data rows
+            for row_idx, row_data in enumerate(rows, 2):
+                for col_idx, value in enumerate(row_data[: len(columns)], 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+
+        if not wb.worksheets:
+            ws = wb.create_sheet("Sheet1")
+            ws.cell(row=1, column=1, value="(no data generated)")
+
+        # ── Step 3: Save and persist via the generate output dir ─────────────
+        import time
+        from pathlib import Path as _Path
+
+        out_dir = _Path("data/forge-builds").resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in wb_title).strip()[:40]
+        filename = f"{safe_name}_{int(time.time())}.xlsx"
+        out_path = out_dir / filename
+        wb.save(str(out_path))
+
+        return {
+            "ok": True,
+            "title": wb_title,
+            "filename": filename,
+            "download_url": f"/api/generate/download?path={out_path}",
+            "sheets": [s.get("name") for s in sheets_plan],
+        }
+
+    except _json.JSONDecodeError as exc:
+        raise HTTPException(500, f"LLM returned invalid JSON for workbook plan: {exc}") from exc
+    except Exception as exc:
+        raise internal_error(logger, exc, "generate workbook") from exc
+
+
 @router.post("/generate/workshop/execute")
 def workshop_execute(body: WorkshopExecuteRequest):
     """Step 2: Generate the document — AI writes code → safe sandbox → critique.
