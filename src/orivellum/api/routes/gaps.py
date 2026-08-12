@@ -105,6 +105,7 @@ def run_gap_scan(work_id: str, req: GapScanRequest | None = None):
     db = get_db()
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities import domain_model as dm
     from orivellum.capabilities import gap_engine as ge
 
     emitters = {
@@ -112,6 +113,8 @@ def run_gap_scan(work_id: str, req: GapScanRequest | None = None):
         ge.DETECTOR_TERM: ge.detect_never_explained,
         ge.DETECTOR_DEADEND: ge.detect_dead_end_citations,
         ge.DETECTOR_FAILURE: ge.detect_failure_clusters,
+        dm.DETECTOR_DOMAIN_COVERAGE: dm.detect_domain_coverage,
+        ge.GAP_CLASS_DOMAIN_FRONTIER: dm.detect_domain_frontier,
     }
     wanted = (req.detectors if req and req.detectors else None) or list(emitters)
     unknown = [d for d in wanted if d not in emitters]
@@ -234,3 +237,125 @@ def list_measurements():
             r["strata"] = {}
         r["meets_blocking_floor"] = r["n_labeled"] >= db.MIN_ORACLE_LABELED
     return {"measurements": rows, "min_labeled_for_blocking": db.MIN_ORACLE_LABELED}
+
+
+# ── G-M5/G-M6: Domain Model — the interpretive layer ─────────────────────────
+#
+# Surfaces here measure the INTERPRETIVE FRAME (triangulated reference
+# structures) — distinct from the factual-spine detectors above and from
+# entity-coverage estimates.  Every node is proposal-only: ratification
+# happens in the review inbox with a signature.
+
+
+class DomainSourceRequest(BaseModel):
+    domain: str
+    doc_id: str
+    kind: str = "structure"  # structure | bibliography
+
+
+@router.post("/works/{work_id}/domain/sources")
+def add_domain_source(work_id: str, req: DomainSourceRequest):
+    """Register a reference-structure document (TOC, syllabus, lexicon,
+    bibliography) as an independent source for a domain."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    try:
+        return db.add_domain_source(work_id, req.domain, req.doc_id, req.kind)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/works/{work_id}/domain/sources")
+def list_domain_sources(work_id: str, domain: str | None = None):
+    db = get_db()
+    return {"sources": db.list_domain_sources(work_id, domain)}
+
+
+@router.delete("/works/{work_id}/domain/sources/{source_id}")
+def remove_domain_source(work_id: str, source_id: str):
+    db = get_db()
+    if not db.remove_domain_source(source_id):
+        raise HTTPException(404, f"domain source {source_id!r} not found")
+    return {"ok": True}
+
+
+class DomainHarvestRequest(BaseModel):
+    domain: str
+
+
+@router.post("/works/{work_id}/domain/harvest")
+def harvest_domain(work_id: str, req: DomainHarvestRequest):
+    """Harvest node proposals from the domain's registered structure sources.
+
+    Deterministic, zero model calls.  Proposals land in the review inbox;
+    nothing generates a gap until ratified with a signature.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.domain_model import harvest_domain as _harvest
+
+    return _harvest(db, work_id, req.domain)
+
+
+@router.get("/works/{work_id}/domain/nodes")
+def list_domain_nodes(
+    work_id: str,
+    domain: str | None = None,
+    status: str | None = None,
+    node_class: str | None = None,
+):
+    db = get_db()
+    import json as _json
+
+    nodes = db.list_domain_nodes(work_id, domain=domain, status=status, node_class=node_class)
+    for n in nodes:
+        try:
+            n["sources"] = _json.loads(n.get("sources") or "[]")
+            n["meta"] = _json.loads(n.get("meta") or "{}")
+        except Exception:
+            pass
+    return {
+        "nodes": nodes,
+        "layer": "interpretive_frame",
+        "note": (
+            "this layer measures the interpretive frame — distinct from the "
+            "factual-spine detectors and entity-coverage estimates"
+        ),
+    }
+
+
+@router.post("/works/{work_id}/domain/scan")
+def run_domain_scan(work_id: str):
+    """Emit G2 coverage gaps and G4 frontier gaps over RATIFIED nodes only.
+
+    G4 frontier gaps route to the decision queue and are never critical as
+    deficiencies; G2 blocking status stays suppressed until the detector is
+    measured on the golden-oracle harness.
+    """
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities import domain_model as dm
+
+    coverage = dm.detect_domain_coverage(work_id, db)
+    frontier = dm.detect_domain_frontier(work_id, db)
+    return {
+        "work_id": work_id,
+        "coverage": {"emitted": coverage["emitted"]},
+        "frontier": {"emitted": frontier["emitted"]},
+        "layer": "interpretive_frame",
+    }
+
+
+@router.get("/works/{work_id}/relative-recall")
+def get_relative_recall(work_id: str):
+    """Completeness measured against peer references (review §4.5) —
+    surfaced alongside the coverage estimates, with honest peer framing."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    from orivellum.capabilities.domain_model import relative_recall
+
+    return relative_recall(db, work_id)

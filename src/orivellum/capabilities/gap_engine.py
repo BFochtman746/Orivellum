@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 
 GAP_CLASS_CITATION = "citation_closure"
 
+# Domain Model classes (G-M5/G-M6, interpretive layer — see domain_model.py).
+# G2 coverage: a ratified domain node with insufficient corpus evidence.
+# G4 frontier: sources structurally disagree — a decision owed, never a
+# deficiency, so its severity is capped below blocking levels here.
+GAP_CLASS_DOMAIN_COVERAGE = "domain_coverage"
+GAP_CLASS_DOMAIN_FRONTIER = "domain_frontier"
+
 # ── Severity ──────────────────────────────────────────────────────────────────
 # Deterministic scoring — never model-assigned.  centrality is how often the
 # absent thing is referenced (total mentions); dependent_count is how many
@@ -48,10 +55,25 @@ def compute_severity(
     centrality: int = 0,
     dependent_count: int = 0,
     blocking_active_work: bool = False,
+    agreement: int = 0,
+    demand: int = 0,
 ) -> str:
-    """Deterministic severity from evidence counts — never asked of a model."""
+    """Deterministic severity from evidence counts — never asked of a model.
+
+    ``agreement`` is the count of independent reference sources establishing
+    the frame node (Domain Model consensus level); ``demand`` is MEASURED
+    usage pressure (user queries touching the node) — never a hand flag.
+    Both default to 0 so pre-domain detectors are unchanged.
+
+    A frontier gap is a decision the user owes, not a deficiency: its
+    severity is capped at ``medium`` no matter what the counts say.
+    """
     score = dependent_count * 3 + min(max(centrality, 0), 12)
+    score += min(max(agreement, 0), 6)
+    score += min(max(demand, 0), 9)
     score *= _CLASS_WEIGHT.get(gap_class, 1)
+    if gap_class == GAP_CLASS_DOMAIN_FRONTIER:
+        return "medium" if score >= 5 else "low"
     if blocking_active_work:
         score += 12
     if score >= 18 and blocking_active_work:

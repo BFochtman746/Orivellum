@@ -283,6 +283,8 @@ def test_scan_route_runs_all_detectors(tmp_path):
         "mentioned_never_explained",
         "dead_end_citation",
         "failure_clustering",
+        "domain_coverage",
+        "domain_frontier",
     }
     assert body["total_gaps"] >= 1  # the citation gap
 

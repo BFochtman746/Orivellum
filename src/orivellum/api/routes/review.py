@@ -39,6 +39,7 @@ _VALID_TYPES = {
     "canon_fact",
     "position",
     "loom_persona",
+    "domain_node",
 }
 
 
@@ -384,6 +385,46 @@ def review_queue(limit: int = 200):
             }
         )
 
+    # 10. Domain Model node proposals (interpretive frame — proposal-only)
+    with db._lock:
+        rows = db._conn.execute(
+            """SELECT n.id, n.work_id, n.domain, n.label, n.node_class,
+                      n.agreement, n.source_count, n.created_at,
+                      w.title AS work_title
+               FROM domain_node n
+               LEFT JOIN works w ON w.id = n.work_id
+               WHERE n.status='proposed'
+               ORDER BY n.agreement DESC, n.created_at ASC LIMIT 300""",
+        ).fetchall()
+    for r in rows:
+        key = f"domain_node:{r['id']}"
+        if key in deferred:
+            continue
+        items.append(
+            {
+                "id": key,
+                "item_type": "domain_node",
+                "title": f"Domain node: {r['label']}",
+                "description": (
+                    f"Harvested from {r['agreement']} of {r['source_count']} "
+                    f"reference structures in domain '{r['domain']}' "
+                    f"({r['node_class']}). Generates no gap until you ratify "
+                    "it with a signature."
+                ),
+                # Consensus across more sources = less uncertain.
+                "confidence": min(0.9, 0.2 + 0.15 * r["agreement"]),
+                "work_id": r["work_id"],
+                "work_title": r["work_title"],
+                "evidence": {
+                    "domain": r["domain"],
+                    "node_class": r["node_class"],
+                    "agreement": r["agreement"],
+                    "source_count": r["source_count"],
+                },
+                "created_at": r["created_at"],
+            }
+        )
+
     # Most uncertain first; None confidence treated as 0.5
     items.sort(key=lambda i: i["confidence"] if i["confidence"] is not None else 0.5)
     counts: dict[str, int] = {}
@@ -471,6 +512,7 @@ def review_resolve(
         "duplicate": lambda: _resolve_duplicate(db, item_id, body),
         "position": lambda: _resolve_position(db, item_id, body),
         "loom_persona": lambda: _resolve_loom_persona(db, item_id, body),
+        "domain_node": lambda: _resolve_domain_node(db, item_id, body),
     }
     if body.decision == "defer":
         result = _defer(db, item_type, item_id, body.reason)
@@ -733,12 +775,12 @@ def _resolve_position(db, item_id: str, body: ResolveBody) -> dict:
         except Exception as exc:
             db.reopen_position_proposal(item_id, expected_resolved_by=author)
             raise HTTPException(
-                500, "voice baseline install failed; the proposal was returned "
-                     "to the review queue — retry the approval"
+                500,
+                "voice baseline install failed; the proposal was returned "
+                "to the review queue — retry the approval",
             ) from exc
         installed = "voice_envelope baseline"
-    return {"ok": True, "decision": decision, "kind": proposal["kind"],
-            "installed": installed}
+    return {"ok": True, "decision": decision, "kind": proposal["kind"], "installed": installed}
 
 
 def _resolve_loom_persona(db, item_id: str, body: ResolveBody) -> dict:
@@ -756,6 +798,33 @@ def _resolve_loom_persona(db, item_id: str, body: ResolveBody) -> dict:
     if result == "conflict":
         raise HTTPException(409, "Persona was already resolved")
     return {"ok": True, "decision": decision}
+
+
+def _resolve_domain_node(db, item_id: str, body: ResolveBody) -> dict:
+    """Ratify/reject a Domain Model node.  A ratified node becomes part of
+    the interpretive frame and can generate G2/G4 gaps, so BOTH decisions
+    require the author signature — a rejection is also a signed ruling the
+    harvest must never overturn.  Claim is atomic in the db layer."""
+    author = (body.author or "").strip()
+    if not author:
+        raise HTTPException(422, "Resolving a domain node requires your signature (author)")
+    node_class = (body.classification or "").strip() or None
+    try:
+        result = db.resolve_domain_node(
+            item_id,
+            body.decision,
+            signed_by=author,
+            reason=body.reason,
+            node_class=node_class,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if result == "not_found":
+        raise HTTPException(404, f"Domain node {item_id!r} not found")
+    if result == "conflict":
+        raise HTTPException(409, "Domain node was already resolved")
+    status = "ratified" if body.decision == "approve" else "rejected"
+    return {"ok": True, "decision": body.decision, "status": status}
 
 
 def _resolve_suggestion(db, item_id: str, body: ResolveBody) -> dict:

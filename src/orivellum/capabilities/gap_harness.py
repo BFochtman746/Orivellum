@@ -26,6 +26,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from orivellum.capabilities.domain_model import (
+    DETECTOR_DOMAIN_COVERAGE,
+    candidates_domain_coverage,
+)
 from orivellum.capabilities.gap_engine import (
     DETECTOR_CITATION,
     DETECTOR_DEADEND,
@@ -49,6 +53,7 @@ DETECTOR_CANDIDATES = {
     DETECTOR_TERM: candidates_never_explained,
     DETECTOR_DEADEND: candidates_dead_end,
     DETECTOR_FAILURE: candidates_failure_clusters,
+    DETECTOR_DOMAIN_COVERAGE: candidates_domain_coverage,
 }
 
 

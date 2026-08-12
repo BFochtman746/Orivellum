@@ -3255,4 +3255,69 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN labels_fingerprint TEXT NOT NULL DEFAULT ''
     """,
     ),
+    # v137 — Domain Model for the interpretive layer (G-M5/G-M6, rescoped).
+    #   domain_source          — reference-structure documents (TOCs, syllabi,
+    #                            lexica, bibliographies) registered per Work +
+    #                            domain; independence = distinct documents.
+    #   domain_node            — nodes harvested from those structures.
+    #                            Proposal-only: nothing generates a gap until a
+    #                            node is ratified with a signature.  node_class:
+    #                            required (intersection across >=3 independent
+    #                            sources), optional (union minus intersection),
+    #                            contested (structural disagreement -> G4).
+    #   domain_node_transition — ledger of every status change, signed.
+    (
+        137,
+        "Domain Model: reference sources, triangulated nodes, signed transitions",
+        """
+        CREATE TABLE IF NOT EXISTS domain_source (
+            id         TEXT PRIMARY KEY,
+            work_id    TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            domain     TEXT NOT NULL,
+            doc_id     TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            kind       TEXT NOT NULL DEFAULT 'structure' CHECK (kind IN
+                           ('structure','bibliography')),
+            created_at TEXT NOT NULL,
+            UNIQUE(work_id, domain, doc_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_domain_source_work
+            ON domain_source(work_id, domain);
+        CREATE TABLE IF NOT EXISTS domain_node (
+            id            TEXT PRIMARY KEY,
+            work_id       TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            domain        TEXT NOT NULL,
+            node_key      TEXT NOT NULL,
+            label         TEXT NOT NULL,
+            parent_key    TEXT NOT NULL DEFAULT '',
+            status        TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN
+                              ('proposed','ratified','rejected')),
+            node_class    TEXT NOT NULL DEFAULT 'optional' CHECK (node_class IN
+                              ('required','optional','contested')),
+            agreement     INTEGER NOT NULL DEFAULT 0,
+            source_count  INTEGER NOT NULL DEFAULT 0,
+            sources       TEXT NOT NULL DEFAULT '[]',
+            centrality    INTEGER NOT NULL DEFAULT 0,
+            ratified_by   TEXT NOT NULL DEFAULT '',
+            ratified_at   TEXT,
+            status_reason TEXT NOT NULL DEFAULT '',
+            meta          TEXT NOT NULL DEFAULT '{}',
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            UNIQUE(work_id, domain, node_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_domain_node_work
+            ON domain_node(work_id, domain, status);
+        CREATE TABLE IF NOT EXISTS domain_node_transition (
+            id          TEXT PRIMARY KEY,
+            node_id     TEXT NOT NULL REFERENCES domain_node(id) ON DELETE CASCADE,
+            from_status TEXT NOT NULL,
+            to_status   TEXT NOT NULL,
+            reason      TEXT NOT NULL DEFAULT '',
+            signed_by   TEXT NOT NULL,
+            at          TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_domain_transition_node
+            ON domain_node_transition(node_id, at)
+    """,
+    ),
 ]

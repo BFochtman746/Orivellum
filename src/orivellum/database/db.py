@@ -5872,6 +5872,8 @@ class OrivellumDB:
         centrality: int = 0,
         dependent_count: int = 0,
         blocking_active_work: bool = False,
+        agreement: int = 0,
+        demand: int = 0,
         unit: str = "",
         force_check: str = "",
         issue_type: str = "",
@@ -5920,6 +5922,8 @@ class OrivellumDB:
             centrality=centrality,
             dependent_count=dependent_count,
             blocking_active_work=blocking_active_work,
+            agreement=agreement,
+            demand=demand,
         )
 
         # ── Blocking-status gate (G-M4, enforced) ────────────────────────────
@@ -5935,6 +5939,8 @@ class OrivellumDB:
                 centrality=centrality,
                 dependent_count=dependent_count,
                 blocking_active_work=False,
+                agreement=agreement,
+                demand=demand,
             )
             meta["blocking_suppressed"] = (
                 f"detector {force_check!r} has no harness measurement — "
@@ -6289,6 +6295,271 @@ class OrivellumDB:
         if not row or row["n_labeled"] < self.MIN_ORACLE_LABELED:
             return False
         return row["labels_fingerprint"] == self.oracle_fingerprint(detector.strip())
+
+    # -------------------------------------------------------------------------
+    # Domain Model (G-M5/G-M6 — interpretive layer, proposal-only)
+    # -------------------------------------------------------------------------
+
+    _DOMAIN_SOURCE_KINDS = ("structure", "bibliography")
+    _DOMAIN_NODE_CLASSES = ("required", "optional", "contested")
+
+    def add_domain_source(self, work_id: str, domain: str, doc_id: str, kind: str) -> dict:
+        """Register a reference-structure document for a Work's domain.
+
+        Idempotent on (work_id, domain, doc_id) — re-registering returns the
+        existing row.  Refuses unknown kinds and missing documents.
+        """
+        domain = (domain or "").strip().lower()
+        if not domain:
+            raise ValueError("domain is required")
+        if kind not in self._DOMAIN_SOURCE_KINDS:
+            raise ValueError(f"kind must be one of {self._DOMAIN_SOURCE_KINDS}")
+        now = _now()
+        with self._lock:
+            doc = self._conn.execute("SELECT id FROM documents WHERE id=?", (doc_id,)).fetchone()
+            if not doc:
+                raise ValueError(f"document {doc_id!r} not found")
+            work = self._conn.execute("SELECT id FROM works WHERE id=?", (work_id,)).fetchone()
+            if not work:
+                raise ValueError(f"work {work_id!r} not found")
+            self._conn.execute(
+                """INSERT INTO domain_source (id, work_id, domain, doc_id, kind, created_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(work_id, domain, doc_id) DO NOTHING""",
+                (_uuid(), work_id, domain, doc_id, kind, now),
+            )
+            self._maybe_commit()
+            row = self._conn.execute(
+                "SELECT * FROM domain_source WHERE work_id=? AND domain=? AND doc_id=?",
+                (work_id, domain, doc_id),
+            ).fetchone()
+        return dict(row)
+
+    def list_domain_sources(self, work_id: str, domain: str | None = None) -> list[dict]:
+        q = """SELECT ds.*, d.title AS doc_title
+               FROM domain_source ds JOIN documents d ON d.id = ds.doc_id
+               WHERE ds.work_id=?"""
+        params: list = [work_id]
+        if domain:
+            q += " AND ds.domain=?"
+            params.append(domain.strip().lower())
+        q += " ORDER BY ds.domain, ds.created_at"
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_domain_source(self, source_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM domain_source WHERE id=?", (source_id,))
+            self._maybe_commit()
+        return cur.rowcount > 0
+
+    @staticmethod
+    def domain_node_id(work_id: str, domain: str, node_key: str) -> str:
+        """Deterministic node id — re-harvests refresh, never clobber."""
+        return "dn-" + hashlib.sha256(f"{work_id}|{domain}|{node_key}".encode()).hexdigest()[:40]
+
+    def upsert_domain_node_proposal(
+        self,
+        *,
+        work_id: str,
+        domain: str,
+        node_key: str,
+        label: str,
+        parent_key: str = "",
+        node_class: str = "optional",
+        agreement: int = 0,
+        source_count: int = 0,
+        sources: list[dict] | None = None,
+        centrality: int = 0,
+        meta: dict | None = None,
+    ) -> dict:
+        """Insert or refresh a harvested node proposal.
+
+        A row already ratified or rejected is NEVER flipped back to proposed
+        and its signed node_class is never overwritten — the harvest only
+        refreshes evidence (agreement / sources / centrality) and records any
+        newly computed class in ``meta.harvest_class`` for a human to act on.
+        """
+        domain = (domain or "").strip().lower()
+        node_key = (node_key or "").strip()
+        if not domain or not node_key or not (label or "").strip():
+            raise ValueError("domain, node_key, and label are required")
+        if node_class not in self._DOMAIN_NODE_CLASSES:
+            raise ValueError(f"node_class must be one of {self._DOMAIN_NODE_CLASSES}")
+        node_id = self.domain_node_id(work_id, domain, node_key)
+        now = _now()
+        sources_json = json.dumps(sources or [])
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM domain_node WHERE id=?", (node_id,)
+            ).fetchone()
+            if existing is not None:
+                row = dict(existing)
+                row_meta = json.loads(row["meta"] or "{}")
+                row_meta.update(meta or {})
+                if row["status"] in ("ratified", "rejected"):
+                    # Signed decision stands; only evidence refreshes.
+                    if node_class != row["node_class"]:
+                        row_meta["harvest_class"] = node_class
+                    self._conn.execute(
+                        """UPDATE domain_node SET agreement=?, source_count=?, sources=?,
+                               centrality=?, meta=?, updated_at=? WHERE id=?""",
+                        (
+                            agreement,
+                            source_count,
+                            sources_json,
+                            centrality,
+                            json.dumps(row_meta),
+                            now,
+                            node_id,
+                        ),
+                    )
+                else:
+                    self._conn.execute(
+                        """UPDATE domain_node SET label=?, parent_key=?, node_class=?,
+                               agreement=?, source_count=?, sources=?, centrality=?,
+                               meta=?, updated_at=? WHERE id=?""",
+                        (
+                            label.strip(),
+                            parent_key or "",
+                            node_class,
+                            agreement,
+                            source_count,
+                            sources_json,
+                            centrality,
+                            json.dumps(row_meta),
+                            now,
+                            node_id,
+                        ),
+                    )
+                self._maybe_commit()
+            else:
+                self._conn.execute(
+                    """INSERT INTO domain_node (id, work_id, domain, node_key, label,
+                           parent_key, status, node_class, agreement, source_count,
+                           sources, centrality, meta, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,'proposed',?,?,?,?,?,?,?,?)""",
+                    (
+                        node_id,
+                        work_id,
+                        domain,
+                        node_key,
+                        label.strip(),
+                        parent_key or "",
+                        node_class,
+                        agreement,
+                        source_count,
+                        sources_json,
+                        centrality,
+                        json.dumps(meta or {}),
+                        now,
+                        now,
+                    ),
+                )
+                self._maybe_commit()
+            return dict(
+                self._conn.execute("SELECT * FROM domain_node WHERE id=?", (node_id,)).fetchone()
+            )
+
+    def list_domain_nodes(
+        self,
+        work_id: str,
+        *,
+        domain: str | None = None,
+        status: str | None = None,
+        node_class: str | None = None,
+    ) -> list[dict]:
+        q = "SELECT * FROM domain_node WHERE work_id=?"
+        params: list = [work_id]
+        if domain:
+            q += " AND domain=?"
+            params.append(domain.strip().lower())
+        if status:
+            q += " AND status=?"
+            params.append(status)
+        if node_class:
+            q += " AND node_class=?"
+            params.append(node_class)
+        q += " ORDER BY domain, agreement DESC, node_key"
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_domain_node(self, node_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM domain_node WHERE id=?", (node_id,)).fetchone()
+        return dict(row) if row else None
+
+    def resolve_domain_node(
+        self,
+        node_id: str,
+        decision: str,
+        *,
+        signed_by: str,
+        reason: str = "",
+        node_class: str | None = None,
+    ) -> str:
+        """Ratify or reject a proposed node — signature required, claim atomic.
+
+        Returns ``"updated"``, ``"not_found"``, or ``"conflict"`` (already
+        resolved).  A contested node can never be ratified as ``required``:
+        structural disagreement is a G4 frontier finding, and signing it away
+        without re-harvest would fabricate consensus.
+        """
+        if decision not in ("approve", "reject"):
+            raise ValueError("decision must be 'approve' or 'reject'")
+        if not (signed_by or "").strip():
+            raise ValueError("signed_by is required — ratification must carry a signature")
+        if node_class is not None and node_class not in self._DOMAIN_NODE_CLASSES:
+            raise ValueError(f"node_class must be one of {self._DOMAIN_NODE_CLASSES}")
+        to_status = "ratified" if decision == "approve" else "rejected"
+        now = _now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT status, node_class FROM domain_node WHERE id=?", (node_id,)
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            if row["node_class"] == "contested" and node_class == "required":
+                raise ValueError(
+                    "a contested node cannot be ratified as required — sources "
+                    "structurally disagree; resolve the disagreement first"
+                )
+            final_class = node_class or row["node_class"]
+            cur = self._conn.execute(
+                """UPDATE domain_node SET status=?, node_class=?, ratified_by=?,
+                       ratified_at=?, status_reason=?, updated_at=?
+                   WHERE id=? AND status='proposed'""",
+                (
+                    to_status,
+                    final_class,
+                    signed_by.strip(),
+                    now,
+                    (reason or "").strip(),
+                    now,
+                    node_id,
+                ),
+            )
+            if cur.rowcount == 0:
+                self._maybe_commit()
+                return "conflict"
+            self._conn.execute(
+                """INSERT INTO domain_node_transition
+                       (id, node_id, from_status, to_status, reason, signed_by, at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    _uuid(),
+                    node_id,
+                    "proposed",
+                    to_status,
+                    (reason or "").strip(),
+                    signed_by.strip(),
+                    now,
+                ),
+            )
+            self._maybe_commit()
+        return "updated"
 
     # -------------------------------------------------------------------------
     # Job state transitions (M0.2 — JOB_SM)

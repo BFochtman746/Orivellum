@@ -438,6 +438,276 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
           </p>
         </div>
       )}
+
+      {/* Interpretive frame (Domain Model) — G-M5/G-M6 */}
+      <DomainModelSection workId={workId} />
+    </div>
+  );
+}
+
+// ─── Interpretive frame (Domain Model) ────────────────────────────────────────
+
+interface DomainSource {
+  id: string; domain: string; doc_id: string; kind: string; doc_title?: string | null;
+}
+interface DomainNode {
+  id: string; domain: string; node_key: string; label: string; status: string;
+  node_class: string; agreement: number; source_count: number; centrality: number;
+}
+interface RecallPeer {
+  mode: string; peer_title?: string; peer_total: number; matched: number;
+  relative_recall: number; missing: { cited: string }[];
+}
+
+const NODE_CLASS_STYLE: Record<string, React.CSSProperties> = {
+  required:  { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" },
+  contested: { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)", color: "var(--rust)" },
+  optional:  { borderColor: "var(--border)", background: "transparent", color: "var(--muted-foreground)" },
+};
+
+function DomainModelSection({ workId }: { workId: string }) {
+  const queryClient = useQueryClient();
+  const [domainInput, setDomainInput] = useState("");
+  const [docPick, setDocPick] = useState("");
+  const [kindPick, setKindPick] = useState("structure");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const { data: docsData } = useGetWorkDocuments(workId);
+  const docs: any[] = (docsData as any)?.documents ?? [];
+
+  const { data: srcData, refetch: refetchSources } = useQuery<{ sources: DomainSource[] }>({
+    queryKey: ["domain-sources", workId],
+    queryFn: () => apiFetch(`${WORK_API_BASE}/works/${workId}/domain/sources`).then((r) => r.json()),
+  });
+  const sources = srcData?.sources ?? [];
+  const domains = [...new Set(sources.map((s) => s.domain))];
+
+  const { data: nodeData, refetch: refetchNodes } = useQuery<{ nodes: DomainNode[] }>({
+    queryKey: ["domain-nodes", workId],
+    queryFn: () => apiFetch(`${WORK_API_BASE}/works/${workId}/domain/nodes`).then((r) => r.json()),
+  });
+  const nodes = nodeData?.nodes ?? [];
+
+  const { data: recall } = useQuery<{ peers: RecallPeer[]; note?: string }>({
+    queryKey: ["relative-recall", workId],
+    queryFn: () => apiFetch(`${WORK_API_BASE}/works/${workId}/relative-recall`).then((r) => r.json()),
+    enabled: sources.length > 0,
+    staleTime: 120_000,
+  });
+
+  const post = async (label: string, path: string, body?: unknown) => {
+    setBusy(label);
+    try {
+      const r = await apiFetch(`${WORK_API_BASE}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        toast.error(d.detail || "Request failed");
+        return null;
+      }
+      return await r.json();
+    } catch {
+      toast.error("Network error");
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const addSource = async () => {
+    const domain = domainInput.trim();
+    if (!domain || !docPick) { toast.error("Pick a domain name and a document"); return; }
+    const d = await post("add-source", `/works/${workId}/domain/sources`, {
+      domain, doc_id: docPick, kind: kindPick,
+    });
+    if (d) { toast.success("Source registered"); setDocPick(""); refetchSources(); }
+  };
+
+  const removeSource = async (id: string) => {
+    setBusy(id);
+    try {
+      const r = await apiFetch(`${WORK_API_BASE}/works/${workId}/domain/sources/${id}`, { method: "DELETE" });
+      if (r.ok) { refetchSources(); } else { toast.error("Could not remove source"); }
+    } catch { toast.error("Network error"); }
+    finally { setBusy(null); }
+  };
+
+  const harvest = async (domain: string) => {
+    const d = await post(`harvest-${domain}`, `/works/${workId}/domain/harvest`, { domain });
+    if (d) {
+      toast.success(
+        `Harvested ${d.nodes} node${d.nodes === 1 ? "" : "s"} from ${d.sources} source${d.sources === 1 ? "" : "s"}` +
+        (d.note ? ` — ${d.note}` : "")
+      );
+      refetchNodes();
+    }
+  };
+
+  const scan = async () => {
+    const d = await post("scan", `/works/${workId}/domain/scan`);
+    if (d) {
+      toast.success(`Scan done — ${d.coverage.emitted} coverage gap(s), ${d.frontier.emitted} decision(s) owed`);
+      queryClient.invalidateQueries({ queryKey: ["work-gaps", workId] });
+    }
+  };
+
+  const byStatus = (s: string) => nodes.filter((n) => n.status === s);
+  const ratified = byStatus("ratified");
+  const proposed = byStatus("proposed");
+  const frontier = ratified.filter((n) => n.node_class === "contested");
+
+  return (
+    <div className="space-y-3 pt-4 border-t border-border/50">
+      <div className="flex items-center justify-between">
+        <h4 className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+          <Network className="w-3.5 h-3.5" /> Interpretive frame (Domain Model)
+        </h4>
+        {ratified.length > 0 && (
+          <button
+            onClick={scan}
+            disabled={!!busy}
+            className="text-[10px] font-mono text-primary/80 hover:text-primary border border-primary/25 rounded px-2 py-0.5 hover:bg-primary/5 transition-colors disabled:opacity-40"
+          >
+            {busy === "scan" ? "…" : "Scan ratified frame →"}
+          </button>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+        This measures the <em>interpretive frame</em> — what triangulated reference structures
+        say the domain contains — distinct from the factual-spine detectors above. Nodes are
+        harvested from registered reference documents (tables of contents, syllabi, reading
+        lists) and generate no gap until you ratify them in the review inbox with a signature.
+      </p>
+
+      {/* Source registration */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={domainInput}
+          onChange={(e) => setDomainInput(e.target.value)}
+          placeholder="Domain name (e.g. theodicy)"
+          className="h-7 w-44 text-xs font-mono"
+        />
+        <Select value={docPick} onValueChange={setDocPick}>
+          <SelectTrigger className="h-7 w-52 text-xs"><SelectValue placeholder="Reference document…" /></SelectTrigger>
+          <SelectContent>
+            {docs.map((d: any) => (
+              <SelectItem key={d.id} value={d.id} className="text-xs">{d.title}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={kindPick} onValueChange={setKindPick}>
+          <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="structure" className="text-xs">structure</SelectItem>
+            <SelectItem value="bibliography" className="text-xs">bibliography</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!!busy} onClick={addSource}>
+          {busy === "add-source" ? "…" : "Register source"}
+        </Button>
+      </div>
+
+      {/* Registered sources, grouped by domain, with harvest buttons */}
+      {domains.map((domain) => {
+        const ds = sources.filter((s) => s.domain === domain);
+        const structural = ds.filter((s) => s.kind === "structure").length;
+        return (
+          <div key={domain} className="p-3 rounded-lg border border-border/50 bg-muted/10 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-medium">{domain}</span>
+              <button
+                onClick={() => harvest(domain)}
+                disabled={!!busy || structural === 0}
+                className="text-[10px] font-mono text-muted-foreground hover:text-foreground border border-border/50 rounded px-2 py-0.5 disabled:opacity-40"
+                title={structural < 3 ? "Fewer than 3 structure sources — nothing can be proposed as required core" : "Harvest node proposals"}
+              >
+                {busy === `harvest-${domain}` ? "…" : `Harvest (${structural} structure source${structural === 1 ? "" : "s"})`}
+              </button>
+            </div>
+            {structural > 0 && structural < 3 && (
+              <p className="text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
+                {structural} of 3 independent sources — required-core triangulation needs at least 3.
+              </p>
+            )}
+            {ds.map((s) => (
+              <div key={s.id} className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+                <span className="text-[9px] uppercase border border-border/50 rounded px-1">{s.kind}</span>
+                <span className="flex-1 truncate">{s.doc_title || s.doc_id}</span>
+                <button onClick={() => removeSource(s.id)} disabled={!!busy} className="opacity-40 hover:opacity-100">
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+
+      {/* Node list */}
+      {nodes.length > 0 && (
+        <div className="space-y-1.5">
+          {proposed.length > 0 && (
+            <p className="text-[10px] font-mono text-muted-foreground">
+              {proposed.length} proposal{proposed.length === 1 ? "" : "s"} awaiting your signature in the{" "}
+              <Link href="/review" className="underline hover:text-foreground">review inbox</Link>.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {nodes.filter((n) => n.status !== "rejected").map((n) => (
+              <span
+                key={n.id}
+                className="text-[10px] font-mono border rounded px-1.5 py-0.5"
+                style={NODE_CLASS_STYLE[n.node_class] ?? NODE_CLASS_STYLE.optional}
+                title={`${n.node_class} · agreement ${n.agreement}/${n.source_count} · ${n.status}`}
+              >
+                {n.label}
+                {n.status === "proposed" && <span className="opacity-50"> ?</span>}
+                {n.status === "ratified" && <span className="opacity-70"> ✓</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Decisions owed (G4 frontier) */}
+      {frontier.length > 0 && (
+        <div className="p-3 rounded-lg border space-y-1" style={NODE_CLASS_STYLE.contested}>
+          <p className="text-xs font-medium">Decisions owed ({frontier.length})</p>
+          <p className="text-[11px] opacity-80 leading-relaxed">
+            Reference structures disagree on where these belong. That is a scoping decision for
+            you, not a deficiency — scan routes them to the decision queue, never as critical gaps.
+          </p>
+          <p className="text-[11px] font-mono opacity-70">{frontier.map((n) => n.label).join(" · ")}</p>
+        </div>
+      )}
+
+      {/* Relative recall vs peers */}
+      {recall && recall.peers.length > 0 && (
+        <div className="p-3 rounded-lg border border-border/50 bg-muted/10 space-y-2">
+          <p className="text-xs font-medium flex items-center gap-2">
+            <BarChart2 className="w-3.5 h-3.5" /> Relative recall vs peer references
+          </p>
+          {recall.peers.map((p, i) => (
+            <div key={i} className="space-y-1">
+              <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                <span className="truncate">{p.peer_title || p.mode} ({p.mode})</span>
+                <span>{p.matched}/{p.peer_total} · {Math.round(p.relative_recall * 100)}%</span>
+              </div>
+              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${Math.round(p.relative_recall * 100)}%`, background: "var(--gilt)" }} />
+              </div>
+              {p.missing.length > 0 && (
+                <p className="text-[10px] font-mono text-muted-foreground/70 truncate" title={p.missing.map((m) => m.cited).join(", ")}>
+                  missing: {p.missing.slice(0, 4).map((m) => m.cited).join(", ")}{p.missing.length > 4 ? "…" : ""}
+                </p>
+              )}
+            </div>
+          ))}
+          {recall.note && <p className="text-[10px] text-muted-foreground/60 leading-snug">{recall.note}</p>}
+        </div>
+      )}
     </div>
   );
 }
