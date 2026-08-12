@@ -277,7 +277,8 @@ def detect_citation_gaps(work_id: str, db: OrivellumDB, *, emit: bool = True) ->
                 "citing_docs": {d: n for d, n in citing},
             },
         )
-        gaps.append(row)
+        if row is not None:  # None = region under an active completeness assertion
+            gaps.append(row)
 
     # Rank by citation frequency — the works most demanded by the corpus first.
     freq = {f"citation:{k}": v["count"] for k, v in cited.items()}
@@ -448,7 +449,8 @@ def detect_never_explained(work_id: str, db: OrivellumDB) -> dict:
                 "mentioning_docs": c["mentioning_docs"],
             },
         )
-        gaps.append(row)
+        if row is not None:  # None = region under an active completeness assertion
+            gaps.append(row)
     strata = {"rare": 0, "common": 0}
     for c in candidates:
         strata[c["frequency_band"]] += 1
@@ -533,7 +535,8 @@ def detect_dead_end_citations(work_id: str, db: OrivellumDB) -> dict:
                 "frequency_band": c["frequency_band"],
             },
         )
-        gaps.append(row)
+        if row is not None:  # None = region under an active completeness assertion
+            gaps.append(row)
     return {"work_id": work_id, "candidates": len(candidates), "gaps": gaps}
 
 
@@ -649,5 +652,6 @@ def detect_failure_clusters(work_id: str, db: OrivellumDB) -> dict:
                 "frequency_band": c["frequency_band"],
             },
         )
-        gaps.append(row)
+        if row is not None:  # None = region under an active completeness assertion
+            gaps.append(row)
     return {"work_id": work_id, "candidates": len(candidates), "gaps": gaps}

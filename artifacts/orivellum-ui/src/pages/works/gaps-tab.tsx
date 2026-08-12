@@ -75,6 +75,7 @@ import {
   AlertTriangle,
   TrendingUp,
   Lightbulb,
+  ShieldCheck,
   Brain,
   Star,
   GitBranch,
@@ -148,6 +149,236 @@ const GAP_SEVERITY_STYLE: Record<string, React.CSSProperties> = {
 const GAP_DOT: Record<string, string> = {
   high: "var(--rust)", medium: "var(--gilt)", low: "var(--green-2)",
 };
+
+// ── Completeness assertions (review §4.1) ────────────────────────────────────
+// Signed "I have all of X" region closures — the opposite sign of a gap.
+// Visible and retractable right beside the gaps they silence.
+
+interface CompletenessAssertion {
+  id: string;
+  gap_class: string;
+  scope: string;
+  basis: string;
+  no_value: number;
+  status: "active" | "retracted";
+  signed_by: string;
+  updated_at: string;
+}
+
+const GAP_CLASS_OPTIONS = [
+  "citation_closure",
+  "mentioned_never_explained",
+  "dead_end_citation",
+  "failure_clustering",
+  "domain_coverage",
+  "domain_frontier",
+];
+
+function CompletenessAssertions({ workId }: { workId: string }) {
+  const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [gapClass, setGapClass] = useState("");
+  const [scope, setScope] = useState("");
+  const [basis, setBasis] = useState("");
+  const [signedBy, setSignedBy] = useState("");
+  const [noValue, setNoValue] = useState(false);
+
+  const { data } = useQuery<{ assertions: CompletenessAssertion[] }>({
+    queryKey: ["work-completeness", workId],
+    queryFn: () =>
+      apiFetch(`${WORK_API_BASE}/works/${workId}/completeness-assertions?status=active`).then((r) => {
+        if (!r.ok) throw new Error("completeness fetch failed");
+        return r.json();
+      }),
+    staleTime: 60_000,
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["work-completeness", workId] });
+    queryClient.invalidateQueries({ queryKey: ["work-gaps", workId] });
+  };
+
+  const assertMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`${WORK_API_BASE}/works/${workId}/completeness-assertions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gap_class: gapClass, scope, basis, signed_by: signedBy, no_value: noValue,
+        }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail || "assert failed");
+      return r.json();
+    },
+    onSuccess: (row: { closed_gap_ids?: string[] }) => {
+      const n = row.closed_gap_ids?.length ?? 0;
+      toast.success(
+        n > 0
+          ? `Region asserted complete — ${n} open gap${n === 1 ? "" : "s"} closed`
+          : "Region asserted complete"
+      );
+      setShowForm(false); setGapClass(""); setScope(""); setBasis(""); setNoValue(false);
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const retractMutation = useMutation({
+    mutationFn: async ({ id, reason, signed_by }: { id: string; reason: string; signed_by: string }) => {
+      const r = await apiFetch(`${WORK_API_BASE}/completeness-assertions/${id}/retract`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason, signed_by }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail || "retract failed");
+      return r.json();
+    },
+    onSuccess: (row: { reopened_gap_ids?: string[] }) => {
+      const n = row.reopened_gap_ids?.length ?? 0;
+      toast.success(
+        n > 0
+          ? `Assertion retracted — ${n} gap${n === 1 ? "" : "s"} re-opened`
+          : "Assertion retracted"
+      );
+      invalidate();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const handleRetract = (a: CompletenessAssertion) => {
+    const reason = window.prompt(`Why retract "${a.gap_class} / ${a.scope}"? A reason is required.`);
+    if (!reason?.trim()) return;
+    const signed_by = window.prompt("Sign the retraction (your name):", a.signed_by);
+    if (!signed_by?.trim()) return;
+    retractMutation.mutate({ id: a.id, reason: reason.trim(), signed_by: signed_by.trim() });
+  };
+
+  const assertions = data?.assertions ?? [];
+
+  return (
+    <div className="p-4 rounded-xl border border-border/50 bg-muted/10 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-primary" />
+          <span className="font-medium text-sm">Closed regions</span>
+          <span className="text-[10px] font-mono text-muted-foreground">
+            signed “I have all of X” assertions — detectors stop asking
+          </span>
+        </div>
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          className="text-[10px] font-mono text-muted-foreground hover:text-foreground"
+        >
+          {showForm ? "cancel" : "+ assert complete"}
+        </button>
+      </div>
+
+      {assertions.length === 0 && !showForm && (
+        <p className="text-xs text-muted-foreground">
+          No regions asserted complete. When you know you hold everything on a topic,
+          assert it here — gap detectors and research runs will stop re-asking.
+        </p>
+      )}
+
+      {assertions.map((a) => (
+        <div
+          key={a.id}
+          className="flex items-start gap-2 px-3 py-2 rounded-lg border border-border/60 bg-background/40"
+        >
+          <ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-emerald-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-mono font-medium">
+                {a.gap_class} / {a.scope === "*" ? "entire class" : a.scope}
+              </span>
+              {a.no_value === 1 && (
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">
+                  empty-but-complete
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{a.basis}</p>
+            <p className="text-[10px] font-mono text-muted-foreground/70 mt-0.5">
+              signed {a.signed_by}
+            </p>
+          </div>
+          <button
+            onClick={() => handleRetract(a)}
+            disabled={retractMutation.isPending}
+            className="text-[10px] font-mono text-muted-foreground hover:text-destructive disabled:opacity-40 shrink-0"
+          >
+            retract
+          </button>
+        </div>
+      ))}
+
+      {showForm && (
+        <div className="space-y-2 pt-1 border-t border-border/40">
+          <div className="grid grid-cols-2 gap-2">
+            <Select value={gapClass} onValueChange={setGapClass}>
+              <SelectTrigger className="h-8 text-xs" data-testid="select-assert-class">
+                <SelectValue placeholder="Gap class" />
+              </SelectTrigger>
+              <SelectContent>
+                {GAP_CLASS_OPTIONS.map((c) => (
+                  <SelectItem key={c} value={c} className="text-xs font-mono">{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+              placeholder="Scope (or * for whole class)"
+              className="h-8 text-xs font-mono"
+              data-testid="input-assert-scope"
+            />
+          </div>
+          <Input
+            value={basis}
+            onChange={(e) => setBasis(e.target.value)}
+            placeholder="Basis — why is this region complete?"
+            className="h-8 text-xs"
+            data-testid="input-assert-basis"
+          />
+          <div className="flex items-center gap-2">
+            <Input
+              value={signedBy}
+              onChange={(e) => setSignedBy(e.target.value)}
+              placeholder="Signed by"
+              className="h-8 text-xs w-40"
+              data-testid="input-assert-signer"
+            />
+            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
+              <Checkbox
+                checked={noValue}
+                onCheckedChange={(v) => setNoValue(v === true)}
+                data-testid="checkbox-assert-novalue"
+              />
+              empty-but-complete
+            </label>
+            <div className="flex-1" />
+            <Button
+              size="sm"
+              className="h-8 text-xs"
+              disabled={
+                assertMutation.isPending ||
+                !gapClass || !scope.trim() || !basis.trim() || !signedBy.trim()
+              }
+              onClick={() => assertMutation.mutate()}
+              data-testid="button-assert-complete"
+            >
+              {assertMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Assert complete"}
+            </Button>
+          </div>
+          <p className="text-[10px] font-mono text-muted-foreground">
+            Open gaps in the region close with this assertion cited; retracting it
+            re-opens exactly those gaps. Everything is signed and ledgered.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm?: (seed: string) => void }) {
   const [, navigate] = useLocation();
@@ -339,6 +570,9 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
           sampled, not understanding.
         </p>
       </div>
+
+      {/* Completeness assertions — signed "I have all of X" region closures */}
+      <CompletenessAssertions workId={workId} />
 
       {/* Hygiene findings list */}
       {data.gaps.length === 0 ? (

@@ -351,7 +351,7 @@ def detect_domain_coverage(work_id: str, db: OrivellumDB) -> dict:
         if node is None:
             continue
         demand = demand_count(db, work_id, node["node_key"])
-        db.create_or_refresh_gap(
+        row = db.create_or_refresh_gap(
             work_id=work_id,
             gap_class=GAP_CLASS_DOMAIN_COVERAGE,
             scope=f"domain:{node['domain']}",
@@ -380,7 +380,8 @@ def detect_domain_coverage(work_id: str, db: OrivellumDB) -> dict:
                 "pair_key": cand["pair_key"],
             },
         )
-        emitted += 1
+        if row is not None:  # None = region under an active completeness assertion
+            emitted += 1
     return {"detector": DETECTOR_DOMAIN_COVERAGE, "candidates": candidates, "emitted": emitted}
 
 
@@ -405,7 +406,7 @@ def detect_domain_frontier(work_id: str, db: OrivellumDB) -> dict:
             parents = _json.loads(node["meta"] or "{}").get("parents_seen", [])
         except Exception:
             parents = []
-        db.create_or_refresh_gap(
+        row = db.create_or_refresh_gap(
             work_id=work_id,
             gap_class=GAP_CLASS_DOMAIN_FRONTIER,
             scope=f"domain:{node['domain']}",
@@ -434,7 +435,8 @@ def detect_domain_frontier(work_id: str, db: OrivellumDB) -> dict:
                 ),
             },
         )
-        emitted += 1
+        if row is not None:  # None = region under an active completeness assertion
+            emitted += 1
     return {"detector": GAP_CLASS_DOMAIN_FRONTIER, "emitted": emitted}
 
 

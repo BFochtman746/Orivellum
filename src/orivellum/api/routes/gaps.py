@@ -92,6 +92,82 @@ def dismiss_hygiene(work_id: str, req: HygieneDismissRequest):
     return {"ok": True, "finding_key": req.finding_key}
 
 
+# ── Completeness assertions (review §4.1) — the opposite sign of a gap ───────
+
+
+class CompletenessAssertRequest(BaseModel):
+    gap_class: str = Field(min_length=1)
+    scope: str = Field(min_length=1)  # '*' closes the whole class for the Work
+    basis: str = Field(min_length=1)
+    signed_by: str = Field(min_length=1)
+    no_value: bool = False  # "genuinely empty for this region, and that is complete"
+    unit: str = ""
+    frame_node_id: str = ""
+    frame_source_ref: str = ""
+
+
+@router.post("/works/{work_id}/completeness-assertions")
+def assert_region_complete(work_id: str, req: CompletenessAssertRequest):
+    """Assert a region complete (signed).  Open gaps in the region close with
+    the assertion cited; detectors stop emitting into it until retraction."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    try:
+        row = db.assert_completeness(
+            work_id=work_id,
+            gap_class=req.gap_class,
+            scope=req.scope,
+            basis=req.basis,
+            signed_by=req.signed_by,
+            no_value=req.no_value,
+            unit=req.unit,
+            frame_node_id=req.frame_node_id,
+            frame_source_ref=req.frame_source_ref,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return row
+
+
+@router.get("/works/{work_id}/completeness-assertions")
+def list_completeness(work_id: str, status: str | None = None):
+    """All completeness assertions for a Work (newest first)."""
+    db = get_db()
+    if not db.get_work(work_id):
+        raise HTTPException(404, f"Work {work_id!r} not found")
+    assertions = db.list_completeness_assertions(work_id, status=status)
+    return {"work_id": work_id, "assertions": assertions, "total": len(assertions)}
+
+
+class CompletenessRetractRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    signed_by: str = Field(min_length=1)
+
+
+@router.post("/completeness-assertions/{assertion_id}/retract")
+def retract_completeness(assertion_id: str, req: CompletenessRetractRequest):
+    """Retract an assertion (signed) — gaps it closed re-open, ledgered."""
+    db = get_db()
+    try:
+        row = db.retract_completeness(assertion_id, reason=req.reason, signed_by=req.signed_by)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return row
+
+
+@router.get("/completeness-assertions/{assertion_id}/history")
+def completeness_history(assertion_id: str):
+    """The full transition ledger for one assertion."""
+    db = get_db()
+    if db.get_completeness_assertion(assertion_id) is None:
+        raise HTTPException(404, f"Assertion {assertion_id!r} not found")
+    return {
+        "assertion_id": assertion_id,
+        "transitions": db.list_completeness_transitions(assertion_id),
+    }
+
+
 # ── G-M3/G-M4: structural detectors + golden oracle + open-world harness ─────
 
 

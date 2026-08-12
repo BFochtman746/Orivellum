@@ -5915,7 +5915,7 @@ class OrivellumDB:
         classification: str = "",
         action: str = "",
         meta: dict | None = None,
-    ) -> dict:
+    ) -> dict | None:
         """Insert a gap, or refresh evidence on the existing row with the same identity.
 
         Identity is a content hash over (work_id, frame_node_id, gap_class,
@@ -5937,6 +5937,11 @@ class OrivellumDB:
         the call returns the row unchanged (re-detection must not undo a signed
         human decision).  Otherwise severity / evidence / meta are refreshed in
         place and the lifecycle status is left alone.
+
+        Returns ``None`` when the region (work_id, gap_class, scope) is
+        covered by an ACTIVE completeness assertion — a region asserted
+        complete never produces a gap again unless the assertion is
+        explicitly retracted (see ``assert_completeness``).
         """
         for name, val in (
             ("frame_node_id", frame_node_id),
@@ -5950,6 +5955,16 @@ class OrivellumDB:
                 )
         if not (gap_class or "").strip() or not (scope or "").strip():
             raise ValueError("gap refused: gap_class and scope are required")
+
+        # ── Completeness-assertion guard (review §4.1) ───────────────────────
+        # "I have all of X" is knowledge with the opposite sign of a gap.  A
+        # region under an active, signed completeness assertion is closed:
+        # the detector's finding is refused here, at the single write path,
+        # so no emitter can re-ask about it.
+        assertion = self.find_completeness_assertion(work_id, gap_class.strip(), scope.strip())
+        if assertion is not None:
+            return None
+
         from orivellum.capabilities.gap_engine import compute_severity
 
         severity = compute_severity(
@@ -6119,6 +6134,292 @@ class OrivellumDB:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM gap_transition WHERE gap_id=? ORDER BY at, id", (gap_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # =========================================================================
+    # Completeness assertions (review §4.1) — the opposite sign of a gap
+    # =========================================================================
+    #
+    # "I have all of X" is knowledge.  An assertion closes a REGION —
+    # (work_id, gap_class, scope) — with the gap table's discipline: stable
+    # content-hash identity, provenance, a required author signature, and an
+    # append-only transition ledger.  ``scope='*'`` closes a whole class for
+    # the Work.  ``no_value=True`` records the empty-but-complete case.
+    #
+    # Effects, all ledgered:
+    #   - detectors stop emitting into the region (guard in
+    #     create_or_refresh_gap);
+    #   - open gaps in the region are dismissed with the assertion cited and
+    #     ``meta.closed_by_assertion`` recorded;
+    #   - retracting the assertion (signed, with reason) re-opens exactly the
+    #     gaps IT closed — the only sanctioned exit from ``dismissed``,
+    #     because that dismissal belonged to the assertion, not to a separate
+    #     human decision.  Human dismissals stay terminal forever.
+
+    @staticmethod
+    def _completeness_id(work_id: str | None, gap_class: str, scope: str) -> str:
+        return (
+            "comp-"
+            + hashlib.sha256(f"{work_id or ''}|{gap_class.strip()}|{scope.strip()}".encode())
+            .hexdigest()[:40]
+        )
+
+    def find_completeness_assertion(
+        self, work_id: str | None, gap_class: str, scope: str
+    ) -> dict | None:
+        """The ACTIVE assertion covering a region, or None.
+
+        A region is covered by an exact (class, scope) assertion or by a
+        class-wide ``scope='*'`` assertion for the same Work.  Never raises —
+        pre-v142 databases simply have no assertions.
+        """
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM completeness_assertion "
+                    "WHERE work_id IS ? AND gap_class=? AND status='active' "
+                    "AND (scope=? OR scope='*') "
+                    "ORDER BY CASE WHEN scope=? THEN 0 ELSE 1 END LIMIT 1",
+                    (work_id, gap_class, scope, scope),
+                ).fetchone()
+            return dict(row) if row else None
+        except sqlite3.OperationalError:
+            return None  # table not present (pre-migration DB)
+
+    def assert_completeness(
+        self,
+        *,
+        work_id: str | None,
+        gap_class: str,
+        scope: str,
+        basis: str,
+        signed_by: str,
+        no_value: bool = False,
+        unit: str = "",
+        frame_node_id: str = "",
+        frame_source_ref: str = "",
+        meta: dict | None = None,
+    ) -> dict:
+        """Assert a region complete (signed).  Idempotent on the region identity.
+
+        REFUSES (ValueError) an assertion without gap_class, scope, a
+        non-blank *basis* (why you believe the region is closed) and a
+        non-blank *signed_by* — an unsigned completeness claim is exactly as
+        inadmissible as an unsigned dismissal.
+
+        Open gaps in the region are dismissed with the assertion cited; their
+        ids are returned under ``closed_gap_ids``.  A retracted assertion for
+        the same region is re-activated (ledgered) rather than duplicated.
+        """
+        gap_class = (gap_class or "").strip()
+        scope = (scope or "").strip()
+        basis = (basis or "").strip()
+        signed_by = (signed_by or "").strip()
+        if not gap_class or not scope:
+            raise ValueError("assertion refused: gap_class and scope are required")
+        if not basis:
+            raise ValueError(
+                "assertion refused: basis is required — say why the region is complete"
+            )
+        if not signed_by:
+            raise ValueError("assertion refused: signed_by is required — a human owns closure")
+
+        aid = self._completeness_id(work_id, gap_class, scope)
+        now = _now()
+        meta_json = json.dumps(meta or {})
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT * FROM completeness_assertion WHERE id=?", (aid,)
+            ).fetchone()
+            if existing is not None:
+                frm = existing["status"]
+                self._conn.execute(
+                    "UPDATE completeness_assertion SET basis=?, no_value=?, unit=?, "
+                    "frame_node_id=?, frame_source_ref=?, meta=?, status='active', "
+                    "status_reason='', signed_by=?, updated_at=? WHERE id=?",
+                    (
+                        basis,
+                        1 if no_value else 0,
+                        unit,
+                        frame_node_id.strip(),
+                        frame_source_ref.strip(),
+                        meta_json,
+                        signed_by,
+                        now,
+                        aid,
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO completeness_transition (id, assertion_id, from_status, "
+                    "to_status, reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
+                    (
+                        _uuid(),
+                        aid,
+                        frm,
+                        "active",
+                        "reasserted" if frm == "retracted" else "refreshed",
+                        signed_by,
+                        now,
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    """INSERT INTO completeness_assertion
+                       (id, work_id, gap_class, scope, unit, frame_node_id,
+                        frame_source_ref, basis, no_value, status, status_reason,
+                        signed_by, meta, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,'active','',?,?,?,?)""",
+                    (
+                        aid,
+                        work_id,
+                        gap_class,
+                        scope,
+                        unit,
+                        frame_node_id.strip(),
+                        frame_source_ref.strip(),
+                        basis,
+                        1 if no_value else 0,
+                        signed_by,
+                        meta_json,
+                        now,
+                        now,
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO completeness_transition (id, assertion_id, from_status, "
+                    "to_status, reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
+                    (_uuid(), aid, "", "active", "asserted", signed_by, now),
+                )
+
+            # Close open gaps the assertion covers — dismissed with the
+            # assertion cited so a later retraction can undo exactly these.
+            scope_clause = "" if scope == "*" else "AND scope=? "
+            params: tuple = (
+                (work_id, gap_class) if scope == "*" else (work_id, gap_class, scope)
+            )
+            open_gaps = self._conn.execute(
+                "SELECT id, status, meta FROM gap WHERE work_id IS ? AND gap_class=? "
+                + scope_clause
+                + "AND status NOT IN ('dismissed','out_of_scope')",
+                params,
+            ).fetchall()
+            closed_ids: list[str] = []
+            reason = f"region asserted complete ({aid})"
+            for g in open_gaps:
+                gmeta = _jload(g["meta"], {}) or {}
+                gmeta["closed_by_assertion"] = aid
+                self._conn.execute(
+                    "UPDATE gap SET status='dismissed', status_reason=?, signed_by=?, "
+                    "meta=?, updated_at=? WHERE id=?",
+                    (reason, signed_by, json.dumps(gmeta), now, g["id"]),
+                )
+                self._conn.execute(
+                    "INSERT INTO gap_transition (id, gap_id, from_status, to_status, "
+                    "reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
+                    (_uuid(), g["id"], g["status"], "dismissed", reason, signed_by, now),
+                )
+                closed_ids.append(g["id"])
+            self._maybe_commit()
+            row = dict(
+                self._conn.execute(
+                    "SELECT * FROM completeness_assertion WHERE id=?", (aid,)
+                ).fetchone()
+            )
+        row["closed_gap_ids"] = closed_ids
+        return row
+
+    def retract_completeness(self, assertion_id: str, *, reason: str, signed_by: str) -> dict:
+        """Retract a completeness assertion (signed, ledgered) — the region re-opens.
+
+        Atomically claims the active row (conditional UPDATE); a second
+        retraction raises ValueError.  Gaps the assertion dismissed —
+        ``meta.closed_by_assertion == assertion_id`` — return to ``proposed``
+        with ledger rows.  Gaps dismissed by an independent human decision
+        carry no marker and stay terminal.
+        """
+        reason = (reason or "").strip()
+        signed_by = (signed_by or "").strip()
+        if not reason or not signed_by:
+            raise ValueError("retraction requires a reason and a signature")
+        now = _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE completeness_assertion SET status='retracted', status_reason=?, "
+                "signed_by=?, updated_at=? WHERE id=? AND status='active'",
+                (reason, signed_by, now, assertion_id),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(
+                    f"assertion {assertion_id!r} not found or already retracted"
+                )
+            self._conn.execute(
+                "INSERT INTO completeness_transition (id, assertion_id, from_status, "
+                "to_status, reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
+                (_uuid(), assertion_id, "active", "retracted", reason, signed_by, now),
+            )
+            # Re-open exactly the gaps this assertion closed.  This is the
+            # only path out of 'dismissed': the dismissal belonged to the
+            # assertion, and both sides of the round-trip are signed rows.
+            dismissed = self._conn.execute(
+                "SELECT id, meta FROM gap WHERE status='dismissed' "
+                "AND json_extract(meta, '$.closed_by_assertion')=?",
+                (assertion_id,),
+            ).fetchall()
+            reopened_ids: list[str] = []
+            reopen_reason = f"assertion retracted ({assertion_id}): {reason}"
+            for g in dismissed:
+                gmeta = _jload(g["meta"], {}) or {}
+                gmeta.pop("closed_by_assertion", None)
+                gmeta["reopened_from_assertion"] = assertion_id
+                self._conn.execute(
+                    "UPDATE gap SET status='proposed', status_reason=?, signed_by=?, "
+                    "meta=?, updated_at=? WHERE id=?",
+                    (reopen_reason, signed_by, json.dumps(gmeta), now, g["id"]),
+                )
+                self._conn.execute(
+                    "INSERT INTO gap_transition (id, gap_id, from_status, to_status, "
+                    "reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
+                    (_uuid(), g["id"], "dismissed", "proposed", reopen_reason, signed_by, now),
+                )
+                reopened_ids.append(g["id"])
+            self._maybe_commit()
+            row = dict(
+                self._conn.execute(
+                    "SELECT * FROM completeness_assertion WHERE id=?", (assertion_id,)
+                ).fetchone()
+            )
+        row["reopened_gap_ids"] = reopened_ids
+        return row
+
+    def get_completeness_assertion(self, assertion_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM completeness_assertion WHERE id=?", (assertion_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_completeness_assertions(
+        self, work_id: str | None = None, status: str | None = None
+    ) -> list[dict]:
+        q = "SELECT * FROM completeness_assertion WHERE 1=1"
+        params: list = []
+        if work_id is not None:
+            q += " AND work_id=?"
+            params.append(work_id)
+        if status is not None:
+            q += " AND status=?"
+            params.append(status)
+        q += " ORDER BY updated_at DESC"
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_completeness_transitions(self, assertion_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM completeness_transition WHERE assertion_id=? ORDER BY at, id",
+                (assertion_id,),
             ).fetchall()
         return [dict(r) for r in rows]
 

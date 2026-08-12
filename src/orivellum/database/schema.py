@@ -3408,4 +3408,51 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE work_gap_cache DROP COLUMN coverage_pct
     """,
     ),
+    # v142 — Completeness assertions (brutal review §4.1): "I have all of X"
+    # is knowledge with nowhere to live.  A gap and a completeness assertion
+    # are the same record with opposite sign — this table stores the positive
+    # polarity with the gap table's discipline: content-hash identity over
+    # the region (work|class|scope), provenance, a REQUIRED author signature,
+    # and an append-only transition ledger.  ``no_value=1`` records the
+    # empty-but-complete case ("this relation is genuinely empty for this
+    # entity, and that is complete").  Detectors consult active assertions
+    # before emitting; the research path treats them as stopping conditions.
+    (
+        142,
+        "Completeness assertions with both polarities (region closure store)",
+        """
+        CREATE TABLE IF NOT EXISTS completeness_assertion (
+            id               TEXT PRIMARY KEY,
+            work_id          TEXT REFERENCES works(id) ON DELETE CASCADE,
+            gap_class        TEXT NOT NULL,
+            scope            TEXT NOT NULL,
+            unit             TEXT NOT NULL DEFAULT '',
+            frame_node_id    TEXT NOT NULL DEFAULT '',
+            frame_source_ref TEXT NOT NULL DEFAULT '',
+            basis            TEXT NOT NULL,
+            no_value         INTEGER NOT NULL DEFAULT 0,
+            status           TEXT NOT NULL DEFAULT 'active'
+                             CHECK(status IN ('active','retracted')),
+            status_reason    TEXT NOT NULL DEFAULT '',
+            signed_by        TEXT NOT NULL,
+            meta             TEXT NOT NULL DEFAULT '{}',
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_completeness_work_status
+            ON completeness_assertion(work_id, status);
+        CREATE TABLE IF NOT EXISTS completeness_transition (
+            id           TEXT PRIMARY KEY,
+            assertion_id TEXT NOT NULL
+                         REFERENCES completeness_assertion(id) ON DELETE CASCADE,
+            from_status  TEXT NOT NULL,
+            to_status    TEXT NOT NULL,
+            reason       TEXT NOT NULL DEFAULT '',
+            signed_by    TEXT NOT NULL DEFAULT '',
+            at           TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_completeness_transition
+            ON completeness_transition(assertion_id, at)
+    """,
+    ),
 ]

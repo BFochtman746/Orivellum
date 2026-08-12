@@ -164,12 +164,46 @@ def _gaps_from_research_requests(c, topic, toks, gaps, notes):
         notes.append(f"research_requests unavailable: {e}")
 
 
-def _gaps_from_gap_table(c, topic, toks, gaps, notes):
+def _closed_regions(c, notes):
+    """Active completeness assertions — regions a human has signed as complete.
+
+    Returns a set of (work_id, gap_class, scope) tuples; scope '*' closes the
+    whole class for the Work.  Pre-v142 databases simply have none.
+    """
+    regions = set()
     try:
         for r in c.execute(
-            "SELECT id, unit, scope, evidence_absent, gap_class FROM gap "
+            "SELECT work_id, gap_class, scope FROM completeness_assertion "
+            "WHERE status='active'"
+        ):
+            regions.add((r["work_id"], r["gap_class"], r["scope"]))
+    except sqlite3.Error:
+        pass  # table absent — no assertions exist
+    return regions
+
+
+def _gaps_from_gap_table(c, topic, toks, gaps, notes):
+    closed = _closed_regions(c, notes)
+    try:
+        for r in c.execute(
+            "SELECT id, work_id, unit, scope, evidence_absent, gap_class FROM gap "
             "WHERE status IN ('proposed','ratified','assigned')"
         ):
+            # Stopping condition (review §4.1): a region under an active,
+            # signed completeness assertion is closed — research against it
+            # ends here with "already closed", never re-queued.  (Assertions
+            # also dismiss such gaps at write time; this guard covers rows
+            # raced in between and keeps the accounting honest.)
+            if (r["work_id"], r["gap_class"], r["scope"]) in closed or (
+                r["work_id"],
+                r["gap_class"],
+                "*",
+            ) in closed:
+                notes.append(
+                    f"gap {r['id']} skipped: region already closed by a "
+                    "completeness assertion"
+                )
+                continue
             blob = " ".join(filter(None, (r["unit"], r["scope"], r["evidence_absent"])))
             if _overlaps(blob, toks):
                 q = (r["unit"] or r["scope"] or "").strip() or r["evidence_absent"][:120]
