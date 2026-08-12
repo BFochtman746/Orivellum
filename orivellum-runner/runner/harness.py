@@ -12,16 +12,26 @@ from .config import CFG
 
 
 class Budget:
-    def __init__(self):
+    """Run-level budget enforcer.
+
+    Per-run limits (``max_units``, ``max_minutes``) take precedence over the
+    global CFG defaults when provided.  Pass them from the action's declared
+    cost so individual actions cannot exceed their own declared budget even if
+    the global CFG allows more.
+    """
+
+    def __init__(self, max_units: int | None = None, max_minutes: int | None = None):
         self.t0 = time.time()
         self.units = 0
+        self._max_units = max_units if max_units is not None else CFG.max_units
+        self._max_minutes = max_minutes if max_minutes is not None else CFG.max_minutes
 
     def check(self):
         mins = (time.time() - self.t0) / 60
-        if mins >= CFG.max_minutes:
-            return f"wall-clock budget reached ({CFG.max_minutes} min)"
-        if self.units >= CFG.max_units:
-            return f"unit budget reached ({CFG.max_units} units)"
+        if mins >= self._max_minutes:
+            return f"wall-clock budget reached ({self._max_minutes} min)"
+        if self.units >= self._max_units:
+            return f"unit budget reached ({self._max_units} units)"
         if llm.used()["est_tokens"] >= CFG.max_tokens:
             return f"token budget reached (~{CFG.max_tokens} tokens)"
         return None
@@ -30,10 +40,16 @@ class Budget:
         return round((time.time() - self.t0) / 60, 2)
 
 
-def execute(run_id, job, on_unit, on_finish=None, resume=False):
+def execute(run_id, job, on_unit, on_finish=None, resume=False,
+            max_units: int | None = None, max_minutes: int | None = None):
     """job: module with a `unit_worker(run_id, unit)` returning a digest dict.
-    Raising inside a worker fails that unit and the loop keeps going."""
-    b = Budget()
+    Raising inside a worker fails that unit and the loop keeps going.
+
+    ``max_units`` and ``max_minutes`` set per-run hard limits that take
+    precedence over the global CFG defaults.  Pass the action's declared cost
+    so individual actions cannot overrun their budget.
+    """
+    b = Budget(max_units=max_units, max_minutes=max_minutes)
     stop_reason = None
     if resume:
         store.note(run_id, "resumed from checkpoint")

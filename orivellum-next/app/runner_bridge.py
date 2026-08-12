@@ -102,13 +102,17 @@ def _runner_dispatch(action: dict, *, executor=None) -> dict:
                     "anchor_ref": action.get("anchor_ref", ""),
                 },
             }])
-            # Execute synchronously.  The harness retries transient unit
-            # failures internally; we read unit counts after completion.
+            # Execute synchronously, capping the run at the action's declared
+            # cost budget.  Passing max_units/max_minutes to the harness makes
+            # the declared cost a hard per-run enforcement limit — not just plan
+            # metadata — independent of the global CFG defaults.
             res = _runner_harness.execute(
                 run_id,
                 _next_action_job,
                 _next_action_job.unit_worker,
                 _next_action_job.final_pass,
+                max_units=action.get("cost_units"),
+                max_minutes=action.get("cost_minutes"),
             )
             # A run can reach status='done' (all units dequeued) even when
             # units FAILED — the harness marks exhausted-retry units as

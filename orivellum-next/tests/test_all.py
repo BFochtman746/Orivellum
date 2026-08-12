@@ -935,6 +935,40 @@ class TestN5Chain(Base):
         self.assertEqual(row["state"], "queued",
                          "concurrent non-running state must be preserved by finish()")
 
+    @unittest.skipUnless(runner_bridge._HAS_RUNNER, "orivellum-runner not installed")
+    def test_action_cost_units_zero_stops_run_before_any_unit_executes(self):
+        """N5 per-run budget enforcement: an action with cost_units=0 must be stopped
+        by the harness Budget before any unit executes, independent of global CFG limits.
+        The run must be 'failed' (not 'done') and the stop_reason must cite the budget.
+        """
+        # Offer an action with cost_units=0 so the harness budget cap is 0 units.
+        acts = [{"kind": "act", "label": "zero-budget",
+                  "prompt": "do something with zero budget",
+                  "anchor": "budget test anchor", "anchor_ref": "budget.test:z:1",
+                  "recommended": True, "rationale": "unblocks rest",
+                  "confidence": 0.9, "cost_units": 0, "cost_minutes": 1,
+                  "reversible": True, "blocked_by": "", "needs_clarify": False},
+                 {"kind": "act", "label": "zero-budget-b",
+                  "prompt": "second", "anchor": "a", "anchor_ref": "a:b:1",
+                  "recommended": False, "rationale": "",
+                  "confidence": 0.9, "cost_units": 5, "cost_minutes": 1,
+                  "reversible": True, "blocked_by": "", "needs_clarify": False}]
+        sid = nextaction.offer(self.db, "budget-t", "msg", acts, POLICY_AUTO,
+                               no_recommendation_reason="")
+        aid = nextaction.read_set(self.db, sid)["actions"][0]["id"]
+
+        result = runner_bridge.enqueue(self.db, aid)
+
+        # Budget stops the run before any unit, so dispatch fails
+        self.assertEqual(result.get("final_state"), "failed",
+                         "cost_units=0 must produce a failed run (budget stops before dispatch)")
+        unit = result.get("unit") or {}
+        self.assertIn("budget", (unit.get("stop_reason") or "").lower(),
+                      "stop_reason must cite the budget: " + repr(unit.get("stop_reason")))
+        row = self.db.q1("SELECT state FROM next_action WHERE id=?", (aid,))
+        self.assertEqual(row["state"], "failed",
+                         "action must be in state='failed' when the per-run budget fires")
+
     def test_run_chain_finish_preserves_concurrent_dismiss(self):
         """N5 concurrent dismiss: if an action is moved out of 'running' while the runner
         is executing, finish() must not overwrite the resulting state with 'done'/'failed'.
