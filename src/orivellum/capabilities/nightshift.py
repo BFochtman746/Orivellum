@@ -809,13 +809,13 @@ def _pass_sparse_harvest(db: OrivellumDB, report: list[str]) -> int:
 def _pass_gap_analysis(db: OrivellumDB, report: list[str]) -> None:
     """Detect research gaps for every active Work and cache results."""
     try:
-        from orivellum.capabilities.gaps import detect_gaps
+        from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
         active_works = db.list_works(status="active")
         high_gaps: list[str] = []
         for work in active_works[:20]:
             try:
-                gr = detect_gaps(work["id"], db)
+                gr = detect_hygiene(work["id"], db)
                 try:
                     gap_dicts = [
                         {
@@ -824,8 +824,9 @@ def _pass_gap_analysis(db: OrivellumDB, report: list[str]) -> None:
                             "description": g.description,
                             "severity": g.severity,
                             "metadata": g.metadata,
+                            "finding_key": g.finding_key,
                         }
-                        for g in gr.gaps
+                        for g in gr.findings
                     ]
                     db.cache_work_gaps(
                         work["id"],
@@ -835,7 +836,7 @@ def _pass_gap_analysis(db: OrivellumDB, report: list[str]) -> None:
                     )
                 except Exception:
                     pass
-                for g in gr.gaps:
+                for g in gr.findings:
                     if g.severity == "high":
                         wtitle = work.get("title", work["id"][:12])
                         high_gaps.append(f"{wtitle}: {g.title}")

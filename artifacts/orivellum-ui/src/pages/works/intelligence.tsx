@@ -295,7 +295,7 @@ export default function WorkIntelligence() {
           color={gaps ? scoreColor(gaps.coverage_pct) : "text-muted-foreground"}
         />
         <MetricCard
-          label="Gaps"
+          label="Hygiene"
           value={totalGaps ? String(totalGaps) : (gaps ? "0" : "—")}
           sub={totalGaps > 0 ? `${highGaps.length} high · ${medGaps.length} med` : "none detected"}
           loading={gapsLoading}

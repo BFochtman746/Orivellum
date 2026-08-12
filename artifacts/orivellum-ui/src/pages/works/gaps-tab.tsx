@@ -112,6 +112,7 @@ const WORK_API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").repl
 interface GapItem {
   kind: string; title: string; description: string; severity: string;
   metadata: Record<string, unknown>;
+  finding_key?: string;
 }
 interface GapReport {
   coverage_pct: number; total_chapters: number;
@@ -219,13 +220,31 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
     finally { setActionPending(null); }
   };
 
+  /** Permanently dismiss a hygiene finding — it never reappears. */
+  const dismissFinding = async (findingKey?: string) => {
+    if (!findingKey) return;
+    setActionPending(findingKey);
+    try {
+      const r = await apiFetch(`${WORK_API_BASE}/works/${workId}/hygiene/dismiss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ finding_key: findingKey, reason: "dismissed from Hygiene tab" }),
+      });
+      if (r.ok) {
+        toast.success("Finding dismissed — it won't come back");
+        refetch();
+      } else { toast.error("Could not dismiss finding"); }
+    } catch { toast.error("Network error"); }
+    finally { setActionPending(null); }
+  };
+
   if (isLoading) return (
     <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20 w-full" />)}</div>
   );
   if (error || !data) return (
     <div className="text-center py-16 text-muted-foreground border border-dashed rounded-lg">
       <AlertTriangle className="w-8 h-8 mx-auto mb-3 opacity-40" />
-      <p className="text-sm">Could not load gap analysis.</p>
+      <p className="text-sm">Could not load hygiene analysis.</p>
     </div>
   );
 
@@ -270,10 +289,10 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
         </p>
       </div>
 
-      {/* Gaps list */}
+      {/* Hygiene findings list */}
       {data.gaps.length === 0 ? (
         <div className="text-center py-10 border border-dashed rounded-lg text-muted-foreground text-sm">
-          No gaps detected — all chapters have sufficient research coverage.
+          No hygiene findings — all chapters have sufficient research coverage.
         </div>
       ) : (
         <div className="space-y-4">
@@ -305,8 +324,19 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
                         </div>
                       </div>
                       <p className="text-[12px] leading-relaxed opacity-80">{g.description}</p>
-                      {/* One-click actions — Add task is available on all gap kinds */}
+                      {/* One-click actions — Add task is available on all finding kinds */}
                       <div className="flex items-center justify-end gap-3 mt-2 pt-2 border-t border-current/10">
+                        {g.finding_key && (
+                          <button
+                            disabled={actionPending === g.finding_key}
+                            onClick={() => dismissFinding(g.finding_key)}
+                            className="flex items-center gap-1.5 text-[11px] font-mono opacity-50 hover:opacity-100 disabled:opacity-30 transition-opacity"
+                            title="Dismiss permanently — this finding will never reappear"
+                          >
+                            <X className="w-3 h-3" />
+                            Dismiss
+                          </button>
+                        )}
                         <button
                           disabled={createTask.isPending}
                           onClick={() => createTaskFromGap(chapTitle)}

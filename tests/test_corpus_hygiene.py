@@ -77,18 +77,18 @@ def _add_knowledge(
     )
 
 
-# ── unit tests — detect_gaps() ────────────────────────────────────────────────
+# ── unit tests — detect_hygiene() ────────────────────────────────────────────────
 
 
 def test_empty_work_has_no_gaps(tmp_path):
     """A Work with no documents should produce no gaps."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Empty Work")
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    assert report.gaps == []
+    assert report.findings == []
     assert report.coverage_pct == 0
     assert report.total_chapters == 0
 
@@ -96,17 +96,17 @@ def test_empty_work_has_no_gaps(tmp_path):
 def test_gap1_undocumented_doc(tmp_path):
     """Ready doc with no chapters → undocumented_doc gap."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work A")
     _add_ready_doc(db, work["id"], title="PlainDoc")
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "undocumented_doc" in kinds
 
-    gap = next(g for g in report.gaps if g.kind == "undocumented_doc")
+    gap = next(g for g in report.findings if g.kind == "undocumented_doc")
     assert gap.severity == "medium"
     assert "PlainDoc" in gap.title
     assert "doc_id" in gap.metadata
@@ -115,32 +115,32 @@ def test_gap1_undocumented_doc(tmp_path):
 def test_gap1_absent_when_chapters_exist(tmp_path):
     """No undocumented_doc gap when the doc has at least one chapter."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work B")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Introduction"])
 
-    report = detect_gaps(work["id"], db)
-    kinds = [g.kind for g in report.gaps]
+    report = detect_hygiene(work["id"], db)
+    kinds = [g.kind for g in report.findings]
     assert "undocumented_doc" not in kinds
 
 
 def test_gap2_uncovered_chapter(tmp_path):
     """Chapter with zero knowledge items → uncovered_chapter (high severity)."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work C")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Methods"])
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "uncovered_chapter" in kinds
 
-    gap = next(g for g in report.gaps if g.kind == "uncovered_chapter")
+    gap = next(g for g in report.findings if g.kind == "uncovered_chapter")
     assert gap.severity == "high"
     assert "Methods" in gap.title
 
@@ -148,7 +148,7 @@ def test_gap2_uncovered_chapter(tmp_path):
 def test_gap3_weak_coverage(tmp_path):
     """Chapter with 1-2 knowledge items → weak_coverage (low severity)."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work D")
     doc_id = _add_ready_doc(db, work["id"])
@@ -157,13 +157,13 @@ def test_gap3_weak_coverage(tmp_path):
     _add_knowledge(db, work["id"], "finding one", source_doc_id=doc_id)
     _add_knowledge(db, work["id"], "finding two", source_doc_id=doc_id)
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "weak_coverage" in kinds
     assert "uncovered_chapter" not in kinds  # 2 items → weak, not uncovered
 
-    gap = next(g for g in report.gaps if g.kind == "weak_coverage")
+    gap = next(g for g in report.findings if g.kind == "weak_coverage")
     assert gap.severity == "low"
     assert "Results" in gap.title
 
@@ -171,7 +171,7 @@ def test_gap3_weak_coverage(tmp_path):
 def test_gap3_absent_when_sufficient_coverage(tmp_path):
     """Chapter with ≥3 items → no coverage gap."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work E")
     doc_id = _add_ready_doc(db, work["id"])
@@ -179,9 +179,9 @@ def test_gap3_absent_when_sufficient_coverage(tmp_path):
     for i in range(3):
         _add_knowledge(db, work["id"], f"fact {i}", source_doc_id=doc_id)
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "uncovered_chapter" not in kinds
     assert "weak_coverage" not in kinds
 
@@ -189,17 +189,17 @@ def test_gap3_absent_when_sufficient_coverage(tmp_path):
 def test_gap4_missing_sources(tmp_path):
     """Knowledge item with source_doc_id=NULL → missing_sources gap."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work F")
     _add_knowledge(db, work["id"], "unsourced fact", source_doc_id=None)
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "missing_sources" in kinds
 
-    gap = next(g for g in report.gaps if g.kind == "missing_sources")
+    gap = next(g for g in report.findings if g.kind == "missing_sources")
     assert gap.severity == "medium"
     assert gap.metadata["count"] == 1
 
@@ -207,22 +207,22 @@ def test_gap4_missing_sources(tmp_path):
 def test_gap4_absent_when_all_sourced(tmp_path):
     """No missing_sources gap when every knowledge item has a source doc."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work G")
     doc_id = _add_ready_doc(db, work["id"])
     _add_knowledge(db, work["id"], "sourced fact", source_doc_id=doc_id)
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "missing_sources" not in kinds
 
 
 def test_gap5_orphaned_research(tmp_path):
     """Knowledge item referencing a doc not linked to this work → orphaned_research."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work_a = db.create_work("Work H")
     work_b = db.create_work("Other Work")
@@ -236,12 +236,12 @@ def test_gap5_orphaned_research(tmp_path):
         db, work_a["id"], "orphaned research fact about external doc", source_doc_id=doc_id
     )
 
-    report = detect_gaps(work_a["id"], db)
+    report = detect_hygiene(work_a["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "orphaned_research" in kinds
 
-    gap = next(g for g in report.gaps if g.kind == "orphaned_research")
+    gap = next(g for g in report.findings if g.kind == "orphaned_research")
     assert gap.severity == "low"
     assert gap.metadata["count"] == 1
 
@@ -249,7 +249,7 @@ def test_gap5_orphaned_research(tmp_path):
 def test_gap6_stale_source(tmp_path):
     """Document created > 1 year ago → stale_source gap (low severity)."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work I")
     two_years_ago = (
@@ -257,12 +257,12 @@ def test_gap6_stale_source(tmp_path):
     ).isoformat()[:10]
     _add_ready_doc(db, work["id"], title="OldDoc", created_at=two_years_ago)
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "stale_source" in kinds
 
-    gap = next(g for g in report.gaps if g.kind == "stale_source")
+    gap = next(g for g in report.findings if g.kind == "stale_source")
     assert gap.severity == "low"
     assert gap.metadata["count"] == 1
 
@@ -270,7 +270,7 @@ def test_gap6_stale_source(tmp_path):
 def test_gap6_absent_for_recent_doc(tmp_path):
     """Document created < 1 year ago → no stale_source gap."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work J")
     six_months_ago = (
@@ -278,16 +278,16 @@ def test_gap6_absent_for_recent_doc(tmp_path):
     ).isoformat()[:10]
     _add_ready_doc(db, work["id"], title="NewDoc", created_at=six_months_ago)
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "stale_source" not in kinds
 
 
 def test_gap7_duplicate_research(tmp_path):
     """Two knowledge items with near-identical text → duplicate_research gap."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work K")
     # Two texts that share all but one word → Jaccard ≥ 0.833, above 0.8 threshold.
@@ -297,27 +297,27 @@ def test_gap7_duplicate_research(tmp_path):
     _add_knowledge(db, work["id"], text_a)
     _add_knowledge(db, work["id"], text_b)
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "duplicate_research" in kinds
 
-    gap = next(g for g in report.gaps if g.kind == "duplicate_research")
+    gap = next(g for g in report.findings if g.kind == "duplicate_research")
     assert gap.metadata["duplicate_pairs"] >= 1
 
 
 def test_gap7_absent_for_distinct_items(tmp_path):
     """Two clearly different knowledge items → no duplicate_research gap."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Work L")
     _add_knowledge(db, work["id"], "The mitochondria generates cellular energy")
     _add_knowledge(db, work["id"], "Photosynthesis converts sunlight into glucose in plants")
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
 
-    kinds = [g.kind for g in report.gaps]
+    kinds = [g.kind for g in report.findings]
     assert "duplicate_research" not in kinds
 
 
@@ -327,13 +327,13 @@ def test_gap7_absent_for_distinct_items(tmp_path):
 def test_coverage_pct_zero_when_all_uncovered(tmp_path):
     """All chapters uncovered → coverage_pct = 0."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Coverage Work")
     doc_id = _add_ready_doc(db, work["id"])
     _add_chapters(db, doc_id, work["id"], ["Ch1", "Ch2"])
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
     assert report.coverage_pct == 0
     assert report.total_chapters == 2
 
@@ -341,7 +341,7 @@ def test_coverage_pct_zero_when_all_uncovered(tmp_path):
 def test_coverage_pct_hundred_when_all_covered(tmp_path):
     """All chapters well-covered → coverage_pct = 100."""
     _, db = _make_app(tmp_path)
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     work = db.create_work("Full Coverage")
     doc_id = _add_ready_doc(db, work["id"])
@@ -349,7 +349,7 @@ def test_coverage_pct_hundred_when_all_covered(tmp_path):
     for i in range(3):
         _add_knowledge(db, work["id"], f"fact {i}", source_doc_id=doc_id)
 
-    report = detect_gaps(work["id"], db)
+    report = detect_hygiene(work["id"], db)
     assert report.coverage_pct == 100
 
 

@@ -651,7 +651,7 @@ export default function WorkDetail() {
               { value: "knowledge",    icon: Network,       label: "Knowledge",    badge: null },
               { value: "graph",        icon: Share2,        label: "Graph",        badge: null },
               { value: "completeness", icon: BarChart2,     label: "Completeness", badge: null },
-              { value: "gaps",         icon: AlertTriangle, label: "Gaps",         badge: null },
+              { value: "gaps",         icon: AlertTriangle, label: "Hygiene",      badge: null },
               { value: "tasks",        icon: CheckSquare,   label: "Tasks",        badge: pendingTaskCount ?? null },
               { value: "conversations",icon: MessageSquare, label: "Conversations",badge: null },
               { value: "search",       icon: Search,        label: "Search",       badge: null },
@@ -682,7 +682,7 @@ export default function WorkDetail() {
             <TabsContent value="knowledge"><ErrorBoundary label="knowledge tab"><KnowledgeTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="graph"><ErrorBoundary label="graph tab"><GraphTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="completeness"><ErrorBoundary label="completeness tab"><CompletenessTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="gaps"><ErrorBoundary label="gaps tab"><GapsTab workId={workId!} onBrainstorm={handleBrainstormGap} /></ErrorBoundary></TabsContent>
+            <TabsContent value="gaps"><ErrorBoundary label="hygiene tab"><GapsTab workId={workId!} onBrainstorm={handleBrainstormGap} /></ErrorBoundary></TabsContent>
             <TabsContent value="tasks"><ErrorBoundary label="tasks tab"><TasksTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="conversations"><ErrorBoundary label="conversations tab"><ConversationsTab workId={workId!} /></ErrorBoundary></TabsContent>
             <TabsContent value="search"><ErrorBoundary label="search tab"><SearchTab workId={workId!} initialQuery={_initialSearchQuery} /></ErrorBoundary></TabsContent>

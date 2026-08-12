@@ -3134,4 +3134,69 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON autonomy_run(work_id, started_at)
     """,
     ),
+    # v134 — GAP ENGINE (G-M1/G-M2): gaps get identity, a lifecycle, and the
+    # first true detector; hygiene findings get dismissal persistence.
+    #
+    # gap            — one row per research gap.  id is a content hash over
+    #                  (frame_node_id, gap_class, scope) so re-detection maps
+    #                  to the same row.  Insert path (db.create_or_refresh_gap)
+    #                  REFUSES rows without a frame citation: frame_node_id,
+    #                  frame_source_ref, and evidence_absent are all NOT NULL
+    #                  and enforced non-blank in code — the same discipline as
+    #                  canon_fact's source_ref rule.  Dismissed / out_of_scope
+    #                  rows persist forever and are never resurrected.
+    # gap_transition — append-only ledger; every status change writes a row.
+    # hygiene_dismissal — dismissed corpus-hygiene findings, keyed by the
+    #                  finding's stable content hash; a dismissed finding
+    #                  never reappears in detect_hygiene output.
+    (
+        134,
+        "GAP ENGINE: gap identity + lifecycle ledger + hygiene dismissals",
+        """
+        CREATE TABLE IF NOT EXISTS gap (
+            id               TEXT PRIMARY KEY,
+            work_id          TEXT REFERENCES works(id) ON DELETE CASCADE,
+            gap_class        TEXT NOT NULL,
+            scope            TEXT NOT NULL,
+            unit             TEXT NOT NULL DEFAULT '',
+            force_check      TEXT NOT NULL DEFAULT '',
+            issue_type       TEXT NOT NULL DEFAULT '',
+            severity         TEXT NOT NULL DEFAULT 'low',
+            classification   TEXT NOT NULL DEFAULT '',
+            action           TEXT NOT NULL DEFAULT '',
+            frame_node_id    TEXT NOT NULL,
+            frame_source_ref TEXT NOT NULL,
+            evidence_absent  TEXT NOT NULL,
+            status           TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN
+                ('proposed','ratified','assigned','researched','covered',
+                 'mastered','dismissed','out_of_scope')),
+            status_reason    TEXT NOT NULL DEFAULT '',
+            signed_by        TEXT NOT NULL DEFAULT '',
+            meta             TEXT NOT NULL DEFAULT '{}',
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gap_work ON gap(work_id, status);
+        CREATE TABLE IF NOT EXISTS gap_transition (
+            id          TEXT PRIMARY KEY,
+            gap_id      TEXT NOT NULL REFERENCES gap(id) ON DELETE CASCADE,
+            from_status TEXT NOT NULL,
+            to_status   TEXT NOT NULL,
+            reason      TEXT NOT NULL DEFAULT '',
+            signed_by   TEXT NOT NULL DEFAULT '',
+            at          TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gap_transition_gap
+            ON gap_transition(gap_id, at);
+        CREATE TABLE IF NOT EXISTS hygiene_dismissal (
+            id          TEXT PRIMARY KEY,
+            work_id     TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+            finding_key TEXT NOT NULL,
+            reason      TEXT NOT NULL DEFAULT '',
+            signed_by   TEXT NOT NULL DEFAULT '',
+            at          TEXT NOT NULL,
+            UNIQUE(work_id, finding_key)
+        )
+    """,
+    ),
 ]

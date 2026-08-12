@@ -21,7 +21,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from .schema import MIGRATIONS
 
@@ -5855,6 +5855,219 @@ class OrivellumDB:
                 }
             )
         return result
+
+    # -------------------------------------------------------------------------
+    # Gap engine (v134) — gap identity, lifecycle ledger, hygiene dismissals
+    # -------------------------------------------------------------------------
+
+    def create_or_refresh_gap(
+        self,
+        *,
+        work_id: str | None,
+        gap_class: str,
+        scope: str,
+        frame_node_id: str,
+        frame_source_ref: str,
+        evidence_absent: str,
+        severity: str,
+        unit: str = "",
+        force_check: str = "",
+        issue_type: str = "",
+        classification: str = "",
+        action: str = "",
+        meta: dict | None = None,
+    ) -> dict:
+        """Insert a gap, or refresh evidence on the existing row with the same identity.
+
+        Identity is a content hash over (frame_node_id, gap_class, scope) — the
+        same absence detected twice maps to ONE row.
+
+        REFUSES (raises ``ValueError``) any gap without a frame citation:
+        ``frame_node_id``, ``frame_source_ref``, and ``evidence_absent`` must
+        all be non-blank — the same discipline as canon_fact's source_ref rule.
+        A gap that cannot say which frame node demands it and what evidence is
+        absent is not a gap; it is an opinion.
+
+        A row already in ``dismissed`` or ``out_of_scope`` is NEVER resurrected:
+        the call returns the row unchanged (re-detection must not undo a signed
+        human decision).  Otherwise severity / evidence / meta are refreshed in
+        place and the lifecycle status is left alone.
+        """
+        for name, val in (
+            ("frame_node_id", frame_node_id),
+            ("frame_source_ref", frame_source_ref),
+            ("evidence_absent", evidence_absent),
+        ):
+            if not (val or "").strip():
+                raise ValueError(
+                    f"gap refused: {name} is required — every gap must cite the "
+                    "frame node that demands it and the evidence that is absent"
+                )
+        if not (gap_class or "").strip() or not (scope or "").strip():
+            raise ValueError("gap refused: gap_class and scope are required")
+        if severity not in ("critical", "high", "medium", "low"):
+            raise ValueError(f"gap refused: invalid severity {severity!r}")
+
+        gap_id = (
+            "gap-"
+            + hashlib.sha256(
+                f"{frame_node_id.strip()}|{gap_class.strip()}|{scope.strip()}".encode()
+            ).hexdigest()[:40]
+        )
+        now = _now()
+        meta_json = json.dumps(meta or {})
+
+        with self._lock:
+            existing = self._conn.execute("SELECT * FROM gap WHERE id=?", (gap_id,)).fetchone()
+            if existing is not None:
+                row = dict(existing)
+                if row["status"] in ("dismissed", "out_of_scope"):
+                    return row  # never resurrect a signed dismissal
+                self._conn.execute(
+                    "UPDATE gap SET severity=?, evidence_absent=?, frame_source_ref=?, "
+                    "meta=?, updated_at=? WHERE id=?",
+                    (
+                        severity,
+                        evidence_absent.strip(),
+                        frame_source_ref.strip(),
+                        meta_json,
+                        now,
+                        gap_id,
+                    ),
+                )
+                self._maybe_commit()
+                return dict(
+                    self._conn.execute("SELECT * FROM gap WHERE id=?", (gap_id,)).fetchone()
+                )
+            self._conn.execute(
+                """INSERT INTO gap (id, work_id, gap_class, scope, unit, force_check,
+                       issue_type, severity, classification, action, frame_node_id,
+                       frame_source_ref, evidence_absent, status, status_reason,
+                       signed_by, meta, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'proposed','','',?,?,?)""",
+                (
+                    gap_id,
+                    work_id,
+                    gap_class.strip(),
+                    scope.strip(),
+                    unit,
+                    force_check,
+                    issue_type,
+                    severity,
+                    classification,
+                    action,
+                    frame_node_id.strip(),
+                    frame_source_ref.strip(),
+                    evidence_absent.strip(),
+                    meta_json,
+                    now,
+                    now,
+                ),
+            )
+            self._conn.execute(
+                "INSERT INTO gap_transition (id, gap_id, from_status, to_status, "
+                "reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
+                (_uuid(), gap_id, "", "proposed", "detected", "system", now),
+            )
+            self._maybe_commit()
+            return dict(self._conn.execute("SELECT * FROM gap WHERE id=?", (gap_id,)).fetchone())
+
+    # Lifecycle: forward progression; any live status may be dismissed or
+    # ruled out of scope (with reason + signature); covered may fall back to
+    # researched when its evidence is rejected.  dismissed / out_of_scope are
+    # terminal and persist forever.
+    _GAP_TRANSITIONS: ClassVar[dict[str, set[str]]] = {
+        "proposed": {"ratified", "dismissed", "out_of_scope"},
+        "ratified": {"assigned", "dismissed", "out_of_scope"},
+        "assigned": {"researched", "dismissed", "out_of_scope"},
+        "researched": {"covered", "dismissed", "out_of_scope"},
+        "covered": {"mastered", "researched", "dismissed", "out_of_scope"},
+        "mastered": {"dismissed", "out_of_scope"},
+        "dismissed": set(),
+        "out_of_scope": set(),
+    }
+
+    def transition_gap(
+        self, gap_id: str, to_status: str, *, reason: str = "", signed_by: str = ""
+    ) -> dict:
+        """Apply a lifecycle transition to a gap.  Every transition is ledgered.
+
+        ``dismissed`` and ``out_of_scope`` require a non-blank *reason* AND
+        *signed_by* — a human owns that decision, and it persists forever.
+
+        Raises ``ValueError`` on unknown gap, illegal transition, or a
+        dismissal without reason + signature.
+        """
+        reason = (reason or "").strip()
+        signed_by = (signed_by or "").strip()
+        if to_status in ("dismissed", "out_of_scope") and (not reason or not signed_by):
+            raise ValueError(f"transition to {to_status!r} requires a reason and a signature")
+        now = _now()
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM gap WHERE id=?", (gap_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"gap {gap_id!r} not found")
+            frm = row["status"]
+            if to_status not in self._GAP_TRANSITIONS.get(frm, set()):
+                raise ValueError(f"illegal gap transition {frm!r} → {to_status!r}")
+            self._conn.execute(
+                "UPDATE gap SET status=?, status_reason=?, signed_by=?, updated_at=? WHERE id=?",
+                (to_status, reason, signed_by, now, gap_id),
+            )
+            self._conn.execute(
+                "INSERT INTO gap_transition (id, gap_id, from_status, to_status, "
+                "reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
+                (_uuid(), gap_id, frm, to_status, reason, signed_by, now),
+            )
+            self._maybe_commit()
+            return dict(self._conn.execute("SELECT * FROM gap WHERE id=?", (gap_id,)).fetchone())
+
+    def get_gap(self, gap_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM gap WHERE id=?", (gap_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_gaps(self, work_id: str, status: str | None = None) -> list[dict]:
+        """All gaps for a Work, most severe first, then newest first."""
+        q = (
+            "SELECT * FROM gap WHERE work_id=? "
+            + ("AND status=? " if status else "")
+            + "ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 "
+            "WHEN 'medium' THEN 2 ELSE 3 END, created_at DESC"
+        )
+        params: tuple = (work_id, status) if status else (work_id,)
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_gap_transitions(self, gap_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM gap_transition WHERE gap_id=? ORDER BY at, id", (gap_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def dismiss_hygiene_finding(
+        self, work_id: str, finding_key: str, *, reason: str = "", signed_by: str = ""
+    ) -> None:
+        """Persist a hygiene-finding dismissal — the finding never reappears."""
+        if not (finding_key or "").strip():
+            raise ValueError("finding_key is required")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO hygiene_dismissal (id, work_id, finding_key, reason, "
+                "signed_by, at) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(work_id, finding_key) DO NOTHING",
+                (_uuid(), work_id, finding_key.strip(), reason, signed_by, _now()),
+            )
+            self._maybe_commit()
+
+    def list_hygiene_dismissal_keys(self, work_id: str) -> set[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT finding_key FROM hygiene_dismissal WHERE work_id=?", (work_id,)
+            ).fetchall()
+        return {r["finding_key"] for r in rows}
 
     # -------------------------------------------------------------------------
     # Job state transitions (M0.2 — JOB_SM)

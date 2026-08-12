@@ -1,10 +1,14 @@
-"""Research gap detection for Works.
+"""Corpus hygiene checks for Works.
 
-Identifies what knowledge is missing from a Work so users know what to
-research next.  Operates entirely on existing data — no LLM call needed
-for the basic analysis.
+Surfaces bookkeeping problems in a Work's corpus — extraction holes, weak
+coverage, missing citations, stale or duplicated research.  These are
+*hygiene findings*, deliberately distinct from research gaps (the ``gap``
+table): hygiene describes problems with what the corpus already holds,
+while gaps describe knowledge the corpus provably lacks.
 
-Gap categories (ranked high → low within each type):
+Operates entirely on existing data — no LLM call needed.
+
+Finding categories (ranked high → low within each type):
   undocumented_doc    — document with no chapter/section structure extracted
   uncovered_chapter   — chapter heading with 0 knowledge items in its source doc
   weak_coverage       — chapter with fewer than MIN_ITEMS knowledge items
@@ -18,6 +22,7 @@ Gap categories (ranked high → low within each type):
 from __future__ import annotations
 
 import datetime
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -35,18 +40,19 @@ _STALE_DAYS = 365  # days before a source is considered stale
 
 
 @dataclass
-class Gap:
+class HygieneFinding:
     kind: str
     title: str
     description: str
     severity: str  # "high" | "medium" | "low"
     metadata: dict = field(default_factory=dict)
+    finding_key: str = ""  # stable content-hash identity (set by detect_hygiene)
 
 
 @dataclass
-class GapReport:
+class HygieneReport:
     work_id: str
-    gaps: list[Gap]
+    findings: list[HygieneFinding]
     suggested_queries: list[str]
     coverage_pct: int  # 0-100 — chapters with sufficient coverage
     total_chapters: int
@@ -61,8 +67,34 @@ def _jaccard(a: str, b: str) -> float:
     return len(wa & wb) / len(wa | wb)
 
 
-def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
-    """Analyse a Work's chapters and knowledge items to surface research gaps."""
+def finding_key(work_id: str, kind: str, scope: str) -> str:
+    """Stable content-hash identity for a hygiene finding.
+
+    Built from (work_id, kind, scope) so a dismissed finding keeps the same
+    key across re-detections and never reappears.
+    """
+    digest = hashlib.sha256(f"{work_id}|{kind}|{scope}".encode()).hexdigest()
+    return f"hyg-{digest[:32]}"
+
+
+def _scope_of(f: HygieneFinding) -> str:
+    """Deterministic scope string for a finding, from its metadata."""
+    md = f.metadata or {}
+    for key in ("doc_id", "chapter_title", "item_ids", "sample_ids"):
+        if md.get(key):
+            val = md[key]
+            if isinstance(val, list):
+                return ",".join(str(v) for v in sorted(val))
+            return str(val)
+    return ""
+
+
+def detect_hygiene(work_id: str, db: OrivellumDB) -> HygieneReport:
+    """Analyse a Work's chapters and knowledge items for hygiene findings.
+
+    Findings previously dismissed for this Work (see
+    ``db.list_hygiene_dismissal_keys``) are filtered out and never reappear.
+    """
 
     # ── Gather all data in one lock acquisition ────────────────────────────────
     with db._lock:
@@ -151,14 +183,14 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
 
     # ── Build gap list ────────────────────────────────────────────────────────
 
-    gaps: list[Gap] = []
+    findings: list[HygieneFinding] = []
 
     # 1. Documents with no chapter structure
     for doc_id in doc_ids:
         if doc_id not in docs_with_chapters:
             title = doc_titles.get(doc_id, doc_id[:8])
-            gaps.append(
-                Gap(
+            findings.append(
+                HygieneFinding(
                     kind="undocumented_doc",
                     title=f'No structure detected in "{title}"',
                     description=(
@@ -179,8 +211,8 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
         kn_count = kn_by_doc.get(doc_id, 0)
         if kn_count == 0:
             uncovered += 1
-            gaps.append(
-                Gap(
+            findings.append(
+                HygieneFinding(
                     kind="uncovered_chapter",
                     title=f'No research for "{ch["title"]}"',
                     description=(
@@ -193,8 +225,8 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
             )
         elif kn_count < _MIN_ITEMS_PER_CHAPTER:
             weak += 1
-            gaps.append(
-                Gap(
+            findings.append(
+                HygieneFinding(
                     kind="weak_coverage",
                     title=f'Thin coverage for "{ch["title"]}"',
                     description=(
@@ -209,8 +241,8 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
     # 3. No chapter structure at all when docs exist
     total = len(chapters)
     if total == 0 and doc_ids:
-        gaps.append(
-            Gap(
+        findings.append(
+            HygieneFinding(
                 kind="no_structure",
                 title="No chapter structure found in this Work",
                 description=(
@@ -227,8 +259,8 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
     if n_missing_src > 0:
         s = "s" if n_missing_src != 1 else ""
         are = "are" if n_missing_src > 1 else "is"
-        gaps.append(
-            Gap(
+        findings.append(
+            HygieneFinding(
                 kind="missing_sources",
                 title=f"{n_missing_src} knowledge item{s} without a source document",
                 description=(
@@ -245,8 +277,8 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
     if n_orphaned > 0:
         s = "s" if n_orphaned != 1 else ""
         ref = "reference" if n_orphaned == 1 else "reference"
-        gaps.append(
-            Gap(
+        findings.append(
+            HygieneFinding(
                 kind="orphaned_research",
                 title=f"{n_orphaned} knowledge item{s} from unlinked documents",
                 description=(
@@ -264,8 +296,8 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
         n = len(stale_docs)
         s = "s" if n != 1 else ""
         were = "were" if n > 1 else "was"
-        gaps.append(
-            Gap(
+        findings.append(
+            HygieneFinding(
                 kind="stale_source",
                 title=f"{n} source document{s} older than one year",
                 description=(
@@ -281,8 +313,8 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
     # 7. Near-duplicate knowledge items
     if dup_pairs > 0:
         s = "s" if dup_pairs != 1 else ""
-        gaps.append(
-            Gap(
+        findings.append(
+            HygieneFinding(
                 kind="duplicate_research",
                 title="Near-duplicate knowledge items detected",
                 description=(
@@ -308,9 +340,18 @@ def detect_gaps(work_id: str, db: OrivellumDB) -> GapReport:
         if len(suggestions) >= 8:
             break
 
-    return GapReport(
+    for f in findings:
+        f.finding_key = finding_key(work_id, f.kind, _scope_of(f))
+    try:
+        dismissed = db.list_hygiene_dismissal_keys(work_id)
+    except Exception:  # pragma: no cover — dismissal table missing pre-migration
+        dismissed = set()
+    if dismissed:
+        findings = [f for f in findings if f.finding_key not in dismissed]
+
+    return HygieneReport(
         work_id=work_id,
-        gaps=gaps,
+        findings=findings,
         suggested_queries=suggestions[:8],
         coverage_pct=coverage_pct,
         total_chapters=total,

@@ -1102,7 +1102,7 @@ def workspace_top_gaps(limit: int = 3, refresh: bool = False):
     providing fresh data when the cache is cold or the caller forces a refresh.
     """
     db = get_db()
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     works = db.list_works(status="active")
     work_by_id = {w["id"]: w for w in works}
@@ -1136,7 +1136,7 @@ def workspace_top_gaps(limit: int = 3, refresh: bool = False):
     stale_works = [w for w in works if refresh or w["id"] not in cached_work_ids]
     for work in stale_works[:10]:
         try:
-            report = detect_gaps(work["id"], db)
+            report = detect_hygiene(work["id"], db)
             gap_dicts = [
                 {
                     "kind": g.kind,
@@ -1144,8 +1144,9 @@ def workspace_top_gaps(limit: int = 3, refresh: bool = False):
                     "description": g.description,
                     "severity": g.severity,
                     "metadata": g.metadata,
+                    "finding_key": g.finding_key,
                 }
-                for g in report.gaps
+                for g in report.findings
             ]
             db.cache_work_gaps(
                 work["id"],
@@ -1178,7 +1179,7 @@ def works_gaps(work_id: str, refresh: bool = False):
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
 
-    from orivellum.capabilities.gaps import detect_gaps
+    from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
     # Try cache first
     if not refresh:
@@ -1194,7 +1195,7 @@ def works_gaps(work_id: str, refresh: bool = False):
                 "from_cache": True,
             }
 
-    report = detect_gaps(work_id, db)
+    report = detect_hygiene(work_id, db)
     gap_dicts = [
         {
             "kind": g.kind,
@@ -1202,8 +1203,9 @@ def works_gaps(work_id: str, refresh: bool = False):
             "description": g.description,
             "severity": g.severity,
             "metadata": g.metadata,
+            "finding_key": g.finding_key,
         }
-        for g in report.gaps
+        for g in report.findings
     ]
     # Write back to cache — persist suggested_queries so future cached
     # responses return them without re-running detection.
@@ -1502,7 +1504,7 @@ def _check_stage_gate(
         gaps: list = []
         evaluated = False
         try:
-            from orivellum.capabilities.gaps import detect_gaps
+            from orivellum.capabilities.corpus_hygiene import detect_hygiene
 
             # Try a fresh-enough cache entry first (avoids a slow LLM call when
             # results are recent), then fall back to live detection.
@@ -1512,7 +1514,7 @@ def _check_stage_gate(
                 evaluated = True
             else:
                 # No cache or stale — run detection now so the gate is authoritative.
-                report = detect_gaps(work_id, db)
+                report = detect_hygiene(work_id, db)
                 gaps = [
                     {
                         "kind": g.kind,
@@ -1520,7 +1522,7 @@ def _check_stage_gate(
                         "title": g.title,
                         "description": g.description,
                     }
-                    for g in report.gaps
+                    for g in report.findings
                 ]
                 # Write result back to cache for subsequent requests.
                 try:

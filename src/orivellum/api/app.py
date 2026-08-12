@@ -681,6 +681,7 @@ def create_app() -> FastAPI:
         files,
         finishing,
         forge,
+        gaps,
         generate,
         genesis,
         health,
@@ -750,6 +751,7 @@ def create_app() -> FastAPI:
         wa,
         series,
         autonomy,
+        gaps,
     ]
     for module in _route_modules:
         app.include_router(module.router)

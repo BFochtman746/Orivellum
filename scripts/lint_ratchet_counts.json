@@ -210,6 +210,9 @@
  "src/orivellum/capabilities/completeness.py": {
   "E501": 1
  },
+ "src/orivellum/capabilities/corpus_hygiene.py": {
+  "C901": 1
+ },
  "src/orivellum/capabilities/custodian.py": {
   "C901": 1,
   "E501": 1
@@ -262,9 +265,6 @@
  },
  "src/orivellum/capabilities/forge/planner.py": {
   "E501": 2
- },
- "src/orivellum/capabilities/gaps.py": {
-  "C901": 1
  },
  "src/orivellum/capabilities/generate.py": {
   "B904": 1,
