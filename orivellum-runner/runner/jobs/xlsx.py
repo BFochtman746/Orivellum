@@ -603,10 +603,30 @@ def _graph_audit(run_id, target):
     _wbf, wbv = _load(target)
     digest = {"graph": graph.stats()}
 
-    # circular references — detected as SCCs, every member named
+    # circular references — detected as SCCs, every member named. The count
+    # is ALWAYS complete; only the per-cycle findings are capped, and any
+    # truncation is disclosed explicitly — never silently undercounted.
     cycles = graph.cycles()
     digest["circular"] = len(cycles)
-    for cyc in cycles[:20]:
+    _CYCLE_FINDING_CAP = 20
+    if len(cycles) > _CYCLE_FINDING_CAP:
+        store.add_finding(
+            run_id,
+            "CRITICAL",
+            "XL-CIRCULAR",
+            "workbook",
+            f"Circular references — {len(cycles)} independent cycles found",
+            detail=(
+                f"Only the first {_CYCLE_FINDING_CAP} cycles are itemized below; "
+                f"{len(cycles) - _CYCLE_FINDING_CAP} more exist. Affected cells "
+                "(first of each remaining cycle): "
+                + ", ".join(c["members"][0] for c in cycles[_CYCLE_FINDING_CAP:])
+            )[:800],
+            source="graph-analysis",
+            fix="Every cycle must be broken; the total count above is complete "
+            "even though only the first cycles are itemized.",
+        )
+    for cyc in cycles[:_CYCLE_FINDING_CAP]:
         members, loop_cells = cyc["members"], cyc["loop"]
         loop = " → ".join(loop_cells + [loop_cells[0]])
         detail = f"cycle: {loop}"

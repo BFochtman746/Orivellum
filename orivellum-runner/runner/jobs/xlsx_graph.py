@@ -158,12 +158,14 @@ class WorkbookGraph:
             path.append(nxt)
             cur = nxt
 
-    def cycles(self, limit=20):
-        """Strongly-connected components of size > 1, plus direct self-loops.
-        Each entry is {"members": sorted SCC members (ALL affected cells),
-        "loop": an edge-ordered directed cycle witness (see _edge_cycle)} —
-        branching SCCs have more members than any single simple loop shows.
-        Iterative Tarjan — recursion depth is workbook-controlled otherwise."""
+    def cycles(self):
+        """ALL strongly-connected components of size > 1, plus direct
+        self-loops — never truncated; the caller may cap what it DISPLAYS,
+        but the count must stay honest. Each entry is {"members": sorted SCC
+        members (all affected cells), "loop": an edge-ordered directed cycle
+        witness (see _edge_cycle)} — branching SCCs have more members than
+        any single simple loop shows. Iterative Tarjan — recursion depth is
+        workbook-controlled otherwise."""
         index, low, onstack = {}, {}, set()
         stack, out, counter = [], [], [0]
         nodes = [k for k in self.formulas if self.precedents.get(k)]
@@ -208,8 +210,6 @@ class WorkbookGraph:
                         )
                     elif node in prec.get(node, ()):
                         out.append({"members": [node], "loop": [node]})
-                if len(out) >= limit:
-                    return out
         return out
 
     # --------------------------------------------------------------- traces

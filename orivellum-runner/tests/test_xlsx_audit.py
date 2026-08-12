@@ -570,6 +570,28 @@ def test_3d_sheet_span_resolves_per_sheet_never_false_unread(tmp_path):
     assert not [f for f in store.findings(run_id) if f["code"] == "XL-GRAPH-PARTIAL"]
 
 
+def test_more_than_twenty_cycles_counted_honestly(tmp_path):
+    """25 independent self-loops: the count must be exactly 25 and any
+    itemization cap must be disclosed explicitly — never silently dropped."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "M"
+    for r in range(1, 26):
+        ws.cell(row=r, column=1, value=f"=A{r}+1")  # each cell references itself
+    p = tmp_path / "manycycles.xlsx"
+    wb.save(p)
+    run_id = _make_run(p)
+    digest = xlsx.workbook_unit(run_id, {"target": str(p)})
+    assert digest["circular"] == 25  # true count, not the display cap
+    circ = [f for f in store.findings(run_id) if f["code"] == "XL-CIRCULAR"]
+    assert len(circ) == 21  # 20 itemized + 1 explicit truncation notice
+    notice = [f for f in circ if "25 independent cycles" in f["title"]]
+    assert notice, "truncation must be disclosed, not silent"
+    assert "5 more exist" in notice[0]["detail"]
+
+
 def test_constant_defined_name_is_not_an_orphan(tmp_path):
     """A constant name (=0.21) has no cell destination but IS a used name —
     the audit must not call it orphaned, and must disclose partial graph."""
