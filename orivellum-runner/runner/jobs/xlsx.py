@@ -607,14 +607,18 @@ def _graph_audit(run_id, target):
     cycles = graph.cycles()
     digest["circular"] = len(cycles)
     for cyc in cycles[:20]:
-        loop = " → ".join(cyc + [cyc[0]])
+        members, loop_cells = cyc["members"], cyc["loop"]
+        loop = " → ".join(loop_cells + [loop_cells[0]])
+        detail = f"cycle: {loop}"
+        if len(members) > len(loop_cells):
+            detail += f"; all {len(members)} affected cells: " + ", ".join(members)
         store.add_finding(
             run_id,
             "CRITICAL",
             "XL-CIRCULAR",
-            cyc[0],
-            f"Circular reference — {len(cyc)} cell(s) depend on themselves",
-            detail=f"cycle: {loop}"[:800],
+            members[0],
+            f"Circular reference — {len(members)} cell(s) depend on themselves",
+            detail=detail[:800],
             source="graph-analysis",
             fix="Break the loop: one of these formulas must take its input "
             "from a cell outside the cycle. With iterative calculation off, "

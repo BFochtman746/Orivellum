@@ -246,8 +246,37 @@ def test_circular_reference_is_named(tmp_path):
     # not just list sorted SCC members
     g = xlsx._graph(p)
     for cyc in g.cycles():
-        for a, b in zip(cyc, cyc[1:] + [cyc[0]], strict=True):
+        loop = cyc["loop"]
+        for a, b in zip(loop, loop[1:] + [loop[0]], strict=True):
             assert b in g.precedents[a], f"{a} → {b} is not a real edge"
+
+
+def test_branched_scc_names_every_member(tmp_path):
+    """A1=B1+C1, B1=A1, C1=A1: one three-cell SCC. Every member must be
+    named in the finding even though no simple loop visits all three."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "M"
+    ws["A1"] = "=B1+C1"
+    ws["B1"] = "=A1"
+    ws["C1"] = "=A1"
+    p = tmp_path / "branched.xlsx"
+    wb.save(p)
+    run_id = _make_run(p)
+    digest = xlsx.workbook_unit(run_id, {"target": str(p)})
+    assert digest["circular"] == 1
+    g = xlsx._graph(p)
+    (cyc,) = g.cycles()
+    assert cyc["members"] == ["M!A1", "M!B1", "M!C1"]  # ALL affected cells
+    loop = cyc["loop"]
+    for a, b in zip(loop, loop[1:] + [loop[0]], strict=True):
+        assert b in g.precedents[a], f"{a} → {b} is not a real edge"
+    (finding,) = [f for f in store.findings(run_id) if f["code"] == "XL-CIRCULAR"]
+    assert "3 cell(s)" in finding["title"]
+    for cell in ("M!A1", "M!B1", "M!C1"):
+        assert cell in finding["detail"], f"{cell} missing from finding detail"
 
 
 def test_clean_workbook_has_no_circular_findings(tmp_path):
