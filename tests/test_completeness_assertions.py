@@ -187,6 +187,55 @@ def test_retraction_reopens_only_assertion_dismissed_gaps(tmp_path):
     assert _gap(db, w["id"]) is not None
 
 
+def test_retract_exact_with_wildcard_still_active(tmp_path):
+    """Exact asserted first, then class-wide '*'.  Retracting the exact one
+    must NOT re-open the region — the wildcard keeps it closed, provenance is
+    reassigned, and retracting the wildcard later re-opens the gap."""
+    db = _make_db(tmp_path)
+    w = db.create_work(title="W")
+    g = _gap(db, w["id"])
+    exact = _assert(db, w["id"])  # closes g
+    wild = _assert(db, w["id"], scope="*", basis="whole class checked")
+    assert exact["closed_gap_ids"] == [g["id"]]
+
+    r = db.retract_completeness(exact["id"], reason="narrowing", signed_by="brian")
+    assert r["reopened_gap_ids"] == []
+    assert r["still_closed_gap_ids"] == [g["id"]]
+    assert db.get_gap(g["id"])["status"] == "dismissed"
+    # Region still closed: emission stays refused.
+    assert _gap(db, w["id"]) is None
+
+    r2 = db.retract_completeness(wild["id"], reason="fully re-opening", signed_by="brian")
+    assert r2["reopened_gap_ids"] == [g["id"]]
+    assert db.get_gap(g["id"])["status"] == "proposed"
+    assert _gap(db, w["id"]) is not None  # emission resumes only now
+
+
+def test_retract_wildcard_with_exact_still_active(tmp_path):
+    """Class-wide '*' asserted first, then the exact region.  Retracting the
+    wildcard re-opens only gaps NOT covered by the surviving exact assertion."""
+    db = _make_db(tmp_path)
+    w = db.create_work(title="W")
+    g_smith = _gap(db, w["id"], scope="smith 1998")
+    g_jones = _gap(db, w["id"], scope="jones 2001")
+    wild = _assert(db, w["id"], scope="*", basis="whole class checked")
+    assert set(wild["closed_gap_ids"]) == {g_smith["id"], g_jones["id"]}
+    exact = _assert(db, w["id"], scope="smith 1998")
+
+    r = db.retract_completeness(wild["id"], reason="only smith is done", signed_by="brian")
+    assert r["reopened_gap_ids"] == [g_jones["id"]]
+    assert r["still_closed_gap_ids"] == [g_smith["id"]]
+    assert db.get_gap(g_jones["id"])["status"] == "proposed"
+    assert db.get_gap(g_smith["id"])["status"] == "dismissed"
+    assert _gap(db, w["id"], scope="smith 1998") is None  # still guarded
+    assert _gap(db, w["id"], scope="jones 2001") is not None
+
+    # Provenance was reassigned: retracting the exact assertion now re-opens smith.
+    r2 = db.retract_completeness(exact["id"], reason="smith too", signed_by="brian")
+    assert r2["reopened_gap_ids"] == [g_smith["id"]]
+    assert db.get_gap(g_smith["id"])["status"] == "proposed"
+
+
 def test_double_retraction_refused(tmp_path):
     db = _make_db(tmp_path)
     w = db.create_work(title="W")

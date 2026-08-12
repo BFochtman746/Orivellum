@@ -6362,18 +6362,41 @@ class OrivellumDB:
                 "to_status, reason, signed_by, at) VALUES (?,?,?,?,?,?,?)",
                 (_uuid(), assertion_id, "active", "retracted", reason, signed_by, now),
             )
-            # Re-open exactly the gaps this assertion closed.  This is the
-            # only path out of 'dismissed': the dismissal belonged to the
-            # assertion, and both sides of the round-trip are signed rows.
+            # Re-open the gaps this assertion closed — UNLESS another active
+            # assertion still covers the gap's region (an exact and a
+            # class-wide '*' assertion can overlap; retracting one must not
+            # re-open a region the other keeps closed).  Still-covered gaps
+            # stay dismissed and their closure provenance is reassigned to
+            # the surviving assertion, so retracting THAT one later re-opens
+            # them.  This is the only path out of 'dismissed': the dismissal
+            # belonged to an assertion, and every step is signed and ledgered.
             dismissed = self._conn.execute(
-                "SELECT id, meta FROM gap WHERE status='dismissed' "
+                "SELECT id, work_id, gap_class, scope, meta FROM gap "
+                "WHERE status='dismissed' "
                 "AND json_extract(meta, '$.closed_by_assertion')=?",
                 (assertion_id,),
             ).fetchall()
             reopened_ids: list[str] = []
+            still_closed_ids: list[str] = []
             reopen_reason = f"assertion retracted ({assertion_id}): {reason}"
             for g in dismissed:
                 gmeta = _jload(g["meta"], {}) or {}
+                survivor = self.find_completeness_assertion(
+                    g["work_id"], g["gap_class"], g["scope"]
+                )
+                if survivor is not None:
+                    gmeta["closed_by_assertion"] = survivor["id"]
+                    self._conn.execute(
+                        "UPDATE gap SET status_reason=?, meta=?, updated_at=? WHERE id=?",
+                        (
+                            f"region still asserted complete ({survivor['id']})",
+                            json.dumps(gmeta),
+                            now,
+                            g["id"],
+                        ),
+                    )
+                    still_closed_ids.append(g["id"])
+                    continue
                 gmeta.pop("closed_by_assertion", None)
                 gmeta["reopened_from_assertion"] = assertion_id
                 self._conn.execute(
@@ -6394,6 +6417,7 @@ class OrivellumDB:
                 ).fetchone()
             )
         row["reopened_gap_ids"] = reopened_ids
+        row["still_closed_gap_ids"] = still_closed_ids
         return row
 
     def get_completeness_assertion(self, assertion_id: str) -> dict | None:
