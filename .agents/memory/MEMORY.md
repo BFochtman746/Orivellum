@@ -128,4 +128,6 @@
 - [Capability gate](orivellum-capability-gate.md) — walk mounted APIRoutes (include_router wraps), shrink-only unproven baseline, verb-aware UI evidence.
 - [iPhone continuity core](orivellum-continuity-core.md) — durable outbox exactly-once via client_msg_id; requeue orphaned "sending" ops; journal pump decoupled from HTTP tail; partial-index ON CONFLICT needs WHERE.
 - [E2E navigation reality](orivellum-e2e-nav.md) — dev SPA serves at ROOT (proxy strips base); e2e helpers' sidebar NAV_MAP + BASE_PATH are stale post-shell-redesign; navigate via pushState from root.
+- [Collections/series/domain layers](orivellum-structure-layers.md) — branding vs order-authority vs shared canon; collection edits refuse silent canon bind/unbind; conversions ledgered + atomic.
+- [atomic()+governed_write composition](orivellum-atomic-tx.md) — atomic must BEGIN IMMEDIATE (outermost-savepoint RELEASE commits); read_conn joins the thread's open atomic txn.
 - [Promotion gate & lifecycle provenance](orivellum-promotion-gate.md) — Promote-to-Book gate lives inside create_book_pipeline(require_ready=True) under the lock; lifecycle actor is explicit; dedup guards re-check inside db.atomic().
