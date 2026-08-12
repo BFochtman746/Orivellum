@@ -382,6 +382,91 @@ function MissingFileRow({ doc, onChanged }: { doc: MissingDoc; onChanged: () => 
   );
 }
 
+// ── Collections (import provenance) ───────────────────────────────────────────
+//
+// A collection records where a batch of documents came from (ZIP archive,
+// watched folder, demoted migration batch). It is provenance only — never a
+// subject: it can't seed a curriculum, enter a book pipeline, or scope a
+// harvest. This panel is a read-only view of that provenance.
+
+type CollectionRow = {
+  id: string;
+  label: string;
+  source_kind: string;
+  source_ref: string;
+  domain?: string | null;
+  imported_at: string;
+  document_count: number;
+  meta?: Record<string, unknown>;
+};
+
+const COLLECTIONS_KEY = ["library", "collections"];
+
+function CollectionsPanel() {
+  const [collapsed, setCollapsed] = useState(true);
+  const { data } = useQuery<{ collections: CollectionRow[]; count: number }>({
+    queryKey: COLLECTIONS_KEY,
+    queryFn: () => apiFetch(`${BASE}/library/collections`).then((r) => r.json()),
+    staleTime: 120_000,
+  });
+
+  const collections = data?.collections ?? [];
+  if (collections.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-card/40 overflow-hidden" data-testid="collections-panel">
+      <button
+        onClick={() => setCollapsed((c) => !c)}
+        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left hover:bg-muted/20 transition-colors"
+        aria-expanded={!collapsed}
+        data-testid="collections-toggle"
+      >
+        <Package className="w-4 h-4 shrink-0 text-muted-foreground" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">
+            {collections.length} import collection{collections.length !== 1 ? "s" : ""}
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            Where batches of documents came from — provenance only, never a subject
+          </p>
+        </div>
+        <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+          {collapsed ? "show" : "hide"}
+        </span>
+      </button>
+      {!collapsed && (
+        <div className="border-t border-border/60 divide-y divide-border/40">
+          {collections.map((c) => (
+            <div key={c.id} className="flex items-center gap-3 px-4 py-2" data-testid={`collection-row-${c.id}`}>
+              <FolderOpen className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm truncate font-serif" title={c.label}>{c.label}</p>
+                <p className="text-[11px] text-muted-foreground truncate" title={c.source_ref}>
+                  {c.source_ref || "—"}
+                </p>
+              </div>
+              <Badge variant="outline" className="text-[10px] shrink-0">
+                {c.source_kind}
+              </Badge>
+              {c.meta?.demoted_from_work === true && (
+                <Badge variant="outline" className="text-[10px] shrink-0 text-muted-foreground">
+                  demoted batch
+                </Badge>
+              )}
+              <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+                {c.document_count} doc{c.document_count !== 1 ? "s" : ""}
+              </span>
+              <span className="text-[11px] text-muted-foreground shrink-0 hidden sm:inline">
+                {c.imported_at ? format(new Date(c.imported_at), "MMM d, yyyy") : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MissingFilesBanner() {
   const [collapsed, setCollapsed] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -1288,6 +1373,9 @@ export default function Library() {
         <MissingFilesBanner />
 
         <DuplicatesBanner readyDocCount={(listResp?.documents ?? []).filter((d: any) => d.readiness === "ready").length} />
+
+        {/* Import provenance — collections */}
+        <CollectionsPanel />
 
         {/* Search */}
         <div className="space-y-3">

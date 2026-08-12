@@ -3534,4 +3534,104 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON completeness_transition(assertion_id, at)
     """,
     ),
+    # v144 — THE RE-PROJECTION Phases 1+2: collections + batch-Work demotion.
+    #
+    # 1. collection: the missing table.  An import batch (ZIP, folder, mail)
+    #    is PROVENANCE — it answers "where did this come from" and nothing
+    #    else.  It is never a subject: it may never seed a curriculum, enter
+    #    a book pipeline, or scope a knowledge harvest (enforced in code by
+    #    OrivellumDB.assert_not_collection + route guards, tested in
+    #    tests/test_collections.py).
+    #
+    # 2. Demotion: every A01_MIGRATION_BATCH_* Work becomes a collection row
+    #    (reusing the Work's id, so old references stay resolvable as
+    #    provenance).  Its documents get collection_id set and work_id NULL.
+    #    Knowledge keeps every row but loses the fake Work scope.  The four
+    #    Works and their objects rows are deleted — trailers/genesis rows
+    #    (the only NO-ACTION FKs on works) are cleaned first so the delete
+    #    cannot be blocked.  The substrate (documents, chunks, vectors) is
+    #    NEVER touched: document, chunk, and vector counts must be identical
+    #    before and after (tested).
+    #
+    #    Deleting a demoted Work INTENTIONALLY cascades away its derived
+    #    Work-domain rows (tasks, curriculum concepts, graph nodes, gap
+    #    caches, book pipelines/chapters, publications, ...) — that derived
+    #    layer IS the fake projection this migration exists to remove; only
+    #    documents/chunks/vectors/knowledge are preserved.  Object-backed
+    #    cascade children (tasks, publications, book_pipelines,
+    #    book_chapters — the tables whose id REFERENCES objects(id) ON
+    #    DELETE CASCADE) are removed via their objects rows BEFORE the works
+    #    delete, because a works-side cascade would drop the child row but
+    #    orphan its objects parent (governed-object ghosts).
+    #
+    # Every statement is idempotent (IF NOT EXISTS / OR IGNORE / re-runnable
+    # UPDATE-DELETE) so the substrate-invariant test can replay it.
+    (
+        144,
+        "Collections table + demote A01_MIGRATION_BATCH Works to collections",
+        """
+        CREATE TABLE IF NOT EXISTS collection (
+            id             TEXT PRIMARY KEY,
+            label          TEXT NOT NULL,
+            source_kind    TEXT NOT NULL,
+            source_ref     TEXT NOT NULL DEFAULT '',
+            domain         TEXT,
+            imported_at    TEXT NOT NULL,
+            document_count INTEGER NOT NULL DEFAULT 0,
+            meta           TEXT NOT NULL DEFAULT '{}'
+        );
+        ALTER TABLE documents ADD COLUMN collection_id TEXT
+            REFERENCES collection(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS docs_collection ON documents(collection_id);
+        INSERT OR IGNORE INTO collection
+            (id, label, source_kind, source_ref, domain, imported_at,
+             document_count, meta)
+        SELECT w.id, w.title, 'zip', w.title, NULL,
+               COALESCE((SELECT o.created_at FROM objects o WHERE o.id = w.id),
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+               (SELECT COUNT(*) FROM documents d WHERE d.work_id = w.id),
+               '{"demoted_from_work": true}'
+          FROM works w
+         WHERE w.title LIKE 'A01\\_MIGRATION\\_BATCH\\_%' ESCAPE '\\';
+        UPDATE documents SET collection_id = work_id
+         WHERE work_id IN (SELECT id FROM collection);
+        UPDATE documents SET work_id = NULL
+         WHERE work_id IN (SELECT id FROM collection);
+        UPDATE knowledge SET work_id = NULL
+         WHERE work_id IN (SELECT id FROM collection);
+        UPDATE knowledge_fts SET work_id = NULL
+         WHERE work_id IN (SELECT id FROM collection);
+        DELETE FROM works_fts
+         WHERE work_id IN (SELECT id FROM collection);
+        DELETE FROM trailers
+         WHERE work_id IN (SELECT id FROM collection);
+        DELETE FROM genesis_stages
+         WHERE book_id IN (SELECT id FROM genesis_books
+                            WHERE work_id IN (SELECT id FROM collection));
+        DELETE FROM genesis_artifacts
+         WHERE book_id IN (SELECT id FROM genesis_books
+                            WHERE work_id IN (SELECT id FROM collection));
+        DELETE FROM genesis_ledger
+         WHERE book_id IN (SELECT id FROM genesis_books
+                            WHERE work_id IN (SELECT id FROM collection));
+        DELETE FROM genesis_books
+         WHERE work_id IN (SELECT id FROM collection);
+        DELETE FROM objects
+         WHERE id IN (SELECT id FROM tasks
+                       WHERE work_id IN (SELECT id FROM collection));
+        DELETE FROM objects
+         WHERE id IN (SELECT id FROM publications
+                       WHERE work_id IN (SELECT id FROM collection));
+        DELETE FROM objects
+         WHERE id IN (SELECT id FROM book_chapters
+                       WHERE work_id IN (SELECT id FROM collection));
+        DELETE FROM objects
+         WHERE id IN (SELECT id FROM book_pipelines
+                       WHERE work_id IN (SELECT id FROM collection));
+        DELETE FROM works
+         WHERE id IN (SELECT id FROM collection);
+        DELETE FROM objects
+         WHERE type = 'work' AND id IN (SELECT id FROM collection)
+    """,
+    ),
 ]

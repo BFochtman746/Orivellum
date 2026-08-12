@@ -1345,6 +1345,10 @@ def create_pipeline(
     to the new pipeline automatically.
     """
     db = get_db()
+    try:
+        db.assert_not_collection(work_id, "enter a book pipeline")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     work = db.get_work(work_id)
     if not work:
         raise HTTPException(404, f"Work {work_id!r} not found")

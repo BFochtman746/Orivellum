@@ -465,6 +465,23 @@ def library_missing_files():
     return {"documents": missing, "count": len(missing)}
 
 
+@router.get("/library/collections")
+def library_list_collections():
+    """List import collections — provenance for batch imports (ZIP/folder).
+
+    A collection answers "where did these documents come from" and nothing
+    else: it is never a subject, never seeds a curriculum, never enters a
+    book pipeline, never scopes a harvest.  Counts are computed live from
+    documents.collection_id.
+
+    NOTE: must stay registered BEFORE /library/{doc_id} (literal-vs-param
+    route ordering), same rule as /library/duplicates.
+    """
+    db = get_db()
+    collections = db.list_collections()
+    return {"collections": collections, "count": len(collections)}
+
+
 @router.get("/library/read-positions")
 def library_list_read_positions():
     """Return ALL server-synced Read Aloud listening positions in one call.

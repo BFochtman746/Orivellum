@@ -197,6 +197,14 @@ class OrivellumDB:
             if not pending:
                 return
 
+            # Phase-0 rule: never mutate an existing schema without a VERIFIED
+            # backup.  Fresh databases (current_v == 0) skip this — there is
+            # nothing to protect yet.  A failed backup or failed verification
+            # aborts the migration run (fail closed).
+            if current_v > 0:
+                target_v = max(v for v, _, _ in pending)
+                self._verified_premigration_backup(target_v)
+
             logger.info("Applying %d pending migrations (current v%d)", len(pending), current_v)
             for version, description, sql in sorted(pending, key=lambda x: x[0]):
                 try:
@@ -218,6 +226,76 @@ class OrivellumDB:
                 except Exception as exc:
                     logger.error("Migration v%d failed: %s", version, exc)
                     raise
+
+    def _verified_premigration_backup(self, target_version: int) -> Path | None:
+        """Take a VERIFIED backup of the database before mutating its schema.
+
+        Phase 0 of THE RE-PROJECTION: an unverified backup is not a backup.
+        The copy is made with SQLite's online backup API to a scratch path
+        (``<db_dir>/backups/pre-migration-v{N}-{ts}.db``), then verified by
+        opening the copy read-only and checking:
+
+        1. ``PRAGMA integrity_check`` returns ``ok``;
+        2. the document count matches the live database;
+        3. a sampled document sha256 matches the live database.
+
+        Any failure raises ``RuntimeError`` and aborts the migration run —
+        fail closed, never migrate on an unproven backup.  In-memory
+        databases are skipped (nothing on disk to protect).  Old
+        pre-migration backups are pruned, keeping the newest three.
+        """
+        if not self._path or self._path == ":memory:":
+            return None
+
+        backup_dir = Path(self._path).parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        dest = backup_dir / f"pre-migration-v{target_version}-{ts}.db"
+
+        bconn = sqlite3.connect(str(dest))
+        try:
+            self._conn.backup(bconn)
+        finally:
+            bconn.close()
+
+        def _fingerprint(conn: sqlite3.Connection) -> tuple[int, str | None]:
+            has_docs = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'"
+            ).fetchone()
+            if not has_docs:
+                return (0, None)
+            n = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            row = conn.execute(
+                "SELECT sha256 FROM documents WHERE sha256 IS NOT NULL ORDER BY id LIMIT 1"
+            ).fetchone()
+            return (n, row[0] if row else None)
+
+        verify = sqlite3.connect(f"file:{dest}?mode=ro", uri=True)
+        try:
+            check = verify.execute("PRAGMA integrity_check").fetchone()[0]
+            if check != "ok":
+                raise RuntimeError(
+                    f"Pre-migration backup failed integrity_check ({check}) at {dest} — "
+                    "refusing to migrate on an unproven backup"
+                )
+            if _fingerprint(verify) != _fingerprint(self._conn):
+                raise RuntimeError(
+                    f"Pre-migration backup at {dest} does not match the live database "
+                    "(document count / sampled hash mismatch) — refusing to migrate"
+                )
+        finally:
+            verify.close()
+
+        # Prune: keep the newest three pre-migration backups.
+        try:
+            old = sorted(backup_dir.glob("pre-migration-v*.db"), key=lambda p: p.name)
+            for stale in old[:-3]:
+                stale.unlink()
+        except OSError as exc:  # pruning is best-effort, never blocks migration
+            logger.warning("Pre-migration backup pruning failed: %s", exc)
+
+        logger.info("Verified pre-migration backup at %s", dest)
+        return dest
 
     # -------------------------------------------------------------------------
     # Settings helpers
@@ -2432,6 +2510,7 @@ class OrivellumDB:
         content_path: str | None = None,
         meta: dict | None = None,
         tier: str = "source",
+        collection_id: str | None = None,
     ) -> dict:
         oid = _uuid()
         now = _now()
@@ -2451,7 +2530,8 @@ class OrivellumDB:
             )
             self._conn.execute(
                 """INSERT INTO documents(id,work_id,title,source,sha256,kind,readiness,
-                   content_path,meta,tier,created_at) VALUES(?,?,?,?,?,?,'imported',?,?,?,?)""",
+                   content_path,meta,tier,collection_id,created_at)
+                   VALUES(?,?,?,?,?,?,'imported',?,?,?,?,?)""",
                 (
                     oid,
                     work_id,
@@ -2462,10 +2542,118 @@ class OrivellumDB:
                     content_path,
                     _jdump(meta or {}),
                     tier,
+                    collection_id,
                     now,
                 ),
             )
         return self.get_document(oid)  # type: ignore[return-value]
+
+    # -------------------------------------------------------------------------
+    # Collections — import provenance, NEVER a subject
+    # -------------------------------------------------------------------------
+    #
+    # A collection answers "where did this batch of documents come from" and
+    # nothing else.  It may never seed a curriculum, enter a book pipeline,
+    # or scope a knowledge harvest — assert_not_collection() is the enforced
+    # refusal, called by those entry points.
+
+    def create_collection(
+        self,
+        label: str,
+        source_kind: str,
+        source_ref: str = "",
+        domain: str | None = None,
+        meta: dict | None = None,
+        collection_id: str | None = None,
+    ) -> dict:
+        """Create a collection (import-provenance) row and return it.
+
+        ``source_kind`` is one of: zip | folder | mail | web | manual.
+        """
+        cid = collection_id or _uuid()
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO collection(id,label,source_kind,source_ref,domain,
+                   imported_at,document_count,meta) VALUES(?,?,?,?,?,?,0,?)""",
+                (cid, label, source_kind, source_ref, domain, now, _jdump(meta or {})),
+            )
+            self._maybe_commit()
+        return self.get_collection(cid)  # type: ignore[return-value]
+
+    def get_collection(self, collection_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM collection WHERE id=?", (collection_id,)
+            ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["meta"] = _jload(d.get("meta"), {})
+        return d
+
+    def find_collection_by_source_ref(self, source_ref: str) -> dict | None:
+        """Return the collection with this exact source_ref, if any (get-or-create helper)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM collection WHERE source_ref=? ORDER BY imported_at LIMIT 1",
+                (source_ref,),
+            ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["meta"] = _jload(d.get("meta"), {})
+        return d
+
+    def list_collections(self) -> list[dict]:
+        """All collections, newest first, with LIVE document counts.
+
+        ``document_count`` is recomputed from documents.collection_id (the
+        stored column is a snapshot that can drift after dedup/deletes).
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT c.*, (SELECT COUNT(*) FROM documents d
+                                 WHERE d.collection_id = c.id) AS live_count
+                     FROM collection c ORDER BY c.imported_at DESC"""
+            ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            d["meta"] = _jload(d.get("meta"), {})
+            d["document_count"] = d.pop("live_count")
+            out.append(d)
+        return out
+
+    def refresh_collection_count(self, collection_id: str) -> None:
+        """Sync the stored document_count snapshot with reality."""
+        with self._lock:
+            self._conn.execute(
+                """UPDATE collection SET document_count =
+                   (SELECT COUNT(*) FROM documents WHERE collection_id=?) WHERE id=?""",
+                (collection_id, collection_id),
+            )
+            self._maybe_commit()
+
+    def is_collection(self, object_id: str | None) -> bool:
+        if not object_id:
+            return False
+        with self._lock:
+            row = self._conn.execute("SELECT 1 FROM collection WHERE id=?", (object_id,)).fetchone()
+        return row is not None
+
+    def assert_not_collection(self, object_id: str | None, context: str) -> None:
+        """Refuse to use a collection as a subject.
+
+        Raises ``ValueError`` when ``object_id`` is a collection id.  Called
+        by curriculum seeding, book-pipeline entry, and knowledge-harvest
+        scoping — a collection is provenance, never a subject.
+        """
+        if self.is_collection(object_id):
+            raise ValueError(
+                f"{object_id!r} is an import collection — a collection records where "
+                f"documents came from and may never {context}"
+            )
 
     def update_document_work(self, doc_id: str, work_id: str | None) -> bool:
         """Re-assign (or unlink) a document from a work."""

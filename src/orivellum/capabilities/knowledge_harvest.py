@@ -84,7 +84,11 @@ def harvest(
     """Harvest knowledge from *result* and write to DB.
 
     Returns count of items created.
+
+    Refuses a collection id as *work_id* — a collection is import
+    provenance, never a subject, and may never scope a knowledge harvest.
     """
+    db.assert_not_collection(work_id, "scope a knowledge harvest")
     created = 0
 
     # 1. Document-level summary node
@@ -384,6 +388,8 @@ def llm_harvest(
     """
     from orivellum.api._deps import get_config  # noqa: PLC0415
 
+    db.assert_not_collection(work_id, "scope a knowledge harvest")
+
     try:
         cfg = get_config()
     except Exception:
@@ -631,6 +637,7 @@ def llm_harvest_by_chapters(
     raised AFTER successful item writes (callers swallow harvest errors) still
     drops the Work's warm gap/coverage cache — same rule as :func:`llm_harvest`.
     """
+    db.assert_not_collection(work_id, "scope a knowledge harvest")
     try:
         return _llm_harvest_by_chapters_inner(doc_id, work_id, doc_title, db)
     except BaseException:

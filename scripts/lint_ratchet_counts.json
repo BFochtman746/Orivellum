@@ -256,8 +256,7 @@
   "E501": 3
  },
  "src/orivellum/capabilities/folder_watch.py": {
-  "C901": 1,
-  "SIM102": 1
+  "C901": 1
  },
  "src/orivellum/capabilities/forge/agent.py": {
   "B007": 1,

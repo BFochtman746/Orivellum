@@ -186,7 +186,34 @@ _KIND_MAP: dict[str, str] = {
 }
 
 
-def _import_file(file_path: Path, work_id: str | None, db: OrivellumDB) -> bool:
+def _collection_for_watch_dir(dir_path: str, db: OrivellumDB) -> str | None:
+    """Get-or-create the provenance collection for a watched directory.
+
+    Keyed on the directory path (source_ref) so every scan of the same
+    directory lands documents in the same collection.  Returns None on any
+    failure — provenance must never block an import.
+    """
+    try:
+        source_ref = f"folder:{dir_path}"
+        coll = db.find_collection_by_source_ref(source_ref)
+        if coll is None:
+            coll = db.create_collection(
+                label=Path(dir_path).name or dir_path,
+                source_kind="folder",
+                source_ref=source_ref,
+            )
+        return coll["id"]
+    except Exception as exc:
+        logger.warning("folder_watch: collection lookup failed for %s: %s", dir_path, exc)
+        return None
+
+
+def _import_file(
+    file_path: Path,
+    work_id: str | None,
+    db: OrivellumDB,
+    collection_id: str | None = None,
+) -> bool:
     """Copy a file into the library and queue it for processing.
 
     Returns True on success (including dedup skip).
@@ -224,7 +251,13 @@ def _import_file(file_path: Path, work_id: str | None, db: OrivellumDB) -> bool:
             content_path=str(dest.relative_to(lib_root)),
             sha256=sha256,
             work_id=work_id,
+            collection_id=collection_id,
         )
+        if collection_id:
+            try:
+                db.refresh_collection_count(collection_id)
+            except Exception as count_exc:  # count sync is best-effort
+                logger.debug("folder_watch: collection count refresh failed: %s", count_exc)
 
         from orivellum.api.executor import get_executor
         from orivellum.capabilities.pipeline import process_document
@@ -276,13 +309,16 @@ def _watch_loop(db: OrivellumDB) -> None:
                         logger.warning("folder_watch: path does not exist: %s", path_str)
                         continue
 
+                    collection_id: str | None = None
                     for f in sorted(p.iterdir()):
                         if (
                             f.is_file()
                             and f.suffix.lower() in _SUPPORTED_EXTS
                             and str(f) not in seen
                         ):
-                            if _import_file(f, work_id, db):
+                            if collection_id is None:
+                                collection_id = _collection_for_watch_dir(path_str, db)
+                            if _import_file(f, work_id, db, collection_id=collection_id):
                                 newly_seen.append(str(f))
                                 seen.add(str(f))
                                 status["files_imported"] += 1

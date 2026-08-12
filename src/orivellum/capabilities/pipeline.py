@@ -66,6 +66,32 @@ def _explode_zip_into_documents(
 
     children: list[str] = []
 
+    # Every ZIP import gets a collection row — the provenance home an import
+    # batch never had (THE RE-PROJECTION Phase 1).  Keyed on the archive's
+    # sha256 so re-exploding the same archive reuses the same collection.
+    collection_id: str | None = None
+    try:
+        arch = db.get_document(doc_id) or {}
+        arch_sha = arch.get("sha256") or ""
+        source_ref = f"{path.name} sha256:{arch_sha}" if arch_sha else path.name
+        existing_coll = db.find_collection_by_source_ref(source_ref)
+        coll = existing_coll or db.create_collection(
+            label=zip_title or path.name,
+            source_kind="zip",
+            source_ref=source_ref,
+        )
+        collection_id = coll["id"]
+        # The archive document itself belongs to its collection too.
+        if not arch.get("collection_id"):
+            with db._lock:
+                db._conn.execute(
+                    "UPDATE documents SET collection_id=? WHERE id=? AND collection_id IS NULL",
+                    (collection_id, doc_id),
+                )
+                db._maybe_commit()
+    except Exception as exc:
+        logger.error("ZIP explode: collection row creation failed for %s: %s", path.name, exc)
+
     try:
         with zipfile.ZipFile(path, "r") as zf:
             members = [n for n in zf.namelist() if not n.endswith("/")]
@@ -105,6 +131,16 @@ def _explode_zip_into_documents(
                     ).fetchone()
                 if existing_row:
                     children.append(existing_row["id"])
+                    # Claim provenance only if the doc has none yet — a doc
+                    # can appear in several archives but has one home column.
+                    if collection_id:
+                        with db._lock:
+                            db._conn.execute(
+                                "UPDATE documents SET collection_id=? "
+                                "WHERE id=? AND collection_id IS NULL",
+                                (collection_id, existing_row["id"]),
+                            )
+                            db._maybe_commit()
                     continue
 
                 # Derive clean title from filename (strip leading index digits like "01_")
@@ -152,6 +188,7 @@ def _explode_zip_into_documents(
                         "zip_folder": folder_hint,
                     },
                     tier=_child_tier,
+                    collection_id=collection_id,
                 )
                 children.append(doc["id"])
 
@@ -192,6 +229,12 @@ def _explode_zip_into_documents(
 
     except zipfile.BadZipFile as exc:
         logger.error("ZIP explode: bad archive %s: %s", path.name, exc)
+
+    if collection_id:
+        try:
+            db.refresh_collection_count(collection_id)
+        except Exception as exc:
+            logger.warning("ZIP explode: collection count refresh failed: %s", exc)
 
     # Review-queue auto-populate (MONARCH #151): when an archive with no Work
     # produces a group of >2 child docs, suggest assigning them to a new Work

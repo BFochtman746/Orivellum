@@ -69,6 +69,10 @@ async def learning_seed(work_id: str):
     import asyncio
 
     db = get_db()
+    try:
+        db.assert_not_collection(work_id, "seed a curriculum")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     base_url, model = _cfg()
@@ -89,6 +93,10 @@ async def learning_import_research(work_id: str, body: ResearchImportBody):
     import asyncio
 
     db = get_db()
+    try:
+        db.assert_not_collection(work_id, "seed a curriculum")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if not db.get_work(work_id):
         raise HTTPException(404, f"Work {work_id!r} not found")
     if not body.digests and not body.curriculum:
