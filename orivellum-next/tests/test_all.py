@@ -372,9 +372,10 @@ class TestGenerate(Base):
     def setUp(self):
         super().setUp()
         # stand in for real corpus state
+        # Mirrors the real Orivellum schema: works uses 'title', not 'name'.
         self.db.conn.executescript(
             "CREATE TABLE documents (id TEXT, tier TEXT);"
-            "CREATE TABLE works (id TEXT, name TEXT);"
+            "CREATE TABLE works (id TEXT, title TEXT);"
         )
         for i in range(40):
             self.db.conn.execute("INSERT INTO documents VALUES (?, 'source')", (f"d{i}",))
@@ -549,7 +550,8 @@ class TestOrivellumProbes(Base):
         return generate.EXAMPLE_PROBES[idx]
 
     def test_probe_A_source_tier_count(self):
-        """Probe 0: documents still on source tier — returns the real count."""
+        """Probe 0: documents still on source tier — returns the real count.
+        Uses orivellum_db=self.db to simulate routing to the Orivellum database."""
         self.db.conn.executescript(
             "CREATE TABLE IF NOT EXISTS documents (id TEXT, tier TEXT);"
         )
@@ -557,7 +559,7 @@ class TestOrivellumProbes(Base):
             (f"d{i}", "source" if i < 5 else "artifact") for i in range(8)
         ])
         self.db.conn.commit()
-        facts = generate.gather_facts(self.db, [self._probe(0)])
+        facts = generate.gather_facts(self.db, [self._probe(0)], orivellum_db=self.db)
         self.assertEqual(len(facts), 1)
         self.assertEqual(facts[0]["count"], 5,
                          "must return the real count, not a hardcoded number")
@@ -565,9 +567,9 @@ class TestOrivellumProbes(Base):
         self.assertIn("5", facts[0]["anchor_ref"])
 
     def test_probe_B_batch_works_count(self):
-        """Probe 1: Works named like migration batches — returns the real count."""
+        """Probe 1: Works titled like migration batches — uses 'title', not 'name'."""
         self.db.conn.executescript(
-            "CREATE TABLE IF NOT EXISTS works (id TEXT, name TEXT);"
+            "CREATE TABLE IF NOT EXISTS works (id TEXT, title TEXT);"
         )
         self.db.conn.executemany("INSERT INTO works VALUES (?,?)", [
             ("w1", "MIGRATION_BATCH_001"),
@@ -575,7 +577,7 @@ class TestOrivellumProbes(Base):
             ("w3", "Normal Work Title"),
         ])
         self.db.conn.commit()
-        facts = generate.gather_facts(self.db, [self._probe(1)])
+        facts = generate.gather_facts(self.db, [self._probe(1)], orivellum_db=self.db)
         self.assertEqual(len(facts), 1)
         self.assertEqual(facts[0]["count"], 2)
         self.assertIn("2", facts[0]["anchor"])
@@ -592,23 +594,24 @@ class TestOrivellumProbes(Base):
             ("f4", "critical", "resolved"), # wrong status — excluded
         ])
         self.db.conn.commit()
-        facts = generate.gather_facts(self.db, [self._probe(2)])
+        facts = generate.gather_facts(self.db, [self._probe(2)], orivellum_db=self.db)
         self.assertEqual(len(facts), 1)
         self.assertEqual(facts[0]["count"], 2)
 
     def test_probe_D_knowledge_items_awaiting_review(self):
-        """Probe 3: AI-extracted knowledge waiting for author review."""
+        """Probe 3: AI-extracted knowledge waiting for review.
+        Table is 'knowledge' (not knowledge_items); AI status is 'ai_auto' (not 'auto')."""
         self.db.conn.executescript(
-            "CREATE TABLE knowledge_items (id TEXT, review_status TEXT);"
+            "CREATE TABLE knowledge (id TEXT, review_status TEXT);"
         )
-        self.db.conn.executemany("INSERT INTO knowledge_items VALUES (?,?)", [
-            ("k1", "auto"),
-            ("k2", "auto"),
-            ("k3", "approved"),
-            ("k4", "rejected"),
+        self.db.conn.executemany("INSERT INTO knowledge VALUES (?,?)", [
+            ("k1", "ai_auto"),
+            ("k2", "ai_auto"),
+            ("k3", "auto"),     # rule-based — excluded (not the LLM-extracted status)
+            ("k4", "approved"),
         ])
         self.db.conn.commit()
-        facts = generate.gather_facts(self.db, [self._probe(3)])
+        facts = generate.gather_facts(self.db, [self._probe(3)], orivellum_db=self.db)
         self.assertEqual(len(facts), 1)
         self.assertEqual(facts[0]["count"], 2)
 
@@ -624,24 +627,25 @@ class TestOrivellumProbes(Base):
             ("c4", None,  None),          # no work_id — excluded
         ])
         self.db.conn.commit()
-        facts = generate.gather_facts(self.db, [self._probe(4)])
+        facts = generate.gather_facts(self.db, [self._probe(4)], orivellum_db=self.db)
         self.assertEqual(len(facts), 1)
         self.assertEqual(facts[0]["count"], 2)
 
     def test_probe_F_open_gates_count(self):
-        """Probe 5: clarify gates still open — uses the DB's own schema table."""
+        """Probe 5: clarify gates still open — runs against next.db (no orivellum_db)."""
         clarify.open_gate(self.db, "ta", "target-a", [facet()],
                           cost_units=50, policy=POLICY)
         clarify.open_gate(self.db, "tb", "target-b", [facet()],
                           cost_units=50, policy=POLICY)
+        # No orivellum_db — probe F is tagged for next.db (no "db": "orivellum")
         facts = generate.gather_facts(self.db, [self._probe(5)])
         self.assertEqual(len(facts), 1)
         self.assertEqual(facts[0]["count"], 2)
 
     def test_probe_drops_silently_when_table_missing(self):
-        """N3 rule: a probe whose table doesn't exist drops out, never guesses."""
-        # pacing_findings does not exist in a fresh next.db
-        facts = generate.gather_facts(self.db, [self._probe(2)])
+        """N3 rule: a probe whose table doesn't exist in orivellum_db drops silently."""
+        # pacing_findings does not exist in a fresh DB passed as orivellum_db
+        facts = generate.gather_facts(self.db, [self._probe(2)], orivellum_db=self.db)
         self.assertEqual(facts, [])
 
 

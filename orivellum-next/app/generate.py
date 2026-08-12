@@ -55,18 +55,25 @@ class AbstainingGateway(MockGateway):
 
 # ── candidate gathering (deterministic) ───────────────────────────────────
 
-def gather_facts(db: DB, probes: list[dict]) -> list[dict]:
+def gather_facts(db: DB, probes: list[dict],
+                 orivellum_db: "DB | None" = None) -> list[dict]:
     """Run each probe's SQL and keep only the ones that actually return something.
 
     A probe is: {kind, subject, sql, params, anchor_template, ref_template,
-                 cost_units_from_count, reversible, ...}
+                 cost_units_from_count, reversible, db, ...}
+
+    Probes tagged `"db": "orivellum"` run against `orivellum_db` if provided;
+    otherwise they fall back to `db`.  All other probes always use `db`.
     The count from the query becomes both the anchor text and the cost estimate,
     so the number a person reads and the number the budget checks are the same one.
     """
     facts = []
     for p in probes:
+        query_db = (orivellum_db
+                    if p.get("db") == "orivellum" and orivellum_db is not None
+                    else db)
         try:
-            row = db.q1(p["sql"], tuple(p.get("params", ())))
+            row = query_db.q1(p["sql"], tuple(p.get("params", ())))
         except Exception:
             continue                        # a broken probe drops out; it never guesses
         n = (row[0] if row else 0) or 0
@@ -132,10 +139,11 @@ def pick_kinds(facts: list[dict], hi: int) -> list[dict]:
 
 
 def build_set(db: DB, thread_id: str, from_message: str, answer: str,
-              probes: list[dict], policy: dict, gateway=None) -> dict:
+              probes: list[dict], policy: dict, gateway=None,
+              orivellum_db: "DB | None" = None) -> dict:
     """The whole pipeline. Returns a dict; raises only on programmer error."""
     gw = gateway or MockGateway()
-    facts = gather_facts(db, probes)
+    facts = gather_facts(db, probes, orivellum_db=orivellum_db)
     if not facts:
         return {"set_id": None, "reason":
                 "nothing in current state suggests a next step — the composer is enough"}
@@ -221,24 +229,26 @@ EXAMPLE_PROBES = [
         "reversible": True,
         "weight": 1.5,
         "rationale": "Every later pipeline phase depends on correct tier classification.",
+        "db": "orivellum",
     },
-    # ── B: Works whose name matches a migration batch ──────────────────────
+    # ── B: Works whose title matches a migration batch ─────────────────────
     {
         "kind": "act",
         "subject": "Works still shaped as migration batches",
         "label": "Collapse Works still shaped as migration batches",
         "prompt": (
-            "List Works whose names match the BATCH pattern and propose a migration "
+            "List Works whose titles match the BATCH pattern and propose a migration "
             "to reassign their documents to the correct collection."
         ),
-        "sql": "SELECT COUNT(*) FROM works WHERE name LIKE '%BATCH%'",
-        "anchor_template": "{n} batch-named Works that should be collections",
-        "ref_template": "works.name~BATCH:{n}",
+        "sql": "SELECT COUNT(*) FROM works WHERE title LIKE '%BATCH%'",
+        "anchor_template": "{n} batch-titled Works that should be collections",
+        "ref_template": "works.title~BATCH:{n}",
         "cost_units": 1,
         "cost_minutes": 6,
         "reversible": True,
         "weight": 1.2,
-        "rationale": "Batch-named Works pollute the Work list with structural noise.",
+        "rationale": "Batch-titled Works pollute the Work list with structural noise.",
+        "db": "orivellum",
     },
     # ── C: open critical findings ──────────────────────────────────────────
     {
@@ -260,24 +270,28 @@ EXAMPLE_PROBES = [
         "reversible": True,
         "weight": 1.8,
         "rationale": "Critical findings block downstream quality gates.",
+        "db": "orivellum",
     },
-    # ── D: knowledge items awaiting author review ──────────────────────────
+    # ── D: AI-extracted knowledge awaiting author review ───────────────────
+    # Table: `knowledge` (not knowledge_items).  LLM-extracted items use
+    # review_status='ai_auto'; rule-based items use 'auto'.
     {
         "kind": "act",
         "subject": "AI-extracted knowledge awaiting author review",
         "label": "Review AI-extracted knowledge items",
         "prompt": (
-            "Show me every knowledge item with review_status='auto', grouped by Work, "
+            "Show me every knowledge item with review_status='ai_auto', grouped by Work, "
             "so I can approve or reject them."
         ),
-        "sql": "SELECT COUNT(*) FROM knowledge_items WHERE review_status='auto'",
+        "sql": "SELECT COUNT(*) FROM knowledge WHERE review_status='ai_auto'",
         "anchor_template": "{n} AI-extracted items awaiting review",
-        "ref_template": "knowledge_items.review_status=auto:{n}",
+        "ref_template": "knowledge.review_status=ai_auto:{n}",
         "cost_units_from_count": True,
         "cost_minutes": 10,
         "reversible": True,
         "weight": 1.3,
         "rationale": "Unreviewed AI extraction degrades chat context quality.",
+        "db": "orivellum",
     },
     # ── E: chapters with no extracted text ────────────────────────────────
     {
@@ -299,6 +313,7 @@ EXAMPLE_PROBES = [
         "reversible": True,
         "weight": 1.1,
         "rationale": "Empty chapters silently degrade pacing analysis and chat context.",
+        "db": "orivellum",
     },
     # ── F: clarify gates still open ───────────────────────────────────────
     {
