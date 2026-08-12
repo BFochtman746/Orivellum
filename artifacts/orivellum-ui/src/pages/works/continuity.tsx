@@ -79,6 +79,8 @@ type Finding = {
     quote: string;
     offset: number | null;
     statement: string;
+    source?: string;
+    source_ref?: string;
   }[];
   canon_class: string | null;
   status: string;
@@ -473,16 +475,33 @@ function FindingCard({ finding, onChanged }: { finding: Finding; onChanged: () =
         </div>
         <p className="text-sm text-muted-foreground">{finding.explanation}</p>
         <div className="space-y-1">
-          {finding.evidence.map((e, i) => (
-            <div key={i} className="rounded-md bg-muted/50 p-2 text-xs">
-              <span className="font-medium">
-                {e.work_title}
-                {e.chapter_seq != null ? `, ch. ${e.chapter_seq}` : ""}
-                {e.offset != null ? ` @ ${e.offset}` : ""}
-              </span>
-              {e.quote && <span className="ml-2 italic">“{e.quote}”</span>}
-            </div>
-          ))}
+          {finding.evidence.map((e, i) =>
+            e.source === "canon" ? (
+              <div
+                key={i}
+                className="rounded-md border border-primary/20 bg-primary/5 p-2 text-xs"
+                data-testid={`evidence-canon-${i}`}
+              >
+                <Badge variant="outline" className="mr-2 text-[10px] uppercase">
+                  Canon evidence
+                </Badge>
+                <span className="font-medium">{e.work_title}</span>
+                {e.statement && <span className="ml-2 italic">“{e.statement}”</span>}
+                {e.source_ref && (
+                  <span className="ml-2 text-muted-foreground">— {e.source_ref}</span>
+                )}
+              </div>
+            ) : (
+              <div key={i} className="rounded-md bg-muted/50 p-2 text-xs">
+                <span className="font-medium">
+                  {e.work_title}
+                  {e.chapter_seq != null ? `, ch. ${e.chapter_seq}` : ""}
+                  {e.offset != null ? ` @ ${e.offset}` : ""}
+                </span>
+                {e.quote && <span className="ml-2 italic">“{e.quote}”</span>}
+              </div>
+            ),
+          )}
         </div>
         {!isClosed && !expanded && (
           <Button size="sm" variant="outline" onClick={() => setExpanded(true)} data-testid={`button-resolve-${finding.id}`}>

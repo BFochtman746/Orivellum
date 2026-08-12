@@ -766,6 +766,38 @@ class ReviewHardeningTests(_Base):
             self.assertTrue(any(s.get("chapter_id") == c2
                                 for s in f["evidence"]))
 
+    def test_text_mutation_between_ledger_and_reconcile_drops_stale_spans(self):
+        b1, b2, c1, c2 = self._two_book_series()
+        self._node(b1["id"], c1, "Character", "Mira",
+                   quote="Mira rode north to the keep.",
+                   attributes={"status": "alive"})
+        self._node(b2["id"], c2, "Character", "Mira",
+                   quote="Mira arrived at the keep at last.",
+                   attributes={"status": "dead"})
+        sr.build_book_ledger(self.db, b1["id"])
+        sr.build_book_ledger(self.db, b2["id"])
+        scope = sr.resolve_scope(self.db, mode="full_series",
+                                 work_id=b1["id"], series_id=None)
+        # Sanity: with intact text the drift IS found.
+        findings = sr.reconcile(self.db, mode="full_series", scope=scope)
+        self.assertTrue(any(f["finding_type"] == "state_drift"
+                            for f in findings))
+        # Author rewrites book 2's chapter AFTER the ledger step: the quoted
+        # passage no longer exists, so reconcile must not cite it.
+        with self.db._lock:
+            self.db._conn.execute(
+                "UPDATE book_chapters SET text='Entirely rewritten.' WHERE id=?",
+                (c2,))
+            self.db._conn.commit()
+        findings = sr.reconcile(self.db, mode="full_series", scope=scope)
+        self.assertFalse(any(f["finding_type"] == "state_drift"
+                             for f in findings))
+        # …and the manifest still reports the chapter stale → partial.
+        manifest = sr.build_manifest(self.db, mode="full_series", scope=scope)
+        self.assertTrue(manifest["partial"])
+        self.assertTrue(any(u["reason"] == "stale"
+                            for u in manifest["unreviewed_regions"]))
+
     def test_chapter_id_must_exist_and_belong_to_the_work(self):
         b1, b2, _, c2 = self._two_book_series()
         with self.assertRaises(sr.SeriesReviewError):

@@ -876,6 +876,35 @@ _MODE_COMPARATORS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _revalidate_spans(db: OrivellumDB, work_id: str,
+                      items: list[dict]) -> list[dict]:
+    """Drop passage-backed items whose exact span no longer verifies.
+
+    Canon items (chapter_id None) are not passage evidence and pass through;
+    everything else must satisfy text[offset:offset+len(quote)] == quote
+    against the chapter text AS OF NOW, not as of the ledger build.
+    """
+    texts = {c["id"]: c.get("text") or "" for c in _chapters(db, work_id)}
+    out: list[dict] = []
+    for it in items:
+        cid = it.get("chapter_id")
+        if cid is None:
+            out.append(it)
+            continue
+        text = texts.get(cid)
+        quote = it.get("quote") or ""
+        offset = it.get("span_offset")
+        if (
+            text is not None
+            and quote.strip()
+            and offset is not None
+            and 0 <= offset <= len(text) - len(quote)
+            and text[offset:offset + len(quote)] == quote
+        ):
+            out.append(it)
+    return out
+
+
 def _split_for_chapter(book: dict, chapter_id: str) -> list[dict]:
     """Split ONE book into ordered pseudo-books around the target chapter.
 
@@ -937,6 +966,12 @@ def reconcile(db: OrivellumDB, *, mode: str, scope: list[dict],
         if ledger is None:
             continue
         items = list_ledger_items(db, s["work_id"], limit=10000)
+        # Re-validate every passage-backed span against the CURRENT chapter
+        # text.  Chapter text can change between the ledger step and this
+        # reconcile step in a background run; a finding must never cite a
+        # quote/offset that no longer identifies a real passage.  (The
+        # manifest independently marks such chapters stale → partial.)
+        items = _revalidate_spans(db, s["work_id"], items)
         books.append({**s, "seg": s["work_id"], "ledger": ledger,
                       "kinds": _by_kind(items), "items": items})
     books.sort(key=lambda b: b["order"])
