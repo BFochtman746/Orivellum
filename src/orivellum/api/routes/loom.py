@@ -343,14 +343,27 @@ def get_chapter_contract(work_id: str, chapter_id: str):
 @router.put("/works/{work_id}/loom/chapters/{chapter_id}/contract")
 def put_chapter_contract(work_id: str, chapter_id: str, body: ContractBody):
     """Author-confirmed contract write.  Meta is MERGED, never replaced —
-    other meta keys (scene counts, extraction data) survive the save."""
+    other meta keys (scene counts, extraction data) survive the save.  The
+    read-merge-write happens under ONE lock/transaction so a concurrent meta
+    write can never be clobbered by a stale snapshot."""
     db = get_db()
-    ch = _get_chapter_row(db, work_id, chapter_id)
     contract = body.validated()
     from datetime import UTC, datetime  # noqa: PLC0415
 
-    meta = {**ch["meta"], "contract": contract}
     with db._lock, db._conn:
+        row = db._conn.execute(
+            "SELECT meta FROM book_chapters WHERE id=? AND work_id=?",
+            (chapter_id, work_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, f"chapter {chapter_id!r} not found in work {work_id!r}")
+        try:
+            current = json.loads(row["meta"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            current = {}
+        if not isinstance(current, dict):
+            current = {}
+        meta = {**current, "contract": contract}
         db._conn.execute(
             "UPDATE book_chapters SET meta=?, updated_at=? WHERE id=? AND work_id=?",
             (

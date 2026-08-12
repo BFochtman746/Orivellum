@@ -175,6 +175,44 @@ class TestContract:
         assert meta["scene_count"] == 3
         assert meta["contract"]["beat"]
 
+    def test_competing_meta_write_survives_save(self, client, db, work_id):
+        """A meta key written AFTER the route would have read the row must
+        survive: the merge happens under the same lock as the write, so the
+        saved snapshot can never be stale."""
+        cid = _chapter(db, work_id, 1)
+        # Simulate a pipeline worker landing metadata just before the save.
+        with db._lock:
+            db._conn.execute(
+                "UPDATE book_chapters SET meta=? WHERE id=?",
+                (json.dumps({"extraction": {"scenes": 4}}), cid),
+            )
+            db._conn.commit()
+        assert client.put(self._url(work_id, cid), json=_contract()).status_code == 200
+        with db._lock:
+            meta = json.loads(
+                db._conn.execute(
+                    "SELECT meta FROM book_chapters WHERE id=?", (cid,)
+                ).fetchone()["meta"]
+            )
+        assert meta["extraction"] == {"scenes": 4}
+        assert meta["contract"]["beat"]
+
+    def test_malformed_legacy_meta_is_tolerated(self, client, db, work_id):
+        """Legacy rows with non-JSON or non-dict meta: readiness reports
+        'no contract yet' and a save replaces the junk rather than crashing."""
+        cid = _chapter(db, work_id, 1)
+        with db._lock:
+            db._conn.execute(
+                "UPDATE book_chapters SET meta='not json' WHERE id=?", (cid,)
+            )
+            db._conn.commit()
+        [ch] = client.get(BASE.format(work_id)).json()["chapters"]
+        assert ch["contract"] is None
+        assert "no contract yet" in ch["problems"]
+        assert client.put(self._url(work_id, cid), json=_contract()).status_code == 200
+        got = client.get(self._url(work_id, cid)).json()
+        assert got["contract"]["beat"]
+
     @pytest.mark.parametrize(
         "bad",
         [
