@@ -355,6 +355,16 @@ def test_stale_reclaimed_worker_cannot_touch_newer_runs_knowledge(db, client, mo
     fresh = db.list_knowledge(work_id=wid, review_status_in=("ai_auto",))
     assert [i["text"] for i in fresh] == ["Fresh Vane item."]
 
+    # The newer run's freshly computed gap cache must also survive the stale
+    # worker's finalization (a superseded run makes ZERO writes).
+    with db._lock:
+        db._conn.execute(
+            "INSERT OR REPLACE INTO work_gap_cache(work_id, gaps_json, coverage_json)"
+            " VALUES(?, '[]', '{\"pct\": 42.0}')",
+            (wid,),
+        )
+        db._conn.commit()
+
     # The stale worker resumes with its dead token: it must write NOTHING.
     _mock_llm(monkeypatch, [{"kind": "character", "text": "STALE poison item."}])
     stale_report = reharvest_work(db, wid, claimed=True, token=old_token)
@@ -364,6 +374,12 @@ def test_stale_reclaimed_worker_cannot_touch_newer_runs_knowledge(db, client, mo
     # Persisted report + status are still the newer run's.
     assert get_report(db, wid)["items_created"] == 1
     assert get_run_status(db, wid)["state"] == "done"
+    # ... and the newer run's gap cache row was not invalidated.
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT coverage_json FROM work_gap_cache WHERE work_id=?", (wid,)
+        ).fetchone()
+    assert row is not None and json.loads(row["coverage_json"])["pct"] == 42.0
 
 
 # ── routes: ontology + pilot gate ─────────────────────────────────────────────

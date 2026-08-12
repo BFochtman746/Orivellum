@@ -374,9 +374,13 @@ def reharvest_work(
     finally:
         report["finished_at"] = _now().isoformat()
         # Fenced finalization: write the report and release the claim in ONE
-        # transaction, and only if this run still owns the claim.
+        # transaction, and only if this run still owns the claim.  A
+        # superseded run must make ZERO writes — including the gap-cache
+        # invalidation, which would otherwise erase the newer run's cache.
+        owned = False
         with db.atomic():
             if _token_current(db, work_id, token):
+                owned = True
                 db.set_setting(_REPORT_KEY.format(work_id=work_id), json.dumps(report))
                 release_run(db, work_id, report["state"], token)
             else:
@@ -385,8 +389,9 @@ def reharvest_work(
                     "discarding this run's report/status",
                     work_id,
                 )
-        with contextlib.suppress(Exception):
-            db.invalidate_gap_cache(work_id)
+        if owned:
+            with contextlib.suppress(Exception):
+                db.invalidate_gap_cache(work_id)
         logger.info(
             "reharvest_work %s (domain=%s): state=%s created=%d discarded=%d docs=%d",
             work_id,
