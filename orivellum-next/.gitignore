@@ -1,0 +1,17 @@
+# Runtime database — created automatically; never commit
+next.db
+next.db-shm
+next.db-wal
+
+# Local progress tracking (user-local state, gitignored by convention)
+PROGRESS.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+
+# Editor
+.env
