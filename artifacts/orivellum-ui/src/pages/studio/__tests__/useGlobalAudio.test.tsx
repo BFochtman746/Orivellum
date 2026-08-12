@@ -201,6 +201,28 @@ describe("custom line preview (playCustomLine)", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
+  it("stopAll during an in-flight custom line: the late response never starts playing", async () => {
+    let resolveFetch!: (r: Response) => void;
+    apiFetchMock.mockReturnValue(new Promise<Response>(res => { resolveFetch = res; }));
+    const audio = renderHook_();
+
+    let call!: Promise<void>;
+    act(() => { call = audio().playCustomLine("nova", "Stop me mid-flight"); });
+    expect(audio().loadingId).toBe("custom:nova");
+
+    act(() => { audio().stopAll(); });
+    expect(audio().loadingId).toBeNull();
+    expect(audio().playingId).toBeNull();
+    const playCalls = playSpy.mock.calls.length;
+
+    // The response lands after the user stopped — it must be discarded.
+    await act(async () => { resolveFetch(okAudioResponse()); await call; });
+    expect(playSpy.mock.calls.length).toBe(playCalls); // play() never called
+    expect(audio().playingId).toBeNull();
+    expect(audio().loadingId).toBeNull();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
   it("rapid clicks: a stale request's failure is silent (no misleading toast)", async () => {
     let rejectFirst!: (r: Response) => void;
     const first = new Promise<Response>(res => { rejectFirst = res; });
