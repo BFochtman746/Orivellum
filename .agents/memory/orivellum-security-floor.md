@@ -30,8 +30,11 @@ lost on restart unless a later commit piggybacks it. This silently broke mail
 token persistence.
 
 **How to apply:** for secret/plumbing settings that must not hit the audit log,
-use `db.set_setting_unaudited(key, value)` (locks + commits). Never call
-`_set_setting` directly outside `governed_write`.
+use `db.set_setting_unaudited(key, value)`. It commits via `_maybe_commit`, so
+inside `atomic()` it correctly defers to the outer transaction (a later
+exception rolls it back). Never call `_set_setting` directly outside
+`governed_write`, and never call `self._conn.commit()` from a mutation method
+— `_maybe_commit` is the only correct committer.
 
 # Other pinned behaviors (see the mail test files)
 
@@ -39,4 +42,5 @@ use `db.set_setting_unaudited(key, value)` (locks + commits). Never call
   (was missing from the approval-required tuple — a real policy hole).
 - MailStore nonces are FK-bound to a real mail record; tests must seed one via
   `upsert_mail_record` before `issue_nonce`.
-- The full suite still OOMs in this container — run ~10-file chunks.
+- Rules must be AST-based (imports/identifiers), never text greps —
+  docstring/string mentions masked ~15 genuinely dead or untested names.

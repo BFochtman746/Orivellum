@@ -116,3 +116,46 @@ def test_missing_session_secret_refuses_to_encrypt(monkeypatch):
     monkeypatch.setenv("SESSION_SECRET", "")
     with pytest.raises(MailStewardError):
         token_vault.encrypt_token(TOKEN)
+
+
+# ── set_setting_unaudited transaction discipline ─────────────────────────────
+
+
+def test_unaudited_write_is_durable_across_reopen(tmp_path):
+    from orivellum.database.db import OrivellumDB
+
+    path = str(tmp_path / "t.db")
+    db = OrivellumDB(path)
+    db.set_setting_unaudited("plumbing_key", "v1")
+    assert db.get_setting("plumbing_key", "") == "v1"
+    db.close()
+    db2 = OrivellumDB(path)
+    assert db2.get_setting("plumbing_key", "") == "v1", (
+        "unaudited setting writes must be committed, not left in an open txn"
+    )
+    db2.close()
+
+
+def test_unaudited_write_inside_atomic_rolls_back_with_the_block(tmp_path):
+    from orivellum.database.db import OrivellumDB
+
+    db = OrivellumDB(str(tmp_path / "t.db"))
+    with pytest.raises(RuntimeError):
+        with db.atomic():
+            db.set_setting_unaudited("plumbing_key", "should-roll-back")
+            raise RuntimeError("boom")
+    assert db.get_setting("plumbing_key", "") == "", (
+        "inside atomic(), set_setting_unaudited must defer to the outer "
+        "transaction so a later exception rolls it back"
+    )
+    db.close()
+
+
+def test_unaudited_write_inside_atomic_commits_with_the_block(tmp_path):
+    from orivellum.database.db import OrivellumDB
+
+    db = OrivellumDB(str(tmp_path / "t.db"))
+    with db.atomic():
+        db.set_setting_unaudited("plumbing_key", "v2")
+    assert db.get_setting("plumbing_key", "") == "v2"
+    db.close()

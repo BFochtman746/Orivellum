@@ -257,10 +257,14 @@ class OrivellumDB:
         leaves the write in an open transaction that is invisible to the
         read connection and lost on restart until some later commit
         piggybacks it.
+
+        Transaction-aware: inside ``atomic()`` it defers to the outer
+        transaction via ``_maybe_commit`` so a later exception still rolls
+        the write back; it must never commit another caller's open work.
         """
         with self._lock:
             self._set_setting(key, value)
-            self._conn.commit()
+            self._maybe_commit()
 
     # Keys whose values must never appear in audit detail (secrets/tokens)
     _AUDIT_SECRET_KEYS: frozenset[str] = frozenset({"api_key", "session_secret", "token"})
