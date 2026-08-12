@@ -15,9 +15,10 @@ from pathlib import Path
 from . import harness, llm, report, store  # noqa: F401 (json/llm: kept for job modules & debugging)
 from .config import CFG
 from .jobs import code as code_job
+from .jobs import research as research_job
 from .jobs import xlsx as xlsx_job
 
-JOBS = {"code": code_job, "xlsx": xlsx_job}
+JOBS = {"code": code_job, "xlsx": xlsx_job, "research": research_job}
 
 
 def _run_dir(run_id):
@@ -28,7 +29,11 @@ def _run_dir(run_id):
 
 def cmd_run(a):
     job = JOBS[a.job]
-    target = str(Path(a.target).resolve())
+    # research takes a topic string; file jobs take a path
+    if getattr(job, "PATH_TARGET", True):
+        target = str(Path(a.target).resolve())
+    else:
+        target = a.target.strip()
     store.init()
     print(f"planning {a.job} run over {target} …")
     tmp = Path(CFG.runs_dir) / "_staging"

@@ -112,6 +112,15 @@ def training_plan(run_id, items):
     for i, it in enumerate(items, 1):
         L.append(f"\n## {i}. {it['topic']}\n")
         L.append(f"\n**Why it matters here:** {it['why']}\n")
+        if it.get("prereq"):
+            L.append(f"\n**Prerequisites:** {', '.join(it['prereq'])}\n")
+        sched = it.get("schedule")
+        if sched:
+            days = ", ".join(str(d) for d in sched.get("review_after_days", []))
+            L.append(
+                f"\n**Schedule:** start on day {sched.get('start_day', 0)}; "
+                f"review after {days} day(s).\n"
+            )
         if it.get("evidence"):
             L.append(
                 f"\n**Where it shows up:** {', '.join('`' + e + '`' for e in it['evidence'][:6])}\n"

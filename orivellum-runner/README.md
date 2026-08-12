@@ -48,6 +48,35 @@ is why mock mode is genuinely useful rather than a demo.
 - Per-function digest: purpose, what it trusts, failure modes, unvalidated
   inputs, hardening suggestions
 
+## `--job research` — a topic in, sourced findings and a curriculum out
+
+    python -m runner run --job research --target "Byzantine iconoclasm"
+
+Five phases on the same harness, so a killed run resumes instead of restarting:
+
+1. **Inventory** — what the corpus already holds, via read-only FTS over the
+   Orivellum database (`ORIVELLUM_DB`, default `../data/orivellum.db`).
+   Deterministic; research never restarts from zero.
+2. **Gap intake** — from the gap table, cached suggested queries, and
+   topic-profile proposals; deterministic seed facets when the tables offer
+   nothing (labeled `seed_facet`, never disguised as detected gaps).
+3. **Per-gap research** — one clean-context unit per gap, calling the existing
+   Orivellum websearch pipeline (RRF fusion, BM25 passage ranking,
+   source-quality scoring; needs `TAVILY_API_KEY` — absent means units FAIL,
+   never fake). Fetched text is injection-screened and fenced. The model
+   proposes claims; **code verifies** every claim cites a known source and
+   quotes text that appears verbatim in the evidence. Unverifiable claims are
+   dropped and counted (`CLAIM-UNSOURCED`), never kept.
+4. **Curriculum** — `TRAINING_PLAN.md` items in the six-field shape, plus
+   prerequisites and a spaced review schedule; `curriculum.json` holds the
+   machine-readable copy for the future Learn-screen importer.
+5. **Report** — leads with completeness and names what it could not find.
+
+Per-gap digests land in `runs/<id>/digests/gap-*.json` and consolidated in
+`runs/<id>/research_digests.json` — claims are proposals with source URL,
+retrieval date, quote, and confidence. Nothing is written back to the
+Orivellum database; that ships with the review gate, deliberately.
+
 ## `--job xlsx` — build, test, and return a PROVEN workbook
 
 The old read-only doctrine is retired. What replaces it is stricter, not
