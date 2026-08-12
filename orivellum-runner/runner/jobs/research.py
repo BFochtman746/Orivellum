@@ -306,11 +306,11 @@ DIGEST_SYS = (
     "summary (one short paragraph), "
     "claims (list, max 10, each {claim, sources: ['S1', ...], quote, "
     "confidence: 'low'|'medium'|'high'} — quote is a verbatim excerpt copied "
-    "EXACTLY from the cited source's passage, max 300 characters), "
+    "EXACTLY from one of the CITED sources' passages, max 300 characters), "
     "not_found (list of things the question asked that the sources do not "
     "answer). Every claim MUST cite at least one [S#] source that supports "
-    "it. If the sources do not answer the question, say so in not_found "
-    "rather than guessing."
+    "it, and its quote must come from a cited source. If the sources do not "
+    "answer the question, say so in not_found rather than guessing."
 )
 
 
@@ -318,24 +318,81 @@ def _norm(s):
     return " ".join((s or "").split()).lower()
 
 
-def verify_claims(raw_claims, context, citations):
-    """Deterministic gate: a claim survives only if every cited source id is
-    real and its quote appears verbatim in the fetched evidence. The model
-    proposes; code disposes."""
+_SID_MARK = re.compile(r"\[S(\d+)\] ")
+
+
+def split_context_by_source(context):
+    """Deterministically split the fused evidence into per-source text.
+
+    _build_model_context emits blocks of the form '[S#] title\\ntext\\n\\n';
+    everything before the first marker is preamble. Returns (preamble,
+    {'S1': text, ...}) — a source may contribute several passages."""
+    marks = list(_SID_MARK.finditer(context or ""))
+    if not marks:
+        return context or "", {}
+    preamble = context[: marks[0].start()]
+    blocks = {}
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(context)
+        sid = f"S{m.group(1)}"
+        blocks[sid] = blocks.get(sid, "") + context[m.start() : end]
+    return preamble, blocks
+
+
+def screen_sources(run_id, ref, context, citations):
+    """Injection screening with CONTAINMENT: a source whose fetched text is
+    injection-shaped is excluded from the evidence BEFORE any model call —
+    detect-and-log alone would still let a hostile passage yield a 'verified'
+    claim. Returns (clean_context, clean_citations, source_blocks, excluded)."""
+    preamble, blocks = split_context_by_source(context)
+    tainted = set()
+    for sid, text in blocks.items():
+        for h in shield.screen(text, where=f"{ref}::{sid}"):
+            tainted.add(sid)
+            store.add_finding(
+                run_id,
+                "HIGH",
+                "INJECT-WEB",
+                f"{ref}::{sid}",
+                f"Injection-shaped text in fetched web content: {h['kind']}",
+                detail=h["match"],
+                source="shield",
+                fix="Source excluded from evidence — its text never reached the model.",
+            )
+    clean_blocks = {sid: t for sid, t in blocks.items() if sid not in tainted}
+    clean_context = preamble + "".join(clean_blocks[s] for s in sorted(clean_blocks))
+    clean_citations = [c for c in citations if c["id"] not in tainted]
+    excluded = [
+        {"id": c["id"], "url": c["url"], "reason": "injection-screened"}
+        for c in citations
+        if c["id"] in tainted
+    ]
+    return clean_context, clean_citations, clean_blocks, excluded
+
+
+def verify_claims(raw_claims, source_blocks, citations):
+    """Deterministic gate: a claim survives only if EVERY cited source id is
+    real (one unknown id rejects the whole claim — no silent trimming) and
+    its quote appears verbatim in the text of a CITED source, not merely
+    somewhere in the combined evidence. The model proposes; code disposes."""
     valid_ids = {c["id"] for c in citations}
-    ctx = _norm(context)
+    norm_blocks = {sid: _norm(t) for sid, t in source_blocks.items()}
     kept, dropped = [], 0
     for cl in (raw_claims or [])[:12]:
         if not isinstance(cl, dict):
             dropped += 1
             continue
         text = (cl.get("claim") or "").strip()
-        sids = [s for s in (cl.get("sources") or []) if s in valid_ids]
+        sids = list(cl.get("sources") or [])
         quote = (cl.get("quote") or "").strip()
         conf = cl.get("confidence")
         if conf not in ("low", "medium", "high"):
             conf = "low"
-        if not text or not sids or not quote or _norm(quote) not in ctx:
+        if not text or not sids or not quote or any(s not in valid_ids for s in sids):
+            dropped += 1
+            continue
+        q = _norm(quote)
+        if not any(q in norm_blocks.get(s, "") for s in sids):
             dropped += 1
             continue
         kept.append({"claim": text, "sources": sids, "quote": quote[:300], "confidence": conf})
@@ -346,6 +403,17 @@ def _digest_dir(run_id):
     d = Path(CFG.runs_dir) / str(run_id) / "digests"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _write_digest_artifact(run_id, ord_, digest):
+    """Atomic write (tmp + rename) so a kill mid-write never leaves a torn
+    artifact. The checkpoint DB stays the source of truth; final_pass
+    regenerates every artifact from it, so a crash between artifact write and
+    unit checkpoint reconciles on the next resume."""
+    p = _digest_dir(run_id) / f"gap-{ord_:03d}.json"
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(digest, indent=1), encoding="utf-8")
+    tmp.replace(p)
 
 
 def _worker_inventory(run_id, unit):
@@ -381,6 +449,12 @@ def _worker_gap(run_id, unit):
         raise RuntimeError("TAVILY_API_KEY not set — gap cannot be researched")
     context, citations, provider_errors = _run_search(query)
 
+    # Injection containment BEFORE any model call: tainted sources are cut
+    # from the evidence and from the citation list, not merely logged.
+    context, citations, source_blocks, excluded = screen_sources(
+        run_id, unit["ref"], context, citations
+    )
+
     retrieved = store.now()[:10]
     sources = [
         {
@@ -393,25 +467,13 @@ def _worker_gap(run_id, unit):
         for c in citations
     ]
 
-    # Injection screening on everything fetched, before any model call.
-    for h in shield.screen(context, where=unit["ref"]):
-        store.add_finding(
-            run_id,
-            "HIGH",
-            "INJECT-WEB",
-            unit["ref"],
-            f"Injection-shaped text in fetched web content: {h['kind']}",
-            detail=h["match"],
-            source="shield",
-            fix="Treat this source as hostile; do not let its claims through review.",
-        )
-
     digest = {
         "kind": "gap",
         "query": query,
         "origin": p.get("origin"),
         "gap_id": p.get("gap_id"),
         "sources": sources,
+        "excluded_sources": excluded,
         "claims": [],
         "dropped_claims": 0,
         "not_found": [],
@@ -429,9 +491,11 @@ def _worker_gap(run_id, unit):
             )
         )
         if out:
-            kept, dropped = verify_claims(out.get("claims"), context, citations)
+            kept, dropped = verify_claims(out.get("claims"), source_blocks, citations)
             digest["claims"] = kept
             digest["dropped_claims"] = dropped
+            # Model narrative — kept in the digest, clearly attributed, but
+            # NEVER propagated into curriculum/report as if it were verified.
             digest["summary"] = out.get("summary")
             nf = out.get("not_found")
             digest["not_found"] = [str(x)[:200] for x in nf][:6] if isinstance(nf, list) else []
@@ -447,9 +511,7 @@ def _worker_gap(run_id, unit):
                     fix="Dropped, not kept. Nothing unsourced enters the digest.",
                 )
 
-    (_digest_dir(run_id) / f"gap-{unit['ord']:03d}.json").write_text(
-        json.dumps(digest, indent=1), encoding="utf-8"
-    )
+    _write_digest_artifact(run_id, unit["ord"], digest)
     return digest
 
 
@@ -473,6 +535,29 @@ def final_pass(run_id):
     covered = [d for d in ds if d["digest"].get("claims")]
     uncovered = [d for d in ds if not d["digest"].get("claims")]
     total_claims = sum(len(d["digest"]["claims"]) for d in covered)
+
+    # Crash reconciliation: the checkpoint DB is the source of truth, so
+    # regenerate every per-gap artifact from it. A kill between an artifact
+    # write and its unit checkpoint can never leave the two disagreeing.
+    for d in ds:
+        _write_digest_artifact(run_id, d["ord"], d["digest"])
+
+    # Planned but never researched: failed or never-reached gap units have no
+    # digest — they must still show up in the coverage accounting, or a run
+    # with a dead search key would read as merely 'thin' instead of 'blind'.
+    unresearched = [u for u in store.failed_units(run_id) if u["kind"] == "gap"]
+    for u in unresearched:
+        store.add_finding(
+            run_id,
+            "MEDIUM",
+            "GAP-UNRESEARCHED",
+            u["ref"],
+            "Gap was planned but never researched (unit failed)",
+            detail=(u["err"] or "")[:200],
+            source="metric",
+            fix="Fix the failure (see Units that failed) and resume the run.",
+            unique=True,
+        )
 
     for d in uncovered:
         why = "; ".join(d["digest"].get("not_found") or []) or (
@@ -508,7 +593,8 @@ def final_pass(run_id):
 
     lines = [
         f"- Gaps planned: **{planned}** · researched: **{len(ds)}** · "
-        f"covered by at least one verified claim: **{len(covered)}**",
+        f"covered by at least one verified claim: **{len(covered)}** · "
+        f"never researched (failed units): **{len(unresearched)}**",
         f"- Verified claims: **{total_claims}** (every one carries a source URL, "
         "a retrieval date, and a quote that appears verbatim in the evidence)",
     ]
@@ -565,7 +651,10 @@ def plan_items(run_id):
         items.append(
             dict(
                 topic=dg["query"][:120],
-                why=(dg.get("summary") or "A named gap in the corpus, now researched.")[:300],
+                # Deterministic: the model's summary is narrative, not verified,
+                # so it stays in the digest and out of the curriculum.
+                why=f"A named gap in the corpus ({dg.get('origin') or 'detected'}), "
+                f"now researched to {len(dg['claims'])} verified, sourced claim(s).",
                 evidence=[s["url"] for s in dg["sources"][:6]],
                 read="; ".join(f"{s['title'] or s['url']} ({s['url']})" for s in dg["sources"][:2]),
                 check="Open the cited source and confirm the quote supporting the first claim.",
