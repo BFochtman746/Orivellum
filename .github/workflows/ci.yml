@@ -47,6 +47,12 @@ jobs:
           SESSION_SECRET: ci-test-secret-not-a-real-key-padding-to-32-plus-chars
         run: uv run --with pyyaml python scripts/check_openapi_drift.py
 
+      # ── Gate 5b: capability manifest — nothing ships unwired ──
+      - name: Capability manifest gate
+        env:
+          SESSION_SECRET: ci-test-secret-not-a-real-key-padding-to-32-plus-chars
+        run: uv run --with pyyaml python scripts/check_capability_manifest.py
+
       # ── Gate 6 runs inside the test suite (tests/test_property_based.py) ──
       - name: Tests with coverage gate
         env:

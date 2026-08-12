@@ -1,0 +1,3113 @@
+{
+ "_doc": [
+  "Capability manifest \u2014 every live API operation's declared product fate.",
+  "Statuses: pwa (shipped in the PWA; ui_route names the owning page),",
+  "external_api (for outside consumers, e.g. MCP), admin_tooling (operator/",
+  "diagnostic surfaces), internal (machine-to-machine infrastructure),",
+  "experimental (built but not wired to any UI \u2014 awaiting a product decision),",
+  "archived (kept as reference, slated for removal).",
+  "contract_backlog: pwa operations not yet in the typed OpenAPI contract",
+  "(lib/api-spec/openapi.yaml). SHRINK-ONLY: new pwa operations must be added",
+  "to the contract; entries leave this list by being specced, never join it.",
+  "Verified bidirectionally by scripts/check_capability_manifest.py (CI).",
+  "Add missing entries with: python scripts/generate_capability_inventory.py --seed"
+ ],
+ "statuses": [
+  "pwa",
+  "external_api",
+  "admin_tooling",
+  "internal",
+  "experimental",
+  "archived"
+ ],
+ "contract_backlog": [
+  "DELETE /api/backups/restore/pending",
+  "DELETE /api/bench/goldens/{golden_id}",
+  "DELETE /api/forge/projects/{project_id}",
+  "DELETE /api/library/{doc_id}/read-position",
+  "DELETE /api/notes/{block_id}",
+  "DELETE /api/operations/playbooks/{playbook_id}",
+  "DELETE /api/operations/schedules/{schedule_id}",
+  "DELETE /api/series/{series_id}",
+  "DELETE /api/series/{series_id}/members/{work_id}",
+  "DELETE /api/studio/transcribe/{job_id}",
+  "DELETE /api/studio/tts/document/{job_id}",
+  "DELETE /api/studio/tts/work/{job_id}",
+  "DELETE /api/studio/voice-clones/{vid}",
+  "DELETE /api/system/extraction-templates/{template_id}",
+  "DELETE /api/system/user-memory",
+  "DELETE /api/system/watch-dirs/{index}",
+  "DELETE /api/workbench/projects/{project_id}",
+  "DELETE /api/works/{work_id}/cover",
+  "DELETE /api/works/{work_id}/domain/sources/{source_id}",
+  "GET /api/assay/instruments",
+  "GET /api/assay/promotion/dashboard",
+  "GET /api/auth/me",
+  "GET /api/backups/restore/pending",
+  "GET /api/band/chapters/{chapter_id}",
+  "GET /api/band/chapters/{chapter_id}/ripple",
+  "GET /api/band/revisions/{revision_id}",
+  "GET /api/bench/goldens",
+  "GET /api/bench/runs",
+  "GET /api/bench/status",
+  "GET /api/bench/telemetry/summary",
+  "GET /api/canon/counts",
+  "GET /api/canon/facts",
+  "GET /api/canon/facts/{fact_id}",
+  "GET /api/canon/facts/{fact_id}/ripple",
+  "GET /api/conversations/{conv_id}/summary",
+  "GET /api/diagnostics",
+  "GET /api/finishing/atelier/books",
+  "GET /api/finishing/atelier/books/{slug}",
+  "GET /api/finishing/atelier/series",
+  "GET /api/finishing/atelier/series/{slug}",
+  "GET /api/finishing/atelier/series/{slug}/books",
+  "GET /api/finishing/press/books",
+  "GET /api/finishing/press/books/{slug}",
+  "GET /api/finishing/press/books/{slug}/outputs",
+  "GET /api/finishing/press/books/{slug}/outputs/{kind}",
+  "GET /api/finishing/press/books/{slug}/verify",
+  "GET /api/finishing/works/{work_id}/gate",
+  "GET /api/forge/projects",
+  "GET /api/forge/projects/{project_id}",
+  "GET /api/forge/projects/{project_id}/jobs/{job_id}",
+  "GET /api/forge/projects/{project_id}/jobs/{job_id}/artifact/{artifact_type}",
+  "GET /api/forge/projects/{project_id}/jobs/{job_id}/events",
+  "GET /api/gap-oracle/labels",
+  "GET /api/gap-oracle/measurements",
+  "GET /api/governance/conflicts",
+  "GET /api/governance/findings",
+  "GET /api/governance/findings/{finding_id}",
+  "GET /api/governance/pending",
+  "GET /api/governance/stats",
+  "GET /api/intake/{doc_id}/research-status",
+  "GET /api/library/collections",
+  "GET /api/library/missing-files",
+  "GET /api/library/read-positions",
+  "GET /api/library/{doc_id}/progress",
+  "GET /api/library/{doc_id}/read-position",
+  "GET /api/mail/attention",
+  "GET /api/mail/audit",
+  "GET /api/mail/decisions/{record_id}",
+  "GET /api/mail/settings",
+  "GET /api/mail/summary",
+  "GET /api/memory/conflicts",
+  "GET /api/notes",
+  "GET /api/notes/policy",
+  "GET /api/notes/report",
+  "GET /api/ontology",
+  "GET /api/operations",
+  "GET /api/operations/actions",
+  "GET /api/operations/playbooks",
+  "GET /api/operations/schedules",
+  "GET /api/operations/schedules/{schedule_id}/runs",
+  "GET /api/operations/{op_id}",
+  "GET /api/profile",
+  "GET /api/search",
+  "GET /api/series",
+  "GET /api/series/{series_id}",
+  "GET /api/series/{series_id}/overview",
+  "GET /api/studio/music/jobs/{job_id}",
+  "GET /api/studio/music/status",
+  "GET /api/studio/transcribe/{job_id}/status",
+  "GET /api/studio/tts/document/active",
+  "GET /api/studio/tts/document/{job_id}/status",
+  "GET /api/studio/tts/work/active",
+  "GET /api/studio/tts/work/{job_id}/status",
+  "GET /api/studio/voice-clones",
+  "GET /api/studio/voices/{voice_id}/sample",
+  "GET /api/studio/works/{work_id}/casting",
+  "GET /api/studio/works/{work_id}/spatial",
+  "GET /api/system/audit-log",
+  "GET /api/system/auto-dedup/stats",
+  "GET /api/system/diagnostics",
+  "GET /api/system/extraction-templates",
+  "GET /api/system/extraction-templates/{template_id}",
+  "GET /api/system/jobs",
+  "GET /api/system/lemonade",
+  "GET /api/system/notifications",
+  "GET /api/system/reindex/status",
+  "GET /api/system/settings/ai-reranking",
+  "GET /api/system/settings/audio-enhance",
+  "GET /api/system/settings/docling",
+  "GET /api/system/settings/models",
+  "GET /api/system/settings/reranker",
+  "GET /api/system/watch-dirs",
+  "GET /api/version",
+  "GET /api/wa/canon-proposals",
+  "GET /api/wa/coverage",
+  "GET /api/wa/inventory",
+  "GET /api/wa/records",
+  "GET /api/wa/records/{record_id}",
+  "GET /api/workbench/projects",
+  "GET /api/workbench/projects/{project_id}",
+  "GET /api/workbench/projects/{project_id}/archive/download",
+  "GET /api/workbench/projects/{project_id}/rundown",
+  "GET /api/workbench/projects/{project_id}/versions/{version_no}/download",
+  "GET /api/workbench/projects/{project_id}/versions/{version_no}/report",
+  "GET /api/works/proposals",
+  "GET /api/works/{work_id}/chapters/{chapter_id}/knowledge",
+  "GET /api/works/{work_id}/collections",
+  "GET /api/works/{work_id}/completeness-assertions",
+  "GET /api/works/{work_id}/constory/status",
+  "GET /api/works/{work_id}/cover",
+  "GET /api/works/{work_id}/domain/nodes",
+  "GET /api/works/{work_id}/domain/sources",
+  "GET /api/works/{work_id}/findings",
+  "GET /api/works/{work_id}/findings/metrics",
+  "GET /api/works/{work_id}/gap-oracle/candidates",
+  "GET /api/works/{work_id}/genesis",
+  "GET /api/works/{work_id}/genesis/stages/{code}",
+  "GET /api/works/{work_id}/genesis/techniques",
+  "GET /api/works/{work_id}/genesis/verify",
+  "GET /api/works/{work_id}/inconsistencies",
+  "GET /api/works/{work_id}/learning/analytics",
+  "GET /api/works/{work_id}/learning/graph",
+  "GET /api/works/{work_id}/learning/teach-back",
+  "GET /api/works/{work_id}/pipeline/package",
+  "GET /api/works/{work_id}/pipeline/package/download",
+  "GET /api/works/{work_id}/reharvest/report",
+  "GET /api/works/{work_id}/reharvest/sample",
+  "GET /api/works/{work_id}/relative-recall",
+  "GET /api/works/{work_id}/trailers",
+  "GET /api/works/{work_id}/trailers/{trailer_id}",
+  "GET /api/works/{work_id}/trailers/{trailer_id}/export",
+  "PATCH /api/finishing/atelier/books/{slug}/print",
+  "PATCH /api/finishing/atelier/series/{slug}/brand",
+  "PATCH /api/finishing/press/books/{slug}/style",
+  "PATCH /api/governance/findings/{finding_id}/resolve",
+  "PATCH /api/mail/drafts/{action_request_id}",
+  "PATCH /api/mail/settings",
+  "PATCH /api/operations/schedules/{schedule_id}",
+  "PATCH /api/profile",
+  "PATCH /api/series/{series_id}",
+  "PATCH /api/series/{series_id}/members/{work_id}",
+  "PATCH /api/system/settings/models",
+  "PATCH /api/system/user-memory/{memory_id}",
+  "PATCH /api/wa/canon-proposals/{proposal_id}",
+  "PATCH /api/works/{work_id}/findings/{finding_id}",
+  "PATCH /api/works/{work_id}/genesis/stages/{code}",
+  "PATCH /api/works/{work_id}/inconsistencies/{inconsistency_id}",
+  "POST /api/auth/login",
+  "POST /api/auth/logout",
+  "POST /api/backups/{name}/restore",
+  "POST /api/band/chapters/{chapter_id}/edit",
+  "POST /api/band/chapters/{chapter_id}/restore",
+  "POST /api/bench/eval/retrieval",
+  "POST /api/bench/goldens",
+  "POST /api/bench/goldens/auto-seed",
+  "POST /api/bench/run",
+  "POST /api/canon/facts",
+  "POST /api/canon/proposals/ratify-approved",
+  "POST /api/canon/proposals/{proposal_id}/ratify",
+  "POST /api/completeness-assertions/{assertion_id}/ratify",
+  "POST /api/completeness-assertions/{assertion_id}/retract",
+  "POST /api/conversations/{conv_id}/predict",
+  "POST /api/finishing/atelier/books/{slug}/cover",
+  "POST /api/finishing/atelier/books/{slug}/seal",
+  "POST /api/finishing/atelier/books/{slug}/sync-pages",
+  "POST /api/finishing/atelier/series",
+  "POST /api/finishing/atelier/series/{series_slug}/books",
+  "POST /api/finishing/atelier/series/{slug}/lock",
+  "POST /api/finishing/press/books",
+  "POST /api/finishing/press/books/{slug}/chapters/{number}/epigraph-slot",
+  "POST /api/finishing/press/books/{slug}/link-work",
+  "POST /api/finishing/press/books/{slug}/matter",
+  "POST /api/finishing/press/books/{slug}/render",
+  "POST /api/finishing/press/books/{slug}/seal",
+  "POST /api/finishing/press/books/{slug}/style/lock",
+  "POST /api/forge/projects",
+  "POST /api/forge/projects/{project_id}/jobs",
+  "POST /api/forge/projects/{project_id}/jobs/{job_id}/approve",
+  "POST /api/forge/projects/{project_id}/jobs/{job_id}/reject",
+  "POST /api/gap-oracle/evaluate",
+  "POST /api/generate/from-prompt",
+  "POST /api/generate/workshop/execute",
+  "POST /api/generate/workshop/plan",
+  "POST /api/governance/batch-review",
+  "POST /api/governance/conflicts/{conflict_id}/resolve",
+  "POST /api/governance/findings",
+  "POST /api/library/scan-duplicates",
+  "POST /api/library/{doc_id}/restore-file",
+  "POST /api/mail/actions/{action_id}/undo",
+  "POST /api/mail/connect/poll",
+  "POST /api/mail/connect/start",
+  "POST /api/mail/decisions/{record_id}/add-to-knowledge",
+  "POST /api/mail/decisions/{record_id}/draft",
+  "POST /api/mail/decisions/{record_id}/move",
+  "POST /api/mail/decisions/{record_id}/send",
+  "POST /api/mail/decisions/{record_id}/send-nonce",
+  "POST /api/mail/disconnect",
+  "POST /api/mail/sync",
+  "POST /api/memory/conflicts/{conflict_id}/resolve",
+  "POST /api/notes",
+  "POST /api/notes/process",
+  "POST /api/operations/plan",
+  "POST /api/operations/playbooks",
+  "POST /api/operations/schedules",
+  "POST /api/operations/schedules/{schedule_id}/run",
+  "POST /api/operations/start",
+  "POST /api/reharvest/all",
+  "POST /api/reharvest/pilot-signoff",
+  "POST /api/series",
+  "POST /api/series/{series_id}/members",
+  "POST /api/studio/music/generate",
+  "POST /api/studio/music/licenses/{model_id}/ack",
+  "POST /api/studio/transcribe",
+  "POST /api/studio/transcribe/library/{doc_id}",
+  "POST /api/studio/tts/document/resume-info",
+  "POST /api/studio/tts/work",
+  "POST /api/studio/tts/work/resume-info",
+  "POST /api/studio/tts/work/start",
+  "POST /api/studio/voice-clones",
+  "POST /api/studio/voice-clones/{vid}/consent",
+  "POST /api/studio/voice/transcribe",
+  "POST /api/studio/voices/design",
+  "POST /api/studio/voices/recommend",
+  "POST /api/studio/works/{work_id}/casting/recommend",
+  "POST /api/system/audio-enhance/probe",
+  "POST /api/system/auto-dedup/run-now",
+  "POST /api/system/docling/probe",
+  "POST /api/system/extraction-templates",
+  "POST /api/system/extraction-templates/{template_id}/reharvest",
+  "POST /api/system/jobs/{job_id}/retry",
+  "POST /api/system/reindex",
+  "POST /api/system/reranker/probe",
+  "POST /api/system/watch-dirs",
+  "POST /api/wa/decompose",
+  "POST /api/wa/upload",
+  "POST /api/workbench/projects",
+  "POST /api/workbench/projects/import",
+  "POST /api/workbench/projects/{project_id}/analyze",
+  "POST /api/workbench/projects/{project_id}/complete",
+  "POST /api/workbench/projects/{project_id}/iterate",
+  "POST /api/workbench/projects/{project_id}/needs",
+  "POST /api/workbench/projects/{project_id}/reactivate",
+  "POST /api/workbench/projects/{project_id}/repair-prove",
+  "POST /api/workbench/projects/{project_id}/revert",
+  "POST /api/workbench/projects/{project_id}/shelve",
+  "POST /api/workbench/transcribe",
+  "POST /api/works/proposals/generate",
+  "POST /api/works/{work_id}/completeness-assertions",
+  "POST /api/works/{work_id}/constory/run",
+  "POST /api/works/{work_id}/cover",
+  "POST /api/works/{work_id}/domain/harvest",
+  "POST /api/works/{work_id}/domain/scan",
+  "POST /api/works/{work_id}/domain/sources",
+  "POST /api/works/{work_id}/gap-oracle/labels",
+  "POST /api/works/{work_id}/genesis",
+  "POST /api/works/{work_id}/genesis/seal",
+  "POST /api/works/{work_id}/genesis/stages/{code}/gate",
+  "POST /api/works/{work_id}/hygiene/dismiss",
+  "POST /api/works/{work_id}/learning/teach-back/assess",
+  "POST /api/works/{work_id}/pcwa/scan",
+  "POST /api/works/{work_id}/reharvest",
+  "POST /api/works/{work_id}/trailer",
+  "PUT /api/conversations/{conv_id}/mail-context",
+  "PUT /api/library/{doc_id}/read-position",
+  "PUT /api/studio/works/{work_id}/casting",
+  "PUT /api/studio/works/{work_id}/spatial",
+  "PUT /api/system/extraction-templates/{template_id}",
+  "PUT /api/system/settings/ai-reranking",
+  "PUT /api/system/settings/audio-enhance",
+  "PUT /api/system/settings/docling",
+  "PUT /api/system/settings/reranker",
+  "PUT /api/system/watch-dirs/{index}"
+ ],
+ "operations": {
+  "DELETE /api/backups/restore/pending": {
+   "status": "pwa",
+   "module": "backups",
+   "ui_route": "/backups"
+  },
+  "DELETE /api/bench/goldens/{golden_id}": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "DELETE /api/claims/{claim_id}": {
+   "status": "pwa",
+   "module": "claims",
+   "ui_route": "/review"
+  },
+  "DELETE /api/conversations/{conv_id}": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "DELETE /api/forge/projects/{project_id}": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge/:projectId"
+  },
+  "DELETE /api/knowledge/{item_id}": {
+   "status": "pwa",
+   "module": "knowledge",
+   "ui_route": "/writing"
+  },
+  "DELETE /api/library/{doc_id}": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/chat"
+  },
+  "DELETE /api/library/{doc_id}/read-position": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "DELETE /api/mcos/prompts/{prompt_id}": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "DELETE /api/notes/{block_id}": {
+   "status": "pwa",
+   "module": "notes",
+   "ui_route": "/notes"
+  },
+  "DELETE /api/operations/playbooks/{playbook_id}": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "DELETE /api/operations/schedules/{schedule_id}": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "DELETE /api/series/{series_id}": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series"
+  },
+  "DELETE /api/series/{series_id}/members/{work_id}": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series/:seriesId"
+  },
+  "DELETE /api/studio/outputs/archive": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "DELETE /api/studio/transcribe/{job_id}": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "DELETE /api/studio/tts/document/{job_id}": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "DELETE /api/studio/tts/work/{job_id}": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/works/:workId"
+  },
+  "DELETE /api/studio/voice-clones/{vid}": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "DELETE /api/system/extraction-templates/{template_id}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "DELETE /api/system/user-memory": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/chat"
+  },
+  "DELETE /api/system/user-memory/{memory_id}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/chat"
+  },
+  "DELETE /api/system/watch-dirs/{index}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "DELETE /api/workbench/projects/{project_id}": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench"
+  },
+  "DELETE /api/works/{work_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/chat"
+  },
+  "DELETE /api/works/{work_id}/cover": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works"
+  },
+  "DELETE /api/works/{work_id}/domain/sources/{source_id}": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "DELETE /api/works/{work_id}/tasks/{task_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "DELETE /api/write/documents/{doc_id}": {
+   "status": "pwa",
+   "module": "write",
+   "ui_route": "/write"
+  },
+  "GET /api/actions": {
+   "status": "pwa",
+   "module": "actions",
+   "ui_route": "/chat"
+  },
+  "GET /api/actions/runs": {
+   "status": "pwa",
+   "module": "actions",
+   "ui_route": "/system"
+  },
+  "GET /api/actions/runs/{run_id}": {
+   "status": "pwa",
+   "module": "actions",
+   "ui_route": "/actions"
+  },
+  "GET /api/actions/runs/{run_id}/log": {
+   "status": "experimental",
+   "module": "actions"
+  },
+  "GET /api/assay/instruments": {
+   "status": "pwa",
+   "module": "assay",
+   "ui_route": "/assay"
+  },
+  "GET /api/assay/instruments/{key}/parity": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "GET /api/assay/promotion/dashboard": {
+   "status": "pwa",
+   "module": "assay",
+   "ui_route": "/assay"
+  },
+  "GET /api/assay/runs": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "GET /api/assay/runs/{run_id}": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "GET /api/assay/works/{work_id}/signatures": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "GET /api/assay/works/{work_id}/voice-baseline": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "GET /api/auth/me": {
+   "status": "pwa",
+   "module": "auth",
+   "ui_route": "/"
+  },
+  "GET /api/autonomy/runs/{run_id}": {
+   "status": "experimental",
+   "module": "autonomy"
+  },
+  "GET /api/autonomy/settings": {
+   "status": "experimental",
+   "module": "autonomy"
+  },
+  "GET /api/backups": {
+   "status": "pwa",
+   "module": "backups",
+   "ui_route": "/backups"
+  },
+  "GET /api/backups/restore/pending": {
+   "status": "pwa",
+   "module": "backups",
+   "ui_route": "/backups"
+  },
+  "GET /api/backups/{name}/download": {
+   "status": "pwa",
+   "module": "backups",
+   "ui_route": "/backups"
+  },
+  "GET /api/backups/{name}/verify": {
+   "status": "pwa",
+   "module": "backups",
+   "ui_route": "/backups"
+  },
+  "GET /api/band/chapters/{chapter_id}": {
+   "status": "pwa",
+   "module": "band",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/band/chapters/{chapter_id}/ripple": {
+   "status": "pwa",
+   "module": "band",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/band/revisions/{revision_id}": {
+   "status": "pwa",
+   "module": "band",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/bench/goldens": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "GET /api/bench/runs": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "GET /api/bench/status": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "GET /api/bench/telemetry/summary": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "GET /api/books": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/books"
+  },
+  "GET /api/briefing": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/canon/counts": {
+   "status": "pwa",
+   "module": "canon",
+   "ui_route": "/canon"
+  },
+  "GET /api/canon/facts": {
+   "status": "pwa",
+   "module": "canon",
+   "ui_route": "/canon"
+  },
+  "GET /api/canon/facts/{fact_id}": {
+   "status": "pwa",
+   "module": "canon",
+   "ui_route": "/canon"
+  },
+  "GET /api/canon/facts/{fact_id}/ripple": {
+   "status": "pwa",
+   "module": "canon",
+   "ui_route": "/canon"
+  },
+  "GET /api/claims": {
+   "status": "pwa",
+   "module": "claims",
+   "ui_route": "/review"
+  },
+  "GET /api/claims/subject/{subject}": {
+   "status": "pwa",
+   "module": "claims",
+   "ui_route": "/review"
+  },
+  "GET /api/claims/{claim_id}": {
+   "status": "pwa",
+   "module": "claims",
+   "ui_route": "/review"
+  },
+  "GET /api/completeness-assertions/{assertion_id}/history": {
+   "status": "experimental",
+   "module": "gaps"
+  },
+  "GET /api/configuration/effective": {
+   "status": "admin_tooling",
+   "module": "health"
+  },
+  "GET /api/conversations": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "GET /api/conversations/search": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "GET /api/conversations/{conv_id}": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "GET /api/conversations/{conv_id}/summary": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "GET /api/dashboard/activity": {
+   "status": "pwa",
+   "module": "dashboard",
+   "ui_route": "/command"
+  },
+  "GET /api/dashboard/nudges": {
+   "status": "pwa",
+   "module": "dashboard",
+   "ui_route": "/command"
+  },
+  "GET /api/dashboard/summary": {
+   "status": "pwa",
+   "module": "dashboard",
+   "ui_route": "/command"
+  },
+  "GET /api/diagnostics": {
+   "status": "pwa",
+   "module": "health",
+   "ui_route": "/system"
+  },
+  "GET /api/download/{path:path}": {
+   "status": "pwa",
+   "module": "files",
+   "ui_route": "/library"
+  },
+  "GET /api/entities": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/entities/{entity_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/files": {
+   "status": "pwa",
+   "module": "files",
+   "ui_route": "/library"
+  },
+  "GET /api/finishing/atelier/books": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/atelier/books/{slug}": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/atelier/books/{slug}/hardcover": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "GET /api/finishing/atelier/books/{slug}/spec": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "GET /api/finishing/atelier/books/{slug}/verify": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "GET /api/finishing/atelier/series": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/atelier/series/{slug}": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/atelier/series/{slug}/books": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/press/books": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/press/books/{slug}": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/press/books/{slug}/distribution": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "GET /api/finishing/press/books/{slug}/ledger": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "GET /api/finishing/press/books/{slug}/outputs": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/press/books/{slug}/outputs/{kind}": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/press/books/{slug}/verify": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/finishing/works/{work_id}/disclosure": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "GET /api/finishing/works/{work_id}/gate": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "GET /api/forge/projects": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge"
+  },
+  "GET /api/forge/projects/{project_id}": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge/:projectId"
+  },
+  "GET /api/forge/projects/{project_id}/jobs/{job_id}": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge/:projectId"
+  },
+  "GET /api/forge/projects/{project_id}/jobs/{job_id}/artifact/{artifact_type}": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge/:projectId"
+  },
+  "GET /api/forge/projects/{project_id}/jobs/{job_id}/events": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge/:projectId"
+  },
+  "GET /api/forge/projects/{project_id}/jobs/{job_id}/preview/{file_path:path}": {
+   "status": "experimental",
+   "module": "forge"
+  },
+  "GET /api/gap-oracle/labels": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "GET /api/gap-oracle/measurements": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "GET /api/gaps/top": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/generate/download": {
+   "status": "pwa",
+   "module": "generate",
+   "ui_route": "/studio"
+  },
+  "GET /api/governance/audit-chain": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "GET /api/governance/conflicts": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "GET /api/governance/findings": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "GET /api/governance/findings/{finding_id}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "GET /api/governance/outbox": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "GET /api/governance/pending": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "GET /api/governance/stats": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/command"
+  },
+  "GET /api/graph": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/graph"
+  },
+  "GET /api/healthz": {
+   "status": "pwa",
+   "module": "health",
+   "ui_route": "/"
+  },
+  "GET /api/intake/{doc_id}": {
+   "status": "pwa",
+   "module": "intake",
+   "ui_route": "/intake"
+  },
+  "GET /api/intake/{doc_id}/research-status": {
+   "status": "pwa",
+   "module": "intake",
+   "ui_route": "/intake"
+  },
+  "GET /api/knowledge": {
+   "status": "pwa",
+   "module": "knowledge",
+   "ui_route": "/writing"
+  },
+  "GET /api/knowledge/ask": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/library/:docId"
+  },
+  "GET /api/knowledge/search": {
+   "status": "pwa",
+   "module": "knowledge",
+   "ui_route": "/learning/review"
+  },
+  "GET /api/knowledge/{item_id}": {
+   "status": "pwa",
+   "module": "knowledge",
+   "ui_route": "/writing"
+  },
+  "GET /api/learn": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/learn"
+  },
+  "GET /api/learn/health": {
+   "status": "admin_tooling",
+   "module": "works"
+  },
+  "GET /api/library": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/"
+  },
+  "GET /api/library/active-work": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "GET /api/library/collections": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "GET /api/library/duplicates": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "GET /api/library/missing-files": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "GET /api/library/read-positions": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "GET /api/library/search": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "GET /api/library/{doc_id}": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/chat"
+  },
+  "GET /api/library/{doc_id}/chapters": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library/:docId"
+  },
+  "GET /api/library/{doc_id}/chunks": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library/:docId"
+  },
+  "GET /api/library/{doc_id}/download": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "GET /api/library/{doc_id}/knowledge": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library/:docId"
+  },
+  "GET /api/library/{doc_id}/progress": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library/:docId"
+  },
+  "GET /api/library/{doc_id}/read-position": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "GET /api/library/{doc_id}/related": {
+   "status": "pwa",
+   "module": "topics",
+   "ui_route": "/library/:docId"
+  },
+  "GET /api/library/{doc_id}/versions": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library/:docId"
+  },
+  "GET /api/loom/chapters/{chapter_id}/revisions": {
+   "status": "experimental",
+   "module": "loom"
+  },
+  "GET /api/loom/runs/{run_id}": {
+   "status": "experimental",
+   "module": "loom"
+  },
+  "GET /api/mail/attention": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "GET /api/mail/audit": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "GET /api/mail/decisions/{record_id}": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "GET /api/mail/settings": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "GET /api/mail/summary": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/chat"
+  },
+  "GET /api/mcos/benchmarks": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/prompts": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/prompts/slots": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/prompts/{prompt_id}/benchmark": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/rag/config": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/rag/reprocess-status": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/rag/sweeps": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/regressions": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/governance"
+  },
+  "GET /api/mcos/runs": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/runs/{run_id}": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/mcos/telemetry": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "GET /api/memory": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "GET /api/memory/conflicts": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "GET /api/notes": {
+   "status": "pwa",
+   "module": "notes",
+   "ui_route": "/notes"
+  },
+  "GET /api/notes/policy": {
+   "status": "pwa",
+   "module": "notes",
+   "ui_route": "/notes"
+  },
+  "GET /api/notes/report": {
+   "status": "pwa",
+   "module": "notes",
+   "ui_route": "/notes"
+  },
+  "GET /api/ontology": {
+   "status": "pwa",
+   "module": "reharvest",
+   "ui_route": "/library"
+  },
+  "GET /api/ontology/violations": {
+   "status": "experimental",
+   "module": "reharvest"
+  },
+  "GET /api/operations": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/command"
+  },
+  "GET /api/operations/actions": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "GET /api/operations/playbooks": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "GET /api/operations/schedules": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "GET /api/operations/schedules/{schedule_id}/runs": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "GET /api/operations/{op_id}": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "GET /api/pklos/inventory": {
+   "status": "pwa",
+   "module": "pklos",
+   "ui_route": "/governance"
+  },
+  "GET /api/pklos/status": {
+   "status": "pwa",
+   "module": "pklos",
+   "ui_route": "/governance"
+  },
+  "GET /api/position/audits/{audit_id}": {
+   "status": "experimental",
+   "module": "position"
+  },
+  "GET /api/profile": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/projects": {
+   "status": "pwa",
+   "module": "projects",
+   "ui_route": "/forge"
+  },
+  "GET /api/projects/{project_id}": {
+   "status": "pwa",
+   "module": "projects",
+   "ui_route": "/learning"
+  },
+  "GET /api/projects/{project_id}/concepts": {
+   "status": "pwa",
+   "module": "projects",
+   "ui_route": "/projects/:projectId"
+  },
+  "GET /api/research-gaps/{gap_id}/history": {
+   "status": "experimental",
+   "module": "gaps"
+  },
+  "GET /api/review/queue": {
+   "status": "pwa",
+   "module": "review",
+   "ui_route": "/review"
+  },
+  "GET /api/search": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/chat"
+  },
+  "GET /api/series": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series"
+  },
+  "GET /api/series/{series_id}": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series"
+  },
+  "GET /api/series/{series_id}/overview": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series/:seriesId"
+  },
+  "GET /api/studio/image-status": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/music/jobs/{job_id}": {
+   "status": "pwa",
+   "module": "music",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/music/status": {
+   "status": "pwa",
+   "module": "music",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/outputs": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/outputs/serve": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/status": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/transcribe/{job_id}/status": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/tts/document/active": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/tts/document/{job_id}/status": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/tts/work/active": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/studio/tts/work/{job_id}/status": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/voice-clones": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/voices": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/voices/{voice_id}/sample": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/works/{work_id}/casting": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/studio/works/{work_id}/spatial": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "GET /api/suggestions": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/access-log": {
+   "status": "admin_tooling",
+   "module": "system"
+  },
+  "GET /api/system/audit-log": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/auto-dedup/stats": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/capabilities": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/diagnostics": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/document-queue": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/embeddings/status": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/extraction-templates": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/extraction-templates/{template_id}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/hardware": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/health": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/jobs": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/jobs/{job_id}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/lemonade": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/llm-health": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/models": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/nightshift/last-report": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/nightshift/status": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/notifications": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/reindex/status": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/ai-extraction": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/ai-reranking": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/asr": {
+   "status": "experimental",
+   "module": "system"
+  },
+  "GET /api/system/settings/audio-enhance": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/context-window": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/docling": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/image-gen": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/late-chunking": {
+   "status": "experimental",
+   "module": "system"
+  },
+  "GET /api/system/settings/models": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/reranker": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/settings/vision-model": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/stats": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/tools": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/user-memory": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/chat"
+  },
+  "GET /api/system/watch-dirs": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/system/web-search-status": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "GET /api/topics": {
+   "status": "pwa",
+   "module": "topics",
+   "ui_route": "/topics"
+  },
+  "GET /api/topics/{topic_id}": {
+   "status": "pwa",
+   "module": "topics",
+   "ui_route": "/topics"
+  },
+  "GET /api/version": {
+   "status": "pwa",
+   "module": "health",
+   "ui_route": "/system"
+  },
+  "GET /api/wa/canon-proposals": {
+   "status": "pwa",
+   "module": "wa",
+   "ui_route": "/architect"
+  },
+  "GET /api/wa/coverage": {
+   "status": "pwa",
+   "module": "wa",
+   "ui_route": "/architect"
+  },
+  "GET /api/wa/inventory": {
+   "status": "pwa",
+   "module": "wa",
+   "ui_route": "/architect"
+  },
+  "GET /api/wa/records": {
+   "status": "pwa",
+   "module": "wa",
+   "ui_route": "/architect"
+  },
+  "GET /api/wa/records/{record_id}": {
+   "status": "pwa",
+   "module": "wa",
+   "ui_route": "/architect"
+  },
+  "GET /api/workbench/projects": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench"
+  },
+  "GET /api/workbench/projects/{project_id}": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench"
+  },
+  "GET /api/workbench/projects/{project_id}/archive/download": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "GET /api/workbench/projects/{project_id}/rundown": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "GET /api/workbench/projects/{project_id}/versions/{version_no}/download": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "GET /api/workbench/projects/{project_id}/versions/{version_no}/report": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "GET /api/works": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/chat"
+  },
+  "GET /api/works/proposals": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/review"
+  },
+  "GET /api/works/types": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/chat"
+  },
+  "GET /api/works/{work_id}/autonomy": {
+   "status": "experimental",
+   "module": "autonomy"
+  },
+  "GET /api/works/{work_id}/book-intelligence": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/brainstorm": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/brainstorm/{session_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/chapters": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/chapters/{chapter_id}/knowledge": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/collections": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/compass": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/chat"
+  },
+  "GET /api/works/{work_id}/completeness": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/completeness-assertions": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "GET /api/works/{work_id}/constory/status": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/conversations": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/cover": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works"
+  },
+  "GET /api/works/{work_id}/documents": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/domain/nodes": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "GET /api/works/{work_id}/domain/sources": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "GET /api/works/{work_id}/duplicates": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/findings": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/findings/metrics": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/gap-oracle/candidates": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "GET /api/works/{work_id}/gaps": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/genesis": {
+   "status": "pwa",
+   "module": "genesis",
+   "ui_route": "/books"
+  },
+  "GET /api/works/{work_id}/genesis/stages/{code}": {
+   "status": "pwa",
+   "module": "genesis",
+   "ui_route": "/books"
+  },
+  "GET /api/works/{work_id}/genesis/techniques": {
+   "status": "pwa",
+   "module": "genesis",
+   "ui_route": "/books"
+  },
+  "GET /api/works/{work_id}/genesis/verify": {
+   "status": "pwa",
+   "module": "genesis",
+   "ui_route": "/books"
+  },
+  "GET /api/works/{work_id}/graph": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/inconsistencies": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/knowledge": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/learning/analytics": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "GET /api/works/{work_id}/learning/concepts": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "GET /api/works/{work_id}/learning/due": {
+   "status": "experimental",
+   "module": "learning"
+  },
+  "GET /api/works/{work_id}/learning/graph": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "GET /api/works/{work_id}/learning/question": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "GET /api/works/{work_id}/learning/research-requests": {
+   "status": "experimental",
+   "module": "learning"
+  },
+  "GET /api/works/{work_id}/learning/summary": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "GET /api/works/{work_id}/learning/teach-back": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "GET /api/works/{work_id}/loom": {
+   "status": "experimental",
+   "module": "loom"
+  },
+  "GET /api/works/{work_id}/loom/personas": {
+   "status": "experimental",
+   "module": "loom"
+  },
+  "GET /api/works/{work_id}/pcwa/relations": {
+   "status": "experimental",
+   "module": "gaps"
+  },
+  "GET /api/works/{work_id}/pipeline": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/books"
+  },
+  "GET /api/works/{work_id}/pipeline/package": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/pipeline/package/download": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/position": {
+   "status": "experimental",
+   "module": "position"
+  },
+  "GET /api/works/{work_id}/position/audits": {
+   "status": "experimental",
+   "module": "position"
+  },
+  "GET /api/works/{work_id}/promotion-eligibility": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/books"
+  },
+  "GET /api/works/{work_id}/reharvest/report": {
+   "status": "pwa",
+   "module": "reharvest",
+   "ui_route": "/library"
+  },
+  "GET /api/works/{work_id}/reharvest/sample": {
+   "status": "pwa",
+   "module": "reharvest",
+   "ui_route": "/library"
+  },
+  "GET /api/works/{work_id}/relative-recall": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "GET /api/works/{work_id}/research-gaps": {
+   "status": "experimental",
+   "module": "gaps"
+  },
+  "GET /api/works/{work_id}/search": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/stats": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/tasks": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "GET /api/works/{work_id}/trailers": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/trailers/{trailer_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/works/{work_id}/trailers/{trailer_id}/export": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "GET /api/write/documents": {
+   "status": "pwa",
+   "module": "write",
+   "ui_route": "/write"
+  },
+  "GET /api/write/documents/{doc_id}": {
+   "status": "pwa",
+   "module": "write",
+   "ui_route": "/write"
+  },
+  "GET /api/write/documents/{doc_id}/export/txt": {
+   "status": "pwa",
+   "module": "write",
+   "ui_route": "/write"
+  },
+  "GET /mcp": {
+   "status": "external_api",
+   "module": "mcp"
+  },
+  "PATCH /api/assay/findings/{finding_id}/disposition": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "PATCH /api/autonomy/settings": {
+   "status": "experimental",
+   "module": "autonomy"
+  },
+  "PATCH /api/claims/{claim_id}/status": {
+   "status": "pwa",
+   "module": "claims",
+   "ui_route": "/review"
+  },
+  "PATCH /api/conversations/{conv_id}": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "PATCH /api/finishing/atelier/books/{slug}/print": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "PATCH /api/finishing/atelier/series/{slug}/brand": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "PATCH /api/finishing/press/books/{slug}/style": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "PATCH /api/governance/findings/{finding_id}/resolve": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "PATCH /api/knowledge/{item_id}/review": {
+   "status": "pwa",
+   "module": "knowledge",
+   "ui_route": "/governance"
+  },
+  "PATCH /api/library/{doc_id}": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/chat"
+  },
+  "PATCH /api/library/{doc_id}/lifecycle": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library/:docId"
+  },
+  "PATCH /api/library/{doc_id}/versions/{version_id}/canonical": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library/:docId"
+  },
+  "PATCH /api/mail/drafts/{action_request_id}": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail/compose/:actionRequestId"
+  },
+  "PATCH /api/mail/settings": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "PATCH /api/operations/schedules/{schedule_id}": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "PATCH /api/profile": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PATCH /api/series/{series_id}": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series"
+  },
+  "PATCH /api/series/{series_id}/members/{work_id}": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series/:seriesId"
+  },
+  "PATCH /api/system/jobs/{job_id}/state": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PATCH /api/system/settings/asr": {
+   "status": "experimental",
+   "module": "system"
+  },
+  "PATCH /api/system/settings/models": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PATCH /api/system/user-memory/{memory_id}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/chat"
+  },
+  "PATCH /api/wa/canon-proposals/{proposal_id}": {
+   "status": "pwa",
+   "module": "wa",
+   "ui_route": "/architect"
+  },
+  "PATCH /api/works/{work_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/chat"
+  },
+  "PATCH /api/works/{work_id}/compass": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/chat"
+  },
+  "PATCH /api/works/{work_id}/findings/{finding_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "PATCH /api/works/{work_id}/genesis/stages/{code}": {
+   "status": "pwa",
+   "module": "genesis",
+   "ui_route": "/books"
+  },
+  "PATCH /api/works/{work_id}/inconsistencies/{inconsistency_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "PATCH /api/works/{work_id}/tasks/{task_id}": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "PATCH /api/write/documents/{doc_id}": {
+   "status": "pwa",
+   "module": "write",
+   "ui_route": "/write"
+  },
+  "POST /api/actions/runs/{run_id}/retry": {
+   "status": "experimental",
+   "module": "actions"
+  },
+  "POST /api/actions/template-fill": {
+   "status": "experimental",
+   "module": "actions"
+  },
+  "POST /api/actions/{name}/execute": {
+   "status": "pwa",
+   "module": "actions",
+   "ui_route": "/chat"
+  },
+  "POST /api/actions/{name}/preview": {
+   "status": "pwa",
+   "module": "actions",
+   "ui_route": "/actions"
+  },
+  "POST /api/assay/instruments/{key}/demote": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "POST /api/assay/instruments/{key}/promote": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "POST /api/assay/instruments/{key}/run": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "POST /api/assay/instruments/{key}/shadow": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "POST /api/assay/works/{work_id}/gates/{gate_key}/signature": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "POST /api/auth/login": {
+   "status": "pwa",
+   "module": "auth",
+   "ui_route": "/"
+  },
+  "POST /api/auth/logout": {
+   "status": "pwa",
+   "module": "auth",
+   "ui_route": "/"
+  },
+  "POST /api/backups": {
+   "status": "pwa",
+   "module": "backups",
+   "ui_route": "/backups"
+  },
+  "POST /api/backups/{name}/restore": {
+   "status": "pwa",
+   "module": "backups",
+   "ui_route": "/backups"
+  },
+  "POST /api/band/chapters/{chapter_id}/edit": {
+   "status": "pwa",
+   "module": "band",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/band/chapters/{chapter_id}/restore": {
+   "status": "pwa",
+   "module": "band",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/bench/eval/retrieval": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "POST /api/bench/goldens": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "POST /api/bench/goldens/auto-seed": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "POST /api/bench/run": {
+   "status": "pwa",
+   "module": "bench",
+   "ui_route": "/system"
+  },
+  "POST /api/canon/facts": {
+   "status": "pwa",
+   "module": "canon",
+   "ui_route": "/canon"
+  },
+  "POST /api/canon/facts/{fact_id}/retract": {
+   "status": "experimental",
+   "module": "canon"
+  },
+  "POST /api/canon/proposals/ratify-approved": {
+   "status": "pwa",
+   "module": "canon",
+   "ui_route": "/architect"
+  },
+  "POST /api/canon/proposals/{proposal_id}/ratify": {
+   "status": "pwa",
+   "module": "canon",
+   "ui_route": "/architect"
+  },
+  "POST /api/claims": {
+   "status": "pwa",
+   "module": "claims",
+   "ui_route": "/review"
+  },
+  "POST /api/claims/search": {
+   "status": "pwa",
+   "module": "claims",
+   "ui_route": "/review"
+  },
+  "POST /api/completeness-assertions/{assertion_id}/ratify": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/completeness-assertions/{assertion_id}/retract": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/conversations": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "POST /api/conversations/{conv_id}/continue": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "POST /api/conversations/{conv_id}/messages": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "POST /api/conversations/{conv_id}/predict": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "POST /api/dashboard/nudges/rebuild": {
+   "status": "pwa",
+   "module": "dashboard",
+   "ui_route": "/command"
+  },
+  "POST /api/dashboard/nudges/resolve": {
+   "status": "pwa",
+   "module": "dashboard",
+   "ui_route": "/command"
+  },
+  "POST /api/extract-file": {
+   "status": "admin_tooling",
+   "module": "files"
+  },
+  "POST /api/finishing/atelier/books/{slug}/cover": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/atelier/books/{slug}/seal": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/atelier/books/{slug}/sync-pages": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/atelier/series": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/atelier/series/{series_slug}/books": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/atelier/series/{slug}/lock": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/press/books": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/chapters/{number}/epigraph": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/chapters/{number}/epigraph-slot": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/chapters/{number}/epigraph/approve": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/link-work": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/matter": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/package": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/render": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/seal": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/style/lock": {
+   "status": "pwa",
+   "module": "finishing",
+   "ui_route": "/finishing"
+  },
+  "POST /api/finishing/press/books/{slug}/validation": {
+   "status": "experimental",
+   "module": "finishing"
+  },
+  "POST /api/forge/projects": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge"
+  },
+  "POST /api/forge/projects/{project_id}/jobs": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge/:projectId"
+  },
+  "POST /api/forge/projects/{project_id}/jobs/{job_id}/approve": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge/:projectId"
+  },
+  "POST /api/forge/projects/{project_id}/jobs/{job_id}/reject": {
+   "status": "pwa",
+   "module": "forge",
+   "ui_route": "/forge/:projectId"
+  },
+  "POST /api/gap-oracle/evaluate": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/generate/bundle": {
+   "status": "pwa",
+   "module": "generate",
+   "ui_route": "/studio"
+  },
+  "POST /api/generate/excel": {
+   "status": "pwa",
+   "module": "generate",
+   "ui_route": "/studio"
+  },
+  "POST /api/generate/from-prompt": {
+   "status": "pwa",
+   "module": "generate",
+   "ui_route": "/studio"
+  },
+  "POST /api/generate/report": {
+   "status": "pwa",
+   "module": "generate",
+   "ui_route": "/studio"
+  },
+  "POST /api/generate/slides": {
+   "status": "pwa",
+   "module": "generate",
+   "ui_route": "/studio"
+  },
+  "POST /api/generate/workshop/execute": {
+   "status": "pwa",
+   "module": "generate",
+   "ui_route": "/studio"
+  },
+  "POST /api/generate/workshop/plan": {
+   "status": "pwa",
+   "module": "generate",
+   "ui_route": "/studio"
+  },
+  "POST /api/governance/batch-review": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "POST /api/governance/conflicts/{conflict_id}/resolve": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "POST /api/governance/findings": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/governance"
+  },
+  "POST /api/governance/rescore": {
+   "status": "admin_tooling",
+   "module": "system"
+  },
+  "POST /api/intake": {
+   "status": "pwa",
+   "module": "intake",
+   "ui_route": "/intake"
+  },
+  "POST /api/intake/research": {
+   "status": "pwa",
+   "module": "intake",
+   "ui_route": "/intake"
+  },
+  "POST /api/library/active-work": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/classify-backfill": {
+   "status": "admin_tooling",
+   "module": "library"
+  },
+  "POST /api/library/duplicates/{dupe_id}/resolve": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/explode-zips": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/import": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/chat"
+  },
+  "POST /api/library/reprocess-all": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/scan-duplicates": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/smart-organize": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/upload": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/{doc_id}/extract": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/{doc_id}/reprocess": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/{doc_id}/restore-file": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "POST /api/library/{doc_id}/versions": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library/:docId"
+  },
+  "POST /api/mail/actions/{action_id}/undo": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "POST /api/mail/connect/poll": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail/connect"
+  },
+  "POST /api/mail/connect/start": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail/connect"
+  },
+  "POST /api/mail/decisions/{record_id}/add-to-knowledge": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "POST /api/mail/decisions/{record_id}/assess": {
+   "status": "experimental",
+   "module": "mail"
+  },
+  "POST /api/mail/decisions/{record_id}/delete": {
+   "status": "experimental",
+   "module": "mail"
+  },
+  "POST /api/mail/decisions/{record_id}/draft": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "POST /api/mail/decisions/{record_id}/move": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "POST /api/mail/decisions/{record_id}/send": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail/compose/:actionRequestId"
+  },
+  "POST /api/mail/decisions/{record_id}/send-nonce": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail/compose/:actionRequestId"
+  },
+  "POST /api/mail/disconnect": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail/settings"
+  },
+  "POST /api/mail/sync": {
+   "status": "pwa",
+   "module": "mail",
+   "ui_route": "/mail"
+  },
+  "POST /api/mcos/prompts": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "POST /api/mcos/prompts/{prompt_id}/activate": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "POST /api/mcos/prompts/{prompt_id}/benchmark": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "POST /api/mcos/rag/apply": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "POST /api/mcos/rag/sweep": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "POST /api/mcos/regressions/{run_id}/ack": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/governance"
+  },
+  "POST /api/mcos/run-all": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "POST /api/mcos/run/{benchmark_id}": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "POST /api/mcos/seed": {
+   "status": "pwa",
+   "module": "mcos",
+   "ui_route": "/mcos"
+  },
+  "POST /api/memory/conflicts/{conflict_id}/resolve": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "POST /api/notes": {
+   "status": "pwa",
+   "module": "notes",
+   "ui_route": "/notes"
+  },
+  "POST /api/notes/process": {
+   "status": "pwa",
+   "module": "notes",
+   "ui_route": "/notes"
+  },
+  "POST /api/operations/plan": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "POST /api/operations/playbooks": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "POST /api/operations/schedules": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "POST /api/operations/schedules/{schedule_id}/run": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "POST /api/operations/start": {
+   "status": "pwa",
+   "module": "operations",
+   "ui_route": "/operations"
+  },
+  "POST /api/operations/{op_id}/cancel": {
+   "status": "experimental",
+   "module": "operations"
+  },
+  "POST /api/operations/{op_id}/pause": {
+   "status": "experimental",
+   "module": "operations"
+  },
+  "POST /api/operations/{op_id}/resume": {
+   "status": "experimental",
+   "module": "operations"
+  },
+  "POST /api/pklos/enforcement/check": {
+   "status": "pwa",
+   "module": "pklos",
+   "ui_route": "/governance"
+  },
+  "POST /api/pklos/inventory": {
+   "status": "pwa",
+   "module": "pklos",
+   "ui_route": "/governance"
+  },
+  "POST /api/projects": {
+   "status": "pwa",
+   "module": "projects",
+   "ui_route": "/forge"
+  },
+  "POST /api/reharvest/all": {
+   "status": "pwa",
+   "module": "reharvest",
+   "ui_route": "/library"
+  },
+  "POST /api/reharvest/pilot-signoff": {
+   "status": "pwa",
+   "module": "reharvest",
+   "ui_route": "/library"
+  },
+  "POST /api/research-gaps/{gap_id}/transition": {
+   "status": "experimental",
+   "module": "gaps"
+  },
+  "POST /api/review/quarantine:{item_id}/reopen": {
+   "status": "experimental",
+   "module": "review"
+  },
+  "POST /api/review/{item_type}:{item_id}/resolve": {
+   "status": "pwa",
+   "module": "review",
+   "ui_route": "/review"
+  },
+  "POST /api/series": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series"
+  },
+  "POST /api/series/{series_id}/members": {
+   "status": "pwa",
+   "module": "series",
+   "ui_route": "/series/:seriesId"
+  },
+  "POST /api/studio/image": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/music/generate": {
+   "status": "pwa",
+   "module": "music",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/music/licenses/{model_id}/ack": {
+   "status": "pwa",
+   "module": "music",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/ocr": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/transcribe": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/transcribe/library/{doc_id}": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/tts": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/tts/document": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/tts/document/resume-info": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/tts/work": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/studio/tts/work/resume-info": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/tts/work/start": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/voice-clones": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/voice-clones/{vid}/consent": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/voice/transcribe": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/voices/design": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/voices/recommend": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/studio/works/{work_id}/casting/recommend": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "POST /api/suggestions/generate": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/audio-enhance/probe": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/auto-dedup/run-now": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/docling/probe": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/embeddings/probe": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/extraction-templates": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/extraction-templates/{template_id}/reharvest": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/jobs/{job_id}/retry": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/nightshift/run": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/nightshift/run-now": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/reindex": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/reranker/probe": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/settings/late-chunking/probe": {
+   "status": "experimental",
+   "module": "system"
+  },
+  "POST /api/system/vision/probe": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/system/watch-dirs": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "POST /api/topics/rebuild": {
+   "status": "pwa",
+   "module": "topics",
+   "ui_route": "/topics"
+  },
+  "POST /api/upload": {
+   "status": "pwa",
+   "module": "files",
+   "ui_route": "/library"
+  },
+  "POST /api/wa/decompose": {
+   "status": "pwa",
+   "module": "wa",
+   "ui_route": "/architect"
+  },
+  "POST /api/wa/upload": {
+   "status": "pwa",
+   "module": "wa",
+   "ui_route": "/architect"
+  },
+  "POST /api/workbench/projects": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench"
+  },
+  "POST /api/workbench/projects/import": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench"
+  },
+  "POST /api/workbench/projects/{project_id}/analyze": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "POST /api/workbench/projects/{project_id}/complete": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "POST /api/workbench/projects/{project_id}/iterate": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "POST /api/workbench/projects/{project_id}/needs": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "POST /api/workbench/projects/{project_id}/reactivate": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "POST /api/workbench/projects/{project_id}/repair-prove": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "POST /api/workbench/projects/{project_id}/revert": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "POST /api/workbench/projects/{project_id}/shelve": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench/:projectId"
+  },
+  "POST /api/workbench/projects/{project_id}/verify": {
+   "status": "experimental",
+   "module": "workbench"
+  },
+  "POST /api/workbench/transcribe": {
+   "status": "pwa",
+   "module": "workbench",
+   "ui_route": "/workbench"
+  },
+  "POST /api/works": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/chat"
+  },
+  "POST /api/works/proposals/generate": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/review"
+  },
+  "POST /api/works/{work_id}/autonomy/run": {
+   "status": "experimental",
+   "module": "autonomy"
+  },
+  "POST /api/works/{work_id}/brainstorm": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/works/{work_id}/brainstorm/{session_id}/ideas/{idea_id}/approve": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/works/{work_id}/completeness-assertions": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/works/{work_id}/constory/run": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "POST /api/works/{work_id}/cover": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works"
+  },
+  "POST /api/works/{work_id}/domain/harvest": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/works/{work_id}/domain/scan": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/works/{work_id}/domain/sources": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/works/{work_id}/evidence/rescore": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "POST /api/works/{work_id}/gap-oracle/labels": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/works/{work_id}/genesis": {
+   "status": "pwa",
+   "module": "genesis",
+   "ui_route": "/books"
+  },
+  "POST /api/works/{work_id}/genesis/seal": {
+   "status": "pwa",
+   "module": "genesis",
+   "ui_route": "/books"
+  },
+  "POST /api/works/{work_id}/genesis/stages/{code}/gate": {
+   "status": "pwa",
+   "module": "genesis",
+   "ui_route": "/books"
+  },
+  "POST /api/works/{work_id}/hygiene/dismiss": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/works/{work_id}/knowledge": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "POST /api/works/{work_id}/learning/assess": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "POST /api/works/{work_id}/learning/concepts/{concept_id}/reset": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "POST /api/works/{work_id}/learning/import-research": {
+   "status": "experimental",
+   "module": "learning"
+  },
+  "POST /api/works/{work_id}/learning/research-requests/{request_id}/resolve": {
+   "status": "experimental",
+   "module": "learning"
+  },
+  "POST /api/works/{work_id}/learning/reset": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "POST /api/works/{work_id}/learning/seed": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "POST /api/works/{work_id}/learning/teach-back/assess": {
+   "status": "pwa",
+   "module": "learning",
+   "ui_route": "/learning"
+  },
+  "POST /api/works/{work_id}/loom/draft": {
+   "status": "experimental",
+   "module": "loom"
+  },
+  "POST /api/works/{work_id}/loom/personas": {
+   "status": "experimental",
+   "module": "loom"
+  },
+  "POST /api/works/{work_id}/pcwa/scan": {
+   "status": "pwa",
+   "module": "gaps",
+   "ui_route": "/works/:workId/gap-oracle"
+  },
+  "POST /api/works/{work_id}/pipeline": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/books"
+  },
+  "POST /api/works/{work_id}/pipeline/advance": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/works/{work_id}/pipeline/run-stage": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/works/{work_id}/position/run": {
+   "status": "experimental",
+   "module": "position"
+  },
+  "POST /api/works/{work_id}/quiz": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/works/{work_id}/reharvest": {
+   "status": "pwa",
+   "module": "reharvest",
+   "ui_route": "/library"
+  },
+  "POST /api/works/{work_id}/research-gaps/citation-scan": {
+   "status": "experimental",
+   "module": "gaps"
+  },
+  "POST /api/works/{work_id}/research-gaps/scan": {
+   "status": "experimental",
+   "module": "gaps"
+  },
+  "POST /api/works/{work_id}/ripple": {
+   "status": "experimental",
+   "module": "works"
+  },
+  "POST /api/works/{work_id}/tasks": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId/intelligence"
+  },
+  "POST /api/works/{work_id}/trailer": {
+   "status": "pwa",
+   "module": "works",
+   "ui_route": "/works/:workId"
+  },
+  "POST /api/write/documents": {
+   "status": "pwa",
+   "module": "write",
+   "ui_route": "/write"
+  },
+  "POST /api/write/documents/{doc_id}/ai": {
+   "status": "pwa",
+   "module": "write",
+   "ui_route": "/write"
+  },
+  "POST /mcp": {
+   "status": "external_api",
+   "module": "mcp"
+  },
+  "PUT /api/assay/works/{work_id}/voice-baseline": {
+   "status": "experimental",
+   "module": "assay"
+  },
+  "PUT /api/conversations/{conv_id}/mail-context": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "PUT /api/conversations/{conv_id}/web-search": {
+   "status": "pwa",
+   "module": "conversations",
+   "ui_route": "/chat"
+  },
+  "PUT /api/library/{doc_id}/read-position": {
+   "status": "pwa",
+   "module": "library",
+   "ui_route": "/library"
+  },
+  "PUT /api/studio/works/{work_id}/casting": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "PUT /api/studio/works/{work_id}/spatial": {
+   "status": "pwa",
+   "module": "studio",
+   "ui_route": "/studio"
+  },
+  "PUT /api/system/extraction-templates/{template_id}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/settings/ai-extraction": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/settings/ai-reranking": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/settings/audio-enhance": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/settings/context-window": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/settings/docling": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/settings/image-gen": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/settings/late-chunking": {
+   "status": "experimental",
+   "module": "system"
+  },
+  "PUT /api/system/settings/reranker": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/settings/vision-model": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/system/watch-dirs/{index}": {
+   "status": "pwa",
+   "module": "system",
+   "ui_route": "/system"
+  },
+  "PUT /api/works/{work_id}/autonomy/optin": {
+   "status": "experimental",
+   "module": "autonomy"
+  }
+ }
+}
