@@ -1450,6 +1450,30 @@ def _pass_clustering(db: OrivellumDB, report: list[str]) -> None:
         logger.warning("Nightshift clustering pass failed: %s", exc, exc_info=True)
 
 
+def _pass_work_proposals(db: OrivellumDB, cfg: OrivellumConfig, report: list[str]) -> None:
+    """Derive content-based Work proposals from unassigned vectorised docs.
+
+    Runs right after topic clustering so it sees the freshest embeddings.
+    Proposals land in the review queue for signed ratification — this pass
+    never creates Works and never mutates documents/chunks/vectors.
+    """
+    try:
+        from orivellum.capabilities.work_proposals import generate_work_proposals
+
+        result = generate_work_proposals(db, cfg)
+        if result.get("status") == "skipped":
+            report.append(f"Work proposals: skipped — {result.get('reason', '')}")
+        else:
+            report.append(
+                f"Work proposals: {result['proposals_upserted']} proposed from "
+                f"{result['vectorised_docs']} unassigned docs "
+                f"({result['proposals_skipped_resolved']} already resolved)"
+            )
+    except Exception as exc:
+        report.append(f"Work proposals: failed — {exc}")
+        logger.warning("Nightshift work-proposal pass failed: %s", exc, exc_info=True)
+
+
 def _pass_knowledge_semantic_dedup(db: OrivellumDB, report: list[str]) -> None:
     """Find near-duplicate knowledge items across different source documents within
     each Work by comparing their stored embedding vectors (no new LLM calls).
@@ -1925,6 +1949,10 @@ def _run_nightshift_passes(db: OrivellumDB, cfg: OrivellumConfig) -> None:
     # 16 — Topic clustering
     logger.info("Nightshift pass 16/17: topic clustering")
     _pass_clustering(db, report)
+
+    # 16a — Content-derived Work proposals (RE-PROJECTION Phase 4)
+    logger.info("Nightshift pass 16a: work proposals")
+    _pass_work_proposals(db, cfg, report)
 
     # 16b — Learning concept re-seed for Works with fresh knowledge
     logger.info("Nightshift pass 16b: learning concept re-seed")

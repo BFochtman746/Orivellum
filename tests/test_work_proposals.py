@@ -407,6 +407,35 @@ def test_ratify_invalidates_chunk_vector_cache(db, client, monkeypatch):
     embeddings.invalidate_vector_cache()
 
 
+def test_nightshift_pass_surfaces_proposals_in_review_queue(db, client):
+    """End-to-end operational path: vectorised documents → the nightshift
+    work-proposal pass → a visible work_proposal item in the review queue.
+    No direct generate_work_proposals() invocation."""
+    from orivellum.capabilities.nightshift import _pass_work_proposals
+
+    _seed_two_subjects(db)
+    report: list[str] = []
+    _pass_work_proposals(db, None, report)
+    assert any(r.startswith("Work proposals:") for r in report)
+
+    r = client.get("/api/review/queue")
+    assert r.status_code == 200
+    items = [i for i in r.json()["items"] if i["item_type"] == "work_proposal"]
+    assert len(items) == 2
+    assert items[0]["title"].startswith("Proposed Work:")
+
+
+def test_generate_endpoint_feeds_review_queue(db, client):
+    """The UI 'Scan for subjects' button path: POST the generate endpoint,
+    then the review queue shows the proposals."""
+    _seed_two_subjects(db)
+    r = client.post("/api/works/proposals/generate")
+    assert r.status_code == 200
+    assert r.json()["proposals_upserted"] == 2
+    q = client.get("/api/review/queue")
+    assert sum(1 for i in q.json()["items"] if i["item_type"] == "work_proposal") == 2
+
+
 def test_rerun_after_ratification_does_not_clobber(db, client):
     quantum, _b = _seed_two_subjects(db)
     generate_work_proposals(db)

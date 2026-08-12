@@ -1,26 +1,25 @@
 ---
-name: Content-derived Work proposals (RE-PROJECTION Phase 4)
-description: Clustering pipeline that proposes Works from document embeddings; signed ratification flow in the review queue.
+name: Content-derived Work proposals & signed ratification
+description: How subject clusters become Works — governance rules, atomicity, and cache invalidation lessons.
 ---
 
 # Content-derived Work proposals
 
-**Rule:** A Work only ever comes into existence through signed ratification (author signature + ontology domain from `VALID_DOMAINS` in `capabilities/work_proposals.py`) or the explicit manual create path. Proposal generation never creates Works and never mutates the substrate (documents/chunks/vectors).
+**Rule:** A Work only ever comes into existence through signed ratification (author signature + ontology domain) or the explicit manual create path. Automated clustering only *proposes*; it never creates Works and never mutates the document/chunk/vector substrate.
+**Why:** The subject taxonomy must be author-governed — clustering is evidence, not authority.
+**How to apply:** Any new pathway that would create a Work from derived data must route through the signed review-queue ratification, never create directly.
 
-**Why:** The subject taxonomy must be author-governed; automated clustering is evidence, not authority.
+## Durable design decisions
 
-**How it works:**
-- Cluster within each collection first (cosine k-means, k≈round(√n)), then merge cross-collection ONLY across different origin collections (centroid cosine ≥ 0.80). Same-collection pairs are never merged directly — k-means just split them. `MIN_CLUSTER_SIZE` gate applies AFTER the merge so per-collection fragments (even singletons) can combine.
-- Names are content-derived (LLM best-effort → TF-IDF fallback); filenames are never naming inputs.
-- Proposals upsert by deterministic fingerprint (sha over sorted member doc_ids); refresh only rows still `status='proposed'` — ratified/rejected are never clobbered.
+- **Cluster within each collection first, then merge only ACROSS different collections.** Same-collection cluster pairs are never merged directly — the within-collection split just separated them, and re-fusing would undo it. Cross-collection agreement is the genuineness signal; single-collection proposals are allowed but carry weaker evidence. Minimum-size gates apply AFTER the merge so small per-collection fragments can still combine.
+- **Names come from content only** (model best-effort, deterministic TF-IDF fallback). Filenames are never naming inputs.
+- **Idempotency via deterministic fingerprint** over sorted member ids; upserts refresh only still-proposed rows — resolved rows are never clobbered.
 
-**Ratification (review.py `_resolve_work_proposal`):**
-- All 4xx gates (decision ∈ {approve, reject}, signature, domain) run BEFORE any claim, so a rejected validation leaves the proposal queued.
-- Approve runs claim + create_work + member re-points + provenance + finalize inside ONE `db.atomic()` block — any failure rolls back everything including the claim (no compensating revert; the author retries).
-- The proposal row is snapshotted INSIDE the transaction AFTER the claim (a concurrent generation refresh can update a proposed row right up to the claim; the Work must be built from exactly the claimed row).
-- Member re-point uses `db.assign_document_to_work_if_eligible()` — one conditional UPDATE with all eligibility predicates (work_id IS NULL, quarantine, tier, generated, lifecycle) so docs are never stolen (no read-then-write TOCTOU).
-- After commit, bump the chunk vector cache ONCE for the batch — cached chunk entries carry `d.work_id` from the JOIN, so work-scoped semantic search stays stale otherwise.
+## Ratification correctness lessons (each caught by review)
 
-**Provenance:** `work_collections` table records which collections contributed how many docs; shown on the Work detail documents tab.
-
-**Lesson (lint ratchet):** `scripts/check_lint_ratchet.py` re-lints with `--isolated`, so the default mccabe C901 threshold (10) applies even when project config is looser — a `ruff check` pass does not guarantee the ratchet passes.
+- All 4xx validation gates run BEFORE any claim so a rejected validation leaves the proposal queued.
+- Claim + Work creation + member re-points + provenance + finalize belong in ONE transaction — a compensating revert after separate commits leaves orphaned Works behind on partial failure.
+- Snapshot the proposal row INSIDE the transaction AFTER the claim: a concurrent generation refresh can update a still-proposed row right up to the claim, and building from a pre-claim read makes the ratified row disagree with the Work it produced.
+- Re-point members with a single conditional UPDATE embedding all eligibility predicates — a read-then-write re-check can steal a doc assigned in between.
+- After commit, bump the chunk vector cache once for the batch: cached chunk entries carry the joined work_id, so work-scoped semantic search silently misses the new Work's content until invalidated.
+- A derived pipeline is incomplete until it runs somewhere operational (nightshift pass + a visible UI trigger) — an endpoint nobody calls does not ship the feature.

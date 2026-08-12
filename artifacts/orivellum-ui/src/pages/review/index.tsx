@@ -512,6 +512,29 @@ export default function ReviewPage() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState<TypeFilter>("all");
   const [workFilter, setWorkFilter] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  const scanForSubjects = async () => {
+    setScanning(true);
+    try {
+      const r = await apiFetch(`${BASE}/works/proposals/generate`, { method: "POST" });
+      if (!r.ok) throw new Error(`Scan failed (${r.status})`);
+      const result = await r.json();
+      if (result.status === "skipped") {
+        toast.info(`No subjects found — ${result.reason}`);
+      } else if (result.proposals_upserted > 0) {
+        toast.success(`${result.proposals_upserted} subject proposal(s) ready for your review`);
+      } else {
+        toast.info("No new subject clusters found in unassigned documents");
+      }
+      refetch();
+      qc.invalidateQueries({ queryKey: ["review-queue-count"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Scan failed");
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const { data, isLoading, isFetching, refetch } = useQuery<QueueResponse>({
     queryKey: ["review-queue"],
@@ -580,11 +603,18 @@ export default function ReviewPage() {
             Everything here needs your decision before it becomes fact. Most uncertain items first.
           </p>
         </div>
-        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}
-                className="min-h-[44px] gap-1.5 shrink-0 mt-2" data-testid="refresh-queue">
-          <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-1 shrink-0 mt-2">
+          <Button size="sm" variant="ghost" onClick={scanForSubjects} disabled={scanning}
+                  className="min-h-[44px] gap-1.5" data-testid="scan-subjects">
+            <Sparkles className={`w-3.5 h-3.5 ${scanning ? "animate-pulse" : ""}`} />
+            {scanning ? "Scanning…" : "Scan for subjects"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}
+                  className="min-h-[44px] gap-1.5" data-testid="refresh-queue">
+            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Type filter pills */}
