@@ -262,12 +262,18 @@ def export_backup(
         json_path = tables_dir / f"{table}.json"
         json_path.write_bytes(content)
         sha = _sha256_bytes(content)
+        # Record column names in the manifest so the compatibility check can
+        # detect column-level schema drift without reading every JSON file.
+        live_cols = [
+            r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+        ]
         manifest_tables.append({
             "name": table,
             "row_count": len(rows),
             "sha256": sha,
             "file": f"tables/{table}.json",
             "classification": classify_table(table, fts_virtual),
+            "columns": live_cols,
         })
 
     # 3. Manifest
@@ -348,43 +354,118 @@ def check_restore_compatibility(
     manifest: dict,
     fts_virtual: set[str],
 ) -> None:
-    """Raise RuntimeError before any destructive step if the target DB is
-    missing tables that exist in the backup manifest.
+    """Raise RuntimeError before any destructive step if restoring this backup
+    would silently destroy data or fail mid-import after the DB is already wiped.
 
-    This prevents silent data loss where a table present in the backup
-    (e.g. from a newer schema) cannot be imported because the target DB
-    was never migrated to include it.
+    Three checks are performed (all with the DB still intact):
 
-    Call this BEFORE wipe_database so the database is still intact when
-    the error is reported.
+    CHECK 1 — BACKUP TABLE ABSENT FROM TARGET
+        A table in the backup doesn't exist in the target DB.
+        wipe_database() would succeed but import_from_backup() would silently
+        skip it (no JSON file for it in the target's table list), leaving the
+        DB without that table's data.
+        → raise; user must apply schema migrations first.
 
-    Tables classified as log_operational are exempt: they are intentionally
-    cleared during reset and never re-imported.
+    CHECK 2 — TARGET-ONLY TABLE WITH DATA
+        A table exists in the target DB but NOT in the backup.
+        wipe_database() would delete all rows from it; import_from_backup()
+        would never recreate them because there is no backup JSON for it.
+        Empty target-only tables are fine (they will simply remain empty).
+        → raise; user must take a fresh backup or confirm data can be lost.
+
+    CHECK 3 — COLUMN INCOMPATIBILITY
+        A shared table's backup has columns that no longer exist in the target.
+        import_from_backup() would fail with "table has no column named X" AFTER
+        the DB is already wiped, leaving it in a partial state.
+        → raise; user must apply schema migrations first.
+
+    log_operational tables are exempt from all three checks: they are always
+    cleared and never re-imported, so their presence/absence is irrelevant.
     """
-    live_tables = {
+    live_tables: set[str] = {
         r[0]
         for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
     }
+    fts_shadows = _get_fts_shadow_names(fts_virtual)
+    manifest_names: set[str] = {t["name"] for t in manifest["tables"]}
 
-    missing: list[str] = []
+    errors: list[str] = []
+
+    # --- CHECK 1: backup tables absent from target ---
     for t in manifest["tables"]:
         name = t["name"]
         cl = t.get("classification", classify_table(name, fts_virtual))
-        # log_operational tables are cleared and never re-imported, so missing
-        # ones do not block the restore.
         if cl == "log_operational":
             continue
         if name not in live_tables:
-            missing.append(f"  {name!r} (classification: {cl})")
+            errors.append(f"  CHECK1: {name!r} (classification: {cl}) absent from target DB")
 
-    if missing:
+    if errors:
         raise RuntimeError(
-            f"Restore compatibility check failed — {len(missing)} table(s) from the backup "
-            f"are absent from the target database.\n"
-            f"Apply the missing schema migrations before restoring this backup.\n"
-            + "\n".join(missing)
+            f"Restore compatibility check failed — {len(errors)} backup table(s) are "
+            f"absent from the target database. "
+            f"Apply missing schema migrations before restoring.\n" + "\n".join(errors)
+        )
+
+    # --- CHECK 2: target-only tables with data (would be wiped and lost) ---
+    for live_table in sorted(live_tables):
+        if live_table in _SQLITE_INTERNAL or live_table.startswith("sqlite_"):
+            continue
+        if live_table in fts_shadows:
+            continue
+        if live_table in manifest_names:
+            continue
+        # This table exists in the target but is not covered by the backup.
+        cl = classify_table(live_table, fts_virtual)
+        if cl == "log_operational":
+            continue  # log tables are always cleared anyway
+        try:
+            n = conn.execute(f'SELECT COUNT(*) FROM "{live_table}"').fetchone()[0]
+            if n > 0:
+                errors.append(
+                    f"  CHECK2: {live_table!r} has {n} row(s) in the target "
+                    f"but no backup file — wipe would permanently delete them"
+                )
+        except Exception:
+            pass
+
+    if errors:
+        raise RuntimeError(
+            f"Restore would permanently destroy data in {len(errors)} table(s) "
+            f"that exist in the target but are not covered by this backup.\n"
+            + "\n".join(errors)
+            + "\nTake a fresh backup that includes these tables, or confirm the "
+            f"data can be safely discarded before proceeding."
+        )
+
+    # --- CHECK 3: column incompatibility (backup has cols absent from target) ---
+    for t in manifest["tables"]:
+        name = t["name"]
+        backup_cols = t.get("columns")
+        if not backup_cols or name not in live_tables:
+            continue
+        cl = t.get("classification", classify_table(name, fts_virtual))
+        if cl == "log_operational":
+            continue
+        target_cols = {
+            r[1]
+            for r in conn.execute(f'PRAGMA table_info("{name}")').fetchall()
+        }
+        extra_in_backup = set(backup_cols) - target_cols
+        if extra_in_backup:
+            errors.append(
+                f"  CHECK3: {name!r} — backup column(s) missing from target: "
+                + ", ".join(sorted(extra_in_backup))
+            )
+
+    if errors:
+        raise RuntimeError(
+            f"Column incompatibility in {len(errors)} table(s). "
+            f"INSERT would fail after the DB is wiped.\n"
+            + "\n".join(errors)
+            + "\nApply schema migrations or restore to a database with a compatible schema."
         )
 
 
@@ -608,7 +689,7 @@ def validate_database(
             errors.append(f"FK violation: table={v[0]} rowid={v[1]} parent={v[2]}")
         report.append(f"  ❌ foreign_key_check: {len(fk_violations)} violation(s)")
 
-    # 3. Row count comparison
+    # 3. Row count comparison (manifest tables + target-only table detection)
     manifest_by_name = {t["name"]: t for t in manifest["tables"]}
     mismatch_count = 0
     skipped_log = 0
@@ -624,7 +705,23 @@ def validate_database(
             skipped_log += 1
             continue
 
-        expected = manifest_by_name.get(table, {}).get("row_count", 0)
+        if table not in manifest_by_name:
+            # This table exists in the target DB but had no backup entry.
+            # It should be empty after a successful wipe; any rows here are
+            # unexpected (they were not wiped or were inserted externally).
+            try:
+                live_n = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            except Exception:
+                live_n = -1
+            if live_n != 0:
+                errors.append(
+                    f"Target-only table '{table}' has {live_n} unexpected row(s) after restore "
+                    f"(no backup entry — rows should be 0)"
+                )
+                mismatch_count += 1
+            continue
+
+        expected = manifest_by_name[table]["row_count"]
         try:
             actual = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
         except Exception:

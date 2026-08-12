@@ -715,6 +715,68 @@ class TestSchemaCompatibility(unittest.TestCase):
         n = self.conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
         self.assertEqual(n, 2, "messages table must be intact after failed compatibility check")
 
+    def test_target_only_table_with_data_raises_before_wipe(self):
+        """Simulate restoring an OLD backup into a NEWER target schema.
+
+        The target has a table ('new_feature') added after the backup was taken.
+        That table has data that would be permanently wiped but never restored.
+        check_restore_compatibility must raise before any destructive action.
+        """
+        # Add a new table to the live DB (simulates a newer schema migration)
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS new_feature ("
+            "id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        self.conn.execute("INSERT INTO new_feature VALUES('nf1','important data')")
+        self.conn.commit()
+
+        # The backup (taken earlier) has no entry for new_feature
+        with self.assertRaises(RuntimeError) as ctx:
+            dr.check_restore_compatibility(self.conn, self.manifest, self.fts_virtual)
+        err = str(ctx.exception)
+        self.assertIn("new_feature", err, "Error must name the table at risk")
+        # Verify DB is still intact — no rows were lost
+        n = self.conn.execute("SELECT COUNT(*) FROM new_feature").fetchone()[0]
+        self.assertEqual(n, 1, "new_feature must still have its row after the failed check")
+        n = self.conn.execute("SELECT COUNT(*) FROM works").fetchone()[0]
+        self.assertEqual(n, 1, "works must be intact after the failed check")
+
+    def test_target_only_empty_table_does_not_raise(self):
+        """A table in the target not covered by the backup is OK if it is empty —
+        it will simply remain empty after wipe, no data loss."""
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS new_empty_table (id TEXT PRIMARY KEY)"
+        )
+        self.conn.commit()
+        # Must not raise — no rows would be lost
+        dr.check_restore_compatibility(self.conn, self.manifest, self.fts_virtual)
+
+    def test_column_incompatibility_raises_before_wipe(self):
+        """If the backup has a column that no longer exists in the target schema
+        (e.g. a column was renamed/dropped), INSERT would fail AFTER the DB is
+        already wiped. check_restore_compatibility must catch this pre-wipe."""
+        # Build a manifest that claims 'works' has an extra column 'old_column'
+        # not present in the test schema.
+        doctored_tables = []
+        for t in self.manifest["tables"]:
+            if t["name"] == "works":
+                doctored_tables.append(
+                    {**t, "columns": t.get("columns", []) + ["old_column"]}
+                )
+            else:
+                doctored_tables.append(t)
+        bad_manifest = {**self.manifest, "tables": doctored_tables}
+
+        with self.assertRaises(RuntimeError) as ctx:
+            dr.check_restore_compatibility(self.conn, bad_manifest, self.fts_virtual)
+        err = str(ctx.exception)
+        self.assertIn("old_column", err, "Error must name the incompatible column")
+        self.assertIn("works", err, "Error must name the affected table")
+
+        # DB must still be intact
+        n = self.conn.execute("SELECT COUNT(*) FROM works").fetchone()[0]
+        self.assertEqual(n, 1, "works must be intact after failed column check")
+
 
 if __name__ == "__main__":
     unittest.main()
