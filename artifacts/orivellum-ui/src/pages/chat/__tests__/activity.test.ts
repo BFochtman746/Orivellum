@@ -6,7 +6,8 @@
 import { describe, it, expect } from "vitest";
 import {
   applyActivityEvent, stepsFromEvents, activityLabel, activityDetail,
-  type ServerActivityEvent,
+  stepsFromCodeProgress,
+  type ServerActivityEvent, type CodeProgressEvent,
 } from "../activity";
 import { foldEvents, emptyReplay } from "@/lib/gen-replay";
 
@@ -96,6 +97,33 @@ describe("activityLabel / activityDetail", () => {
   });
 });
 
+describe("stepsFromCodeProgress", () => {
+  const FRAMES: CodeProgressEvent[] = [
+    { stage: "planning", label: "Planning the program", n: 1, total: 4 },
+    { stage: "generating", label: "Writing file 1/2", n: 2, total: 4 },
+    { stage: "generating", label: "Writing file 2/2", n: 2, total: 4 },
+    { stage: "testing", label: "Running tests", n: 3, total: 4 },
+  ];
+
+  it("a later stage frame completes the earlier stage (sequential pipeline)", () => {
+    const steps = stepsFromCodeProgress(FRAMES, false, NOW);
+    expect(steps.map((s) => s.id)).toEqual(["cg_planning", "cg_generating", "cg_testing"]);
+    expect(steps[0].done).toBe(true);
+    expect(steps[1].done).toBe(true);
+    // Same-stage repeat updated the label in place, no extra row
+    expect(steps[1].label).toBe("Writing file 2/2");
+  });
+
+  it("the final stage is done only when the job actually finished", () => {
+    expect(stepsFromCodeProgress(FRAMES, false, NOW).at(-1)!.done).toBe(false);
+    expect(stepsFromCodeProgress(FRAMES, true, NOW).at(-1)!.done).toBe(true);
+  });
+
+  it("empty input yields no steps", () => {
+    expect(stepsFromCodeProgress([], true, NOW)).toEqual([]);
+  });
+});
+
 describe("gen-replay activity folding", () => {
   it("collects journaled activity events in order", () => {
     const acc = foldEvents(emptyReplay(), [
@@ -118,5 +146,17 @@ describe("gen-replay activity folding", () => {
       { seq: 2, kind: "meta", payload: JSON.stringify({ activity: "nope" }) },
     ]);
     expect(acc.activity).toHaveLength(0);
+  });
+
+  it("collects code_progress frames for replay", () => {
+    const acc = foldEvents(emptyReplay(), [
+      { seq: 1, kind: "code_progress", payload: JSON.stringify({ code_progress: { stage: "planning", label: "Planning", n: 1, total: 4 } }) },
+      { seq: 2, kind: "code_progress", payload: JSON.stringify({ code_progress: { stage: "generating", label: "Writing", n: 2, total: 4 } }) },
+    ]);
+    expect(acc.codeProgress).toHaveLength(2);
+    const steps = stepsFromCodeProgress(acc.codeProgress as unknown as CodeProgressEvent[], false, NOW);
+    expect(steps).toHaveLength(2);
+    expect(steps[0].done).toBe(true);
+    expect(steps[1].done).toBe(false);
   });
 });

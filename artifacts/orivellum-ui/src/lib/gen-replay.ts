@@ -122,6 +122,8 @@ export interface ReplayedReply {
   sources: unknown[] | null;
   /** Server-authored activity events, in journal order (WP4 replay). */
   activity: Record<string, unknown>[];
+  /** Code-generation pipeline progress frames, in journal order. */
+  codeProgress: Record<string, unknown>[];
   done: boolean;
   failed: boolean;
   lastSeq: number;
@@ -149,6 +151,9 @@ export function foldEvents(acc: ReplayedReply, events: GenEvent[]): ReplayedRepl
       if (p.activity && typeof p.activity === "object" && !Array.isArray(p.activity)) {
         next.activity = [...next.activity, p.activity as Record<string, unknown>];
       }
+      if (p.code_progress && typeof p.code_progress === "object" && !Array.isArray(p.code_progress)) {
+        next.codeProgress = [...next.codeProgress, p.code_progress as Record<string, unknown>];
+      }
     } catch {
       /* malformed event — skip */
     }
@@ -163,6 +168,7 @@ export function emptyReplay(): ReplayedReply {
     messageId: null,
     sources: null,
     activity: [],
+    codeProgress: [],
     done: false,
     failed: false,
     lastSeq: 0,

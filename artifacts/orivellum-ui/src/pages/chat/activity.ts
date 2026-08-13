@@ -146,3 +146,55 @@ export function stepsFromEvents(
 ): ActivityStep[] {
   return events.reduce<ActivityStep[]>((acc, ev) => applyActivityEvent(acc, ev, now), []);
 }
+
+/** One code-generation pipeline progress frame (server-authored). */
+export interface CodeProgressEvent {
+  stage: string;
+  label: string;
+  n?: number;
+  total?: number;
+}
+
+export function codeProgressIcon(stage: string): ActivityStep["icon"] {
+  if (stage === "planning") return "think";
+  if (stage === "generating") return "write";
+  return "read"; // testing, fixing, packaging
+}
+
+/**
+ * Rebuild code-generation steps from journaled `code_progress` frames.
+ * The pipeline is sequential, so a later stage frame is server evidence the
+ * earlier stage finished. The FINAL stage is only marked done when the job
+ * itself finished (`finished`) — a crash mid-stage must not paint success.
+ */
+export function stepsFromCodeProgress(
+  events: CodeProgressEvent[],
+  finished: boolean,
+  now: number = Date.now(),
+): ActivityStep[] {
+  const steps: ActivityStep[] = [];
+  for (const ev of events) {
+    if (!ev || typeof ev.stage !== "string") continue;
+    const id = `cg_${ev.stage}`;
+    const last = steps.at(-1);
+    if (last?.id === id) {
+      // Same stage again (e.g. file 2/5) — refresh the label in place.
+      steps[steps.length - 1] = { ...last, label: ev.label ?? last.label };
+      continue;
+    }
+    // A new stage arriving is evidence the previous one completed.
+    if (last && !last.done) steps[steps.length - 1] = { ...last, done: true, endMs: now };
+    steps.push({
+      id,
+      label: ev.label ?? ev.stage,
+      icon: codeProgressIcon(ev.stage),
+      startMs: now,
+      done: false,
+    });
+  }
+  const tail = steps.at(-1);
+  if (tail && !tail.done && finished) {
+    steps[steps.length - 1] = { ...tail, done: true, endMs: now };
+  }
+  return steps;
+}

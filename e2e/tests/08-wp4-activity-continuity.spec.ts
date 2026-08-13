@@ -203,6 +203,110 @@ test.describe('WP4 — truthful activity & continuity (mobile 390×844)', () => 
     await expect(page.getByTestId('reasoning-indicator').first()).toBeVisible();
   });
 
+  test('mid-continuation drop → journal replay recovers the tail (no error, no duplicate continue)', async ({ page }) => {
+    const convId = await createConversation(page, 'E2E WP4 — continuation drop');
+    const jobId = `e2e-wp4-cont-${Date.now()}`;
+    const baseText = 'The response began here and was cut sh';
+    const tailText = 'ort — and this tail was recovered from the journal.';
+
+    // The conversation holds a cut-short assistant message so the Continue
+    // affordance renders; after replay the row carries the merged text.
+    let replayFinished = false;
+    await page.route(`**/api/conversations/${convId}`, async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      body.messages = [
+        ...(body.messages ?? []),
+        { id: 'srv-cont-user', role: 'user', text: 'tell me everything', created_at: new Date().toISOString(), meta: {} },
+        {
+          id: 'srv-cont-msg',
+          role: 'assistant',
+          text: replayFinished ? baseText + tailText : baseText,
+          created_at: new Date().toISOString(),
+          meta: replayFinished ? {} : { cut_short: true },
+        },
+      ];
+      await route.fulfill({ response: res, json: body });
+    });
+
+    // Continue POST answers with a journaled stream that drops mid-tail.
+    let continueAttempts = 0;
+    await page.addInitScript(([id]) => {
+      const orig = window.fetch.bind(window);
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (method === 'POST' && /\/api\/conversations\/[^/]+\/continue$/.test(url.split('?')[0])) {
+          (window as unknown as { __contAttempts: number }).__contAttempts =
+            ((window as unknown as { __contAttempts?: number }).__contAttempts ?? 0) + 1;
+          const enc = new TextEncoder();
+          const stream = new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ job_id: id })}\n\n`));
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ activity: { stage: 'generation', state: 'start', action: 'continuation' } })}\n\n`));
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ continue_message_id: 'srv-cont-msg' })}\n\n`));
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ token: 'ort — ' })}\n\n`));
+              setTimeout(() => c.error(new TypeError('network connection lost')), 1_500);
+            },
+          });
+          return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        return orig(input as RequestInfo, init);
+      };
+    }, [jobId]);
+
+    // Journal replay for the continuation job.
+    let eventCalls = 0;
+    await page.route(`**/api/conversations/jobs/${jobId}/events*`, (route) => {
+      eventCalls += 1;
+      const first = eventCalls === 1;
+      if (!first) replayFinished = true;
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          first
+            ? {
+                job: { id: jobId, conversation_id: convId, message_id: null, state: 'running' },
+                events: [
+                  { seq: 1, kind: 'activity', payload: JSON.stringify({ activity: { stage: 'generation', state: 'start', action: 'continuation' } }) },
+                ],
+              }
+            : {
+                job: { id: jobId, conversation_id: convId, message_id: 'srv-cont-msg', state: 'done' },
+                events: [
+                  { seq: 2, kind: 'chunk', payload: JSON.stringify({ token: tailText }) },
+                  { seq: 3, kind: 'activity', payload: JSON.stringify({ activity: { stage: 'generation', state: 'done', action: 'continuation', elapsed_ms: 700 } }) },
+                  { seq: 4, kind: 'meta', payload: JSON.stringify({ message_id: 'srv-cont-msg' }) },
+                  { seq: 5, kind: 'done', payload: '' },
+                ],
+              },
+        ),
+      });
+    });
+
+    await page.goto(`${WEB_ORIGIN}${BASE_PATH}/`);
+    await ensureLoggedIn(page);
+    await openConversation(page, convId);
+    await page.setViewportSize(MOBILE);
+
+    // The cut-short affordance renders; continue.
+    await expect(page.getByText('Response was cut short.')).toBeVisible({ timeout: 15_000 });
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+
+    // Server-authored continuation activity reaches the strip.
+    await expect(page.getByTestId('activity-strip')).toBeVisible({ timeout: 10_000 });
+
+    // The stream drops (~1.5 s in) → journal replay recovers the tail. The
+    // merged message ends up visible, with no error toast and exactly one
+    // continue attempt.
+    await expect(page.getByText(baseText + tailText)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('Could not continue — please try again')).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as unknown as { __contAttempts: number }).__contAttempts),
+    ).toBe(1);
+  });
+
   test('no server activity events → no activity strip (client never invents steps)', async ({ page }) => {
     const convId = await createConversation(page, 'E2E WP4 — no invented steps');
     const jobId = `e2e-wp4-clean-${Date.now()}`;

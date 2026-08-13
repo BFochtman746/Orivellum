@@ -10,8 +10,8 @@ import {
 } from "@/lib/gen-replay";
 import { SyncStatusChip } from "@/components/sync-status";
 import {
-  applyActivityEvent, stepsFromEvents,
-  type ActivityStep, type ServerActivityEvent,
+  applyActivityEvent, stepsFromEvents, stepsFromCodeProgress,
+  type ActivityStep, type ServerActivityEvent, type CodeProgressEvent,
 } from "./activity";
 import { randomUUID, copyToClipboard } from "@/lib/uuid";
 import { useReadAloud, stripForSpeech } from "@/lib/read-aloud";
@@ -2086,16 +2086,23 @@ export default function Chat() {
         if (!res) { clearPendingGen(pending.jobId); break; } // pruned/unknown
         acc = foldEvents(acc, res.events);
         const running = res.job.state === "running";
-        // Replay journaled activity events into the strip — same truth source
-        // as the live stream, rebuilt instead of invented.
-        if (acc.activity.length && activeIdRef.current === pending.convId) {
+        // Replay journaled activity + code-progress events into the strip —
+        // same truth source as the live stream, rebuilt instead of invented.
+        const replaySteps = [
+          ...stepsFromEvents(acc.activity as unknown as ServerActivityEvent[]),
+          ...stepsFromCodeProgress(
+            acc.codeProgress as unknown as CodeProgressEvent[],
+            res.job.state === "done",
+          ),
+        ];
+        if (replaySteps.length && activeIdRef.current === pending.convId) {
           // A stale fade timer from the interrupted live stream must not wipe
           // the replayed steps mid-recovery.
           if (activityFadeTimer.current !== null) {
             clearTimeout(activityFadeTimer.current);
             activityFadeTimer.current = null;
           }
-          setActivitySteps(stepsFromEvents(acc.activity as unknown as ServerActivityEvent[]));
+          setActivitySteps(replaySteps);
           setActivityFading(!running);
         }
         if (acc.text || acc.thinking) {
@@ -2501,10 +2508,13 @@ export default function Chat() {
         sendingRef.current = false;
         abortRef.current = null;
         setSending(false);
-        // ── Activity: mark all steps done then fade out the strip ──────────
+        // ── Activity: fade out the strip. Steps are terminalized ONLY by
+        // server done/failed events — a lost stream must never paint a
+        // checkmark on a stage the server hasn't confirmed. Open rows keep
+        // their in-progress state through the fade (journal replay rebuilds
+        // the truthful list if recovery kicks in).
         // Guard with thisGen so a stale timeout from a prior request can never
         // clear activity state that belongs to a newer in-flight request.
-        setActivitySteps(prev => prev.map(s => ({ ...s, done: true, endMs: s.endMs ?? Date.now() })));
         setActivityFading(true);
         activityFadeTimer.current = setTimeout(() => {
           if (activityGenRef.current === thisGen) {
@@ -2608,6 +2618,12 @@ export default function Chat() {
     let continueTargetId = messageId;
     let accumulated = "";
     let stillCutShort = false;
+    let contJobId: string | null = null;
+    // Continuation drives the strip with its own server-emitted frames.
+    activityGenRef.current += 1;
+    const contGen = activityGenRef.current;
+    setActivitySteps([]);
+    setActivityFading(false);
 
     try {
       const resp = await fetch(`${API_BASE}/conversations/${convId}/continue`, {
@@ -2634,6 +2650,16 @@ export default function Chat() {
           if (data === "[DONE]") break;
           try {
             const parsed = JSON.parse(data);
+            // Journaled job id — persist a replay cursor so a network drop or
+            // background suspension can recover the continuation.
+            if (parsed.job_id) {
+              contJobId = parsed.job_id as string;
+              setPendingGen({ jobId: contJobId, convId, startedAt: Date.now() });
+            }
+            // Server-authored activity — same truth contract as sendText.
+            if (parsed.activity) {
+              setActivitySteps(prev => applyActivityEvent(prev, parsed.activity as ServerActivityEvent));
+            }
             if (parsed.continue_message_id) continueTargetId = parsed.continue_message_id;
             if (parsed.cut_short || parsed.timeout) stillCutShort = true;
             if (parsed.error === "continuation_failed") {
@@ -2654,8 +2680,19 @@ export default function Chat() {
           } catch { /* ignore */ }
         }
       }
+      // Stream completed normally — the journal record has served its purpose.
+      if (contJobId) clearPendingGen(contJobId);
     } catch (err: any) {
-      if (err?.name !== "AbortError") toast.error("Could not continue — please try again");
+      if (err?.name === "AbortError") {
+        // Intentional cancellation — generation continues server-side; keep
+        // the pending-gen record so journal replay picks the tail up later.
+      } else if (contJobId) {
+        // Connection lost mid-continuation — recover from the journal instead
+        // of asking the user to retry (the server kept generating).
+        setTimeout(() => { void recoverPendingGenRef.current?.(); }, 50);
+      } else {
+        toast.error("Could not continue — please try again");
+      }
     } finally {
       sendingRef.current = false;
       abortRef.current = null;
@@ -2665,6 +2702,15 @@ export default function Chat() {
           ? { ...m, streaming: false, incomplete: stillCutShort || undefined }
           : m
       ));
+      // Fade the strip — steps are terminalized only by server events.
+      setActivityFading(true);
+      activityFadeTimer.current = setTimeout(() => {
+        if (activityGenRef.current === contGen) {
+          setActivityFading(false);
+          setActivitySteps([]);
+        }
+        activityFadeTimer.current = null;
+      }, 600);
       // Give the final local state a moment to render, then hand off to server data
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(convId) });
