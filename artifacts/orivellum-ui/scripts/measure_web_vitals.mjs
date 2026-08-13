@@ -51,11 +51,15 @@ const browser = await chromium.launch({
 let failures = [];
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  // Hermetic: every API call returns an empty-but-valid JSON payload so the
-  // shell renders its loading/empty states without a backend.
-  await context.route('**/api/**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
-  );
+  // Hermetic: stub the API so the AUTHENTICATED Home screen renders without a
+  // backend. /api/auth/me must report authenticated:true — otherwise the app
+  // shows the login form and the vitals numbers would measure the wrong page.
+  await context.route('**/api/**', (route) => {
+    const url = route.request().url();
+    let body = '{}';
+    if (url.includes('/api/auth/me')) body = '{"authenticated":true}';
+    return route.fulfill({ status: 200, contentType: 'application/json', body });
+  });
   const page = await context.newPage();
   await page.addInitScript(() => {
     window.__vitals = { lcp: 0, cls: 0, inp: 0 };
@@ -73,6 +77,12 @@ try {
   });
 
   await page.goto(URL_HOME, { waitUntil: 'networkidle', timeout: 60_000 });
+  // Guard: we must be measuring the authenticated shell, not the login form.
+  // The login form is the only surface with a password input.
+  const onLogin = await page.locator('input[type="password"]').count();
+  if (onLogin > 0) {
+    failures.push('measured page is the LOGIN form, not the authenticated Home — auth stub broken');
+  }
   await page.waitForTimeout(3000); // let LCP settle
   // A real interaction for INP (tap the body — safe on any screen).
   await page.mouse.click(195, 400);

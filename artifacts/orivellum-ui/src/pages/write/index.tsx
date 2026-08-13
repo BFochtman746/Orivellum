@@ -623,6 +623,10 @@ export default function WriteDeskPage() {
   // gets the full width without the user needing to find focus mode.
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const saveTimer                 = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Pending debounced save (WP5 update-safety): lets the unmount cleanup flush
+  // an in-flight draft instead of dropping the last ~1.5 s of typing, and
+  // guarantees the 'write-draft' busy flag never outlives this page.
+  const pendingSaveRef            = useRef<{ ed: NonNullable<ReturnType<typeof useEditor>>; docId: string } | null>(null);
   const [, navigate] = useLocation();
 
   // ── Editor ────────────────────────────────────────────────────────────────
@@ -723,35 +727,68 @@ export default function WriteDeskPage() {
     // Update-safety (WP5): from the first unsaved keystroke until the save
     // lands (or reaches the durable outbox), a PWA update reload is blocked.
     setBusyFlag('write-draft', true);
+    pendingSaveRef.current = { ed, docId: activeDoc.id };
     saveTimer.current = setTimeout(async () => {
-      const json = ed.getJSON();
-      const text = ed.getText();
+      saveTimer.current = null;
       setSaving(true);
       try {
-        const updated = await apiPatch(`/write/documents/${activeDoc.id}`, {
-          content_json: json,
-          content_text: text,
-        });
-        setDocs((prev) => prev.map((d) => d.id === updated.id ? updated : d));
-        setActiveDoc((prev) => prev?.id === updated.id ? updated : prev);
-      } catch (err) {
-        if (isNetworkError(err)) {
-          // Offline — persist the newest content to the device outbox so it
-          // still reaches the server on reconnect (latest-wins per document).
-          try {
-            await enqueueOp('api_call', {
-              method: 'PATCH',
-              url: `${BASE}/write/documents/${activeDoc.id}`,
-              body: { content_json: json, content_text: text },
-              label: 'Draft save',
-            }, { replaceKey: `write-doc-${activeDoc.id}` });
-          } catch { /* IDB unavailable — next edit retries the network */ }
+        // Content capture can throw if the editor was destroyed mid-debounce
+        // — keep it INSIDE the try so the finally always releases the flag.
+        const json = ed.getJSON();
+        const text = ed.getText();
+        try {
+          const updated = await apiPatch(`/write/documents/${activeDoc.id}`, {
+            content_json: json,
+            content_text: text,
+          });
+          setDocs((prev) => prev.map((d) => d.id === updated.id ? updated : d));
+          setActiveDoc((prev) => prev?.id === updated.id ? updated : prev);
+        } catch (err) {
+          if (isNetworkError(err)) {
+            // Offline — persist the newest content to the device outbox so it
+            // still reaches the server on reconnect (latest-wins per document).
+            try {
+              await enqueueOp('api_call', {
+                method: 'PATCH',
+                url: `${BASE}/write/documents/${activeDoc.id}`,
+                body: { content_json: json, content_text: text },
+                label: 'Draft save',
+              }, { replaceKey: `write-doc-${activeDoc.id}` });
+            } catch { /* IDB unavailable — next edit retries the network */ }
+          }
+          /* otherwise silent — next save will retry */
         }
-        /* otherwise silent — next save will retry */
-      }
-      finally { setSaving(false); setBusyFlag('write-draft', false); }
+      } catch { /* editor destroyed — the unmount flush already captured it */ }
+      finally { pendingSaveRef.current = null; setSaving(false); setBusyFlag('write-draft', false); }
     }, 1500);
   }, [activeDoc]);
+
+  // Unmount flush (WP5): if a debounced save is still pending when the page
+  // unmounts, fire it immediately (network with outbox fallback) so the last
+  // seconds of typing survive navigation, and always release the busy flag.
+  useEffect(() => () => {
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    const pending = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    if (pending) {
+      try {
+        const json = pending.ed.getJSON();
+        const text = pending.ed.getText();
+        apiPatch(`/write/documents/${pending.docId}`, { content_json: json, content_text: text })
+          .catch((err) => {
+            if (isNetworkError(err)) {
+              enqueueOp('api_call', {
+                method: 'PATCH',
+                url: `${BASE}/write/documents/${pending.docId}`,
+                body: { content_json: json, content_text: text },
+                label: 'Draft save',
+              }, { replaceKey: `write-doc-${pending.docId}` }).catch(() => { /* IDB unavailable */ });
+            }
+          });
+      } catch { /* editor already destroyed — nothing to capture */ }
+    }
+    setBusyFlag('write-draft', false);
+  }, []);
 
   // ── Title save ────────────────────────────────────────────────────────────
 

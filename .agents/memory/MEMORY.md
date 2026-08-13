@@ -25,6 +25,7 @@
 - [Windows pnpm TTY quirk](windows-pnpm-tty.md) — pnpm silently skips launching Vite when stdout is redirected; must open Vite in a new console window (Start-Process without -NoNewWindow/-Redirect).
 - [API auth design](orivellum-api-auth.md) — session-cookie auth for web; SecureStore bearer token for mobile; SessionMiddleware must be added LAST; CORS origin regex must be exact domain, not wildcard *.replit.dev.
 - [PWA stale-cache blank page](orivellum-pwa-cache.md) — assets immutable, shell/sw.js no-cache, missing assets must 404 (never the SPA shell); recovery = unregister SW + clear site data.
+- [WP5 route bundles & PWA updates](orivellum-wp5-bundles.md) — lazy routes + byte budgets; workbox-window must be a direct dep; updates gated on app-busy registry; vitals stub must auth or it measures the login form.
 - [Safari HTTP compatibility](safari-http-compat.md) — crypto.randomUUID/clipboard blocked over HTTP; polyfills in lib/uuid.ts; CORS regex covers Tailscale 100.64–127.x.x range.
 - [Chat global knowledge search](orivellum-chat-knowledge.md) — _build_system_prompt now accepts user_query; uses search_knowledge+search_chunks globally, grouped by Work/topic; recency fallback when no query.
 - [Websearch pipeline design](orivellum-websearch-pipeline.md) — Tavily provider; multi-query RRF; BM25 passage ranking; planner overlaps first search wave (never re-serialize); transcripts fetched concurrently.
