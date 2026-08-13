@@ -5,8 +5,8 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import {
   Select,
   SelectContent,
@@ -178,20 +178,19 @@ export default function PacingPage() {
   const work = workQ.data?.work ?? workQ.data;
 
   return (
-    <div className="container mx-auto max-w-5xl px-4 py-6 space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-3">
+    <Page
+      wide
+      eyebrow="Pacing & Immersion"
+      title={work?.title || "Pacing & Immersion"}
+      actions={
         <Link href={`/works/${workId}`}>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
+          <Button variant="ghost" size="icon" className="min-h-11 min-w-11">
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
-        <div>
-          <h1 className="text-xl font-semibold">Pacing & Immersion</h1>
-          {work && <p className="text-sm text-muted-foreground">{work.title}</p>}
-        </div>
-      </div>
-
+      }
+    >
+      <div className="space-y-4">
       {/* Tabs */}
       <div className="flex gap-1 border-b">
         {(["overview", "breath", "findings", "profile"] as const).map((t) => (
@@ -215,7 +214,8 @@ export default function PacingPage() {
       {workId && tab === "breath"    && <BreathPanel workId={workId} />}
       {workId && tab === "findings"  && <FindingsPanel workId={workId} />}
       {workId && tab === "profile"   && <ProfilePanel workId={workId} />}
-    </div>
+      </div>
+    </Page>
   );
 }
 
@@ -327,11 +327,11 @@ function OverviewPanel({ workId }: { workId: string }) {
                     name === "revelation" ? "Revelation density" : "Grounding",
                   ]}
                 />
-                <ReferenceLine y={0.7} stroke="hsl(var(--destructive))" strokeDasharray="3 3" strokeOpacity={0.4} />
-                <Line type="monotone" dataKey="tension"    stroke="hsl(var(--destructive))" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="intensity"  stroke="hsl(var(--chart-2, #f59e0b))" dot={false} strokeWidth={1.5} strokeDasharray="4 2" />
-                <Line type="monotone" dataKey="revelation" stroke="hsl(var(--chart-3, #8b5cf6))" dot={false} strokeWidth={1.5} strokeDasharray="2 3" />
-                <Line type="monotone" dataKey="grounding"  stroke="hsl(var(--chart-4, #10b981))" dot={false} strokeWidth={1} strokeOpacity={0.7} />
+                <ReferenceLine y={0.7} stroke="var(--gd-danger)" strokeDasharray="3 3" strokeOpacity={0.4} />
+                <Line type="monotone" dataKey="tension"    stroke="var(--gd-danger)" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="intensity"  stroke="var(--gd-caution)" dot={false} strokeWidth={1.5} strokeDasharray="4 2" />
+                <Line type="monotone" dataKey="revelation" stroke="var(--gd-violet)" dot={false} strokeWidth={1.5} strokeDasharray="2 3" />
+                <Line type="monotone" dataKey="grounding"  stroke="var(--gd-success)" dot={false} strokeWidth={1} strokeOpacity={0.7} />
               </LineChart>
             </ResponsiveContainer>
             <div className="flex gap-4 text-xs text-muted-foreground mt-1 flex-wrap">
@@ -345,14 +345,21 @@ function OverviewPanel({ workId }: { workId: string }) {
       )}
 
       {/* Scene list */}
-      {scenes.length === 0 && !scenesQ.isLoading && (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground text-sm">
-            No scenes yet. Extract them from the chapters above.
-          </CardContent>
-        </Card>
+      {scenesQ.isError && (
+        <ErrorState
+          title="Couldn't load scenes"
+          detail="The pacing scenes failed to load."
+          onRetry={() => scenesQ.refetch()}
+        />
       )}
-      {scenesQ.isLoading && <Skeleton className="h-32 w-full" />}
+      {scenes.length === 0 && !scenesQ.isLoading && !scenesQ.isError && (
+        <EmptyState
+          icon={<Activity />}
+          title="No scenes yet"
+          description="Extract them from the chapters above."
+        />
+      )}
+      {scenesQ.isLoading && <LoadingState rows={3} label="Loading scenes" />}
       <div className="space-y-2">
         {scenes.map((sc) => (
           <SceneCard
@@ -506,13 +513,21 @@ function BreathPanel({ workId }: { workId: string }) {
         quiet is missing before or after major events.
       </p>
 
-      {scenes.length === 0 && (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground text-sm">
-            No scenes yet — extract scenes from the Tension Map tab first.
-          </CardContent>
-        </Card>
+      {scenesQ.isError && (
+        <ErrorState
+          title="Couldn't load scenes"
+          detail="The pacing scenes failed to load."
+          onRetry={() => scenesQ.refetch()}
+        />
       )}
+      {scenes.length === 0 && !scenesQ.isLoading && !scenesQ.isError && (
+        <EmptyState
+          icon={<Wind />}
+          title="No scenes yet"
+          description="Extract scenes from the Tension Map tab first."
+        />
+      )}
+      {scenesQ.isLoading && <LoadingState rows={3} label="Loading scenes" />}
 
       {/* Breath band */}
       {scenes.length > 0 && (
@@ -646,12 +661,27 @@ function FindingsPanel({ workId }: { workId: string }) {
         )}
       </div>
 
-      {!activeRun && !runsQ.isLoading && (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground text-sm">
-            No diagnostic runs yet. Run diagnostics to find pacing issues.
-          </CardContent>
-        </Card>
+      {runsQ.isError && (
+        <ErrorState
+          title="Couldn't load diagnostic runs"
+          detail="The pacing runs failed to load."
+          onRetry={() => runsQ.refetch()}
+        />
+      )}
+      {findingsQ.isError && activeRun && (
+        <ErrorState
+          title="Couldn't load findings"
+          detail="The pacing findings failed to load."
+          onRetry={() => findingsQ.refetch()}
+        />
+      )}
+      {runsQ.isLoading && <LoadingState rows={3} label="Loading diagnostic runs" />}
+      {!activeRun && !runsQ.isLoading && !runsQ.isError && (
+        <EmptyState
+          icon={<TrendingDown />}
+          title="No diagnostic runs yet"
+          description="Run diagnostics to find pacing issues."
+        />
       )}
 
       {activeRun?.coverage.note && (
@@ -842,7 +872,23 @@ function ProfilePanel({ workId }: { workId: string }) {
         genre and intention.
       </p>
 
-      {profileQ.isLoading && <Skeleton className="h-32 w-full" />}
+      {profileQ.isLoading && <LoadingState rows={3} label="Loading profile" />}
+
+      {profileQ.isError && (
+        <ErrorState
+          title="Couldn't load profile"
+          detail="The pacing profile failed to load."
+          onRetry={() => profileQ.refetch()}
+        />
+      )}
+
+      {!profileQ.isLoading && !profileQ.isError && !profile && (
+        <EmptyState
+          icon={<Settings />}
+          title="No profile available"
+          description="A pacing profile could not be loaded for this work."
+        />
+      )}
 
       {profile && (
         <div className="space-y-3">

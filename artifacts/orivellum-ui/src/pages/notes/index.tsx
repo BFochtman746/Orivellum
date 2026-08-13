@@ -12,10 +12,9 @@ import { Link } from "wouter";
 import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { useGdDark } from "@/lib/useGdDark";
 import { toast } from "sonner";
+import { Page, EmptyState, ErrorState, LoadingState, ConfirmAction } from "@/components/primitives";
 import {
   NotebookPen, Send, Sparkles, Loader2, Inbox, Clock, CheckCircle2,
   XCircle, Trash2, ChevronLeft, ChevronRight, FileText, Scale,
@@ -42,9 +41,9 @@ interface NotesResponse {
 
 const STATUS_META: Record<NoteBlock["status"], { label: string; icon: typeof Inbox; cls: string; style?: React.CSSProperties }> = {
   inbox:    { label: "Inbox",        icon: Inbox,        cls: "text-muted-foreground" },
-  proposed: { label: "Awaiting you", icon: Scale,        cls: "", style: { color: "var(--gilt)" } },
-  approved: { label: "Approved",     icon: CheckCircle2, cls: "", style: { color: "var(--green-2)" } },
-  filed:    { label: "Filed",        icon: CheckCircle2, cls: "", style: { color: "var(--green-2)" } },
+  proposed: { label: "Awaiting you", icon: Scale,        cls: "", style: { color: "var(--gd-bronze)" } },
+  approved: { label: "Approved",     icon: CheckCircle2, cls: "", style: { color: "var(--gd-success)" } },
+  filed:    { label: "Filed",        icon: CheckCircle2, cls: "", style: { color: "var(--gd-success)" } },
   rejected: { label: "Dismissed",    icon: XCircle,      cls: "text-muted-foreground/60" },
 };
 
@@ -67,13 +66,12 @@ function proposalOf(b: NoteBlock): { title?: string; categories?: string[]; kind
 }
 
 export default function NotesPage() {
-  useGdDark();
   const qc = useQueryClient();
   const [day, setDay] = useState(todayStr());
   const [draft, setDraft] = useState("");
   const isToday = day === todayStr();
 
-  const { data, isLoading } = useQuery<NotesResponse>({
+  const { data, isLoading, isError, refetch } = useQuery<NotesResponse>({
     queryKey: ["notes", day],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/notes?day=${day}`);
@@ -160,22 +158,14 @@ export default function NotesPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="font-display text-2xl flex items-center gap-2">
-            <NotebookPen className="w-6 h-6" />
-            Commonplace
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Capture through the day. Processed nightly — or now, if you like.
-          </p>
-        </div>
+    <Page
+      eyebrow="Capture through the day. Processed nightly — or now, if you like."
+      title="Commonplace"
+      actions={
         <Button
           variant="outline"
           size="sm"
-          className="gap-1.5"
+          className="gap-1.5 min-h-11"
           onClick={() => processNow.mutate()}
           disabled={processNow.isPending || inboxCount === 0}
         >
@@ -184,8 +174,8 @@ export default function NotesPage() {
             : <Sparkles className="w-3.5 h-3.5" />}
           Process now{inboxCount > 0 ? ` (${inboxCount})` : ""}
         </Button>
-      </div>
-
+      }
+    >
       {/* Capture box */}
       <div className="rounded-xl border border-border bg-card p-3 space-y-2">
         <Textarea
@@ -263,15 +253,19 @@ export default function NotesPage() {
 
       {/* Blocks */}
       {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-        </div>
+        <LoadingState rows={2} label="Loading notes" />
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load notes"
+          detail="Your captured notes failed to load. Check your connection and try again."
+          onRetry={() => refetch()}
+        />
       ) : blocks.length === 0 ? (
-        <div className="text-center py-10 text-sm text-muted-foreground">
-          <Inbox className="w-8 h-8 mx-auto mb-2 opacity-40" />
-          Nothing captured {isToday ? "yet today" : `on ${day}`}.
-        </div>
+        <EmptyState
+          icon={<Inbox />}
+          title={`Nothing captured ${isToday ? "yet today" : `on ${day}`}`}
+          description="Jot a thought in the box above — one idea per note."
+        />
       ) : (
         <div className="space-y-2">
           {blocks.map((b) => {
@@ -284,12 +278,21 @@ export default function NotesPage() {
                 <div className="flex items-start justify-between gap-3">
                   <p className="text-sm whitespace-pre-wrap flex-1 min-w-0">{b.text}</p>
                   {b.status === "inbox" && (
-                    <Button variant="ghost" size="sm"
-                            className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 shrink-0"
-                            onClick={() => remove.mutate(b.id)}
-                            aria-label="Delete note">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                    <ConfirmAction
+                      title="Delete this note?"
+                      consequence="This removes the captured note permanently. This can't be undone."
+                      confirmLabel="Delete"
+                      destructive
+                      onConfirm={() => remove.mutate(b.id)}
+                      trigger={
+                        <Button variant="ghost" size="sm"
+                                className="min-h-11 min-w-11 p-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 shrink-0"
+                                aria-label="Delete note"
+                                data-testid={`button-delete-note-${b.id}`}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      }
+                    />
                   )}
                 </div>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
@@ -332,6 +335,6 @@ export default function NotesPage() {
           </pre>
         </div>
       )}
-    </div>
+    </Page>
   );
 }

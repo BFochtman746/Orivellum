@@ -5,7 +5,6 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -26,8 +25,10 @@ import {
   BookOpen,
   Link2,
   HelpCircle,
+  Inbox,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 
 const API = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -181,27 +182,26 @@ export default function HandoffPage() {
   const work = workQ.data?.work ?? workQ.data;
 
   return (
-    <div className="container mx-auto max-w-5xl px-4 py-6 space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link href={`/works/${workId}`}>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-xl font-semibold">Handoff Contracts</h1>
-          {work && (
-            <p className="text-sm text-muted-foreground">{work.title}</p>
-          )}
-        </div>
-        <div className="ml-auto flex gap-1">
-          <BookOpen className="h-5 w-5 text-muted-foreground" />
-          <ArrowRight className="h-5 w-5 text-muted-foreground" />
-          <BookOpen className="h-5 w-5 text-muted-foreground" />
-        </div>
-      </div>
-
+    <Page
+      wide
+      eyebrow="Handoff Contracts"
+      title={work?.title || "Handoff Contracts"}
+      actions={
+        <>
+          <Link href={`/works/${workId}`}>
+            <Button variant="ghost" size="icon" className="min-h-11 min-w-11">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <span className="flex gap-1" aria-hidden>
+            <BookOpen className="h-5 w-5 text-muted-foreground" />
+            <ArrowRight className="h-5 w-5 text-muted-foreground" />
+            <BookOpen className="h-5 w-5 text-muted-foreground" />
+          </span>
+        </>
+      }
+    >
+      <div className="space-y-4">
       {/* Tab bar */}
       <div className="flex gap-1 border-b">
         {(["package", "contract", "audit"] as const).map((tab) => (
@@ -222,7 +222,8 @@ export default function HandoffPage() {
       {workId && activeTab === "package" && <PackagePanel workId={workId} />}
       {workId && activeTab === "contract" && <ContractPanel workId={workId} />}
       {workId && activeTab === "audit" && <AuditPanel workId={workId} />}
-    </div>
+      </div>
+    </Page>
   );
 }
 
@@ -292,13 +293,13 @@ function PackagePanel({ workId }: { workId: string }) {
         </Button>
       </div>
 
-      {pkgQ.isLoading && <Skeleton className="h-32 w-full" />}
+      {pkgQ.isLoading && <LoadingState rows={3} label="Loading package" />}
       {!pkgQ.isLoading && !pkg && (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground text-sm">
-            No End-State Package yet. Build one from the final chapters.
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<Inbox />}
+          title="No End-State Package yet"
+          description="Build one from the final chapters."
+        />
       )}
 
       {pkg && (
@@ -450,13 +451,13 @@ function ContractPanel({ workId }: { workId: string }) {
         </Button>
       </div>
 
-      {contractQ.isLoading && <Skeleton className="h-32 w-full" />}
+      {contractQ.isLoading && <LoadingState rows={3} label="Loading contract" />}
       {!contractQ.isLoading && !contract && (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground text-sm">
-            No Opening Contract yet. Build one from the opening chapters.
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<Inbox />}
+          title="No Opening Contract yet"
+          description="Build one from the opening chapters."
+        />
       )}
 
       {contract && (
@@ -525,6 +526,13 @@ function AuditPanel({ workId }: { workId: string }) {
       apiFetch(`${API}/handoff-audits?successor_work_id=${workId}&limit=10`).then((r) => r.json()),
   });
 
+  const auditsError = auditsQ.isError || auditsSuccQ.isError;
+  const auditsLoading = auditsQ.isLoading || auditsSuccQ.isLoading;
+  const retryAudits = () => {
+    auditsQ.refetch();
+    auditsSuccQ.refetch();
+  };
+
   const allAudits: Audit[] = [
     ...(auditsQ.data?.audits ?? []),
     ...(auditsSuccQ.data?.audits ?? []),
@@ -558,16 +566,28 @@ function AuditPanel({ workId }: { workId: string }) {
         </Select>
       )}
 
+      {auditsLoading && allAudits.length === 0 && !auditsError && (
+        <LoadingState rows={3} label="Loading audits" />
+      )}
+
+      {auditsError && allAudits.length === 0 && (
+        <ErrorState
+          title="Couldn't load handoff audits"
+          detail="The handoff audits failed to load."
+          onRetry={retryAudits}
+        />
+      )}
+
       {activeAudit && (
         <AuditDetail audit={activeAudit} />
       )}
 
-      {allAudits.length === 0 && !auditsQ.isLoading && (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground text-sm">
-            No handoff audits yet. Visit the Series page to run one.
-          </CardContent>
-        </Card>
+      {allAudits.length === 0 && !auditsLoading && !auditsError && (
+        <EmptyState
+          icon={<Inbox />}
+          title="No handoff audits yet"
+          description="Visit the Series page to run one."
+        />
       )}
     </div>
   );
@@ -636,7 +656,14 @@ function AuditDetail({ audit }: { audit: Audit }) {
       )}
 
       {/* Findings */}
-      {findingsQ.isLoading && <Skeleton className="h-32 w-full" />}
+      {findingsQ.isLoading && <LoadingState rows={3} label="Loading findings" />}
+      {findingsQ.isError && (
+        <ErrorState
+          title="Couldn't load findings"
+          detail="The audit findings failed to load."
+          onRetry={() => findingsQ.refetch()}
+        />
+      )}
       <div className="space-y-2">
         {findings.map((f) => (
           <FindingCard

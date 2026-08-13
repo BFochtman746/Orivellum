@@ -41,7 +41,7 @@ export function DimensionBar({ label, value, color }: { label: string; value: nu
       <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
         <div
           className="h-full rounded-full transition-all"
-          style={{ width: `${(value / 10) * 100}%`, background: color || "var(--gilt)" }}
+          style={{ width: `${(value / 10) * 100}%`, background: color || "var(--gd-bronze)" }}
         />
       </div>
       <span className="text-[10px] font-mono text-muted-foreground w-4 text-right">{value}</span>
@@ -50,12 +50,12 @@ export function DimensionBar({ label, value, color }: { label: string; value: nu
 }
 
 export const DIMENSION_COLORS: Record<string, string> = {
-  warmth:    "var(--gilt)",
-  authority: "var(--green-2)",
-  gravitas:  "var(--rust)",
-  pace:      "var(--green-2)",
-  brightness:"var(--gilt)",
-  age:       "#8A7A6A",
+  warmth:    "var(--gd-bronze)",
+  authority: "var(--gd-primary)",
+  gravitas:  "var(--gd-danger)",
+  pace:      "var(--gd-primary)",
+  brightness:"var(--gd-bronze)",
+  age:       "var(--gd-olive)",
 };
 
 // ── Voice Card ────────────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ export function VoiceCard({
             <span className="font-semibold text-sm leading-tight">{voice.name}</span>
             <span className="text-[11px] text-muted-foreground">{genderIcon}</span>
             {voice.builtin && (
-              <span className="text-[9px] font-mono px-1 py-0.5 rounded" style={{ background: "var(--green-soft)", color: "var(--green-2)" }}>
+              <span className="text-[9px] font-mono px-1 py-0.5 rounded" style={{ background: "var(--gd-primary-soft)", color: "var(--gd-primary)" }}>
                 ✓
               </span>
             )}

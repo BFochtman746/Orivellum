@@ -12,13 +12,13 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
   Network, FileText, ChevronRight, RefreshCw, Loader2,
-  Layers, Search, BookOpen, X,
+  Layers, Search, X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -57,13 +57,13 @@ export default function TopicsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
 
-  const { data, isLoading, refetch } = useQuery<{ topics: Topic[]; total: number }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ topics: Topic[]; total: number }>({
     queryKey: ["topics"],
     queryFn: () => apiFetch(`${BASE}/topics`).then((r) => r.json()),
     staleTime: 60_000,
   });
 
-  const { data: detail, isLoading: detailLoading } = useQuery<TopicDetail>({
+  const { data: detail, isLoading: detailLoading, isError: detailError, refetch: refetchDetail } = useQuery<TopicDetail>({
     queryKey: ["topic", selectedId],
     queryFn: () => apiFetch(`${BASE}/topics/${selectedId}`).then((r) => r.json()),
     enabled: !!selectedId,
@@ -95,34 +95,25 @@ export default function TopicsPage() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300 pb-20">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Network className="w-6 h-6 text-primary" />
-          <div>
-            <span className="eyebrow mb-1">Everything, linked</span>
-            <h1 className="vellum-h1">The Web</h1>
-            <div className="gilt-rule w-24" />
-            <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
-              Concepts and sources — and the edges between them.
-            </p>
-          </div>
-        </div>
+    <Page
+      wide
+      eyebrow="Everything, linked"
+      title="The Web"
+      actions={
         <Button
           size="sm"
           variant="outline"
           onClick={handleRebuild}
           disabled={rebuilding}
-          className="gap-1.5"
+          className="gap-1.5 min-h-11"
         >
           {rebuilding
             ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
             : <RefreshCw className="w-3.5 h-3.5" />}
           Rebuild clusters
         </Button>
-      </div>
-
+      }
+    >
       {/* Stats bar */}
       {data && (
         <div className="flex items-center gap-6 text-sm font-mono text-muted-foreground border-b border-border/40 pb-4">
@@ -149,22 +140,23 @@ export default function TopicsPage() {
           </div>
 
           {isLoading ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-20 w-full" />)}
-            </div>
+            <LoadingState rows={5} label="Loading topics" />
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load topics"
+              detail="The topic clusters failed to load. Check your connection and try again."
+              onRetry={() => refetch()}
+            />
           ) : topics.length === 0 ? (
-            <div className="text-center py-20 bg-muted/10 border border-dashed rounded-lg space-y-3">
-              <Layers className="w-10 h-10 text-muted-foreground mx-auto opacity-40" />
-              <p className="text-muted-foreground font-serif">
-                {search ? "No topics match your search." : "No topic clusters yet."}
-              </p>
-              {!search && (
-                <p className="text-sm text-muted-foreground/60 max-w-xs mx-auto">
-                  Topics are built automatically during the nightly maintenance pass.
-                  Click "Rebuild clusters" to run clustering now.
-                </p>
-              )}
-            </div>
+            <EmptyState
+              icon={<Layers />}
+              title={search ? "No topics match your search" : "No topic clusters yet"}
+              description={
+                search
+                  ? "Try a different search term."
+                  : "Topics are built automatically during the nightly maintenance pass. Use \u201CRebuild clusters\u201D to run clustering now."
+              }
+            />
           ) : (
             <div className="space-y-2">
               {topics.map((topic) => (
@@ -216,7 +208,8 @@ export default function TopicsPage() {
               </h2>
               <button
                 onClick={() => setSelectedId(null)}
-                className="text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                aria-label="Close topic detail"
+                className="inline-flex items-center justify-center min-h-11 min-w-11 -mr-2 text-muted-foreground/60 hover:text-muted-foreground transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -233,7 +226,7 @@ export default function TopicsPage() {
                   <div className="space-y-1">
                     <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Gaps</p>
                     {detail.profile.gaps.slice(0, 3).map((g, i) => (
-                      <p key={i} className="text-[11px]" style={{ color: "var(--gilt)" }}>• {g}</p>
+                      <p key={i} className="text-[11px]" style={{ color: "var(--gd-bronze)" }}>• {g}</p>
                     ))}
                   </div>
                 )}
@@ -242,11 +235,19 @@ export default function TopicsPage() {
 
             {/* Documents */}
             {detailLoading ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
-              </div>
+              <LoadingState rows={3} label="Loading topic documents" />
+            ) : detailError ? (
+              <ErrorState
+                title="Couldn't load this topic"
+                detail="The topic details failed to load. Try again."
+                onRetry={() => refetchDetail()}
+              />
             ) : detail?.documents.length === 0 ? (
-              <p className="text-sm text-muted-foreground italic">No documents in this topic.</p>
+              <EmptyState
+                icon={<FileText />}
+                title="No documents in this topic"
+                description="Documents assigned to this cluster will appear here."
+              />
             ) : (
               <div className="space-y-2">
                 <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">
@@ -282,6 +283,6 @@ export default function TopicsPage() {
           </div>
         )}
       </div>
-    </div>
+    </Page>
   );
 }

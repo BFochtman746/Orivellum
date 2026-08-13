@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Target, BookOpen, TrendingUp, Network } from "lucide-react";
 import { format } from "date-fns";
+import { EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -31,12 +32,12 @@ function masteryLabel(m: number): string {
   return "Not started";
 }
 
-// Five distinct mastery tiers — kept visually distinct across the VELLUM palette.
+// Five distinct mastery tiers — kept visually distinct across the GD token palette.
 function masteryColor(m: number): { cls: string; style?: React.CSSProperties } {
-  if (m >= 0.9) return { cls: "", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } };
-  if (m >= 0.7) return { cls: "", style: { color: "var(--green-raw)", background: "color-mix(in srgb, var(--green-raw) 10%, transparent)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)" } };
-  if (m >= 0.4) return { cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } };
-  if (m > 0) return { cls: "", style: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } };
+  if (m >= 0.9) return { cls: "", style: { color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "var(--gd-success)" } };
+  if (m >= 0.7) return { cls: "", style: { color: "var(--gd-primary)", background: "var(--gd-primary-soft)", borderColor: "var(--gd-primary)" } };
+  if (m >= 0.4) return { cls: "", style: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "var(--gd-bronze)" } };
+  if (m > 0) return { cls: "", style: { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "var(--gd-danger)" } };
   return { cls: "text-muted-foreground bg-muted border-border" };
 }
 
@@ -44,11 +45,11 @@ export default function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
   const [, navigate] = useLocation();
 
-  const { data: projData, isLoading: projLoading } = useGetProject(projectId ?? "", {
+  const { data: projData, isLoading: projLoading, isError: projError, refetch: refetchProj } = useGetProject(projectId ?? "", {
     query: { queryKey: getGetProjectQueryKey(projectId ?? ""), enabled: !!projectId },
   });
 
-  const { data: conceptsData, isLoading: conceptsLoading } = useQuery<{ concepts: Concept[] }>({
+  const { data: conceptsData, isLoading: conceptsLoading, isError: conceptsErr, refetch: refetchConcepts } = useQuery<{ concepts: Concept[] }>({
     queryKey: ["project-concepts", projectId],
     queryFn: () => apiFetch(`${BASE}/projects/${projectId}/concepts`).then((r) => r.json()),
     enabled: !!projectId,
@@ -67,18 +68,36 @@ export default function ProjectDetail() {
       <div className="space-y-4 max-w-4xl animate-in fade-in duration-500">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-4 w-48" />
-        <Skeleton className="h-48 w-full" />
+        <LoadingState rows={3} label="Loading project" />
+      </div>
+    );
+  }
+
+  if (projError) {
+    return (
+      <div className="max-w-4xl">
+        <ErrorState
+          title="Couldn't load this project"
+          detail="The project failed to load. Check your connection and try again."
+          onRetry={() => refetchProj()}
+        />
       </div>
     );
   }
 
   if (!project) {
     return (
-      <div className="text-center py-20">
-        <p className="text-muted-foreground">Project not found.</p>
-        <Button variant="ghost" className="mt-4 gap-2" onClick={() => navigate("/projects")}>
-          <ArrowLeft className="w-4 h-4" /> Back to Projects
-        </Button>
+      <div className="max-w-4xl">
+        <EmptyState
+          icon={<Target />}
+          title="Project not found"
+          description="This project may have been removed or the link is out of date."
+          action={
+            <Button variant="outline" className="gap-2" onClick={() => navigate("/projects")}>
+              <ArrowLeft className="w-4 h-4" /> Back to Projects
+            </Button>
+          }
+        />
       </div>
     );
   }
@@ -143,14 +162,19 @@ export default function ProjectDetail() {
         </div>
 
         {conceptsLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => <Skeleton key={i} className="h-24 w-full" />)}
-          </div>
+          <LoadingState rows={3} label="Loading concepts" />
+        ) : conceptsErr ? (
+          <ErrorState
+            title="Couldn't load concepts"
+            detail="The concept list failed to load. Try again."
+            onRetry={() => refetchConcepts()}
+          />
         ) : concepts.length === 0 ? (
-          <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
-            <Target className="w-8 h-8 mx-auto mb-3 opacity-20" />
-            <p className="text-muted-foreground">No concepts defined yet.</p>
-          </div>
+          <EmptyState
+            icon={<Target />}
+            title="No concepts defined yet"
+            description="Concepts will appear here as this project's knowledge is broken into study units."
+          />
         ) : (
           <div className="grid gap-3">
             {concepts.map((c) => (
@@ -159,7 +183,7 @@ export default function ProjectDetail() {
                   <div className="flex items-start gap-4">
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-medium">{c.name}</h3>
+                        <h3 className="font-medium truncate max-w-full">{c.name}</h3>
                         {(() => { const mc = masteryColor(c.mastery); return (
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${mc.cls}`} style={mc.style}>
                           {masteryLabel(c.mastery)}

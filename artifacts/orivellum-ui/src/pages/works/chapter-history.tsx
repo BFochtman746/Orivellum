@@ -146,11 +146,11 @@ function DiffView({ oldText, newText }: { oldText: string; newText: string }) {
           o.op === "same" ? (
             <span key={idx}>{o.text} </span>
           ) : o.op === "del" ? (
-            <span key={idx} className="line-through decoration-2" style={{ color: "var(--rust)", background: "var(--rust-soft)" }}>
+            <span key={idx} className="line-through decoration-2" style={{ color: "var(--gd-danger)", background: "var(--gd-danger-soft)" }}>
               {o.text}{" "}
             </span>
           ) : (
-            <span key={idx} style={{ color: "var(--moss, #3f6b3f)", background: "color-mix(in srgb, var(--moss, #3f6b3f) 12%, transparent)" }}>
+            <span key={idx} style={{ color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)" }}>
               {o.text}{" "}
             </span>
           ),
@@ -219,7 +219,7 @@ export function ChapterBandDialog({
             <Scissors className="w-4 h-4 text-primary" />
             {data?.title || "Chapter"}
             {data?.status === "approved" && (
-              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded border" style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded border" style={{ color: "var(--gd-caution)", borderColor: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}>
                 approved
               </span>
             )}
@@ -312,7 +312,7 @@ function RippleSummary({ chapterId }: { chapterId: string }) {
         className="w-full flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground"
         onClick={() => setOpen((o) => !o)}
       >
-        <Waves className="w-3.5 h-3.5" style={{ color: "var(--gilt, #b8952e)" }} />
+        <Waves className="w-3.5 h-3.5" style={{ color: "var(--gd-caution)" }} />
         Blast radius
         <span className="normal-case tracking-normal font-sans text-[11px] text-foreground/80 ml-1">
           {empty
@@ -478,14 +478,14 @@ function EditPanel({ data, onDone }: { data: ChapterOverview; onDone: () => void
       </div>
       {needsAuthor && (
         <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-          <AlertTriangle className="w-3 h-3" style={{ color: "var(--gilt)" }} />
+          <AlertTriangle className="w-3 h-3" style={{ color: "var(--gd-caution)" }} />
           This chapter is approved — editing it requires your signature and returns it to drafted.
         </div>
       )}
 
       {refusal && (
-        <div className="border rounded-lg p-3 space-y-2" style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", background: "var(--rust-soft)" }}>
-          <div className="text-xs font-mono uppercase tracking-widest flex items-center gap-1.5" style={{ color: "var(--rust)" }}>
+        <div className="border rounded-lg p-3 space-y-2" style={{ borderColor: "color-mix(in srgb, var(--gd-danger) 40%, transparent)", background: "var(--gd-danger-soft)" }}>
+          <div className="text-xs font-mono uppercase tracking-widest flex items-center gap-1.5" style={{ color: "var(--gd-danger)" }}>
             <AlertTriangle className="w-3.5 h-3.5" /> Edit refused — regressions detected
           </div>
           <ul className="text-sm font-serif list-disc pl-5 space-y-0.5">
@@ -587,7 +587,7 @@ function HistoryPanel({ data, onDone }: { data: ChapterOverview; onDone: () => v
                   {r.edit_scope?.instruction ? ` — “${r.edit_scope.instruction.slice(0, 60)}${r.edit_scope.instruction.length > 60 ? "…" : ""}”` : ""}
                 </span>
                 {r.meta?.accepted_regression && (
-                  <span className="text-[9px] font-mono uppercase px-1 py-0.5 rounded border shrink-0" style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)" }}>
+                  <span className="text-[9px] font-mono uppercase px-1 py-0.5 rounded border shrink-0" style={{ color: "var(--gd-caution)", borderColor: "var(--gd-caution)" }}>
                     accepted regression
                   </span>
                 )}

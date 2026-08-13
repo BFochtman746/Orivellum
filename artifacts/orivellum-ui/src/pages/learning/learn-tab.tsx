@@ -15,6 +15,7 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { toast } from "sonner";
+import { ErrorState, LoadingState, ConfirmAction } from "@/components/primitives";
 import {
   AlertCircle,
   AlertTriangle,
@@ -397,7 +398,7 @@ function VelocitySparkline({ weeks }: { weeks: { week: string; graduated: number
 }
 
 function AnalyticsPanel({ workId }: { workId: string }) {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["learnAnalytics", workId],
     queryFn: () =>
       apiFetch(`${LEARN_API_BASE}/works/${workId}/learning/analytics`)
@@ -406,16 +407,19 @@ function AnalyticsPanel({ workId }: { workId: string }) {
     refetchInterval: 120_000,
   });
 
-  if (isLoading) return (
-    <div className="flex items-center justify-center py-16 gap-3 text-sm"
-      style={{ fontFamily: "var(--gd-data)", color: "var(--gd-muted)" }}>
-      <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> Loading analytics…
-    </div>
+  if (isLoading) return <LoadingState rows={4} label="Loading analytics" />;
+
+  if (isError) return (
+    <ErrorState
+      title="Couldn't load analytics"
+      detail="Your study analytics failed to load. Try again."
+      onRetry={() => refetch()}
+    />
   );
 
-  if (error || !data) return (
+  if (!data) return (
     <div className="py-8 text-center text-sm" style={{ fontFamily: "var(--gd-data)", color: "var(--gd-muted)" }}>
-      Could not load analytics — study a few concepts first.
+      No analytics yet — study a few concepts first.
     </div>
   );
 
@@ -763,6 +767,7 @@ export function LearnTab({ workId }: { workId: string }) {
   const [showConcepts, setShowConcepts] = useState(false);
   const [concepts, setConcepts] = useState<any[]>([]);
   const [resettingConcept, setResettingConcept] = useState<string | null>(null);
+  const [resetTarget, setResetTarget] = useState<{ id: string; subject: string } | null>(null);
   const [learnSection, setLearnSection] = useState<"study" | "analytics">("study");
   const [interleavedMode, setInterleavedMode] = useState(false);
   const [interleavedHistory, setInterleavedHistory] = useState<{concept_id: string; subject: string; score: number}[]>([]);
@@ -986,8 +991,7 @@ export function LearnTab({ workId }: { workId: string }) {
     }
   };
 
-  const resetConcept = async (conceptId: string, subject: string) => {
-    if (!confirm(`Reset the mastery streak for "${subject}"? It will re-enter the study queue.`)) return;
+  const resetConcept = async (conceptId: string) => {
     setResettingConcept(conceptId);
     try {
       const r = await apiFetch(`${apiBase}/works/${workId}/learning/concepts/${conceptId}/reset`, { method: "POST" });
@@ -1827,10 +1831,12 @@ export function LearnTab({ workId }: { workId: string }) {
                       )}
                       {hasProgress && (
                         <button
-                          onClick={() => resetConcept(c.id, c.subject)}
+                          onClick={() => setResetTarget({ id: c.id, subject: c.subject })}
                           disabled={isResetting}
                           title="Reset streak — re-enter study queue"
-                          className="opacity-0 group-hover:opacity-60 hover:!opacity-100 focus-visible:opacity-100 p-1 rounded transition-all"
+                          aria-label={`Reset streak for ${c.subject}`}
+                          data-testid={`button-reset-concept-${c.id}`}
+                          className="opacity-0 group-hover:opacity-60 hover:!opacity-100 focus-visible:opacity-100 min-h-9 min-w-9 inline-flex items-center justify-center rounded transition-all"
                           style={{ color: "var(--gd-muted)" }}
                         >
                           {isResetting
@@ -1903,6 +1909,24 @@ export function LearnTab({ workId }: { workId: string }) {
           )}
         </div>
       )}
+
+      {/* Reset-streak confirmation — single controlled dialog for the whole concept map */}
+      <ConfirmAction
+        open={resetTarget !== null}
+        onOpenChange={(o) => { if (!o) setResetTarget(null); }}
+        title="Reset mastery streak?"
+        consequence={
+          resetTarget
+            ? `"${resetTarget.subject}" will re-enter the study queue and its progress will be cleared. This can't be undone.`
+            : ""
+        }
+        confirmLabel="Reset streak"
+        destructive
+        onConfirm={() => {
+          if (resetTarget) void resetConcept(resetTarget.id);
+          setResetTarget(null);
+        }}
+      />
     </div>
   );
 }

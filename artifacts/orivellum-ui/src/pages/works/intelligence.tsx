@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import {
   ArrowLeft, BarChart2, AlertTriangle, Lightbulb, CheckCircle2,
   RefreshCw, ChevronDown, ChevronRight, Layers, Brain,
@@ -103,18 +104,18 @@ interface PipelineData {
 // ── Colour helpers ─────────────────────────────────────────────────────────────
 
 function scoreColor(score: number): string {
-  if (score >= 80) return "var(--green-2)";
-  if (score >= 50) return "var(--gilt)";
-  return "var(--rust)";
+  if (score >= 80) return "var(--gd-success)";
+  if (score >= 50) return "var(--gd-caution)";
+  return "var(--gd-danger)";
 }
 
 const GAP_ROW: Record<string, React.CSSProperties> = {
-  high:   { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
-  medium: { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
-  low:    { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
+  high:   { borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)" },
+  medium: { borderColor: "var(--gd-caution)", background: "var(--gd-caution-soft)" },
+  low:    { borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)" },
 };
 const GAP_DOT: Record<string, string> = {
-  high: "var(--rust)", medium: "var(--gilt)", low: "var(--green-2)",
+  high: "var(--gd-danger)", medium: "var(--gd-caution)", low: "var(--gd-success)",
 };
 
 // ── Stages with AI workers ────────────────────────────────────────────────────
@@ -151,13 +152,13 @@ export default function WorkIntelligence() {
     enabled: !!workId, staleTime: 60_000,
   });
 
-  const { data: compl, isLoading: complLoading, refetch: refetchCompl } = useQuery<ComplReport>({
+  const { data: compl, isLoading: complLoading, isError: complError, refetch: refetchCompl } = useQuery<ComplReport>({
     queryKey: ["work-completeness", workId],
     queryFn: () => apiFetch(`${BASE}/works/${workId}/completeness`).then((r) => r.json()),
     enabled: !!workId, staleTime: 120_000,
   });
 
-  const { data: gaps, isLoading: gapsLoading, refetch: refetchGaps } = useQuery<GapReport>({
+  const { data: gaps, isLoading: gapsLoading, isError: gapsError, refetch: refetchGaps } = useQuery<GapReport>({
     queryKey: ["work-gaps", workId],
     queryFn: () => apiFetch(`${BASE}/works/${workId}/gaps`).then((r) => r.json()),
     enabled: !!workId, staleTime: 120_000,
@@ -267,31 +268,28 @@ export default function WorkIntelligence() {
     navigate(`${WORKS_BASE}/${workId}?tab=book`);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl">
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={() => navigate(`${WORKS_BASE}/${workId}`)} className="-ml-2">
-          <ArrowLeft className="w-4 h-4 mr-1.5" /> {title}
-        </Button>
-        <Button variant="outline" size="sm"
-          onClick={() => { refetchCompl(); refetchGaps(); }}
-          disabled={!allReady}>
-          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh all
-        </Button>
-      </div>
-
-      <div className="border-b border-border/50 pb-3">
-        <div className="flex items-center gap-3">
-          <Brain className="w-6 h-6 text-primary" />
-          <div>
-            <h1 className="text-2xl font-serif font-semibold tracking-tight">{title}</h1>
-            <p className="text-muted-foreground text-sm font-serif mt-0.5">
-              Knowledge Intelligence — what you have, what it means, what's missing, what's next.
-            </p>
-          </div>
-        </div>
-      </div>
+    <Page
+      wide
+      eyebrow="Knowledge Intelligence"
+      title={title}
+      actions={
+        <>
+          <Button variant="ghost" size="sm" className="min-h-11" onClick={() => navigate(`${WORKS_BASE}/${workId}`)}>
+            <ArrowLeft className="w-4 h-4 mr-1.5" /> Work
+          </Button>
+          <Button variant="outline" size="sm" className="min-h-11"
+            onClick={() => { refetchCompl(); refetchGaps(); }}
+            disabled={!allReady}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh all
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-6 animate-in fade-in duration-300">
+      <p className="flex items-center gap-2 text-muted-foreground text-sm">
+        <Brain className="w-4 h-4 text-primary shrink-0" />
+        What you have, what it means, what's missing, what's next.
+      </p>
 
       {/* ── Completeness + gaps metrics ───────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -303,10 +301,10 @@ export default function WorkIntelligence() {
           color={
             compl
               ? predicatesMet === predicatesTotal
-                ? "var(--green-2)"
+                ? "var(--gd-success)"
                 : predicatesMet > 0
-                  ? "var(--gilt)"
-                  : "var(--rust)"
+                  ? "var(--gd-caution)"
+                  : "var(--gd-danger)"
               : "text-muted-foreground"
           }
         />
@@ -334,7 +332,7 @@ export default function WorkIntelligence() {
           value={totalGaps ? String(totalGaps) : (gaps ? "0" : "—")}
           sub={totalGaps > 0 ? `${highGaps.length} high · ${medGaps.length} med` : "none detected"}
           loading={gapsLoading}
-          color={totalGaps > 0 ? "var(--rust)" : (gaps ? "var(--green-2)" : "text-muted-foreground")}
+          color={totalGaps > 0 ? "var(--gd-danger)" : (gaps ? "var(--gd-success)" : "text-muted-foreground")}
         />
         <MetricCard
           label="Chapters"
@@ -379,7 +377,7 @@ export default function WorkIntelligence() {
             label="Tasks"
             value={String(statsData.pending_task_count)}
             sub="pending"
-            color={statsData.pending_task_count > 0 ? "var(--gilt)" : "text-muted-foreground"}
+            color={statsData.pending_task_count > 0 ? "var(--gd-caution)" : "text-muted-foreground"}
           />
           <MetricCard
             label="Chats"
@@ -410,8 +408,8 @@ export default function WorkIntelligence() {
 
       {/* ── Low research coverage CTA ─────────────────────────────────────────── */}
       {researchLow && (
-        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg border" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
-          <div className="flex items-center gap-2 text-sm" style={{ color: "var(--gilt)" }}>
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg border" style={{ borderColor: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}>
+          <div className="flex items-center gap-2 text-sm" style={{ color: "var(--gd-caution)" }}>
             <TrendingUp className="w-4 h-4 shrink-0" />
             <span>
               Only {reviewedCount?.total ?? 0} knowledge item{(reviewedCount?.total ?? 0) === 1 ? "" : "s"} extracted so far.
@@ -420,7 +418,7 @@ export default function WorkIntelligence() {
           </div>
           <Button size="sm" variant="outline"
             className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
-            style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+            style={{ borderColor: "var(--gd-caution)", color: "var(--gd-caution)" }}
             onClick={() => navigate(`${LIB}?import=1`)}>
             <UploadCloud className="w-3 h-3" />
             Import sources
@@ -433,7 +431,13 @@ export default function WorkIntelligence() {
         open={open.has("completeness")} onToggle={() => toggle("completeness")}
         badge={compl ? `${predicatesMet}/${predicatesTotal}` : undefined}>
         {complLoading ? (
-          <div className="space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-10 w-full" />)}</div>
+          <LoadingState rows={5} label="Loading completeness" />
+        ) : complError ? (
+          <ErrorState
+            title="Couldn't load completeness"
+            detail="The completeness report failed to load."
+            onRetry={() => refetchCompl()}
+          />
         ) : compl ? (
           <div className="space-y-4">
             {/* Predicates — true/false facts, never percentages */}
@@ -441,13 +445,13 @@ export default function WorkIntelligence() {
               {compl.predicates.map((p) => (
                 <div key={p.name} className="flex items-start gap-2.5 text-sm">
                   {p.value ? (
-                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green-2)" }} />
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--gd-success)" }} />
                   ) : (
-                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--rust)" }} />
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--gd-danger)" }} />
                   )}
                   <div className="min-w-0">
                     <span className="font-medium">{p.label}</span>
-                    <span className="ml-2 text-[11px] font-mono" style={{ color: p.value ? "var(--green-2)" : "var(--rust)" }}>
+                    <span className="ml-2 text-[11px] font-mono" style={{ color: p.value ? "var(--gd-success)" : "var(--gd-danger)" }}>
                       {p.value ? "yes" : "no"}
                     </span>
                     <p className="text-[10px] font-mono text-muted-foreground/70">{p.detail}</p>
@@ -469,7 +473,7 @@ export default function WorkIntelligence() {
               {researchLow && (
                 <button
                   className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80"
-                  style={{ color: "var(--gilt)" }}
+                  style={{ color: "var(--gd-caution)" }}
                   onClick={() => navigate(`${LIB}?import=1`)}
                 >
                   <UploadCloud className="w-3 h-3" />
@@ -499,7 +503,11 @@ export default function WorkIntelligence() {
             )}
           </div>
         ) : (
-          <Empty text="No completeness data yet — extract documents first." />
+          <EmptyState
+            icon={<BarChart2 />}
+            title="No completeness data yet"
+            description="Extract documents first to evaluate readiness."
+          />
         )}
       </Section>
 
@@ -509,7 +517,13 @@ export default function WorkIntelligence() {
         badge={totalGaps ? String(totalGaps) : undefined}
         badgeVariant="destructive">
         {gapsLoading ? (
-          <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-14 w-full" />)}</div>
+          <LoadingState rows={3} label="Loading research gaps" />
+        ) : gapsError ? (
+          <ErrorState
+            title="Couldn't load gap analysis"
+            detail="The gap report failed to load."
+            onRetry={() => refetchGaps()}
+          />
         ) : totalGaps > 0 ? (
           <div className="space-y-5">
             {[
@@ -548,7 +562,7 @@ export default function WorkIntelligence() {
                         </button>
                         <button
                           className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80 whitespace-nowrap"
-                          style={{ color: "var(--gilt)" }}
+                          style={{ color: "var(--gd-caution)" }}
                           onClick={() => goBrainstorm(g.title)}
                           title={`Brainstorm approaches for: ${g.title}`}
                         >
@@ -556,7 +570,7 @@ export default function WorkIntelligence() {
                           Brainstorm approaches
                         </button>
                         {trackedGaps.has(g.title) ? (
-                          <span className="flex items-center gap-1 text-[10px] font-mono whitespace-nowrap" style={{ color: "var(--green-2)" }}>
+                          <span className="flex items-center gap-1 text-[10px] font-mono whitespace-nowrap" style={{ color: "var(--gd-success)" }}>
                             <CheckSquare className="w-3 h-3" />
                             Task created
                           </span>
@@ -581,12 +595,16 @@ export default function WorkIntelligence() {
             ))}
           </div>
         ) : gaps ? (
-          <div className="flex items-center gap-2 text-sm py-4" style={{ color: "var(--green-2)" }}>
+          <div className="flex items-center gap-2 text-sm py-4" style={{ color: "var(--gd-success)" }}>
             <CheckCircle2 className="w-4 h-4" />
             No research gaps detected — all chapters have sufficient coverage.
           </div>
         ) : (
-          <Empty text="No gap analysis yet — extract documents first." />
+          <EmptyState
+            icon={<AlertTriangle />}
+            title="No gap analysis yet"
+            description="Extract documents first to analyze research gaps."
+          />
         )}
       </Section>
 
@@ -665,10 +683,10 @@ export default function WorkIntelligence() {
                 {item.confidence != null && (() => {
                   const pct = item.confidence * 100;
                   const tier: { label: string; style: React.CSSProperties } = pct >= 80
-                    ? { label: 'High', style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } }
+                    ? { label: 'High', style: { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" } }
                     : pct >= 50
-                    ? { label: 'Med', style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } }
-                    : { label: 'Low', style: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } };
+                    ? { label: 'Med', style: { color: "var(--gd-caution)", background: "var(--gd-caution-soft)", borderColor: "var(--gd-caution)" } }
+                    : { label: 'Low', style: { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" } };
                   return (
                     <span
                       className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0 mt-0.5"
@@ -699,7 +717,8 @@ export default function WorkIntelligence() {
           Full Work detail →
         </Button>
       </div>
-    </div>
+      </div>
+    </Page>
   );
 }
 
@@ -712,12 +731,12 @@ export default function WorkIntelligence() {
 // pairs a token colour with a matching soft background + border so every kind
 // stays visually distinct even though VELLUM has fewer hues than the original.
 const KIND_COLOR: Record<string, React.CSSProperties> = {
-  character:     { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
-  event:         { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", borderColor: "color-mix(in srgb, color-mix(in srgb, var(--gilt) 55%, var(--rust)) 28%, transparent)", background: "color-mix(in srgb, color-mix(in srgb, var(--gilt) 55%, var(--rust)) 12%, transparent)" },
-  setting:       { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
-  relationship:  { color: "var(--green-raw)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)", background: "color-mix(in srgb, var(--green-raw) 12%, transparent)" },
-  theme:         { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
-  foreshadowing: { color: "color-mix(in srgb, var(--rust) 55%, var(--gilt))", borderColor: "color-mix(in srgb, color-mix(in srgb, var(--rust) 55%, var(--gilt)) 28%, transparent)", background: "color-mix(in srgb, color-mix(in srgb, var(--rust) 55%, var(--gilt)) 12%, transparent)" },
+  character:     { color: "var(--gd-bronze)", borderColor: "color-mix(in srgb, var(--gd-bronze) 28%, transparent)", background: "var(--gd-bronze-soft)" },
+  event:         { color: "var(--gd-caution)", borderColor: "color-mix(in srgb, var(--gd-caution) 28%, transparent)", background: "var(--gd-caution-soft)" },
+  setting:       { color: "var(--gd-sonar)", borderColor: "color-mix(in srgb, var(--gd-sonar) 28%, transparent)", background: "var(--gd-sonar-soft)" },
+  relationship:  { color: "var(--gd-olive)", borderColor: "color-mix(in srgb, var(--gd-olive) 28%, transparent)", background: "var(--gd-olive-soft)" },
+  theme:         { color: "var(--gd-danger)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)" },
+  foreshadowing: { color: "var(--gd-violet)", borderColor: "color-mix(in srgb, var(--gd-violet) 28%, transparent)", background: "color-mix(in srgb, var(--gd-violet) 12%, transparent)" },
 };
 
 function ChapterKnowledgePanel({ workId, chapterId, baseApiUrl }: {
@@ -742,7 +761,7 @@ function ChapterKnowledgePanel({ workId, chapterId, baseApiUrl }: {
   }
   if (isError || !data) {
     return (
-      <p className="pl-7 pt-1 text-[11px] font-mono" style={{ color: "var(--rust)" }}>
+      <p className="pl-7 pt-1 text-[11px] font-mono" style={{ color: "var(--gd-danger)" }}>
         Could not load chapter knowledge.
       </p>
     );
@@ -856,7 +875,7 @@ function ChapterList({
               {missingChapters.length > 0 && (
                 <button
                   className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80 shrink-0"
-                  style={{ color: "var(--gilt)" }}
+                  style={{ color: "var(--gd-caution)" }}
                   onClick={() => onNavigate(`${libBase}/${docGroup.doc_id}`)}
                   title={`${missingChapters.length} missing chapter${missingChapters.length !== 1 ? "s" : ""} — view document in Library`}
                 >
@@ -884,7 +903,7 @@ function ChapterList({
                         ${isMissing ? "" : "text-muted-foreground"}
                         ${hasKnowledge ? "hover:bg-muted/30 cursor-pointer" : ""}
                         ${ch.id === highlightedId ? "chapter-highlight" : ""}`}
-                      style={isMissing ? { color: "color-mix(in srgb, var(--rust) 80%, transparent)" } : undefined}
+                      style={isMissing ? { color: "color-mix(in srgb, var(--gd-danger) 80%, transparent)" } : undefined}
                       onClick={hasKnowledge ? () => toggleChapter(ch.id) : undefined}
                       title={hasKnowledge ? (isExpanded ? "Collapse knowledge" : `Show ${ch.knowledge_count} knowledge items`) : undefined}
                     >
@@ -905,7 +924,7 @@ function ChapterList({
                       </span>
 
                       {isMissing && (
-                        <span className="text-[9px] font-mono uppercase px-1 rounded shrink-0" style={{ color: "var(--rust)", background: "var(--rust-soft)" }}>
+                        <span className="text-[9px] font-mono uppercase px-1 rounded shrink-0" style={{ color: "var(--gd-danger)", background: "var(--gd-danger-soft)" }}>
                           missing
                         </span>
                       )}
@@ -958,7 +977,7 @@ function PipelineBanner({
 
   if (isTerminal) {
     return (
-      <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border text-xs" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)", color: "var(--green-2)" }}>
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border text-xs" style={{ borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", color: "var(--gd-success)" }}>
         <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
         <span className="font-medium">Pipeline complete</span>
         <span className="opacity-70">— this Work has reached B17 (Published).</span>
@@ -971,8 +990,8 @@ function PipelineBanner({
 
   if (readyToAdvance && nextLabel) {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
-        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--green-2)" }}>
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)" }}>
+        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--gd-success)" }}>
           <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
           <span>
             <span className="font-medium">Ready to advance</span>
@@ -981,7 +1000,7 @@ function PipelineBanner({
         </div>
         <Button size="sm" variant="outline"
           className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
-          style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)" }}
+          style={{ borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", color: "var(--gd-success)" }}
           onClick={onGoBook}>
           Advance to {nextLabel} <ArrowRight className="w-3 h-3" />
         </Button>
@@ -992,8 +1011,8 @@ function PipelineBanner({
   if (hasBlockers) {
     const high = (pipeline.open_findings ?? []).filter(f => f.severity === "high" || f.severity === "critical");
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}>
-        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--rust)" }}>
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)" }}>
+        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--gd-danger)" }}>
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
           <span>
             <span className="font-mono">{pipeline.status}</span> {stageLabel} has{" "}
@@ -1003,7 +1022,7 @@ function PipelineBanner({
         </div>
         <Button size="sm" variant="outline"
           className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
-          style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", color: "var(--rust)" }}
+          style={{ borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", color: "var(--gd-danger)" }}
           onClick={onGoBook}>
           Resolve in Book tab <ExternalLink className="w-3 h-3" />
         </Button>
@@ -1013,8 +1032,8 @@ function PipelineBanner({
 
   if (needsArtifact) {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
-        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--gilt)" }}>
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border" style={{ borderColor: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}>
+        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--gd-caution)" }}>
           <Zap className="w-3.5 h-3.5 shrink-0" />
           <span>
             Stage <span className="font-mono">{pipeline.status}</span> ({stageLabel}) needs its AI work run before you can advance.
@@ -1022,7 +1041,7 @@ function PipelineBanner({
         </div>
         <Button size="sm" variant="outline"
           className="gap-1.5 h-7 text-xs shrink-0 hover:opacity-80"
-          style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+          style={{ borderColor: "var(--gd-caution)", color: "var(--gd-caution)" }}
           onClick={onGoBook}>
           Run stage work <ArrowRight className="w-3 h-3" />
         </Button>
@@ -1103,10 +1122,6 @@ function Section({
   );
 }
 
-function Empty({ text }: { text: string }) {
-  return <p className="text-sm text-muted-foreground py-4 text-center">{text}</p>;
-}
-
 // ── Continuity Findings (ConStory) ────────────────────────────────────────────
 
 interface NarrativeFinding {
@@ -1129,10 +1144,10 @@ interface ConstoryRun {
 }
 
 const SEV_STYLE: Record<string, React.CSSProperties> = {
-  critical: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 45%, transparent)" },
-  high:     { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" },
-  medium:   { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
-  low:      { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" },
+  critical: { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 45%, transparent)" },
+  high:     { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" },
+  medium:   { color: "var(--gd-caution)", background: "var(--gd-caution-soft)", borderColor: "var(--gd-caution)" },
+  low:      { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" },
 };
 const DISPOSITION_LABEL: Record<string, string> = {
   open: "Open", fixed: "Fixed", intentional: "Intentional", wontfix: "Won't fix",
@@ -1166,7 +1181,7 @@ function FindingsSection({ workId, open, onToggle }: {
     prevRunning.current = running;
   }, [running, run, queryClient, workId]);
 
-  const { data: findingsData, isLoading } = useQuery<{ findings: NarrativeFinding[] }>({
+  const { data: findingsData, isLoading, isError, refetch: refetchFindings } = useQuery<{ findings: NarrativeFinding[] }>({
     queryKey: ["narrative-findings", workId],
     queryFn: () => apiFetch(`${BASE}/works/${workId}/findings`).then((r) => r.json()),
     staleTime: 60_000,
@@ -1269,12 +1284,25 @@ function FindingsSection({ workId, open, onToggle }: {
       </div>
 
       {isLoading ? (
-        <div className="space-y-2">{[1, 2].map((i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
+        <LoadingState rows={2} label="Loading continuity findings" />
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load findings"
+          detail="The continuity findings failed to load."
+          onRetry={() => refetchFindings()}
+        />
       ) : shown.length === 0 ? (
         all.length === 0 ? (
-          <Empty text='No contradictions recorded yet — press "Run check" to scan every chapter against all earlier chapters and canon.' />
+          <EmptyState
+            icon={<ScanSearch />}
+            title="No contradictions recorded yet"
+            description='Press "Run check" to scan every chapter against all earlier chapters and canon.'
+          />
         ) : (
-          <Empty text={`No ${filter === "all" ? "" : DISPOSITION_LABEL[filter].toLowerCase() + " "}findings.`} />
+          <EmptyState
+            icon={<ScanSearch />}
+            title={`No ${filter === "all" ? "" : DISPOSITION_LABEL[filter].toLowerCase() + " "}findings.`}
+          />
         )
       ) : (
         <div className="space-y-3">
@@ -1309,7 +1337,7 @@ function FindingsSection({ workId, open, onToggle }: {
                   <span className="italic">“{f.fact_quote}”</span>
                 </p>
                 <p className="leading-snug">
-                  <span className="text-[10px] font-mono mr-1.5" style={{ color: "var(--rust)" }}>
+                  <span className="text-[10px] font-mono mr-1.5" style={{ color: "var(--gd-danger)" }}>
                     ch {f.contradiction_chapter} @{f.contradiction_offset}
                   </span>
                   <span className="italic">“{f.contradiction_quote}”</span>
@@ -1319,7 +1347,7 @@ function FindingsSection({ workId, open, onToggle }: {
                 <p className="text-[11px] text-muted-foreground mt-1.5">{f.reasoning}</p>
               )}
               {f.disposition === "intentional" && f.disposition_note && (
-                <p className="text-[11px] font-mono mt-1.5" style={{ color: "var(--gilt)" }}>
+                <p className="text-[11px] font-mono mt-1.5" style={{ color: "var(--gd-caution)" }}>
                   note: {f.disposition_note}
                 </p>
               )}
@@ -1330,14 +1358,14 @@ function FindingsSection({ workId, open, onToggle }: {
                   <>
                     <button
                       className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80"
-                      style={{ color: "var(--green-2)" }}
+                      style={{ color: "var(--gd-success)" }}
                       disabled={dispositionMutation.isPending}
                       onClick={() => dispositionMutation.mutate({ id: f.id, disposition: "fixed" })}>
                       <Check className="w-3 h-3" /> Fixed
                     </button>
                     <button
                       className="flex items-center gap-1 text-[10px] font-mono transition-opacity hover:opacity-80"
-                      style={{ color: "var(--gilt)" }}
+                      style={{ color: "var(--gd-caution)" }}
                       disabled={dispositionMutation.isPending}
                       onClick={() => { setNoteFor(noteFor === f.id ? null : f.id); setNoteText(""); }}>
                       <Lightbulb className="w-3 h-3" /> Intentional…

@@ -95,9 +95,9 @@ interface RevisionRow {
 
 const personaBadge = (status: string) => {
   if (status === "approved")
-    return { color: "var(--green-2)", bg: "var(--green-soft)" };
-  if (status === "rejected") return { color: "var(--rust)", bg: "var(--rust-soft)" };
-  return { color: "var(--gilt)", bg: "var(--gilt-soft)" };
+    return { color: "var(--gd-success)", bg: "color-mix(in srgb, var(--gd-success) 12%, transparent)" };
+  if (status === "rejected") return { color: "var(--gd-danger)", bg: "var(--gd-danger-soft)" };
+  return { color: "var(--gd-caution)", bg: "var(--gd-caution-soft)" };
 };
 
 // ─── Main panel ───────────────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ export function DraftingCockpit({ workId }: { workId: string }) {
                   {proposedPersonas > 0 && (
                     <Link href="/review">
                       <Button size="sm" variant="ghost" className="h-7 text-[11px] gap-1">
-                        <CircleAlert className="w-3 h-3" style={{ color: "var(--gilt)" }} />
+                        <CircleAlert className="w-3 h-3" style={{ color: "var(--gd-caution)" }} />
                         {proposedPersonas} awaiting approval
                       </Button>
                     </Link>
@@ -376,7 +376,7 @@ function ChapterRow({
         ) : chapter.draft_ready ? (
           <span
             className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider"
-            style={{ color: "var(--green-2)" }}
+            style={{ color: "var(--gd-success)" }}
           >
             <CheckCircle2 className="w-3 h-3" /> Ready
           </span>
@@ -384,7 +384,7 @@ function ChapterRow({
           <button
             type="button"
             className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider"
-            style={{ color: "var(--gilt)" }}
+            style={{ color: "var(--gd-caution)" }}
             onClick={() => setShowProblems((v) => !v)}
           >
             <CircleAlert className="w-3 h-3" /> {chapter.problems.length} to fix
@@ -414,7 +414,7 @@ function ChapterRow({
       {showProblems && chapter.problems.length > 0 && (
         <ul
           className="mt-2 p-2 rounded-md text-[11px] space-y-0.5"
-          style={{ color: "var(--gilt)", background: "var(--gilt-soft)" }}
+          style={{ color: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}
         >
           {chapter.problems.map((p, i) => (
             <li key={i}>· {p}</li>
@@ -544,7 +544,7 @@ function ContractDialog({
           {suggestNote && (
             <p
               className="text-[11px] p-2 rounded-md"
-              style={{ color: "var(--gilt)", background: "var(--gilt-soft)" }}
+              style={{ color: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}
             >
               {suggestNote}
             </p>
@@ -747,7 +747,7 @@ function RunDialog({
         {run?.error && (
           <p
             className="text-xs p-2 rounded-md"
-            style={{ color: "var(--rust)", background: "var(--rust-soft)" }}
+            style={{ color: "var(--gd-danger)", background: "var(--gd-danger-soft)" }}
           >
             {run.error}
           </p>
@@ -786,7 +786,7 @@ function RunDialog({
               </div>
             )}
             {stalled.length > 0 && (
-              <p className="text-xs" style={{ color: "var(--gilt)" }}>
+              <p className="text-xs" style={{ color: "var(--gd-caution)" }}>
                 Stalled characters (no action passed the critic): {stalled.join(", ")}
               </p>
             )}
@@ -799,14 +799,14 @@ function RunDialog({
         )}
         {escalations.length > 0 && (
           <div className="space-y-1">
-            <p className="text-[10px] font-mono uppercase tracking-widest" style={{ color: "var(--gilt)" }}>
+            <p className="text-[10px] font-mono uppercase tracking-widest" style={{ color: "var(--gd-caution)" }}>
               Escalations for this chapter
             </p>
             {escalations.map((e) => (
               <p
                 key={e.id}
                 className="text-[11px] p-2 rounded-md"
-                style={{ color: "var(--gilt)", background: "var(--gilt-soft)" }}
+                style={{ color: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}
               >
                 {e.description} {e.state !== "open" && <span className="opacity-60">({e.state})</span>}
               </p>

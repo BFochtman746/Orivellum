@@ -22,8 +22,10 @@ import {
   Loader2,
   FlaskConical,
   Scale,
+  Inbox,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 
 const API = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -89,7 +91,7 @@ export default function GapOraclePage() {
   const [missKey, setMissKey] = useState("");
   const [missFreq, setMissFreq] = useState("1");
 
-  const { data, isLoading, error } = useQuery<{
+  const { data, isLoading, isError, refetch } = useQuery<{
     candidates: Candidate[];
     unflagged_labels: UnflaggedLabel[];
   }>({
@@ -163,21 +165,22 @@ export default function GapOraclePage() {
   const floor = measurements?.min_labeled_for_blocking ?? 20;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-4 md:p-6">
-        <div className="flex items-center gap-3">
-          <Link href={`/works/${workId}`}>
-            <Button variant="ghost" size="icon" aria-label="Back to Work">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="font-display text-xl font-semibold">Gap Oracle</h1>
-            <p className="text-sm text-muted-foreground">
-              Hand-label detector candidates so precision and recall can be
-              measured. Unknowns are stored but never scored.
-            </p>
-          </div>
-        </div>
+    <Page
+      eyebrow="Gap Oracle"
+      title="Gap Oracle"
+      actions={
+        <Link href={`/works/${workId}`}>
+          <Button variant="ghost" size="icon" aria-label="Back to Work" className="min-h-11 min-w-11">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+        </Link>
+      }
+    >
+      <div className="space-y-6">
+        <p className="text-sm text-muted-foreground">
+          Hand-label detector candidates so precision and recall can be
+          measured. Unknowns are stored but never scored.
+        </p>
 
         <Card>
           <CardContent className="space-y-3 p-4">
@@ -254,12 +257,13 @@ export default function GapOraclePage() {
         </Card>
 
         {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-          </div>
-        ) : error ? (
-          <p className="text-sm text-destructive">Could not load candidates.</p>
+          <LoadingState rows={3} label="Loading candidates" />
+        ) : isError ? (
+          <ErrorState
+            title="Couldn't load candidates"
+            detail="The detector candidates failed to load."
+            onRetry={() => refetch()}
+          />
         ) : (
           <div className="space-y-2">
             {(data?.candidates ?? []).map((c) => (
@@ -313,9 +317,11 @@ export default function GapOraclePage() {
               </Card>
             ))}
             {data && data.candidates.length === 0 && (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                This detector found no candidates for this Work.
-              </p>
+              <EmptyState
+                icon={<Inbox />}
+                title="No candidates found"
+                description="This detector found no candidates for this Work."
+              />
             )}
             <div className="pt-2">
               <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -383,6 +389,7 @@ export default function GapOraclePage() {
             )}
           </div>
         )}
-    </div>
+      </div>
+    </Page>
   );
 }

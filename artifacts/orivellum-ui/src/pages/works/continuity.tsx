@@ -5,7 +5,6 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -24,6 +23,7 @@ import {
   Play,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 
 const API = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -106,7 +106,7 @@ export default function ContinuityPage() {
     staleTime: Infinity,
   });
 
-  const { data: runsData, isLoading: runsLoading } = useQuery({
+  const { data: runsData, isLoading: runsLoading, isError: runsError, refetch: refetchRuns } = useQuery({
     queryKey: ["review-runs", workId],
     queryFn: async () => {
       const r = await apiFetch(`${API}/review-runs?work_id=${workId}`);
@@ -160,19 +160,19 @@ export default function ContinuityPage() {
   });
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-6">
-      <div className="flex flex-wrap items-center gap-3">
+    <Page
+      wide
+      eyebrow="Continuity review"
+      title="Continuity review"
+      actions={
         <Link href={`/works/${workId}`}>
-          <Button variant="ghost" size="sm" data-testid="button-back-to-work">
+          <Button variant="ghost" size="sm" className="min-h-11" data-testid="button-back-to-work">
             <ArrowLeft className="mr-1 h-4 w-4" /> Back to work
           </Button>
         </Link>
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-primary" />
-          <h1 className="font-display text-xl font-semibold">Continuity review</h1>
-        </div>
-      </div>
-
+      }
+    >
+      <div className="space-y-6">
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3 p-4">
           <div className="space-y-1">
@@ -228,9 +228,17 @@ export default function ContinuityPage() {
         </CardContent>
       </Card>
 
-      {runsLoading && <Skeleton className="h-32 w-full" />}
+      {runsLoading && <LoadingState rows={3} label="Loading review runs" />}
 
-      {!runsLoading && runs.length > 0 && (
+      {!runsLoading && runsError && (
+        <ErrorState
+          title="Couldn't load review runs"
+          detail="The continuity review runs failed to load."
+          onRetry={() => refetchRuns()}
+        />
+      )}
+
+      {!runsLoading && !runsError && runs.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {runs.slice(0, 8).map((r) => (
             <button
@@ -255,15 +263,15 @@ export default function ContinuityPage() {
 
       {activeRun && <RunDetail run={activeRun} workId={workId!} />}
 
-      {!runsLoading && runs.length === 0 && (
-        <Card>
-          <CardContent className="p-8 text-center text-sm text-muted-foreground">
-            No continuity reviews yet. Start one to build per-book evidence
-            ledgers and reconcile them across the series.
-          </CardContent>
-        </Card>
+      {!runsLoading && !runsError && runs.length === 0 && (
+        <EmptyState
+          icon={<ShieldCheck />}
+          title="No continuity reviews yet"
+          description="Start one to build per-book evidence ledgers and reconcile them across the series."
+        />
       )}
-    </div>
+      </div>
+    </Page>
   );
 }
 
@@ -388,7 +396,7 @@ function GateBanner({ gate }: { gate: NonNullable<Run["gate"]> }) {
 
 function FindingsTray({ runId, workId }: { runId: string; workId: string }) {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["review-findings", runId],
     queryFn: async () => {
       const r = await apiFetch(`${API}/review-runs/${runId}/findings`);
@@ -397,15 +405,22 @@ function FindingsTray({ runId, workId }: { runId: string; workId: string }) {
     },
   });
   const findings: Finding[] = data?.findings ?? [];
-  if (isLoading) return <Skeleton className="h-40 w-full" />;
+  if (isLoading) return <LoadingState rows={3} label="Loading findings" />;
+  if (isError)
+    return (
+      <ErrorState
+        title="Couldn't load findings"
+        detail="The review findings failed to load."
+        onRetry={() => refetch()}
+      />
+    );
   if (findings.length === 0)
     return (
-      <Card>
-        <CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-          No continuity findings in this run.
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={<CheckCircle2 />}
+        title="No continuity findings in this run"
+        description="This review completed without recording any findings."
+      />
     );
   const open = findings.filter((f) => f.status === "open");
   const closed = findings.filter((f) => f.status !== "open");
