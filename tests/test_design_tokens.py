@@ -276,12 +276,25 @@ ALIAS_HSL = {
 
 
 def _alias_block(mode: str) -> dict[str, str]:
+    """Extract the canonical top-level ``:root`` / ``.dark`` declaration block.
+
+    Anchored to line start (``^``) so nested or compound selectors that merely
+    END in ``:root``/``.dark`` (e.g. ``html:root``) can never match, and
+    asserted unique so a silent second block would fail loudly.
+    """
     css = INDEX_CSS.read_text(encoding="utf-8")
     selector = ".dark" if mode == "hull" else ":root"
-    m = re.search(re.escape(selector) + r"\s*\{(.*?)\n\}", css, re.DOTALL)
-    assert m, f"no {selector} block in index.css"
+    matches = re.findall(
+        r"^" + re.escape(selector) + r"\s*\{(.*?)\n\}",
+        css,
+        re.DOTALL | re.MULTILINE,
+    )
+    assert len(matches) == 1, (
+        f"expected exactly one top-level {selector} block in index.css, "
+        f"found {len(matches)}"
+    )
     return dict(
-        re.findall(r"(--[\w-]+):\s*([\d.]+ [\d.]+% [\d.]+%)\s*;", m.group(1))
+        re.findall(r"(--[\w-]+):\s*([\d.]+ [\d.]+% [\d.]+%)\s*;", matches[0])
     )
 
 

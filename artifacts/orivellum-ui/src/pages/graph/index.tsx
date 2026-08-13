@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Page } from "@/components/primitives";
+import { Page, ErrorState } from "@/components/primitives";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { apiFetch } from "@/lib/auth";
 import { useDomainKindChips } from "@/lib/ontology-kinds";
@@ -38,7 +38,7 @@ export default function GraphPage() {
   if (workId !== "all") params.set("work_id", workId);
 
   const queryKey = ["globalGraph", workId, refreshKey];
-  const { data: graphData, isLoading, error } = useQuery({
+  const { data: graphData, isLoading, error, refetch } = useQuery({
     queryKey,
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/graph?${params}`);
@@ -144,17 +144,25 @@ export default function GraphPage() {
       </div>
 
       {/* Graph */}
-      <KnowledgeGraph
-        nodes={graphData?.nodes ?? []}
-        edges={graphData?.edges ?? []}
-        hiddenKinds={hiddenKinds}
-        onNavigate={handleNavigate}
-        height={560}
-        loading={isLoading}
-        error={error ? String(error) : ""}
-        nodeCount={graphData?.node_count}
-        edgeCount={graphData?.edge_count}
-      />
+      {error ? (
+        <ErrorState
+          title="Couldn't load the knowledge graph"
+          detail={String(error)}
+          onRetry={() => refetch()}
+        />
+      ) : (
+        <KnowledgeGraph
+          nodes={graphData?.nodes ?? []}
+          edges={graphData?.edges ?? []}
+          hiddenKinds={hiddenKinds}
+          onNavigate={handleNavigate}
+          height={560}
+          loading={isLoading}
+          error=""
+          nodeCount={graphData?.node_count}
+          edgeCount={graphData?.edge_count}
+        />
+      )}
     </Page>
   );
 }
