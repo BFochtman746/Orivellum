@@ -83,16 +83,16 @@ import { GraphTab } from "./graph-tab";
 import { QuizTab } from "./quiz-tab";
 
 import {
-  Page, Panel, Section, ErrorState, Status,
+  Page, Panel, Section, ErrorState, Status, ConfirmAction,
 } from "@/components/primitives";
 
 // ─── View / segment IA (WP3 restructure) ─────────────────────────────────────
 // FIVE primary views replace the old ~14 flat tabs. Each view owns inner
 // segments; advanced tools live in a single Tools overflow menu, never as a
 // primary view.
-type PrimaryView = "overview" | "create" | "knowledge" | "review" | "activity";
+export type PrimaryView = "overview" | "create" | "knowledge" | "review" | "activity";
 
-const VIEW_SEGMENTS: Record<PrimaryView, string[]> = {
+export const VIEW_SEGMENTS: Record<PrimaryView, string[]> = {
   overview: [],
   create: ["book", "brainstorm", "genesis"],
   knowledge: ["knowledge", "search", "graph"],
@@ -103,7 +103,7 @@ const VIEW_SEGMENTS: Record<PrimaryView, string[]> = {
 // BACK-COMPAT: every old ?tab= value maps to a { view, segment } pair so deep
 // links from other pages (intelligence, review queue, intake, brainstorm) keep
 // landing on the right content. `trailer` opens the Tools trailer surface.
-const LEGACY_TAB_MAP: Record<string, { view: PrimaryView; segment?: string; trailer?: boolean }> = {
+export const LEGACY_TAB_MAP: Record<string, { view: PrimaryView; segment?: string; trailer?: boolean }> = {
   book:          { view: "create",   segment: "book" },
   brainstorm:    { view: "create",   segment: "brainstorm" },
   genesis:       { view: "create",   segment: "genesis" },
@@ -120,6 +120,33 @@ const LEGACY_TAB_MAP: Record<string, { view: PrimaryView; segment?: string; trai
   tasks:         { view: "activity", segment: "tasks" },
   trailer:       { view: "overview", trailer: true },
 };
+
+/**
+ * Pure initial-state resolver for the view/segment IA. Given a legacy ?tab=
+ * value, returns the primary view, the per-view inner segments (with the
+ * mapped segment applied to its view — NOT just each view's default), and
+ * whether the Tools trailer opens. Exported for focused deep-link tests.
+ */
+export function initialViewState(tab: string | null): {
+  view: PrimaryView;
+  segments: Record<PrimaryView, string>;
+  trailer: boolean;
+} {
+  const mapped = tab ? LEGACY_TAB_MAP[tab] : undefined;
+  const segments: Record<PrimaryView, string> = {
+    overview: "",
+    create: VIEW_SEGMENTS.create[0],
+    knowledge: VIEW_SEGMENTS.knowledge[0],
+    review: VIEW_SEGMENTS.review[0],
+    activity: VIEW_SEGMENTS.activity[0],
+  };
+  if (mapped?.segment) segments[mapped.view] = mapped.segment;
+  return {
+    view: mapped?.view ?? "overview",
+    segments,
+    trailer: mapped?.trailer ?? false,
+  };
+}
 
 // ─── Work cover image ─────────────────────────────────────────────────────────
 // Upload / replace / remove a Work's cover. Shown beside the title and used as
@@ -310,18 +337,13 @@ export default function WorkDetail() {
   const _searchStr   = useSearch();
   const _urlParams   = new URLSearchParams(_searchStr);
   const _legacyTab   = _urlParams.get("tab");
-  const _mapped      = _legacyTab ? LEGACY_TAB_MAP[_legacyTab] : undefined;
   const _initialSearchQuery = _urlParams.get("q") ?? "";
 
-  const [view, setView] = useState<PrimaryView>(() => _mapped?.view ?? "overview");
-  const [segment, setSegment] = useState<Record<PrimaryView, string>>(() => ({
-    overview: "",
-    create: VIEW_SEGMENTS.create[0],
-    knowledge: VIEW_SEGMENTS.knowledge[0],
-    review: VIEW_SEGMENTS.review[0],
-    activity: VIEW_SEGMENTS.activity[0],
-  }));
-  const [trailerOpen, setTrailerOpen] = useState(() => _mapped?.trailer ?? false);
+  const [view, setView] = useState<PrimaryView>(() => initialViewState(_legacyTab).view);
+  const [segment, setSegment] = useState<Record<PrimaryView, string>>(
+    () => initialViewState(_legacyTab).segments,
+  );
+  const [trailerOpen, setTrailerOpen] = useState(() => initialViewState(_legacyTab).trailer);
 
   // Jump helper — moves to a view and (optionally) its inner segment. Replaces
   // the old flat setActiveTab so internal jumps (pipeline → book, stat cards,
@@ -357,9 +379,9 @@ export default function WorkDetail() {
     onError: () => toast.error("Could not start book pipeline"),
   });
 
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const handleDelete = () => {
     if (!workId) return;
-    if (!window.confirm("Delete this work? This cannot be undone.")) return;
     deleteWork.mutate(
       { workId },
       {
@@ -449,7 +471,7 @@ export default function WorkDetail() {
       <QuickChatButton workId={workId!} />
       {toolsMenu}
       <button
-        onClick={handleDelete}
+        onClick={() => setConfirmDeleteOpen(true)}
         disabled={deleteWork.isPending}
         className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/50 hover:text-destructive transition-colors px-2 py-1 rounded hover:bg-destructive/5 min-h-11"
         data-testid="button-delete-work"
@@ -457,6 +479,18 @@ export default function WorkDetail() {
         {deleteWork.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
         Delete
       </button>
+      <ConfirmAction
+        open={confirmDeleteOpen}
+        onOpenChange={setConfirmDeleteOpen}
+        title="Delete this work?"
+        consequence="The work, its knowledge, tasks, and conversations are removed. This cannot be undone."
+        confirmLabel="Delete work"
+        destructive
+        onConfirm={() => {
+          setConfirmDeleteOpen(false);
+          handleDelete();
+        }}
+      />
     </>
   ) : null;
 
