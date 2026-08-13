@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Page, EmptyState, ErrorState } from "@/components/primitives";
 import {
   BookOpen, ArrowRight, Plus, BookMarked, FileText,
   ChevronRight, Sparkles,
@@ -49,36 +50,37 @@ export function chapterProgressLabel(b: {
   return approved > 0 ? `${base} · ${approved} approved` : base;
 }
 
-// Stage ladder (B0→B17) — kept visually distinct across the run using VELLUM
-// tokens and color-mix blends so each phase group reads as a step forward.
+// Stage ladder (B0→B17) — kept visually distinct across the run using
+// semantic accent tokens and color-mix blends so each phase group reads as a
+// step forward.
 const STAGE_NEUTRAL: React.CSSProperties = {};
 const STAGE_STYLE: Record<string, React.CSSProperties> = {
   // B0 — neutral (uses text-muted-foreground via STAGE_CLS)
   B0: {},
-  // B1–B2 — early / info: soft gilt at low strength
-  B1: { color: "var(--gilt)", background: "color-mix(in srgb, var(--gilt) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gilt) 18%, transparent)" },
-  B2: { color: "var(--gilt)", background: "color-mix(in srgb, var(--gilt) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gilt) 18%, transparent)" },
-  // B3–B5 — AI/design (was violet): gilt, nearest VELLUM token
-  B3: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
-  B4: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
-  B5: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
-  // B6–B8 — building (amber): gilt strong
-  B6: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "color-mix(in srgb, var(--gilt) 40%, transparent)" },
-  B7: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "color-mix(in srgb, var(--gilt) 40%, transparent)" },
-  B8: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "color-mix(in srgb, var(--gilt) 40%, transparent)" },
-  // B9–B11 — later build (orange): gilt/rust blend, warmer than gilt
-  B9: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--rust) 8%, transparent)", borderColor: "color-mix(in srgb, var(--rust) 22%, transparent)" },
-  B10: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--rust) 8%, transparent)", borderColor: "color-mix(in srgb, var(--rust) 22%, transparent)" },
-  B11: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--rust) 8%, transparent)", borderColor: "color-mix(in srgb, var(--rust) 22%, transparent)" },
-  // B12–B14 — success (emerald): green-2
-  B12: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" },
-  B13: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" },
-  B14: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" },
-  // B15–B16 — near-done (teal): green blend, distinct from B12–B14 and B17
-  B15: { color: "color-mix(in srgb, var(--green-2) 70%, var(--green-raw))", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)" },
-  B16: { color: "color-mix(in srgb, var(--green-2) 70%, var(--green-raw))", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-raw) 28%, transparent)" },
-  // B17 — published (deep forest): green-raw
-  B17: { color: "var(--green-raw)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-raw) 40%, transparent)" },
+  // B1–B2 — early / info: soft bronze at low strength
+  B1: { color: "var(--gd-bronze)", background: "color-mix(in srgb, var(--gd-bronze) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gd-bronze) 18%, transparent)" },
+  B2: { color: "var(--gd-bronze)", background: "color-mix(in srgb, var(--gd-bronze) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gd-bronze) 18%, transparent)" },
+  // B3–B5 — AI/design: bronze
+  B3: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)" },
+  B4: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)" },
+  B5: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)" },
+  // B6–B8 — building: bronze strong
+  B6: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)" },
+  B7: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)" },
+  B8: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)" },
+  // B9–B11 — later build: bronze/danger blend, warmer than bronze
+  B9: { color: "color-mix(in srgb, var(--gd-bronze) 55%, var(--gd-danger))", background: "color-mix(in srgb, var(--gd-danger) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gd-danger) 22%, transparent)" },
+  B10: { color: "color-mix(in srgb, var(--gd-bronze) 55%, var(--gd-danger))", background: "color-mix(in srgb, var(--gd-danger) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gd-danger) 22%, transparent)" },
+  B11: { color: "color-mix(in srgb, var(--gd-bronze) 55%, var(--gd-danger))", background: "color-mix(in srgb, var(--gd-danger) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gd-danger) 22%, transparent)" },
+  // B12–B14 — success: success token
+  B12: { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" },
+  B13: { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" },
+  B14: { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" },
+  // B15–B16 — near-done: success/olive blend, distinct from B12–B14 and B17
+  B15: { color: "color-mix(in srgb, var(--gd-success) 70%, var(--gd-olive))", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-olive) 28%, transparent)" },
+  B16: { color: "color-mix(in srgb, var(--gd-success) 70%, var(--gd-olive))", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-olive) 28%, transparent)" },
+  // B17 — published (deep): olive
+  B17: { color: "var(--gd-olive)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-olive) 40%, transparent)" },
 };
 
 function stageProgress(status: string): number {
@@ -146,7 +148,7 @@ function PromoteButton({ workId, workTitle }: { workId: string; workTitle: strin
       <div className="flex flex-col items-end gap-1 max-w-[240px] shrink-0">
         <span
           className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded-md border"
-          style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+          style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)" }}
         >
           <BookOpen className="w-3 h-3" /> Not ready for promotion
         </span>
@@ -198,7 +200,7 @@ function BookCard({ book }: { book: BookEntry }) {
                   {book.title}
                 </h3>
                 {isPublished && (
-                  <Sparkles className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />
+                  <Sparkles className="w-4 h-4 shrink-0" style={{ color: "var(--gd-success)" }} />
                 )}
               </div>
               {book.description && (
@@ -223,7 +225,7 @@ function BookCard({ book }: { book: BookEntry }) {
             <div className="h-1.5 bg-muted rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-500 ${isPublished ? "" : "bg-primary/70"}`}
-                style={{ width: `${progress}%`, ...(isPublished ? { background: "var(--green-2)" } : {}) }}
+                style={{ width: `${progress}%`, ...(isPublished ? { background: "var(--gd-success)" } : {}) }}
               />
             </div>
           </div>
@@ -293,7 +295,7 @@ function NonBookWorks({ bookWorkIds }: { bookWorkIds: Set<string> }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function BooksPage() {
-  const { data, isLoading } = useQuery<{ books: BookEntry[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ books: BookEntry[] }>({
     queryKey: ["books"],
     queryFn: () => apiFetch(`${BASE}/books`).then(r => r.json()),
     staleTime: 20_000,
@@ -306,71 +308,72 @@ export default function BooksPage() {
   const publishedBooks = books.filter(b => b.pipeline_status === "B17");
 
   return (
-    <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <BookMarked className="w-6 h-6 text-primary" />
-            <h1 className="text-3xl font-serif font-semibold tracking-tight">Books</h1>
-          </div>
-          <p className="text-muted-foreground text-sm">
-            Long-form writing projects moving through the 17-stage pipeline.
-          </p>
-        </div>
-        <Button asChild size="sm" variant="outline" className="gap-2 font-mono text-xs uppercase tracking-wider">
+    <Page
+      wide
+      eyebrow="Pipeline"
+      title="Books"
+      actions={
+        <Button asChild size="sm" variant="outline" className="min-h-11 gap-2 font-mono text-xs uppercase tracking-wider">
           <Link href="/works?create=1">
             <Plus className="w-3.5 h-3.5" /> New Work
           </Link>
         </Button>
-      </div>
-
-      {/* In-progress books */}
-      {isLoading ? (
-        <div className="grid sm:grid-cols-2 gap-4">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-44 w-full rounded-xl" />)}
+      }
+    >
+      <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-2 text-muted-foreground text-sm">
+          <BookMarked className="w-4 h-4 shrink-0 text-primary" />
+          Long-form writing projects moving through the 17-stage pipeline.
         </div>
-      ) : books.length === 0 ? (
-        <Card className="border-dashed bg-muted/20">
-          <CardContent className="p-12 text-center space-y-4">
-            <BookOpen className="w-10 h-10 text-muted-foreground mx-auto opacity-40" />
-            <div className="space-y-1">
-              <p className="font-medium text-foreground">No books yet</p>
-              <p className="text-sm text-muted-foreground">
-                Promote an existing Work to start the 17-stage book pipeline,
-                or create a new Work and promote it here.
-              </p>
-            </div>
-            <Button asChild size="sm">
-              <Link href="/works">Go to Works</Link>
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <>
-          {activeBooks.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-lg font-serif font-semibold">In Progress</h2>
-              <div className="grid sm:grid-cols-2 gap-4">
-                {activeBooks.map(b => <BookCard key={b.id} book={b} />)}
-              </div>
-            </div>
-          )}
-          {publishedBooks.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
-                <Sparkles className="w-4 h-4" style={{ color: "var(--green-2)" }} /> Published
-              </h2>
-              <div className="grid sm:grid-cols-2 gap-4">
-                {publishedBooks.map(b => <BookCard key={b.id} book={b} />)}
-              </div>
-            </div>
-          )}
-        </>
-      )}
 
-      {/* Other works eligible for promotion */}
-      {!isLoading && <NonBookWorks bookWorkIds={bookWorkIds} />}
-    </div>
+        {/* In-progress books */}
+        {isLoading ? (
+          <div className="grid sm:grid-cols-2 gap-4">
+            {[1, 2, 3].map(i => <Skeleton key={i} className="h-44 w-full rounded-xl" />)}
+          </div>
+        ) : isError ? (
+          <ErrorState
+            title="Couldn't load your books"
+            detail="The book pipeline list failed to load. Check your connection and try again."
+            onRetry={() => refetch()}
+          />
+        ) : books.length === 0 ? (
+          <EmptyState
+            icon={<BookOpen />}
+            title="No books yet"
+            description="Promote an existing Work to start the 17-stage book pipeline, or create a new Work and promote it here."
+            action={
+              <Button asChild size="sm">
+                <Link href="/works">Go to Works</Link>
+              </Button>
+            }
+          />
+        ) : (
+          <>
+            {activeBooks.length > 0 && (
+              <div className="space-y-3">
+                <h2 className="text-lg font-serif font-semibold">In Progress</h2>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {activeBooks.map(b => <BookCard key={b.id} book={b} />)}
+                </div>
+              </div>
+            )}
+            {publishedBooks.length > 0 && (
+              <div className="space-y-3">
+                <h2 className="text-lg font-serif font-semibold flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" style={{ color: "var(--gd-success)" }} /> Published
+                </h2>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {publishedBooks.map(b => <BookCard key={b.id} book={b} />)}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Other works eligible for promotion */}
+        {!isLoading && !isError && <NonBookWorks bookWorkIds={bookWorkIds} />}
+      </div>
+    </Page>
   );
 }

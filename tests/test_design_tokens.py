@@ -8,8 +8,10 @@ Three guarantees, enforced forever:
 2. **Parity** — ``src/styles/gd-tokens.css`` (both theme blocks + per-app
    accent lines) mirrors tokens.json exactly; the CSS is a build artifact of
    the token source, never an independent palette.
-3. **Alias fidelity** — the temporary legacy alias sheet's shadcn HSL triples
-   round-trip to the same colors (±2/255 per channel for HSL rounding).
+3. **shadcn fidelity** — the shadcn HSL triples in ``src/index.css``
+   (``:root`` / ``.dark`` blocks) round-trip to the same colors as the token
+   source (±2/255 per channel for HSL rounding). WP3 deleted the temporary
+   legacy alias sheet; index.css is now the only home of these triples.
 
 Plus lockdown floors: no Google Fonts anywhere in UI source, and no
 ``-webkit-font-smoothing`` overrides (platform rendering is the contract).
@@ -28,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOKENS_PATH = ROOT / "design" / "tokens.json"
 UI = ROOT / "artifacts" / "orivellum-ui"
 GD_CSS = UI / "src" / "styles" / "gd-tokens.css"
-ALIAS_CSS = UI / "src" / "styles" / "legacy-aliases.css"
+INDEX_CSS = UI / "src" / "index.css"
 
 TOKENS = json.loads(TOKENS_PATH.read_text(encoding="utf-8"))
 
@@ -233,7 +235,7 @@ def test_css_per_app_soft_derives_from_accent(app: str, mode: str):
     assert float(m.group(4)) <= 0.2, f"{app} [{mode}] soft alpha too strong"
 
 
-# ── 3. legacy alias sheet fidelity ───────────────────────────────────────────
+# ── 3. shadcn HSL triple fidelity (index.css) ────────────────────────────────
 
 ALIAS_HSL = {
     "daylight": {
@@ -274,10 +276,10 @@ ALIAS_HSL = {
 
 
 def _alias_block(mode: str) -> dict[str, str]:
-    css = ALIAS_CSS.read_text(encoding="utf-8")
-    selector = "html:root.dark" if mode == "hull" else "html:root"
+    css = INDEX_CSS.read_text(encoding="utf-8")
+    selector = ".dark" if mode == "hull" else ":root"
     m = re.search(re.escape(selector) + r"\s*\{(.*?)\n\}", css, re.DOTALL)
-    assert m, f"no {selector} block in legacy-aliases.css"
+    assert m, f"no {selector} block in index.css"
     return dict(
         re.findall(r"(--[\w-]+):\s*([\d.]+ [\d.]+% [\d.]+%)\s*;", m.group(1))
     )
@@ -294,18 +296,24 @@ def test_alias_hsl_fidelity(mode: str):
     block = _alias_block(mode)
     failures = []
     for var, token_path in ALIAS_HSL[mode].items():
-        assert var in block, f"{var} missing from {mode} alias block"
+        assert var in block, f"{var} missing from {mode} index.css block"
         actual = _hsl_to_rgb(block[var])
         expected = _rgb(token_hex(token_path, mode))
         if any(abs(a - e) > 2 for a, e in zip(actual, expected)):
             failures.append(f"{var} [{mode}]: hsl→{actual} vs token {expected} ({token_path})")
-    assert not failures, "alias sheet diverged from tokens:\n" + "\n".join(failures)
+    assert not failures, "index.css shadcn triples diverged from tokens:\n" + "\n".join(failures)
 
 
-def test_alias_sheet_has_no_hex():
-    """The alias sheet must stay hex-free (HSL triples + var() only)."""
-    css = ALIAS_CSS.read_text(encoding="utf-8")
-    assert not re.search(r"#[0-9A-Fa-f]{3,8}\b", css), "hex literal crept into legacy-aliases.css"
+def test_index_css_has_no_hex():
+    """index.css must stay hex-free — colors come only from gd-tokens.css
+    (parity-checked) or HSL triples (fidelity-checked). WP3 floor."""
+    css = INDEX_CSS.read_text(encoding="utf-8")
+    assert not re.search(r"#[0-9A-Fa-f]{3,8}\b", css), "hex literal crept into index.css"
+
+
+def test_legacy_alias_sheet_deleted():
+    """WP3 deleted the temporary alias sheet; it must never come back."""
+    assert not (UI / "src" / "styles" / "legacy-aliases.css").exists()
 
 
 # ── lockdown floors ──────────────────────────────────────────────────────────

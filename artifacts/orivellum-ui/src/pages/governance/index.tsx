@@ -1012,6 +1012,6 @@ export default function GovernancePage() {
         </div>
       )}
 
-    </div>
+    </Page>
   );
 }

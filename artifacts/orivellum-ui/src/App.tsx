@@ -202,10 +202,10 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background relative overflow-hidden">
-      {/* Radial gradient ground — matches VELLUM paper background */}
+      {/* Radial gradient ground — token-driven paper wash */}
       <div
         className="absolute inset-0 pointer-events-none"
-        style={{ background: 'radial-gradient(130% 100% at 50% 0%, #efe7d6 0%, #e6dcc7 55%, #dccfb4 100%)' }}
+        style={{ background: 'radial-gradient(130% 100% at 50% 0%, var(--gd-canvas) 0%, var(--gd-surface) 55%, var(--gd-surface-raised) 100%)' }}
         aria-hidden
       />
 
@@ -213,10 +213,7 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
         {/* Brand */}
         <div className="text-center space-y-3">
           <div className="flex items-center justify-center gap-2.5 mb-1">
-            <div
-              className="w-9 h-9 rounded-[10px] flex items-center justify-center text-[#F4EEE1] font-serif font-bold text-lg"
-              style={{ background: 'var(--green-raw)' }}
-            >
+            <div className="w-9 h-9 rounded-[10px] flex items-center justify-center font-serif font-bold text-lg bg-primary text-primary-foreground">
               <span style={{ fontVariationSettings: '"opsz" 40' }}>O</span>
             </div>
             <span className="brand-orivellum text-[22px]">
@@ -225,26 +222,23 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
           </div>
           {/* Gilt rule */}
           <div className="gilt-rule mx-auto max-w-[180px]" />
-          <p className="eyebrow" style={{ color: 'var(--ink-faint)' }}>
+          <p className="eyebrow" style={{ color: 'var(--gd-dim)' }}>
             Sovereign knowledge
           </p>
         </div>
 
-        {/* Glass card */}
-        <div
-          className="rounded-[18px] p-7 space-y-5 glass-card relative overflow-hidden"
-          style={{ border: '1px solid var(--line)' }}
-        >
+        {/* Card */}
+        <div className="rounded-[18px] p-7 space-y-5 relative overflow-hidden bg-card border border-card-border" style={{ boxShadow: 'var(--gd-shadow)' }}>
           {/* Lens flare */}
           <div
             className="absolute top-0 left-0 right-0 h-px pointer-events-none"
-            style={{ background: 'linear-gradient(90deg, transparent, var(--vellum-hi) 40%, var(--vellum-hi) 60%, transparent)' }}
+            style={{ background: 'linear-gradient(90deg, transparent, var(--gd-bronze-soft) 40%, var(--gd-bronze-soft) 60%, transparent)' }}
           />
           <div className="space-y-1">
-            <p className="text-[15px] font-medium" style={{ color: 'var(--ink-raw)' }}>
+            <p className="text-[15px] font-medium text-foreground">
               Enter your access key
             </p>
-            <p className="text-[12.5px]" style={{ color: 'var(--ink-faint)' }}>
+            <p className="text-[12.5px] text-muted-foreground">
               Nothing leaves your machine.
             </p>
           </div>
@@ -256,18 +250,18 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
               onChange={(e) => setKey(e.target.value)}
               autoFocus
               disabled={loading}
-              className="rounded-[12px] border-[var(--line-2)] bg-[var(--paper-2)] placeholder:text-[var(--ink-faint)]"
+              className="rounded-[12px] border-border bg-muted/30 placeholder:text-muted-foreground/60"
             />
             {error && (
-              <p className="text-[12.5px]" style={{ color: 'var(--rust)' }}>{error}</p>
+              <p className="text-[12.5px]" style={{ color: 'var(--gd-danger)' }}>{error}</p>
             )}
-            <Button type="submit" className="w-full rounded-[12px]" disabled={loading || !key.trim()}>
+            <Button type="submit" className="w-full rounded-[12px] min-h-11" disabled={loading || !key.trim()}>
               {loading ? 'Checking…' : 'Continue →'}
             </Button>
           </form>
         </div>
 
-        <p className="text-[11px] text-center font-mono" style={{ color: 'var(--ink-faint)', letterSpacing: '0.04em' }}>
+        <p className="text-[11px] text-center font-mono text-muted-foreground" style={{ letterSpacing: '0.04em' }}>
           key in startup logs · <code>data/api_key.txt</code>
         </p>
       </div>

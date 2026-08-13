@@ -162,7 +162,7 @@ function FormattingToolbar({ editor }: { editor: ReturnType<typeof useEditor> | 
         <Strikethrough className="w-3.5 h-3.5" />
       </TBBtn>
       <TBBtn onClick={() => e.chain().focus().toggleHighlight().run()} active={e.isActive('highlight')} title="Highlight">
-        <span className="w-3.5 h-3.5 text-xs font-bold leading-none" style={{ background: 'linear-gradient(transparent 60%, #fde047 60%)' }}>A</span>
+        <span className="w-3.5 h-3.5 text-xs font-bold leading-none" style={{ background: 'linear-gradient(transparent 60%, var(--gd-caution) 60%)' }}>A</span>
       </TBBtn>
       <TBBtn onClick={() => e.chain().focus().toggleCode().run()} active={e.isActive('code')} title="Inline code">
         <Code className="w-3.5 h-3.5" />

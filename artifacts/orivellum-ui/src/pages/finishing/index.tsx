@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState, ErrorState, Status } from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api/finishing`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -52,8 +53,8 @@ function useWorks() {
 
 function StatusBadge({ passed }: { passed: boolean }) {
   return passed
-    ? <Badge className="border" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>PASS</Badge>
-    : <Badge className="border" style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>FAIL</Badge>;
+    ? <Status kind="ok" label="PASS" />
+    : <Status kind="danger" label="FAIL" />;
 }
 
 function SectionHeader({ title, icon: Icon }: { title: string; icon: React.ElementType }) {
@@ -117,7 +118,7 @@ function PressVerifyCard({ slug }: { slug: string }) {
   if (!data) return null;
   const checks = data.checks ?? {};
   return (
-    <Card className="vellum-card">
+    <Card>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm">Pre-flight</CardTitle>
@@ -132,8 +133,8 @@ function PressVerifyCard({ slug }: { slug: string }) {
       <CardContent className="space-y-1 text-xs">
         {Object.entries(checks).map(([k, v]) => (
           <div key={k} className="flex items-center gap-2">
-            {v ? <Check className="h-3 w-3" style={{ color: "var(--green-2)" }} /> : <AlertTriangle className="h-3 w-3" style={{ color: "var(--rust)" }} />}
-            <span className={v ? "text-foreground" : ""} style={v ? undefined : { color: "var(--rust)" }}>{k.replace(/_/g, " ")}</span>
+            {v ? <Check className="h-3 w-3" style={{ color: "var(--gd-success)" }} /> : <AlertTriangle className="h-3 w-3" style={{ color: "var(--gd-danger)" }} />}
+            <span className={v ? "text-foreground" : ""} style={v ? undefined : { color: "var(--gd-danger)" }}>{k.replace(/_/g, " ")}</span>
           </div>
         ))}
         {data.word_count != null && (
@@ -168,10 +169,10 @@ function PressRenderCard({ slug, styleLocked }: { slug: string; styleLocked: boo
   const validation = data?.validation;
   const vBadge = (v?: string) =>
     v === "clean"
-      ? <Badge className="border text-[10px] py-0" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>clean</Badge>
-      : <Badge variant="outline" className="text-[10px] py-0" style={{ color: "var(--rust)" }}>{v ?? "missing"}</Badge>;
+      ? <Badge className="border text-[10px] py-0" style={{ color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}>clean</Badge>
+      : <Badge variant="outline" className="text-[10px] py-0" style={{ color: "var(--gd-danger)" }}>{v ?? "missing"}</Badge>;
   return (
-    <Card className="vellum-card">
+    <Card>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm flex items-center gap-2">
@@ -235,7 +236,7 @@ function ReleaseGateCard({ workId, pressSlug }: { workId: string; pressSlug: str
   if (!data) return null;
   const checks: Record<string, boolean> = data.checks ?? {};
   return (
-    <Card className="vellum-card">
+    <Card>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm flex items-center gap-2">
@@ -259,8 +260,8 @@ function ReleaseGateCard({ workId, pressSlug }: { workId: string; pressSlug: str
         </select>
         {Object.entries(checks).map(([k, v]) => (
           <div key={k} className="flex items-center gap-2">
-            {v ? <Check className="h-3 w-3" style={{ color: "var(--green-2)" }} /> : <AlertTriangle className="h-3 w-3" style={{ color: "var(--rust)" }} />}
-            <span className={v ? "text-foreground" : ""} style={v ? undefined : { color: "var(--rust)" }}>{k.replace(/_/g, " ").replace("gate.", "")}</span>
+            {v ? <Check className="h-3 w-3" style={{ color: "var(--gd-success)" }} /> : <AlertTriangle className="h-3 w-3" style={{ color: "var(--gd-danger)" }} />}
+            <span className={v ? "text-foreground" : ""} style={v ? undefined : { color: "var(--gd-danger)" }}>{k.replace(/_/g, " ").replace("gate.", "")}</span>
           </div>
         ))}
         {data.disclosure && (
@@ -351,7 +352,7 @@ function PressDetail({ slug }: { slug: string }) {
   return (
     <div className="space-y-4">
       {/* Style card */}
-      <Card className="vellum-card">
+      <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -383,7 +384,7 @@ function PressDetail({ slug }: { slug: string }) {
       </Card>
 
       {/* Chapters */}
-      <Card className="vellum-card">
+      <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm">Chapters ({chapters.length})</CardTitle>
@@ -412,7 +413,7 @@ function PressDetail({ slug }: { slug: string }) {
             </div>
           </div>
           {(b.orphan_epigraph_slots ?? []).length > 0 && (
-            <div className="rounded-lg border p-2 text-xs space-y-1" style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", color: "var(--rust)" }}>
+            <div className="rounded-lg border p-2 text-xs space-y-1" style={{ borderColor: "color-mix(in srgb, var(--gd-danger) 40%, transparent)", color: "var(--gd-danger)" }}>
               <div className="flex items-center gap-1.5">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
                 Epigraph slots point at chapters that no longer exist:
@@ -439,7 +440,7 @@ function PressDetail({ slug }: { slug: string }) {
               </span>
               <div className="flex items-center gap-2 text-muted-foreground">
                 {!ch.has_text && (
-                  <Badge variant="outline" className="text-[10px] py-0 px-1" style={{ color: "var(--rust)" }}>
+                  <Badge variant="outline" className="text-[10px] py-0 px-1" style={{ color: "var(--gd-danger)" }}>
                     no text
                   </Badge>
                 )}
@@ -468,7 +469,7 @@ function PressDetail({ slug }: { slug: string }) {
                 <button key={side}
                   onClick={() => setMatter.mutate({ front: side === "front" ? !active : !!b.has_front, back: side === "back" ? !active : !!b.has_back })}
                   className={`flex items-center gap-1 rounded px-2 py-1 border transition-colors ${active ? "" : "border-border text-muted-foreground"}`}
-                  style={active ? { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } : undefined}
+                  style={active ? { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" } : undefined}
                 >
                   {active ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
                   {side} matter
@@ -489,7 +490,7 @@ function PressDetail({ slug }: { slug: string }) {
       {b.work_id && <ReleaseGateCard workId={b.work_id} pressSlug={slug} />}
 
       {/* Seal package */}
-      <Card className="vellum-card">
+      <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
             <Stamp className="h-3.5 w-3.5" /> Seal Package
@@ -541,7 +542,7 @@ function PressDetail({ slug }: { slug: string }) {
 
 function PressTab() {
   const qc = useQueryClient();
-  const { data, isLoading } = useApi<any>(["press-books"], "/press/books");
+  const { data, isLoading, isError, refetch } = useApi<any>(["press-books"], "/press/books");
   const [selected, setSelected] = useState<string | null>(null);
   const [newBook, setNewBook] = useState({ title: "", author_name: "", series: "", work_id: "" });
   const [creating, setCreating] = useState(false);
@@ -573,7 +574,7 @@ function PressTab() {
           <Plus className="h-3 w-3 mr-1" /> New book
         </Button>
         {creating && (
-          <Card className="vellum-card">
+          <Card>
             <CardContent className="pt-4 space-y-2">
               <div>
                 <Label className="text-xs">Title</Label>
@@ -606,8 +607,10 @@ function PressTab() {
         )}
         {isLoading
           ? [1,2].map(i => <Skeleton key={i} className="h-24 rounded-lg" />)
+          : isError
+          ? <ErrorState title="Couldn't load books" detail="The press book list failed to load. Try again." onRetry={() => refetch()} />
           : books.length === 0
-          ? <p className="text-xs text-muted-foreground text-center py-8">No books yet</p>
+          ? <EmptyState icon={<BookOpen />} title="No books yet" description="Create a press book to start finalizing a manuscript." />
           : books.map((b: any) => (
             <PressBookCard key={b.slug} book={b} selected={selected === b.slug} onSelect={() => setSelected(b.slug)} />
           ))}
@@ -633,7 +636,7 @@ function PressTab() {
 function SpineCard({ spec }: { spec: any }) {
   if (!spec) return null;
   return (
-    <Card className="vellum-card">
+    <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2"><Layers className="h-3.5 w-3.5" /> Product spec</CardTitle>
       </CardHeader>
@@ -684,13 +687,13 @@ function AtelierPrintCard({ book }: { book: any }) {
   });
 
   return (
-    <Card className="vellum-card">
+    <Card>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm flex items-center gap-2"><Barcode className="h-3.5 w-3.5" /> Print model</CardTitle>
           {book.actual_pages
             ? <Badge variant="secondary" className="text-xs">{book.actual_pages} actual pages</Badge>
-            : <Badge variant="outline" className="text-xs" style={{ color: "var(--rust)" }}>estimated pages</Badge>}
+            : <Badge variant="outline" className="text-xs" style={{ color: "var(--gd-danger)" }}>estimated pages</Badge>}
         </div>
       </CardHeader>
       <CardContent className="space-y-2 text-xs">
@@ -765,7 +768,7 @@ function AtelierBookDetail({ book }: { book: any }) {
       <AtelierPrintCard book={book} />
 
       {/* Cover generation */}
-      <Card className="vellum-card">
+      <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2"><Image className="h-3.5 w-3.5" /> Cover versions</CardTitle>
         </CardHeader>
@@ -803,7 +806,7 @@ function AtelierBookDetail({ book }: { book: any }) {
 
       {/* Seal design */}
       {covers.length > 0 && (
-        <Card className="vellum-card">
+        <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2"><Shield className="h-3.5 w-3.5" /> Seal cover</CardTitle>
           </CardHeader>
@@ -904,7 +907,7 @@ function AtelierSeriesDetail({ seriesSlug }: { seriesSlug: string }) {
     <div className="grid grid-cols-[1fr,1fr] gap-4">
       {/* Brand tokens */}
       <div className="space-y-3">
-        <Card className="vellum-card">
+        <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm flex items-center gap-2"><Palette className="h-3.5 w-3.5" /> Brand tokens</CardTitle>
@@ -950,7 +953,7 @@ function AtelierSeriesDetail({ seriesSlug }: { seriesSlug: string }) {
           </Button>
         </div>
         {addingBook && (
-          <Card className="vellum-card">
+          <Card>
             <CardContent className="pt-4 space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -1027,7 +1030,7 @@ function AtelierSeriesDetail({ seriesSlug }: { seriesSlug: string }) {
 
 function AtelierTab() {
   const qc = useQueryClient();
-  const { data, isLoading } = useApi<any>(["atelier-series"], "/atelier/series");
+  const { data, isLoading, isError, refetch } = useApi<any>(["atelier-series"], "/atelier/series");
   const [selected, setSelected] = useState<string | null>(null);
   const [newSeries, setNewSeries] = useState({ name: "", books: "1" });
   const [creating, setCreating] = useState(false);
@@ -1057,7 +1060,7 @@ function AtelierTab() {
           <Plus className="h-3 w-3 mr-1" /> New series
         </Button>
         {creating && (
-          <Card className="vellum-card">
+          <Card>
             <CardContent className="pt-4 space-y-2">
               <div>
                 <Label className="text-xs">Series name</Label>
@@ -1076,8 +1079,10 @@ function AtelierTab() {
         )}
         {isLoading
           ? [1,2].map(i => <Skeleton key={i} className="h-20 rounded-lg" />)
+          : isError
+          ? <ErrorState title="Couldn't load series" detail="The series list failed to load. Try again." onRetry={() => refetch()} />
           : series.length === 0
-          ? <p className="text-xs text-muted-foreground text-center py-8">No series yet</p>
+          ? <EmptyState icon={<BookMarked />} title="No series yet" description="Create a series brand to design covers and spines." />
           : series.map((s: any) => (
             <AtelierSeriesCard key={s.slug} series={s} selected={selected === s.slug} onSelect={() => setSelected(s.slug)} />
           ))}

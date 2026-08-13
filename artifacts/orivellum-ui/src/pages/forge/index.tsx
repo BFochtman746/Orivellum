@@ -5,18 +5,17 @@ import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import {
-  Globe2, Plus, Loader2, ArrowRight, Clock, CheckCircle2, AlertCircle,
+  Globe2, Plus, Loader2, ArrowRight, Clock, CheckCircle2,
   HelpCircle, Hammer, Sparkles,
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { useGdDark } from "@/lib/useGdDark";
 
 const API = `${import.meta.env.BASE_URL}api/forge`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -31,23 +30,25 @@ type ForgeProject = {
 };
 
 const STATUS_META: Record<string, { label: string; color: string; style: React.CSSProperties; icon: any }> = {
-  active:   { label: "Active",   color: "", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }, icon: CheckCircle2 },
-  building: { label: "Building", color: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }, icon: Hammer },
+  active:   { label: "Active",   color: "", style: { color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "var(--gd-line-control)" }, icon: CheckCircle2 },
+  building: { label: "Building", color: "", style: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "var(--gd-line-control)" }, icon: Hammer },
   released: { label: "Released", color: "text-primary bg-primary/5 border-primary/20", style: {}, icon: Globe2 },
   archived: { label: "Archived", color: "text-muted-foreground bg-muted/50 border-border", style: {}, icon: HelpCircle },
 };
 
 export default function ForgePage() {
-  const gdDark = useGdDark();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [newBrief, setNewBrief] = useState("");
 
-  const { data, isLoading } = useQuery<{ projects: ForgeProject[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ projects: ForgeProject[] }>({
     queryKey: ["forge-projects"],
-    queryFn: () => apiFetch(`${API}/projects`).then(r => r.json()),
+    queryFn: () => apiFetch(`${API}/projects`).then(r => {
+      if (!r.ok) throw new Error("Failed to load projects");
+      return r.json();
+    }),
     staleTime: 30_000,
     refetchInterval: 15_000,
   });
@@ -78,45 +79,47 @@ export default function ForgePage() {
   const projects = data?.projects ?? [];
 
   return (
-    <div className={`space-y-8 animate-in fade-in duration-500 pb-20 ${gdDark ? "dark text-foreground" : ""}`}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Globe2 className="w-5 h-5 text-primary" />
-            <h1 className="vellum-h1">Pressworks</h1>
-          </div>
-          <div className="gilt-rule w-24" />
-          <p className="text-sm text-muted-foreground mt-2 max-w-lg">
-            Governed website factory — plan, design, build, and release static sites
-            with an AI agent working under quality-gate oversight.
-          </p>
-        </div>
+    <Page
+      eyebrow="Governed Factory"
+      title="Pressworks"
+      actions={
         <Button
           onClick={() => setShowNew(true)}
-          className="gap-1.5"
+          className="gap-1.5 min-h-11"
         >
           <Plus className="w-4 h-4" /> New project
         </Button>
-      </div>
+      }
+    >
+      <p className="text-sm text-muted-foreground max-w-lg -mt-2">
+        Governed website factory — plan, design, build, and release static sites
+        with an AI agent working under quality-gate oversight.
+      </p>
 
       {/* Project list */}
       {isLoading ? (
-        <div className="space-y-3">
-          {[0, 1, 2].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}
-        </div>
+        <LoadingState rows={3} label="Loading projects" />
+      ) : isError ? (
+        <ErrorState
+          title="Could not load projects"
+          detail="The Pressworks service may still be starting."
+          onRetry={() => refetch()}
+        />
       ) : projects.length === 0 ? (
-        <div className="border border-dashed border-border/60 rounded-xl p-12 text-center">
-          <Globe2 className="w-8 h-8 text-muted-foreground/40 mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">No projects yet.</p>
-          <Button
-            variant="outline"
-            className="mt-4 gap-1.5"
-            onClick={() => setShowNew(true)}
-          >
-            <Plus className="w-4 h-4" /> Create your first project
-          </Button>
-        </div>
+        <EmptyState
+          icon={<Globe2 />}
+          title="No projects yet"
+          description="Create your first Pressworks project to start planning and building a site."
+          action={
+            <Button
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => setShowNew(true)}
+            >
+              <Plus className="w-4 h-4" /> Create your first project
+            </Button>
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {projects.map(proj => {
@@ -208,6 +211,6 @@ export default function ForgePage() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </Page>
   );
 }

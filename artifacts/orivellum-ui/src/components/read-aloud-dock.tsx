@@ -5,8 +5,8 @@
  * element is ALWAYS mounted (even with no session) so play() can be called
  * synchronously inside a tap gesture (iOS Safari autoplay policy).
  *
- * Deliberately styled as constant dark chrome (not VELLUM paper / not GD
- * theme-flipped) so it reads as one OS-level player over every page.
+ * Styled as an OS-level player surface using semantic accent tokens so it
+ * reads as one persistent player over every page.
  */
 import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
@@ -18,13 +18,15 @@ import {
 } from "@/components/ui/select";
 import { useReadAloud, TTS_VOICE_OPTIONS, TTS_SPEED_OPTIONS } from "@/lib/read-aloud";
 
+// Player chrome, expressed as design tokens (never raw literals).
 const CHROME = {
-  bg: "#1A1F24",
-  bgHi: "#232930",
-  line: "#39414B",
-  text: "#E8E6E1",
-  muted: "#9AA3AD",
-  accent: "#D9A441",
+  bg: "var(--gd-surface)",
+  bgHi: "var(--gd-raised)",
+  line: "var(--gd-line)",
+  text: "var(--gd-text)",
+  muted: "var(--gd-muted)",
+  accent: "var(--gd-accent)",
+  accentInk: "var(--gd-accent-ink)",
 };
 
 export function ReadAloudDock() {
@@ -80,7 +82,7 @@ export function ReadAloudDock() {
             // The tab bar already absorbs the safe-area inset when raised.
             paddingBottom:
               "max(0px, calc(env(safe-area-inset-bottom) - var(--shell-tabbar-h, 0px)))",
-            boxShadow: "0 -6px 24px rgba(0,0,0,0.35)",
+            boxShadow: "var(--gd-shadow)",
           }}
         >
           <div className="max-w-[1400px] mx-auto px-3 py-2">
@@ -100,7 +102,7 @@ export function ReadAloudDock() {
                   disabled={ra.loading}
                   data-testid="button-dock-resume"
                   className="px-2.5 rounded font-mono font-semibold disabled:opacity-50 shrink-0"
-                  style={{ height: 26, background: CHROME.accent, color: "#1A1508" }}
+                  style={{ height: 26, background: CHROME.accent, color: CHROME.accentInk }}
                 >
                   Resume
                 </button>
@@ -122,7 +124,7 @@ export function ReadAloudDock() {
                 aria-label={ra.playing ? "Pause" : "Play"}
                 data-testid="button-dock-play"
                 className="inline-flex items-center justify-center rounded-full shrink-0 disabled:opacity-50"
-                style={{ width: 40, height: 40, background: CHROME.accent, color: "#1A1508" }}
+                style={{ width: 40, height: 40, background: CHROME.accent, color: CHROME.accentInk }}
               >
                 {ra.loading
                   ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -249,7 +251,7 @@ export function ReadAloudDock() {
                       style={{
                         height: 28,
                         background: ra.speed === s.value ? CHROME.accent : CHROME.bgHi,
-                        color: ra.speed === s.value ? "#1A1508" : CHROME.muted,
+                        color: ra.speed === s.value ? CHROME.accentInk : CHROME.muted,
                         fontWeight: ra.speed === s.value ? 600 : 400,
                       }}
                     >

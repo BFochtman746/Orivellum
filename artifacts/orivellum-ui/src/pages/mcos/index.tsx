@@ -36,7 +36,7 @@ import {
   FlaskConical, Trash2, Plus, CheckCircle2, SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useGdDark } from "@/lib/useGdDark";
+import { ConfirmAction } from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -127,9 +127,9 @@ interface TelemetryDay {
 
 function scoreColorStyle(score: number | null | undefined): { cls: string; style: React.CSSProperties } {
   if (score == null) return { cls: "text-muted-foreground", style: {} };
-  if (score >= 0.8) return { cls: "", style: { color: "var(--green-2)" } };
-  if (score >= 0.5) return { cls: "", style: { color: "var(--gilt)" } };
-  return { cls: "", style: { color: "var(--rust)" } };
+  if (score >= 0.8) return { cls: "", style: { color: "var(--gd-success)" } };
+  if (score >= 0.5) return { cls: "", style: { color: "var(--gd-bronze)" } };
+  return { cls: "", style: { color: "var(--gd-danger)" } };
 }
 
 function scorePct(score: number | null | undefined): string {
@@ -146,12 +146,12 @@ function fmtTime(iso: string | null | undefined): string {
 
 function StatusBadge({ status }: { status: string }) {
   const cfg: Record<string, React.CSSProperties> = {
-    // running (was blue / info-processing) → gilt, nearest VELLUM token
-    running:  { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
-    success:  { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
-    complete: { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
-    error:    { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
-    failed:   { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
+    // running (was an info-processing hue) → bronze accent token
+    running:  { color: "var(--gd-bronze)", borderColor: "var(--gd-line-control)", background: "var(--gd-bronze-soft)" },
+    success:  { color: "var(--gd-success)", borderColor: "var(--gd-line-control)", background: "var(--gd-primary-soft)" },
+    complete: { color: "var(--gd-success)", borderColor: "var(--gd-line-control)", background: "var(--gd-primary-soft)" },
+    error:    { color: "var(--gd-danger)", borderColor: "var(--gd-line-control)", background: "var(--gd-danger-soft)" },
+    failed:   { color: "var(--gd-danger)", borderColor: "var(--gd-line-control)", background: "var(--gd-danger-soft)" },
   };
   const style = cfg[status];
   return (
@@ -169,7 +169,7 @@ function DeltaArrow({ delta }: { delta: number | null | undefined }) {
   if (delta == null || delta === 0) return <span className="text-muted-foreground">—</span>;
   const up = delta > 0;
   return (
-    <span className="inline-flex items-center gap-0.5 text-xs font-mono" style={{ color: up ? "var(--green-2)" : "var(--rust)" }}>
+    <span className="inline-flex items-center gap-0.5 text-xs font-mono" style={{ color: up ? "var(--gd-success)" : "var(--gd-danger)" }}>
       {up ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
       {up ? "+" : ""}{Math.round(delta * 100)}%
     </span>
@@ -181,9 +181,9 @@ function DeltaArrow({ delta }: { delta: number | null | undefined }) {
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
-      <AlertCircle className="w-8 h-8" style={{ color: "var(--rust)" }} />
+      <AlertCircle className="w-8 h-8" style={{ color: "var(--gd-danger)" }} />
       <p className="text-sm text-muted-foreground">{message}</p>
-      <Button variant="outline" size="sm" onClick={onRetry}>
+      <Button variant="outline" size="sm" className="min-h-11" onClick={onRetry}>
         <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
         Retry
       </Button>
@@ -216,7 +216,7 @@ function CaseRow({ result }: { result: CaseResult }) {
                   </span>
                 ))}
                 <span>{result.latency_ms != null ? `${result.latency_ms} ms` : "—"}</span>
-                {result.error && <span style={{ color: "var(--rust)" }}>error</span>}
+                {result.error && <span style={{ color: "var(--gd-danger)" }}>error</span>}
               </div>
               {llmReason && (
                 <p className="text-[11px] text-muted-foreground/80 italic mt-1 line-clamp-2">{llmReason}</p>
@@ -227,7 +227,7 @@ function CaseRow({ result }: { result: CaseResult }) {
         <CollapsibleContent>
           <div className="px-3 pb-3 pl-9 space-y-2">
             {result.error && (
-              <div className="text-xs font-mono border rounded p-2" style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
+              <div className="text-xs font-mono border rounded p-2" style={{ color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "var(--gd-line-control)" }}>
                 {result.error}
               </div>
             )}
@@ -288,7 +288,7 @@ function RunsTable({ runs, isLoading, isError, onRetry }: {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   return (
-    <Card className="vellum-card">
+    <Card className="border-card-border">
       <CardContent className="p-6">
         <div className="flex items-center gap-2 mb-4">
           <Activity className="w-4 h-4 text-primary" />
@@ -337,7 +337,7 @@ function RunsTable({ runs, isLoading, isError, onRetry }: {
                         <div className="flex items-center justify-end gap-2">
                           <DeltaArrow delta={run.meta?.delta} />
                           {run.meta?.regressed && (
-                            <Badge variant="outline" className="text-[10px]" style={{ color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
+                            <Badge variant="outline" className="text-[10px]" style={{ color: "var(--gd-danger)", borderColor: "var(--gd-line-control)" }}>
                               Regression
                             </Badge>
                           )}
@@ -388,7 +388,7 @@ function TelemetryCard() {
   );
 
   return (
-    <Card className="vellum-card">
+    <Card className="border-card-border">
       <CardContent className="p-6">
         <div className="flex items-center gap-2 mb-4">
           <Gauge className="w-4 h-4 text-primary" />
@@ -425,7 +425,7 @@ function TelemetryCard() {
                     <TableCell className="text-right font-mono">{p.avg_latency_ms != null ? `${Math.round(p.avg_latency_ms)} ms` : "—"}</TableCell>
                     <TableCell className="text-right font-mono">{p.total_prompt_tokens ?? 0}</TableCell>
                     <TableCell className="text-right font-mono">{p.total_completion_tokens ?? 0}</TableCell>
-                    <TableCell className="text-right font-mono" style={(p.error_rate ?? 0) > 0.05 ? { color: "var(--rust)" } : undefined}>
+                    <TableCell className="text-right font-mono" style={(p.error_rate ?? 0) > 0.05 ? { color: "var(--gd-danger)" } : undefined}>
                       {p.error_rate != null ? `${Math.round(p.error_rate * 100)}%` : "—"}
                     </TableCell>
                   </TableRow>
@@ -453,7 +453,7 @@ function BenchmarkCard({ bench, running, onRun }: {
   onRun: () => void;
 }) {
   return (
-    <Card className="vellum-card flex flex-col">
+    <Card className="border-card-border flex flex-col">
       <CardContent className="p-5 flex flex-col flex-1 gap-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -630,6 +630,8 @@ function CandidatePrompt({ prompt, slot, benchmarkable, onChanged }: {
   onChanged: () => void;
 }) {
   const [showSuites, setShowSuites] = useState(false);
+  const [confirmActivate, setConfirmActivate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const benchQuery = useQuery<PromptBenchmark>({
     queryKey: ["mcos", "prompt-benchmark", prompt.id],
@@ -690,14 +692,6 @@ function CandidatePrompt({ prompt, slot, benchmarkable, onChanged }: {
     },
   });
 
-  const handleActivate = () => {
-    if (!window.confirm(`Activate "${prompt.name}" (v${prompt.version})? This deactivates the current active prompt for ${slot}.`)) return;
-    activate.mutate();
-  };
-  const handleDelete = () => {
-    if (!window.confirm(`Delete candidate "${prompt.name}" (v${prompt.version})?`)) return;
-    remove.mutate();
-  };
 
   const candAvg = benchQuery.data?.candidate?.avg ?? null;
   const actAvg = benchQuery.data?.active?.avg ?? null;
@@ -725,16 +719,34 @@ function CandidatePrompt({ prompt, slot, benchmarkable, onChanged }: {
                 : <><FlaskConical className="w-3.5 h-3.5 mr-1.5" /> Benchmark vs active</>}
             </Button>
           )}
-          <Button size="sm" disabled={activate.isPending} onClick={handleActivate}>
+          <Button size="sm" disabled={activate.isPending} onClick={() => setConfirmActivate(true)}>
             {activate.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />}
             Activate
           </Button>
-          <Button size="sm" variant="ghost" disabled={remove.isPending} onClick={handleDelete}
+          <Button size="sm" variant="ghost" disabled={remove.isPending} onClick={() => setConfirmDelete(true)}
             className="text-muted-foreground hover:text-destructive">
             {remove.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
           </Button>
         </div>
       </div>
+
+      <ConfirmAction
+        open={confirmActivate}
+        onOpenChange={setConfirmActivate}
+        title="Activate prompt"
+        consequence={`Activate "${prompt.name}" (v${prompt.version})? This deactivates the current active prompt for ${slot}.`}
+        confirmLabel="Activate"
+        onConfirm={() => activate.mutate()}
+      />
+      <ConfirmAction
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Delete candidate"
+        consequence={`Delete candidate "${prompt.name}" (v${prompt.version})? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => remove.mutate()}
+      />
 
       {!benchmarkable && (
         <p className="text-[11px] text-muted-foreground italic">
@@ -753,8 +765,8 @@ function CandidatePrompt({ prompt, slot, benchmarkable, onChanged }: {
                 variant="outline"
                 className="text-[10px]"
                 style={delta >= 0
-                  ? { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }
-                  : { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
+                  ? { color: "var(--gd-success)", borderColor: "var(--gd-line-control)" }
+                  : { color: "var(--gd-danger)", borderColor: "var(--gd-line-control)" }}
               >
                 {delta >= 0 ? "+" : ""}{Math.round(delta * 100)} pts
               </Badge>
@@ -848,7 +860,7 @@ function PromptLabCard() {
   });
 
   return (
-    <Card className="vellum-card">
+    <Card className="border-card-border">
       <CardContent className="p-6">
         <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
           <div className="flex items-center gap-2">
@@ -901,11 +913,11 @@ function PromptLabCard() {
         ) : (
           <div className="space-y-3">
             {active && (
-              <div className="rounded-lg border p-3" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
+              <div className="rounded-lg border p-3" style={{ borderColor: "var(--gd-line-control)", background: "var(--gd-primary-soft)" }}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium truncate">{active.name}</span>
                   <Badge variant="outline" className="text-[10px] font-mono">v{active.version}</Badge>
-                  <Badge className="text-[10px]" style={{ background: "var(--green-2)", color: "var(--paper)" }}>Active</Badge>
+                  <Badge className="text-[10px]" style={{ background: "var(--gd-success)", color: "var(--gd-accent-ink)" }}>Active</Badge>
                 </div>
                 <div className="flex items-center gap-3 mt-0.5 text-[11px] font-mono text-muted-foreground">
                   <span>{active.created_at ? fmtTime(active.created_at) : "—"}</span>
@@ -1084,7 +1096,7 @@ function RagCalibrationCard() {
   const bestDiffers = !!(best && cfg && (best.target_words !== cfg.target_words || best.overlap_words !== cfg.overlap_words));
 
   return (
-    <Card className="vellum-card">
+    <Card className="border-card-border">
       <CardContent className="p-6">
         <div className="flex items-center justify-between gap-2 mb-4">
           <div className="flex items-center gap-2">
@@ -1150,10 +1162,10 @@ function RagCalibrationCard() {
                     const isBest = !!(best && res.target_words === best.target_words && res.overlap_words === best.overlap_words);
                     return (
                       <TableRow key={`${res.target_words}-${res.overlap_words}`}
-                        style={isBest ? { background: "var(--green-soft)" } : undefined}>
+                        style={isBest ? { background: "var(--gd-primary-soft)" } : undefined}>
                         <TableCell className="text-right font-mono">
                           {res.target_words}
-                          {isBest && <Badge className="ml-2 text-[9px]" style={{ background: "var(--green-2)", color: "var(--paper)" }}>best</Badge>}
+                          {isBest && <Badge className="ml-2 text-[9px]" style={{ background: "var(--gd-success)", color: "var(--gd-accent-ink)" }}>best</Badge>}
                         </TableCell>
                         <TableCell className="text-right font-mono">{res.overlap_words}</TableCell>
                         <TableCell className={`text-right font-mono ${scoreColorStyle(res.score).cls}`} style={scoreColorStyle(res.score).style}>{scorePct(res.score)}</TableCell>
@@ -1228,7 +1240,6 @@ function RagCalibrationCard() {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Mcos() {
-  const gdDark = useGdDark();
   const qc = useQueryClient();
 
   // Recent runs — used to determine polling and per-benchmark "running" state.
@@ -1334,12 +1345,12 @@ export default function Mcos() {
   const isEmpty = !benchLoading && !benchError && benchmarks.length === 0;
 
   return (
-    <div className={`space-y-8 animate-in fade-in duration-500 max-w-6xl mx-auto ${gdDark ? "dark text-foreground" : ""}`}>
+    <div className="space-y-8 animate-in fade-in duration-500 max-w-6xl mx-auto">
       {/* Header */}
       <div className="border-b border-border/50 pb-4 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-serif font-semibold tracking-tight flex items-center gap-2">
-            <Gauge className="w-7 h-7" style={{ color: "var(--green-raw)" }} />
+            <Gauge className="w-7 h-7 text-primary" />
             Calibration
           </h1>
           <p className="text-muted-foreground mt-1 font-serif">
@@ -1382,7 +1393,7 @@ export default function Mcos() {
           </CardContent>
         </Card>
       ) : isEmpty ? (
-        <Card className="vellum-card bg-primary/5 border-primary/20">
+        <Card className="bg-primary/5 border-primary/20">
           <CardContent className="p-8 text-center space-y-3">
             <Sparkles className="w-8 h-8 text-primary mx-auto" />
             <h3 className="font-serif font-semibold text-lg">No benchmarks yet</h3>

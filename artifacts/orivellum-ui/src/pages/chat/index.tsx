@@ -3323,7 +3323,7 @@ export default function Chat() {
             )}
 
             {/* Input — bottom padding accounts for the home indicator safe area so the
-                composer never sits below the swipe zone. Task #288 will add full
+                composer never sits below the swipe zone. Task 288 will add full
                 keyboard-avoidance behavior on top of this foundation. */}
             <div
               className="px-6 bg-muted/10 border-t border-border/50 shrink-0"

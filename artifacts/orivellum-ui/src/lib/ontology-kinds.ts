@@ -14,22 +14,28 @@ const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/
 export interface KindChip {
   value: string;
   label: string;
+  /** A CSS token reference (var(--gd-*)), never a raw color literal. */
   color: string;
 }
 
-/** Legacy entity-kind chips — fallback when no domain ontology applies. */
-export const LEGACY_ENTITY_KINDS: KindChip[] = [
-  { value: "concept",   label: "Concepts",  color: "#8b5cf6" },
-  { value: "person",    label: "People",    color: "#6366f1" },
-  { value: "place",     label: "Places",    color: "#10b981" },
-  { value: "theme",     label: "Themes",    color: "#f59e0b" },
-  { value: "scripture", label: "Scripture", color: "#ef4444" },
+/**
+ * Ordered semantic accent palette (CSS token strings). Cycled when a domain
+ * has more kinds than entries. Consumers that need a concrete color string
+ * (e.g. canvas drawing) resolve these via getComputedStyle at draw time.
+ */
+const PALETTE = [
+  "var(--gd-info)", "var(--gd-success)", "var(--gd-caution)", "var(--gd-violet)",
+  "var(--gd-bronze)", "var(--gd-sonar)", "var(--gd-danger)", "var(--gd-olive)",
+  "var(--gd-slate)",
 ];
 
-// Stable palette for domain-derived kinds (cycled when a domain has more).
-const PALETTE = [
-  "#8b5cf6", "#6366f1", "#10b981", "#f59e0b", "#ef4444",
-  "#06b6d4", "#ec4899", "#84cc16",
+/** Legacy entity-kind chips — fallback when no domain ontology applies. */
+export const LEGACY_ENTITY_KINDS: KindChip[] = [
+  { value: "concept",   label: "Concepts",  color: "var(--gd-violet)" },
+  { value: "person",    label: "People",    color: "var(--gd-info)" },
+  { value: "place",     label: "Places",    color: "var(--gd-success)" },
+  { value: "theme",     label: "Themes",    color: "var(--gd-caution)" },
+  { value: "scripture", label: "Scripture", color: "var(--gd-danger)" },
 ];
 
 interface OntologyResponse {

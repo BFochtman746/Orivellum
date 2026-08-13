@@ -1,5 +1,4 @@
 @import './styles/gd-tokens.css';
-@import './styles/legacy-aliases.css';
 @import './styles/shell.css';
 @import 'tailwindcss';
 @import 'tw-animate-css';
@@ -70,87 +69,38 @@
   --elevate-1: rgba(40, 35, 24, 0.03);
   --elevate-2: rgba(40, 35, 24, 0.08);
 
-  /* ── VELLUM raw tokens (used directly in glass/grain utilities) ─── */
-  --paper:       #F4EEE1;
-  --paper-2:     #F8F3E8;
-  --card-raw:    #FEFCF6;
-  --ink-raw:     #282318;
-  --ink-soft:    #5C5443;
-  --ink-faint:   #8B8271;
-  --green-raw:   #274633;
-  --green-2:     #3C6A4B;
-  --green-soft:  rgba(39, 70, 51, 0.10);
-  --gilt:        #9A7B2E;
-  --gilt-2:      #B4922F;
-  --gilt-soft:   rgba(154, 123, 46, 0.12);
-  --gilt-line:   rgba(154, 123, 46, 0.32);
-  --rust:        #B2431E;
-  --rust-soft:   rgba(178, 67, 30, 0.10);
-  --line:        rgba(40, 35, 24, 0.12);
-  --line-2:      rgba(40, 35, 24, 0.18);
-  /* Glass / vellum surface tokens */
-  --vellum:        rgba(248, 243, 232, 0.74);
-  --vellum-strong: rgba(250, 246, 237, 0.90);
-  --vellum-hi:     rgba(255, 255, 255, 0.55);
-  --blur:          16px;
-  /* Warm-tinted shadows */
-  --shadow-1: 0 1px 2px rgba(40,35,24,.04), 0 6px 20px rgba(40,35,24,.07);
-  --shadow-2: 0 2px 8px rgba(40,35,24,.06), 0 18px 46px rgba(40,35,24,.13);
-  /* Tier colors */
-  --t-canon:   #274633;
-  --t-source:  #9A7B2E;
-  --t-artifact:#8B8271;
-  --t-conv:    #3C6A4B;
-  --t-claim:   #B2431E;
-
-  /* ── Tailwind HSL tokens (warm ink throughout) ─── */
-  /* Parchment Base */
-  --background: 40 32% 93%;
-  --foreground: 36 28% 13%;
-  --border: 38 18% 84%;
-
-  /* Card (bright vellum) */
-  --card: 40 50% 98%;
-  --card-foreground: 36 28% 13%;
-  --card-border: 38 18% 84%;
-
-  /* Sidebar — slightly deeper parchment */
-  --sidebar: 40 22% 90%;
-  --sidebar-foreground: 36 28% 13%;
-  --sidebar-border: 38 18% 82%;
-  --sidebar-primary: 151 43% 24%;
-  --sidebar-primary-foreground: 40 33% 98%;
-  --sidebar-accent: 40 18% 85%;
-  --sidebar-accent-foreground: 36 28% 10%;
-  --sidebar-ring: 151 43% 24%;
-
-  /* Popovers */
-  --popover: 40 50% 98%;
-  --popover-foreground: 36 28% 13%;
-  --popover-border: 38 18% 84%;
-
-  /* Forest Green primary */
-  --primary: 151 43% 24%;
-  --primary-foreground: 40 33% 98%;
-
-  /* Warm parchment secondary */
-  --secondary: 36 25% 87%;
-  --secondary-foreground: 36 30% 20%;
-
-  /* Muted */
-  --muted: 38 16% 89%;
-  --muted-foreground: 35 14% 42%;
-
-  /* Accent */
-  --accent: 38 16% 89%;
-  --accent-foreground: 36 28% 13%;
-
-  /* Rust destructive */
-  --destructive: 15 72% 41%;
-  --destructive-foreground: 40 30% 97%;
-
-  --input: 38 18% 83%;
-  --ring: 151 43% 24%;
+  /* ── shadcn HSL triples — Daylight (from design/tokens.json).
+     tests/test_design_tokens.py checks triple parity against the token
+     source; never edit these without updating tokens.json first. ─── */
+  --background: 43.6 33.3% 93.5%;        /* semantic.canvas */
+  --foreground: 208.9 37% 14.3%;         /* semantic.text */
+  --border: 41.1 19.6% 81%;              /* line-decorative */
+  --card: 0 0% 100%;                     /* semantic.raised */
+  --card-foreground: 208.9 37% 14.3%;
+  --card-border: 41.1 19.6% 81%;
+  --sidebar: 48 38.5% 97.5%;             /* semantic.surface */
+  --sidebar-foreground: 208.9 37% 14.3%;
+  --sidebar-border: 41.1 19.6% 81%;
+  --sidebar-primary: 206.2 58.2% 21.6%;  /* semantic.primary */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 42.9 25% 89%;        /* semantic.recessed */
+  --sidebar-accent-foreground: 208.9 37% 14.3%;
+  --sidebar-ring: 206.2 58.2% 21.6%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 208.9 37% 14.3%;
+  --popover-border: 41.1 19.6% 81%;
+  --primary: 206.2 58.2% 21.6%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 42.9 25% 89%;
+  --secondary-foreground: 208.9 37% 14.3%;
+  --muted: 42.9 25% 89%;
+  --muted-foreground: 207.1 18.1% 33.5%; /* semantic.text-muted */
+  --accent: 42.9 25% 89%;
+  --accent-foreground: 208.9 37% 14.3%;
+  --destructive: 5.7 55.2% 41.2%;        /* semantic.danger */
+  --destructive-foreground: 0 0% 100%;
+  --input: 38.2 8.9% 51.4%;              /* line-control */
+  --ring: 206.2 58.2% 21.6%;             /* semantic.focus */
 
   /* Platform stacks for interface copy (self-hosted faces are display-only:
      wordmark stencil, condensed plates, data mono — see gd-tokens.css). */
@@ -182,74 +132,37 @@
   --elevate-1: rgba(255, 255, 255, 0.04);
   --elevate-2: rgba(255, 255, 255, 0.09);
 
-  /* ── VELLUM dark raw tokens ─── */
-  --paper:       #14110C;
-  --paper-2:     #1A160F;
-  --card-raw:    #1E1A12;
-  --ink-raw:     #EFE7D5;
-  --ink-soft:    #B9B09B;
-  --ink-faint:   #847B67;
-  --green-raw:   #6FA982;
-  --green-2:     #8FC2A1;
-  --green-soft:  rgba(111, 169, 130, 0.14);
-  --gilt:        #C9A25A;
-  --gilt-2:      #D8B570;
-  --gilt-soft:   rgba(201, 162, 90, 0.14);
-  --gilt-line:   rgba(201, 162, 90, 0.36);
-  --rust:        #D46A43;
-  --rust-soft:   rgba(212, 106, 67, 0.14);
-  --line:        rgba(239, 231, 213, 0.10);
-  --line-2:      rgba(239, 231, 213, 0.16);
-  --vellum:        rgba(26, 22, 15, 0.82);
-  --vellum-strong: rgba(20, 17, 12, 0.92);
-  --vellum-hi:     rgba(239, 231, 213, 0.10);
-  --shadow-1: 0 1px 2px rgba(0,0,0,.30), 0 6px 20px rgba(0,0,0,.36);
-  --shadow-2: 0 2px 8px rgba(0,0,0,.40), 0 18px 46px rgba(0,0,0,.52);
-  --t-canon:   #8FC2A1;
-  --t-source:  #D8B570;
-  --t-artifact:#A99F89;
-  --t-conv:    #6FA982;
-  --t-claim:   #E08A63;
-
-  /* ── Tailwind HSL dark tokens ─── */
-  --background: 36 28% 8%;
-  --foreground: 38 22% 92%;
-  --border: 36 18% 18%;
-
-  --card: 36 25% 11%;
-  --card-foreground: 38 22% 92%;
-  --card-border: 36 18% 18%;
-
-  --sidebar: 36 30% 6%;
-  --sidebar-foreground: 38 22% 92%;
-  --sidebar-border: 36 18% 13%;
-  --sidebar-primary: 150 32% 52%;
-  --sidebar-primary-foreground: 36 28% 8%;
-  --sidebar-accent: 36 22% 14%;
-  --sidebar-accent-foreground: 38 22% 92%;
-  --sidebar-ring: 150 32% 52%;
-
-  --popover: 36 25% 11%;
-  --popover-foreground: 38 22% 92%;
-  --popover-border: 36 18% 18%;
-
-  --primary: 150 32% 52%;
-  --primary-foreground: 36 28% 8%;
-
-  --secondary: 36 22% 16%;
-  --secondary-foreground: 38 18% 88%;
-
-  --muted: 36 18% 14%;
-  --muted-foreground: 36 12% 60%;
-
-  --accent: 36 22% 16%;
-  --accent-foreground: 38 22% 92%;
-
-  --destructive: 15 58% 52%;
-  --destructive-foreground: 38 22% 95%;
-
-  --input: 36 18% 18%;
-  --ring: 150 32% 52%;
+  /* ── shadcn HSL triples — Hull (from design/tokens.json).
+     Parity-checked by tests/test_design_tokens.py. ─── */
+  --background: 213.3 18.4% 9.6%;        /* semantic.canvas */
+  --foreground: 42 19.2% 89.8%;          /* semantic.text */
+  --border: 211.6 14.3% 26.1%;           /* line-decorative */
+  --card: 212.3 15.7% 16.3%;             /* semantic.raised */
+  --card-foreground: 42 19.2% 89.8%;
+  --card-border: 211.6 14.3% 26.1%;
+  --sidebar: 212.7 16.9% 12.7%;          /* semantic.surface */
+  --sidebar-foreground: 42 19.2% 89.8%;
+  --sidebar-border: 211.6 14.3% 26.1%;
+  --sidebar-primary: 212.6 35.1% 62%;    /* semantic.primary */
+  --sidebar-primary-foreground: 213.3 18.4% 9.6%;
+  --sidebar-accent: 212.3 15.7% 16.3%;
+  --sidebar-accent-foreground: 42 19.2% 89.8%;
+  --sidebar-ring: 212.6 35.1% 62%;
+  --popover: 212.3 15.7% 16.3%;
+  --popover-foreground: 42 19.2% 89.8%;
+  --popover-border: 211.6 14.3% 26.1%;
+  --primary: 212.6 35.1% 62%;
+  --primary-foreground: 213.3 18.4% 9.6%;
+  --secondary: 212.3 15.7% 16.3%;
+  --secondary-foreground: 42 19.2% 89.8%;
+  --muted: 212.3 15.7% 16.3%;
+  --muted-foreground: 210 14.1% 69.4%;   /* semantic.text-muted */
+  --accent: 212.3 15.7% 16.3%;
+  --accent-foreground: 42 19.2% 89.8%;
+  --destructive: 8.5 74.9% 59.4%;        /* semantic.danger */
+  --destructive-foreground: 213.3 18.4% 9.6%;
+  --input: 210 14.3% 32.9%;              /* --gd-line-2 */
+  --ring: 212.6 35.1% 62%;               /* semantic.focus */
 }
 
 /* ── App shell geometry foundation ────────────────────────────────────────
@@ -560,104 +473,10 @@ body:is(.dark)::before {
   body::before { display: none; }
 }
 
-/* ── iOS Glass — the core technique ────────────────────────────────────────
-   Three levels of frosted vellum glass, matching iOS system materials:
-
-   .glass-vellum     → standard (nav bars, toolbars, context bars)
-   .glass-sheet      → elevated (sheets, modals, drawers — stronger blur)
-   .glass-card       → subtle (elevated cards, popovers)
-
-   Each has:
-   1. Semi-transparent warm tint (not pure white — *paper* tint)
-   2. backdrop-filter blur + saturate (the glass effect)
-   3. 1px top-edge inner glow (the iOS highlight strip)
-   4. Warm-tinted drop shadow for depth
-   5. Graceful degradation via @supports                                     */
-
-.glass-vellum {
-  background: var(--vellum);
-  border: 1px solid var(--line);
-}
-@supports (backdrop-filter: blur(1px)) {
-  .glass-vellum {
-    -webkit-backdrop-filter: blur(var(--blur)) saturate(125%);
-    backdrop-filter: blur(var(--blur)) saturate(125%);
-    box-shadow: 0 -1px 0 var(--vellum-hi) inset, var(--shadow-1);
-  }
-}
-@media (prefers-reduced-transparency: reduce) {
-  .glass-vellum { background: hsl(var(--card)); backdrop-filter: none; -webkit-backdrop-filter: none; }
-}
-
-.glass-sheet {
-  background: var(--vellum-strong);
-  border-top: 1px solid var(--vellum-hi);
-  border-radius: 22px 22px 0 0;
-}
-@supports (backdrop-filter: blur(1px)) {
-  .glass-sheet {
-    -webkit-backdrop-filter: blur(calc(var(--blur) + 6px)) saturate(130%);
-    backdrop-filter: blur(calc(var(--blur) + 6px)) saturate(130%);
-    box-shadow: 0 1px 0 var(--vellum-hi) inset, 0 -14px 44px rgba(40,35,24,.16);
-  }
-}
-@media (prefers-reduced-transparency: reduce) {
-  .glass-sheet { background: hsl(var(--card)); backdrop-filter: none; -webkit-backdrop-filter: none; }
-}
-
-.glass-card {
-  background: var(--card-raw);
-  border: 1px solid var(--line);
-}
-@supports (backdrop-filter: blur(1px)) {
-  .glass-card {
-    background: rgba(254, 252, 246, 0.82);
-    -webkit-backdrop-filter: blur(8px) saturate(110%);
-    backdrop-filter: blur(8px) saturate(110%);
-    box-shadow: var(--shadow-1);
-  }
-}
-.dark .glass-card {
-  background: rgba(30, 26, 18, 0.82) !important;
-}
-@media (prefers-reduced-transparency: reduce) {
-  .glass-card { background: hsl(var(--card)); backdrop-filter: none; -webkit-backdrop-filter: none; }
-}
-
-/* Gilt lens flare — the thin gradient shimmer at top of a glass surface */
-.glass-lens::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; height: 1px;
-  background: linear-gradient(90deg, transparent 0%, var(--vellum-hi) 30%, rgba(255,255,255,0.7) 50%, var(--vellum-hi) 70%, transparent 100%);
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-/* ── Vellum card (drop-in for shadcn Card) ──────────────────────────────── */
-.vellum-card {
-  background: hsl(var(--card));
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: var(--shadow-1);
-  transition: box-shadow 0.18s ease, border-color 0.18s ease, transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.1);
-}
-.vellum-card:is([data-interactive]):hover,
-.vellum-card.tap:hover {
-  box-shadow: var(--shadow-2);
-  border-color: var(--gilt-line);
-  transform: translateY(-1px);
-}
-.vellum-card:is([data-interactive]):active,
-.vellum-card.tap:active {
-  transform: scale(0.99);
-  box-shadow: var(--shadow-1);
-}
-
 /* ── Gilt hairline rule — editorial underline under page titles ──────────── */
 .gilt-rule {
   height: 1px;
-  background: linear-gradient(90deg, var(--gilt-line) 0%, transparent 100%);
+  background: linear-gradient(90deg, var(--gd-bronze-soft) 0%, transparent 100%);
   margin: 12px 0 4px;
   flex-shrink: 0;
 }
@@ -670,17 +489,6 @@ body:is(.dark)::before {
   text-transform: uppercase;
   color: var(--gd-bronze);
   display: block;
-}
-
-/* ── Drop-cap — rust first-letter on AI voice / prose ──────────────────── */
-.drop-cap::first-letter {
-  font-family: var(--app-font-serif);
-  font-size: 3em;
-  line-height: 0.82;
-  float: left;
-  margin: 0.04em 0.1em 0 0;
-  color: var(--rust);
-  font-variation-settings: "opsz" 144;
 }
 
 /* ── Tier badges ────────────────────────────────────────────────────────────
@@ -698,11 +506,11 @@ body:is(.dark)::before {
   align-items: center;
   line-height: 1.4;
 }
-.tier-canon   { color: var(--t-canon);    border-color: var(--t-canon);    background: var(--green-soft); }
-.tier-source  { color: var(--t-source);   border-color: var(--t-source);   background: var(--gilt-soft); }
-.tier-artifact{ color: var(--t-artifact); border-color: var(--line-2);     background: transparent; }
-.tier-conv    { color: var(--t-conv);     border-color: var(--t-conv);     background: var(--green-soft); }
-.tier-claim   { color: var(--t-claim);    border-color: var(--t-claim);    background: var(--rust-soft); }
+.tier-canon   { color: var(--gd-primary); border-color: var(--gd-primary);      background: var(--gd-primary-soft); }
+.tier-source  { color: var(--gd-bronze);  border-color: var(--gd-bronze);       background: var(--gd-bronze-soft); }
+.tier-artifact{ color: var(--gd-dim);     border-color: var(--gd-line-control); background: transparent; }
+.tier-conv    { color: var(--gd-sonar);   border-color: var(--gd-sonar);        background: var(--gd-primary-soft); }
+.tier-claim   { color: var(--gd-danger);  border-color: var(--gd-danger);       background: var(--gd-danger-soft); }
 
 /* ── Spring-like transitions ────────────────────────────────────────────────
    CSS can't do real springs but these bezier curves mimic the characteristic
@@ -720,93 +528,7 @@ body:is(.dark)::before {
   to   { opacity: 1; transform: none; }
 }
 
-/* Row pattern (icon + title + meta + trailing) */
-.vellum-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: hsl(var(--card));
-  box-shadow: var(--shadow-1);
-  cursor: pointer;
-  transition: border-color 0.18s ease, transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.1);
-}
-.vellum-row:hover { border-color: var(--gilt-line); }
-.vellum-row:active { transform: scale(0.995); }
-
-/* ── Pipeline stage bar ─────────────────────────────────────────────────── */
-.pipeline {
-  display: flex;
-  gap: 3px;
-  margin-top: 10px;
-}
-.pipeline-stage {
-  flex: 1;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--line);
-  transition: background 0.3s ease;
-}
-.pipeline-stage.done  { background: var(--green-2); }
-.pipeline-stage.cur   { background: var(--gilt); }
-
-/* ── Stat card ───────────────────────────────────────────────────────────── */
-.stat-meter {
-  height: 5px;
-  border-radius: 3px;
-  background: var(--line);
-  margin-top: 8px;
-  overflow: hidden;
-}
-.stat-meter-fill {
-  height: 100%;
-  border-radius: 3px;
-  background: linear-gradient(90deg, var(--green-2), var(--gilt));
-  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-/* ── Frosted filter chips ────────────────────────────────────────────────── */
-.vellum-chip {
-  flex-shrink: 0;
-  font-family: var(--app-font-sans);
-  font-size: 12.5px;
-  color: var(--ink-soft);
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  padding: 5px 14px;
-  background: hsl(var(--card));
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-}
-.vellum-chip:hover { border-color: var(--gilt-line); color: var(--ink-raw); }
-.vellum-chip.active {
-  color: hsl(var(--primary-foreground));
-  background: var(--green-raw);
-  border-color: var(--green-raw);
-}
-.dark .vellum-chip.active { color: #12100b; }
-
-/* ── Page header layout ─────────────────────────────────────────────────── */
-.vellum-pagehead {
-  padding: 20px 24px 0;
-}
-.vellum-h1 {
-  font-family: var(--app-font-serif);
-  font-weight: 400;
-  font-size: clamp(28px, 5vw, 36px);
-  line-height: 1.05;
-  color: var(--green-raw);
-  font-variation-settings: "opsz" 120;
-  letter-spacing: -0.01em;
-  margin: 6px 0 0;
-}
-.dark .vellum-h1 { color: var(--green-2); }
-
-/* ── Page heading — semantic-token twin of .vellum-h1 (tokens flip; no dark
-   override needed). Preferred over .vellum-h1 for migrated screens. ──────── */
+/* ── Page heading — semantic tokens flip themes; no dark override needed. ── */
 .page-h1 {
   font-family: var(--app-font-serif);
   font-weight: 400;
@@ -816,50 +538,19 @@ body:is(.dark)::before {
   letter-spacing: -0.01em;
 }
 
-/* Segment control (workspace folios) */
-.vellum-seg {
-  display: flex;
-  gap: 4px;
-  background: hsl(var(--card));
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  padding: 4px;
-  box-shadow: var(--shadow-1);
-}
-.vellum-seg-btn {
-  flex: 1;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  font-family: var(--app-font-sans);
-  font-size: 13px;
-  color: var(--ink-soft);
-  padding: 7px 10px;
-  border-radius: 9px;
-  transition: all 0.18s ease;
-}
-.vellum-seg-btn.active {
-  background: var(--green-soft);
-  color: var(--green-raw);
-  font-family: var(--app-font-serif);
-  font-variation-settings: "opsz" 30;
-}
-.dark .vellum-seg-btn.active { color: var(--green-2); }
-
 /* ── Sidebar brand ──────────────────────────────────────────────────────── */
 .brand-orivellum {
   font-family: var(--app-font-serif);
   font-weight: 500;
   font-size: 20px;
-  color: var(--green-raw);
+  color: hsl(var(--primary));
   font-variation-settings: "opsz" 40;
   letter-spacing: -0.01em;
 }
 .brand-orivellum .brand-accent {
-  color: var(--gilt);
+  color: var(--gd-bronze);
   font-style: normal;
 }
-.dark .brand-orivellum { color: var(--green-2); }
 
 /* Section label (mono uppercase) */
 .section-label-mono {
@@ -872,42 +563,3 @@ body:is(.dark)::before {
   margin: 18px 0 8px;
 }
 
-/* ── Status pulse dot ───────────────────────────────────────────────────── */
-.status-dot-pulse {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--green-2);
-  box-shadow: 0 0 0 3px var(--green-soft);
-  animation: vellum-pulse 2.6s ease-in-out infinite;
-  flex-shrink: 0;
-}
-@keyframes vellum-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.45; }
-}
-
-/* ── Caret streaming cursor ────────────────────────────────────────────── */
-.ai-caret {
-  display: inline-block;
-  width: 2px;
-  height: 1.05em;
-  vertical-align: -2px;
-  margin-left: 1px;
-  background: var(--gilt);
-  border-radius: 1px;
-  animation: vellum-blink 1s steps(2, end) infinite;
-}
-@keyframes vellum-blink { 50% { opacity: 0; } }
-
-/* ── Epigraph / pull-quote ──────────────────────────────────────────────── */
-.epigraph {
-  font-family: var(--app-font-serif);
-  font-style: italic;
-  color: var(--ink-soft);
-  font-size: 14.5px;
-  padding-left: 14px;
-  margin: 14px 0;
-  line-height: 1.6;
-  border-left: 2px solid var(--gilt-line);
-  font-variation-settings: "opsz" 32;
-}

@@ -10,9 +10,22 @@
  * `onNavigate(node)` is called when the user clicks "Open" in the detail panel,
  * allowing parent pages to route without coupling the component to a router.
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, X, ChevronRight, ExternalLink, Share2 } from "lucide-react";
+import { useThemePreference } from "@/lib/theme";
+
+/**
+ * Resolve a CSS custom-property reference like "var(--gd-info)" (or a bare
+ * "--gd-info") to a concrete color string via the document root's computed
+ * style. SVG presentation attributes need concrete strings, so tokens are
+ * resolved once per draw generation (keyed on the resolved theme).
+ */
+function resolveToken(ref: string): string {
+  const name = ref.trim().replace(/^var\(\s*/, "").replace(/\s*\)$/, "");
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || ref;
+}
 
 // ── Shared types ───────────────────────────────────────────────────────────────
 
@@ -36,16 +49,21 @@ export interface GEdge {
   type: string;
 }
 
+/**
+ * Node fill colors as CSS token references (var(--gd-*)), never raw literals.
+ * SVG accepts these directly; where a concrete color string is required they
+ * are resolved once per draw generation via getComputedStyle (see resolveVar).
+ */
 export const NODE_COLORS: Record<string, string> = {
-  person:    "#6366f1",
-  place:     "#10b981",
-  concept:   "#8b5cf6",
-  theme:     "#f59e0b",
-  scripture: "#ef4444",
-  document:  "#64748b",
-  file:      "#64748b",
-  pdf:       "#94a3b8",
-  default:   "#a855f7",
+  person:    "var(--gd-info)",
+  place:     "var(--gd-success)",
+  concept:   "var(--gd-violet)",
+  theme:     "var(--gd-caution)",
+  scripture: "var(--gd-danger)",
+  document:  "var(--gd-slate)",
+  file:      "var(--gd-slate)",
+  pdf:       "var(--gd-dim)",
+  default:   "var(--gd-violet)",
 };
 
 export function gNodeColor(n: GNode): string {
@@ -86,6 +104,24 @@ export function KnowledgeGraph({
   const nodesRef = useRef<GNode[]>([]);
   const frameRef = useRef<number>(0);
   const panRef   = useRef<{ px: number; py: number; tx: number; ty: number } | null>(null);
+
+  // Concrete color strings for the SVG scene, resolved once per theme flip.
+  // The resolved theme flips every token, so re-resolve when it changes.
+  const { resolved } = useThemePreference();
+  const draw = useMemo(() => ({
+    edge:      resolveToken("var(--gd-info)"),
+    edgeFaint: resolveToken("var(--gd-dim)"),
+    label:     resolveToken("var(--gd-dim)"),
+    selection: resolveToken("var(--gd-canvas)"),
+    node: Object.fromEntries(
+      Object.entries(NODE_COLORS).map(([k, v]) => [k, resolveToken(v)]),
+    ) as Record<string, string>,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [resolved]);
+  const drawNodeColor = (n: GNode) =>
+    n.type === "document"
+      ? draw.node.document
+      : draw.node[n.kind] ?? draw.node.default;
 
   const [dims,      setDims]      = useState({ w: 900, h: height });
   const [simNodes,  setSimNodes]  = useState<GNode[]>([]);
@@ -283,7 +319,7 @@ export function KnowledgeGraph({
             <defs>
               <marker id="kg-arrow" viewBox="0 0 10 10" refX="20" refY="5"
                 markerWidth="5" markerHeight="5" orient="auto">
-                <path d="M0 0 L10 5 L0 10z" fill="#6366f1" opacity="0.6" />
+                <path d="M0 0 L10 5 L0 10z" fill={draw.edge} opacity="0.6" />
               </marker>
             </defs>
             <g transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`}>
@@ -297,14 +333,14 @@ export function KnowledgeGraph({
                 return (
                   <g key={i}>
                     <line x1={s.x} y1={s.y} x2={t.x} y2={t.y}
-                      stroke={isMention ? "#94a3b8" : "#6366f1"}
+                      stroke={isMention ? draw.edgeFaint : draw.edge}
                       strokeWidth={isMention ? 0.7 : 1.4}
                       strokeOpacity={isMention ? 0.35 : 0.65}
                       strokeDasharray={isMention ? "4 3" : undefined}
                       markerEnd={!isMention ? "url(#kg-arrow)" : undefined}
                     />
                     {!isMention && (
-                      <text x={mx} y={my - 5} fontSize="8" fill="#94a3b8"
+                      <text x={mx} y={my - 5} fontSize="8" fill={draw.label}
                         textAnchor="middle" style={{ pointerEvents: "none" }}>
                         {e.label?.length > 22 ? e.label.slice(0, 20) + "…" : e.label}
                       </text>
@@ -317,7 +353,7 @@ export function KnowledgeGraph({
               {simNodes.map(n => {
                 const isDoc = n.type === "document";
                 const r     = isDoc ? 10 : 8;
-                const col   = gNodeColor(n);
+                const col   = drawNodeColor(n);
                 const isSel = selected?.id === n.id;
                 return (
                   <g key={n.id} className="gn"
@@ -329,11 +365,11 @@ export function KnowledgeGraph({
                     {isDoc
                       ? <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={2}
                           fill={col} fillOpacity={isSel ? 1 : 0.8}
-                          stroke={isSel ? "#fff" : "none"} strokeWidth={2} />
+                          stroke={isSel ? draw.selection : "none"} strokeWidth={2} />
                       : <circle r={r} fill={col} fillOpacity={isSel ? 1 : 0.8}
-                          stroke={isSel ? "#fff" : "none"} strokeWidth={2} />
+                          stroke={isSel ? draw.selection : "none"} strokeWidth={2} />
                     }
-                    <text dy="1.9em" fontSize="9" fill="#94a3b8"
+                    <text dy="1.9em" fontSize="9" fill={draw.label}
                       textAnchor="middle" style={{ pointerEvents: "none" }}>
                       {n.label.length > 16 ? n.label.slice(0, 14) + "…" : n.label}
                     </text>

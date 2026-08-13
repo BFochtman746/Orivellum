@@ -26,11 +26,11 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
-  ShieldCheck, Eye, FlaskConical, Loader2, RefreshCw, AlertCircle,
+  ShieldCheck, Eye, FlaskConical, Loader2, RefreshCw,
   TrendingDown, ArrowUpCircle, ArrowDownCircle, ScrollText,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useGdDark } from "@/lib/useGdDark";
+import { EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -59,9 +59,9 @@ interface CertEvent {
 // ── Status badge ─────────────────────────────────────────────────────────────
 
 const STATUS_STYLE: Record<string, React.CSSProperties> = {
-  certified: { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)", background: "var(--green-soft)" },
-  shadow:    { borderColor: "var(--gilt-line)", color: "var(--gilt)", background: "var(--gilt-soft)" },
-  advisory:  { borderColor: "var(--line)", color: "var(--ink-3)", background: "transparent" },
+  certified: { borderColor: "var(--gd-line-control)", color: "var(--gd-success)", background: "var(--gd-primary-soft)" },
+  shadow:    { borderColor: "var(--gd-line-control)", color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" },
+  advisory:  { borderColor: "var(--gd-line-decorative)", color: "var(--gd-dim)", background: "transparent" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -78,16 +78,16 @@ function StatusBadge({ status }: { status: string }) {
 // ── Precision sparkline (pure SVG, no chart dep) ─────────────────────────────
 
 function Sparkline({ series, bar }: { series: PrecisionPoint[]; bar: number }) {
-  if (series.length < 2) return <span className="text-xs" style={{ color: "var(--ink-3)" }}>—</span>;
+  if (series.length < 2) return <span className="text-xs" style={{ color: "var(--gd-dim)" }}>—</span>;
   const w = 120, h = 28, pad = 2;
   const xs = series.map((_, i) => pad + (i * (w - 2 * pad)) / (series.length - 1));
   const ys = series.map((p) => h - pad - p.precision * (h - 2 * pad));
   const barY = h - pad - bar * (h - 2 * pad);
   const last = series[series.length - 1].precision;
-  const color = last >= bar ? "var(--green-2)" : "var(--rust)";
+  const color = last >= bar ? "var(--gd-success)" : "var(--gd-danger)";
   return (
     <svg width={w} height={h} aria-label="precision over time" role="img">
-      <line x1={pad} x2={w - pad} y1={barY} y2={barY} stroke="var(--line)" strokeDasharray="3 3" />
+      <line x1={pad} x2={w - pad} y1={barY} y2={barY} stroke="var(--gd-line-decorative)" strokeDasharray="3 3" />
       <polyline
         points={xs.map((x, i) => `${x},${ys[i]}`).join(" ")}
         fill="none" stroke={color} strokeWidth={1.5}
@@ -120,7 +120,6 @@ const ACTION_COPY = {
 } as const;
 
 export default function AssayPromotion() {
-  const gdDark = useGdDark();
   const qc = useQueryClient();
   const [action, setAction] = useState<Action>(null);
   const [note, setNote] = useState("");
@@ -163,35 +162,45 @@ export default function AssayPromotion() {
   const events = dashQuery.data?.events ?? [];
 
   return (
-    <div className={gdDark ? "gd-dark" : undefined} style={{ background: "var(--paper)", minHeight: "100%" }}>
+    <div className="bg-background" style={{ minHeight: "100%" }}>
       <div className="mx-auto max-w-5xl px-4 py-8 space-y-8">
         <header className="flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="eyebrow">Scriptorium · Quality</p>
-            <h1 className="font-display text-2xl" style={{ color: "var(--ink)" }}>
+            <h1 className="font-display text-2xl text-foreground">
               Instrument Certification
             </h1>
-            <p className="mt-1 text-sm max-w-2xl" style={{ color: "var(--ink-2)" }}>
+            <p className="mt-1 text-sm max-w-2xl text-muted-foreground">
               No instrument may block your book until it earns that right. Shadow
               candidates run alongside certified checks; your true/false-positive
               verdicts build the precision record that promotion requires.
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => dashQuery.refetch()} disabled={dashQuery.isFetching}>
+          <Button variant="outline" size="sm" className="min-h-11 shrink-0" onClick={() => dashQuery.refetch()} disabled={dashQuery.isFetching}>
             {dashQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           </Button>
         </header>
 
         {dashQuery.isLoading && (
-          <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
+          <LoadingState rows={3} label="Loading instruments" />
         )}
         {dashQuery.isError && (
-          <Card><CardContent className="flex items-center gap-2 py-6 text-sm" style={{ color: "var(--rust)" }}>
-            <AlertCircle className="h-4 w-4 shrink-0" />{(dashQuery.error as Error).message}
-          </CardContent></Card>
+          <ErrorState
+            title="Could not load instruments"
+            detail={(dashQuery.error as Error).message}
+            onRetry={() => dashQuery.refetch()}
+          />
         )}
 
-        {!dashQuery.isLoading && !dashQuery.isError && (
+        {!dashQuery.isLoading && !dashQuery.isError && rows.length === 0 && (
+          <EmptyState
+            icon={<ShieldCheck />}
+            title="No instruments registered"
+            description="Quality instruments appear here once they are registered and start accumulating a precision record."
+          />
+        )}
+
+        {!dashQuery.isLoading && !dashQuery.isError && rows.length > 0 && (
           <div className="space-y-3">
             {rows.map((row) => {
               const p = row.precision;
@@ -202,9 +211,9 @@ export default function AssayPromotion() {
                     <div className="flex flex-wrap items-center gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium truncate" style={{ color: "var(--ink)" }}>{row.name}</span>
+                          <span className="font-medium truncate text-foreground">{row.name}</span>
                           <StatusBadge status={row.certification} />
-                          <Badge variant="outline" style={{ borderColor: "var(--line)", color: "var(--ink-3)" }}>
+                          <Badge variant="outline" style={{ borderColor: "var(--gd-line-decorative)", color: "var(--gd-dim)" }}>
                             Tier {row.tier}
                           </Badge>
                           {row.shadow_of && (
@@ -213,13 +222,12 @@ export default function AssayPromotion() {
                             </Badge>
                           )}
                           {row.degraded && (
-                            <Badge variant="outline" className="gap-1"
-                              style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", color: "var(--rust)", background: "var(--rust-soft)" }}>
+                            <Badge variant="outline" className="gap-1 text-destructive border-destructive/40 bg-destructive/10">
                               <TrendingDown className="h-3 w-3" />degraded
                             </Badge>
                           )}
                         </div>
-                        <p className="mt-1 text-xs" style={{ color: "var(--ink-3)" }}>
+                        <p className="mt-1 text-xs" style={{ color: "var(--gd-dim)" }}>
                           {p.sample_size > 0
                             ? <>Precision {p.precision != null ? `${Math.round(p.precision * 100)}%` : "—"} over {p.sample_size} verdict{p.sample_size === 1 ? "" : "s"} (bar: {barPct}% over ≥{p.bar.min_dispositions})</>
                             : <>No author verdicts yet — disposition this instrument's findings to build its record (bar: {barPct}% over ≥{p.bar.min_dispositions}).</>}
@@ -231,20 +239,20 @@ export default function AssayPromotion() {
                       <Sparkline series={p.series} bar={p.bar.min_precision} />
                       <div className="flex items-center gap-2">
                         {row.certification === "advisory" && (
-                          <Button size="sm" variant="outline" data-testid={`button-shadow-${row.key}`}
+                          <Button size="sm" variant="outline" className="min-h-11" data-testid={`button-shadow-${row.key}`}
                             onClick={() => setAction({ kind: "shadow", row })}>
                             <Eye className="mr-1 h-3.5 w-3.5" />Shadow
                           </Button>
                         )}
                         {row.certification === "shadow" && (
-                          <Button size="sm" disabled={!row.promotable} data-testid={`button-promote-${row.key}`}
+                          <Button size="sm" className="min-h-11" disabled={!row.promotable} data-testid={`button-promote-${row.key}`}
                             title={row.promotable ? undefined : "Precision bar not met yet"}
                             onClick={() => setAction({ kind: "promote", row })}>
                             <ArrowUpCircle className="mr-1 h-3.5 w-3.5" />Promote
                           </Button>
                         )}
                         {row.certification === "certified" && (
-                          <Button size="sm" variant="outline" data-testid={`button-demote-${row.key}`}
+                          <Button size="sm" variant="outline" className="min-h-11" data-testid={`button-demote-${row.key}`}
                             onClick={() => setAction({ kind: "demote", row })}>
                             <ArrowDownCircle className="mr-1 h-3.5 w-3.5" />Demote
                           </Button>
@@ -260,21 +268,21 @@ export default function AssayPromotion() {
 
         {events.length > 0 && (
           <section>
-            <h2 className="mb-2 flex items-center gap-2 font-display text-lg" style={{ color: "var(--ink)" }}>
+            <h2 className="mb-2 flex items-center gap-2 font-display text-lg text-foreground">
               <ScrollText className="h-4 w-4" />Certification ledger
             </h2>
-            <Card><CardContent className="divide-y py-1" style={{ borderColor: "var(--line)" }}>
+            <Card><CardContent className="divide-y border-border py-1">
               {events.map((e) => (
                 <div key={e.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
-                  <span style={{ color: "var(--ink-2)" }}>{format(new Date(e.created_at), "d MMM yyyy HH:mm")}</span>
-                  <span className="capitalize" style={{ color: "var(--ink)" }}>{e.from_status} → {e.to_status}</span>
-                  <span style={{ color: "var(--ink-3)" }}>by {e.actor}</span>
+                  <span className="text-muted-foreground">{format(new Date(e.created_at), "d MMM yyyy HH:mm")}</span>
+                  <span className="capitalize text-foreground">{e.from_status} → {e.to_status}</span>
+                  <span style={{ color: "var(--gd-dim)" }}>by {e.actor}</span>
                   {e.precision_val != null && (
-                    <span style={{ color: "var(--ink-3)" }}>
+                    <span style={{ color: "var(--gd-dim)" }}>
                       · precision {Math.round(e.precision_val * 100)}%{e.sample_size != null ? ` over ${e.sample_size}` : ""}
                     </span>
                   )}
-                  {e.note && <span className="italic" style={{ color: "var(--ink-3)" }}>“{e.note}”</span>}
+                  {e.note && <span className="italic" style={{ color: "var(--gd-dim)" }}>“{e.note}”</span>}
                 </div>
               ))}
             </CardContent></Card>
@@ -297,8 +305,8 @@ export default function AssayPromotion() {
                     placeholder="Why this decision — kept on the ledger" rows={2} data-testid="input-cert-note" />
                 </div>
                 <DialogFooter>
-                  <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-                  <Button data-testid="button-confirm-cert"
+                  <DialogClose asChild><Button variant="outline" className="min-h-11">Cancel</Button></DialogClose>
+                  <Button data-testid="button-confirm-cert" className="min-h-11"
                     disabled={mutate.isPending}
                     onClick={() => mutate.mutate({ kind: action.kind, key: action.row.key, note })}>
                     {mutate.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}

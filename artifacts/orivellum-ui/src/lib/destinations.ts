@@ -83,8 +83,6 @@ export const DESTINATIONS: Destination[] = [
       { name: "Write desk", href: "/write" },
       { name: "Projects", href: "/projects" },
       { name: "Books", href: "/books" },
-      { name: "Series", href: "/series" },
-      { name: "Collections", href: "/collections" },
       { name: "Canon", href: "/canon" },
       { name: "Architect", href: "/architect" },
       { name: "Finishing", href: "/finishing" },

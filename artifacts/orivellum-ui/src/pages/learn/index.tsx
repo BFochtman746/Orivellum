@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Page, EmptyState, ErrorState } from "@/components/primitives";
 import {
   GraduationCap, BookOpen, Brain, Target, Zap,
   ChevronRight, Lightbulb, TrendingUp,
@@ -24,7 +25,7 @@ interface LearnWork extends Work {
 function MasteryRing({ pct, size = 48 }: { pct: number; size?: number }) {
   const r = (size - 8) / 2;
   const circ = 2 * Math.PI * r;
-  const color = pct >= 80 ? "var(--green-2)" : pct >= 50 ? "var(--gilt)" : "var(--ink-soft)";
+  const color = pct >= 80 ? "var(--gd-success)" : pct >= 50 ? "var(--gd-bronze)" : "var(--gd-muted)";
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0 -rotate-90">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={6}
@@ -50,7 +51,7 @@ function LearnWorkCard({ work }: { work: LearnWork }) {
     : pct >= 50 ? "In progress"
     : pct > 0   ? "Getting started"
     : "Not started";
-  const masteryStyle = pct >= 80 ? { color: 'var(--green-2)' } : pct >= 50 ? { color: 'var(--gilt)' } : { color: 'var(--ink-soft)' };
+  const masteryStyle = pct >= 80 ? { color: 'var(--gd-success)' } : pct >= 50 ? { color: 'var(--gd-bronze)' } : { color: 'var(--gd-muted)' };
 
   return (
     <Link href={`/works/${work.id}`}>
@@ -134,7 +135,7 @@ function LearnWorkCard({ work }: { work: LearnWork }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function LearnPage() {
-  const { data, isLoading } = useQuery<{ works: LearnWork[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ works: LearnWork[] }>({
     queryKey: ["learn"],
     queryFn: () => apiFetch(`${BASE}/learn`).then(r => r.json()),
     staleTime: 30_000,
@@ -150,31 +151,25 @@ export default function LearnPage() {
   const overallPct = totalConcepts > 0 ? Math.round(totalGraduated / totalConcepts * 100) : 0;
 
   return (
-    <div className="space-y-8 max-w-5xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Header */}
-      <div>
-        <span className="eyebrow mb-1">The Tutor</span>
-        <h1 className="vellum-h1">Learn</h1>
-        <div className="gilt-rule w-28" />
-        <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
-          Socratic study sessions grounded in your own sources.
-        </p>
-      </div>
+    <Page eyebrow="The Tutor" title="Learn" wide>
+      <p className="text-[13px] -mt-2 text-muted-foreground">
+        Socratic study sessions grounded in your own sources.
+      </p>
 
       {/* Overall scorecard */}
-      {!isLoading && totalConcepts > 0 && (
+      {!isLoading && !isError && totalConcepts > 0 && (
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: "Total Concepts",  value: totalConcepts,       icon: Target,       tokenColor: 'var(--green-raw)', tokenBg: 'var(--green-soft)' },
-            { label: "Graduated",       value: totalGraduated,      icon: GraduationCap, tokenColor: 'var(--gilt)',      tokenBg: 'var(--gilt-soft)' },
-            { label: "Overall Mastery", value: `${overallPct}%`,    icon: TrendingUp,   tokenColor: 'var(--green-2)',   tokenBg: 'var(--green-soft)' },
+            { label: "Total Concepts",  value: totalConcepts,       icon: Target,       tokenColor: 'var(--gd-olive)',  tokenBg: 'var(--gd-olive-soft)' },
+            { label: "Graduated",       value: totalGraduated,      icon: GraduationCap, tokenColor: 'var(--gd-bronze)', tokenBg: 'var(--gd-bronze-soft)' },
+            { label: "Overall Mastery", value: `${overallPct}%`,    icon: TrendingUp,   tokenColor: 'var(--gd-success)', tokenBg: 'var(--gd-olive-soft)' },
           ].map(({ label, value, icon: Icon, tokenColor, tokenBg }) => (
-            <div key={label} className="vellum-card p-4 flex items-center gap-3"
+            <div key={label} className="rounded-lg border border-card-border p-4 flex items-center gap-3"
                  style={{ background: tokenBg }}>
               <Icon className="w-5 h-5 shrink-0" style={{ color: tokenColor }} />
-              <div>
-                <div className="text-2xl font-serif font-semibold" style={{ color: tokenColor }}>{value}</div>
-                <div className="text-[10px] font-mono uppercase" style={{ color: tokenColor, opacity: 0.7 }}>{label}</div>
+              <div className="min-w-0">
+                <div className="text-2xl font-serif font-semibold truncate" style={{ color: tokenColor }}>{value}</div>
+                <div className="text-[10px] font-mono uppercase truncate" style={{ color: tokenColor, opacity: 0.7 }}>{label}</div>
               </div>
             </div>
           ))}
@@ -186,27 +181,25 @@ export default function LearnPage() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-40 w-full rounded-xl" />)}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load your study progress"
+          detail="The tutor data didn't come back. Check your connection and try again."
+          onRetry={() => refetch()}
+        />
       ) : works.length === 0 ? (
-        <Card className="border-dashed bg-muted/20">
-          <CardContent className="p-12 text-center space-y-4">
-            <GraduationCap className="w-10 h-10 text-muted-foreground mx-auto opacity-40" />
-            <div className="space-y-1">
-              <p className="font-medium">No Works yet</p>
-              <p className="text-sm text-muted-foreground">
-                Create a Work, import documents, and seed learning concepts to start.
-              </p>
-            </div>
-            <Button asChild size="sm">
-              <Link href="/works">Go to Works</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<GraduationCap />}
+          title="No Works yet"
+          description="Create a Work, import documents, and seed learning concepts to start."
+          action={<Button asChild size="sm"><Link href="/works">Go to Works</Link></Button>}
+        />
       ) : (
         <div className="space-y-6">
           {worksWithConcepts.length > 0 && (
             <div className="space-y-3">
               <h2 className="text-lg font-serif font-semibold flex items-center gap-2 text-balance">
-                <BookOpen className="w-4 h-4" style={{ color: 'var(--green-raw)' }} /> Active Study
+                <BookOpen className="w-4 h-4 text-primary" /> Active Study
               </h2>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {worksWithConcepts.map(w => <LearnWorkCard key={w.id} work={w} />)}
@@ -244,6 +237,6 @@ export default function LearnPage() {
           )}
         </div>
       )}
-    </div>
+    </Page>
   );
 }

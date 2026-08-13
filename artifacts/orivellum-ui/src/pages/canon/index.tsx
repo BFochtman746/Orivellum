@@ -16,7 +16,7 @@ import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, EmptyState, ErrorState } from "@/components/primitives";
 import { toast } from "sonner";
 import {
   ScrollText, Loader2, Plus, X, ShieldCheck, Landmark, Sparkles, GitBranch, Waves, PenLine,
@@ -52,9 +52,9 @@ interface WorkLite {
 }
 
 const CLASS_META: Record<Classification, { label: string; icon: typeof Landmark; style: React.CSSProperties }> = {
-  HISTORICAL: { label: "Historical", icon: Landmark, style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" } },
-  INFERRED: { label: "Inferred", icon: GitBranch, style: { color: "var(--green-2)", borderColor: "var(--green-2)", background: "var(--green-soft)" } },
-  INVENTED: { label: "Invented", icon: Sparkles, style: { color: "var(--rust)", borderColor: "var(--rust)", background: "var(--rust-soft)" } },
+  HISTORICAL: { label: "Historical", icon: Landmark, style: { color: "var(--gd-bronze)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)" } },
+  INFERRED: { label: "Inferred", icon: GitBranch, style: { color: "var(--gd-success)", borderColor: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)" } },
+  INVENTED: { label: "Invented", icon: Sparkles, style: { color: "var(--gd-danger)", borderColor: "var(--gd-danger)", background: "var(--gd-danger-soft)" } },
 };
 
 const CLASSIFICATIONS: Classification[] = ["HISTORICAL", "INFERRED", "INVENTED"];
@@ -99,7 +99,7 @@ function FactRipple({ fact, fallbackWorkId }: { fact: CanonFact; fallbackWorkId:
         className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-muted-foreground hover:text-foreground"
         data-testid={`ripple-${fact.id}`}
       >
-        <Waves className="w-3 h-3" style={{ color: "var(--gilt)" }} />
+        <Waves className="w-3 h-3" style={{ color: "var(--gd-bronze)" }} />
         {open ? "Hide ripple" : "Preview ripple"}
       </button>
       {open && (
@@ -164,13 +164,13 @@ function FactCard({
           <Badge variant="outline" className="gap-1 border" style={meta.style}>
             <Icon className="w-3 h-3" />{meta.label}
           </Badge>
-          <Badge variant="outline" className="text-[10px]"
-                 style={{ borderColor: "var(--line-2)", color: "var(--ink-soft)" }}>
+          <Badge variant="outline" className="text-[10px] text-muted-foreground"
+                 style={{ borderColor: "var(--gd-line-control)" }}>
             {fact.work_id ? "This book" : "Series-wide"}
           </Badge>
           {fact.status !== "active" && (
-            <Badge variant="outline" className="text-[10px]"
-                   style={{ borderColor: "var(--line-2)", color: "var(--ink-soft)" }}>
+            <Badge variant="outline" className="text-[10px] text-muted-foreground"
+                   style={{ borderColor: "var(--gd-line-control)" }}>
               {fact.status}
             </Badge>
           )}
@@ -183,7 +183,7 @@ function FactCard({
             title="Revise this fact — the replacement explicitly supersedes it, keeping the audit trail"
             data-testid={`fact-revise-${fact.id}`}
           >
-            <PenLine className="w-3 h-3" style={{ color: "var(--gilt)" }} />
+            <PenLine className="w-3 h-3" style={{ color: "var(--gd-bronze)" }} />
             Revise
           </button>
         )}
@@ -196,7 +196,7 @@ function FactCard({
         )}
         {fact.origin === "wa_archive" && (
           <span className="inline-flex items-center gap-1 text-[11px]"
-                style={{ color: "var(--gilt)" }}
+                style={{ color: "var(--gd-bronze)" }}
                 data-testid={`fact-origin-archive-${fact.id}`}>
             <ScrollText className="w-3 h-3" />ratified from archive
           </span>
@@ -224,7 +224,6 @@ function FactCard({
 }
 
 export default function CanonPage() {
-  useGdDark();
   const qc = useQueryClient();
   const [workFilter, setWorkFilter] = useState<string | null>(null);
   const [classFilter, setClassFilter] = useState<Classification | "all">("all");
@@ -244,7 +243,7 @@ export default function CanonPage() {
   });
   const works = worksData?.works ?? [];
 
-  const { data, isLoading, refetch } = useQuery<FactsResponse>({
+  const { data, isLoading, isError, refetch } = useQuery<FactsResponse>({
     queryKey: ["canon-facts", workFilter, classFilter, showRetired],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -294,20 +293,17 @@ export default function CanonPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
-      {/* Header */}
-      <div className="space-y-1">
-        <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-2">
-          <ScrollText className="w-3.5 h-3.5" /> Authority
-        </div>
-        <h1 className="text-3xl font-serif">Canon</h1>
-        <p className="text-sm text-muted-foreground max-w-2xl">
+    <Page eyebrow="Authority" title="Canon">
+      <div className="space-y-6">
+      <p className="text-sm text-muted-foreground max-w-2xl -mt-2 flex items-start gap-2">
+        <ScrollText className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden />
+        <span>
           The classified, sourced record for the trilogy. A HISTORICAL fact needs a source,
           an INFERRED fact traces to parent facts, and an INVENTED fact is signed by you.
           Nothing enters canon unchecked, and revisions never silently overwrite —
           {" "}{totalActive} active fact(s).
-        </p>
-      </div>
+        </span>
+      </p>
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
@@ -315,7 +311,7 @@ export default function CanonPage() {
           value={workFilter ?? "series"}
           onChange={(e) => setWorkFilter(e.target.value === "series" ? null : e.target.value)}
           className="h-8 px-2 rounded-md border bg-background text-xs"
-          style={{ borderColor: "var(--line-2)" }}
+          style={{ borderColor: "var(--gd-line-control)" }}
           data-testid="canon-work-filter"
         >
           <option value="series">Series-wide only</option>
@@ -332,8 +328,8 @@ export default function CanonPage() {
                 classFilter === c ? "font-medium" : "text-muted-foreground"
               }`}
               style={classFilter === c
-                ? { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }
-                : { borderColor: "var(--line-2)" }}
+                ? { borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }
+                : { borderColor: "var(--gd-line-control)" }}
               data-testid={`canon-class-${c}`}
             >
               {c === "all" ? "All" : CLASS_META[c].label}
@@ -347,8 +343,8 @@ export default function CanonPage() {
           Show superseded / retracted
         </label>
         <div className="ml-auto">
-          <Button size="sm" variant="outline" className="h-8 gap-1.5"
-                  style={{ borderColor: "var(--line-2)" }}
+          <Button size="sm" variant="outline" className="min-h-11 gap-1.5"
+                  style={{ borderColor: "var(--gd-line-control)" }}
                   onClick={() => { setRevising(null); setAdding((v) => !v); }}
                   data-testid="canon-add-toggle">
             {adding ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
@@ -381,14 +377,18 @@ export default function CanonPage() {
         <div className="space-y-3">
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-24 w-full rounded-xl" />)}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load canon"
+          detail="The canon record failed to load. Check your connection and try again."
+          onRetry={() => refresh()}
+        />
       ) : facts.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <ScrollText className="w-8 h-8 mx-auto mb-3 opacity-40" />
-          <p className="text-sm">No canon facts yet in this view.</p>
-          <p className="text-xs mt-1">
-            Facts land here when you pass the G3 Canon Seed gate or ratify a proposal in the review inbox.
-          </p>
-        </div>
+        <EmptyState
+          icon={<ScrollText />}
+          title="No canon facts yet in this view"
+          description="Facts land here when you pass the G3 Canon Seed gate or ratify a proposal in the review inbox."
+        />
       ) : (
         <div className="space-y-3">
           {facts.map((f) => (
@@ -406,7 +406,8 @@ export default function CanonPage() {
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </Page>
   );
 }
 
@@ -465,11 +466,11 @@ function NewFactForm({
 
   return (
     <div className="border rounded-xl bg-card p-4 space-y-3"
-         style={{ borderColor: revises ? "var(--gilt-line)" : "var(--line-2)" }}>
+         style={{ borderColor: revises ? "color-mix(in srgb, var(--gd-bronze) 40%, transparent)" : "var(--gd-line-control)" }}>
       {revises && (
         <div className="flex items-start justify-between gap-3">
           <p className="text-xs text-muted-foreground">
-            <span className="font-mono uppercase tracking-widest" style={{ color: "var(--gilt)" }}>
+            <span className="font-mono uppercase tracking-widest" style={{ color: "var(--gd-bronze)" }}>
               Revising
             </span>{" "}
             — the new fact will explicitly supersede{" "}
@@ -492,20 +493,20 @@ function NewFactForm({
         onChange={(e) => setStatement(e.target.value)}
         placeholder="State the fact plainly (e.g. 'Job lived in the land of Uz')"
         className="w-full min-h-[70px] p-2 rounded-md border bg-background text-sm"
-        style={{ borderColor: "var(--line-2)" }}
+        style={{ borderColor: "var(--gd-line-control)" }}
         data-testid="new-fact-statement"
       />
       <div className="flex flex-wrap items-center gap-2">
         <select value={classification} onChange={(e) => setClassification(e.target.value as Classification)}
                 className="h-8 px-2 rounded-md border bg-background text-xs"
-                style={{ borderColor: "var(--line-2)" }} data-testid="new-fact-class">
+                style={{ borderColor: "var(--gd-line-control)" }} data-testid="new-fact-class">
           {CLASSIFICATIONS.map((c) => <option key={c} value={c}>{CLASS_META[c].label}</option>)}
         </select>
         <select value={workId} onChange={(e) => setWorkId(e.target.value)}
                 disabled={!!revises}
                 title={revises ? "A revision keeps its predecessor's scope" : undefined}
                 className="h-8 px-2 rounded-md border bg-background text-xs disabled:opacity-60"
-                style={{ borderColor: "var(--line-2)" }} data-testid="new-fact-work">
+                style={{ borderColor: "var(--gd-line-control)" }} data-testid="new-fact-work">
           <option value="series">Series-wide</option>
           {works.map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}
         </select>
@@ -515,7 +516,7 @@ function NewFactForm({
         onChange={(e) => setSourceRef(e.target.value)}
         placeholder={classification === "HISTORICAL" ? "Source (required, e.g. Job 1:1)" : "Source (optional)"}
         className="w-full h-8 px-2 rounded-md border bg-background text-xs"
-        style={{ borderColor: "var(--line-2)" }}
+        style={{ borderColor: "var(--gd-line-control)" }}
         data-testid="new-fact-source"
       />
       <input
@@ -523,7 +524,7 @@ function NewFactForm({
         onChange={(e) => setSignedBy(e.target.value)}
         placeholder={classification === "INVENTED" ? "Sign as (required for invented facts)" : "Sign as"}
         className="w-full h-8 px-2 rounded-md border bg-background text-xs"
-        style={{ borderColor: "var(--line-2)" }}
+        style={{ borderColor: "var(--gd-line-control)" }}
         data-testid="new-fact-signed"
       />
       <div className="flex justify-end">

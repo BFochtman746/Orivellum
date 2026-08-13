@@ -13,7 +13,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,6 +21,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import { Library, Plus, Loader2, ArrowRight, BookOpen } from "lucide-react";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -104,7 +104,7 @@ function CreateSeriesDialog({ open, onClose }: { open: boolean; onClose: () => v
 
 export default function SeriesList() {
   const [createOpen, setCreateOpen] = useState(false);
-  const { data, isLoading, error } = useQuery<{ series: SeriesSummary[] }>({
+  const { data, isLoading, isError, error, refetch } = useQuery<{ series: SeriesSummary[] }>({
     queryKey: ["series-list"],
     queryFn: async () => {
       const resp = await apiFetch(`${BASE}/series`);
@@ -115,65 +115,69 @@ export default function SeriesList() {
   const series = data?.series ?? [];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="editorial-title flex items-center gap-2.5">
-            <Library className="w-6 h-6" aria-hidden />
-            Series
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1 max-w-xl">
-            Group your books in reading order. Canon established in an earlier
-            volume binds every later one; voice and personas carry forward.
-          </p>
-        </div>
-        <Button onClick={() => setCreateOpen(true)} data-testid="button-new-series">
+    <Page
+      eyebrow="Reading order"
+      title="Series"
+      actions={
+        <Button onClick={() => setCreateOpen(true)} className="min-h-11" data-testid="button-new-series">
           <Plus className="w-4 h-4" /> New series
         </Button>
-      </div>
+      }
+    >
+      <p className="flex items-center gap-2 text-sm text-muted-foreground -mt-2 max-w-xl">
+        <Library className="w-4 h-4 shrink-0" aria-hidden />
+        Group your books in reading order. Canon established in an earlier
+        volume binds every later one; voice and personas carry forward.
+      </p>
 
-      {isLoading && (
+      {isLoading && <LoadingState rows={3} label="Loading series" />}
+      {isError && (
+        <ErrorState
+          title="Couldn't load your series"
+          detail={String((error as Error)?.message ?? "The series list didn't come back.")}
+          onRetry={() => refetch()}
+        />
+      )}
+      {!isLoading && !isError && series.length === 0 && (
+        <EmptyState
+          icon={<Library />}
+          title="No series yet"
+          description="Create a series, then add your books as volumes in reading order."
+          action={
+            <Button onClick={() => setCreateOpen(true)} data-testid="button-new-series-empty">
+              <Plus className="w-4 h-4" /> New series
+            </Button>
+          }
+        />
+      )}
+
+      {!isLoading && !isError && series.length > 0 && (
         <div className="space-y-3">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-20 w-full" />
+          {series.map((s) => (
+            <Link key={s.id} href={`/series/${s.id}`}>
+              <Card className="cursor-pointer hover-elevate" data-testid={`card-series-${s.id}`}>
+                <CardContent className="py-4 min-h-11 flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{s.title}</div>
+                    {s.description && (
+                      <div className="text-sm text-muted-foreground truncate">{s.description}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <Badge variant="outline" className="gap-1">
+                      <BookOpen className="w-3.5 h-3.5" aria-hidden />
+                      {s.member_count} {s.member_count === 1 ? "volume" : "volumes"}
+                    </Badge>
+                    <ArrowRight className="w-4 h-4 text-muted-foreground" aria-hidden />
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
         </div>
       )}
-      {error && (
-        <p className="text-sm text-destructive">Couldn't load series: {String((error as Error).message)}</p>
-      )}
-      {!isLoading && !error && series.length === 0 && (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            No series yet. Create one, then add your books as volumes.
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="space-y-3">
-        {series.map((s) => (
-          <Link key={s.id} href={`/series/${s.id}`}>
-            <Card className="cursor-pointer hover-elevate" data-testid={`card-series-${s.id}`}>
-              <CardContent className="py-4 flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="font-medium truncate">{s.title}</div>
-                  {s.description && (
-                    <div className="text-sm text-muted-foreground truncate">{s.description}</div>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <Badge variant="outline" className="gap-1">
-                    <BookOpen className="w-3.5 h-3.5" aria-hidden />
-                    {s.member_count} {s.member_count === 1 ? "volume" : "volumes"}
-                  </Badge>
-                  <ArrowRight className="w-4 h-4 text-muted-foreground" aria-hidden />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
-      </div>
 
       <CreateSeriesDialog open={createOpen} onClose={() => setCreateOpen(false)} />
-    </div>
+    </Page>
   );
 }

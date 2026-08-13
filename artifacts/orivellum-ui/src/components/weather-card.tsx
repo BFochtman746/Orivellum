@@ -73,9 +73,9 @@ const monoXs: React.CSSProperties = {
 };
 
 function aqiColor(aqi: number): string {
-  if (aqi <= 50) return "var(--gd-ok, #4ade80)";
-  if (aqi <= 100) return "var(--gd-warn, #facc15)";
-  return "var(--gd-danger, #f87171)";
+  if (aqi <= 50) return "var(--gd-success)";
+  if (aqi <= 100) return "var(--gd-caution)";
+  return "var(--gd-danger)";
 }
 
 // ── City picker (no-geolocation fallback) ─────────────────────────────────────

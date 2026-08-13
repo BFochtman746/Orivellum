@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, ErrorState, LoadingState } from "@/components/primitives";
 
 const API = `${import.meta.env.BASE_URL}api/forge`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -48,12 +48,12 @@ const STEPS = [
 
 const STATUS_STYLE: Record<string, { cls: string; style: React.CSSProperties }> = {
   pending:           { cls: "text-muted-foreground bg-muted/50", style: {} },
-  running:           { cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)" } },
+  running:           { cls: "", style: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" } },
   // awaiting_approval (was blue / info-running) → gilt, nearest VELLUM token
-  awaiting_approval: { cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)" } },
-  passed:            { cls: "", style: { color: "var(--green-2)", background: "var(--green-soft)" } },
+  awaiting_approval: { cls: "", style: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" } },
+  passed:            { cls: "", style: { color: "var(--gd-success)", background: "var(--gd-primary-soft)" } },
   // conditional (was orange / warn-with-caveat) → gilt/rust blend, between gilt and rust
-  conditional:       { cls: "", style: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, var(--rust) 8%, transparent)" } },
+  conditional:       { cls: "", style: { color: "color-mix(in srgb, var(--gd-bronze) 55%, var(--gd-danger))", background: "color-mix(in srgb, var(--gd-danger) 8%, transparent)" } },
   blocked:           { cls: "text-destructive bg-destructive/10", style: {} },
   failed:            { cls: "text-destructive bg-destructive/10", style: {} },
   rejected:          { cls: "text-muted-foreground bg-muted/50", style: {} },
@@ -63,18 +63,18 @@ const STATUS_STYLE: Record<string, { cls: string; style: React.CSSProperties }> 
 // tokens: plan/build → gilt, design (was purple, AI accent) → gilt/rust blend,
 // cmd_run (was cyan) → green-2, *_complete/done → green-2.
 const PHASE_STYLE: Record<string, React.CSSProperties> = {
-  plan_start:      { color: "color-mix(in srgb, var(--gilt) 70%, transparent)" },
-  plan_ready:      { color: "var(--gilt)" },
-  plan_complete:   { color: "var(--green-2)" },
-  design_start:    { color: "color-mix(in srgb, var(--gilt) 60%, var(--rust))" },
-  design_ready:    { color: "color-mix(in srgb, var(--gilt) 45%, var(--rust))" },
-  design_complete: { color: "var(--green-2)" },
-  build_start:     { color: "var(--gilt)" },
-  cmd_run:         { color: "var(--green-raw)" },
-  build_done:      { color: "var(--green-2)" },
-  build_complete:  { color: "var(--green-2)" },
-  gates_done:      { color: "var(--green-2)" },
-  approved:        { color: "var(--green-2)" },
+  plan_start:      { color: "color-mix(in srgb, var(--gd-bronze) 70%, transparent)" },
+  plan_ready:      { color: "var(--gd-bronze)" },
+  plan_complete:   { color: "var(--gd-success)" },
+  design_start:    { color: "color-mix(in srgb, var(--gd-bronze) 60%, var(--gd-danger))" },
+  design_ready:    { color: "color-mix(in srgb, var(--gd-bronze) 45%, var(--gd-danger))" },
+  design_complete: { color: "var(--gd-success)" },
+  build_start:     { color: "var(--gd-bronze)" },
+  cmd_run:         { color: "var(--gd-primary)" },
+  build_done:      { color: "var(--gd-success)" },
+  build_complete:  { color: "var(--gd-success)" },
+  gates_done:      { color: "var(--gd-success)" },
+  approved:        { color: "var(--gd-success)" },
 };
 
 // Phases that use a neutral utility class rather than a token color.
@@ -179,7 +179,6 @@ function ConceptCard({
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function ForgeDetail() {
-  const gdDark = useGdDark();
   const { projectId } = useParams();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
@@ -195,7 +194,7 @@ export default function ForgeDetail() {
   const [showPreview, setShowPreview] = useState(false);
 
   // ── Queries
-  const { data, isLoading, refetch: refetchProject } = useQuery<{
+  const { data, isLoading, isError, refetch: refetchProject } = useQuery<{
     project: ForgeProject; jobs: ForgeJob[];
   }>({
     queryKey: ["forge-project", projectId],
@@ -323,27 +322,39 @@ export default function ForgeDetail() {
     return "DONE";
   })();
 
-  const darkCls = gdDark ? "dark text-foreground" : "";
-
   if (isLoading) {
     return (
-      <div className={`space-y-4 ${darkCls}`}>
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-64 rounded-xl" />
-      </div>
+      <Page wide>
+        <LoadingState rows={4} label="Loading project" />
+      </Page>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Page wide>
+        <ErrorState
+          title="Could not load project"
+          detail="The Pressworks service may be unreachable."
+          onRetry={() => refetchProject()}
+        />
+      </Page>
     );
   }
 
   if (!project) {
     return (
-      <div className={`text-center py-20 text-muted-foreground ${darkCls}`}>
-        Project not found. <Link href="/forge" className="text-primary hover:underline">Back to Pressworks</Link>
-      </div>
+      <Page wide>
+        <div className="text-center py-20 text-muted-foreground">
+          Project not found. <Link href="/forge" className="text-primary hover:underline">Back to Pressworks</Link>
+        </div>
+      </Page>
     );
   }
 
   return (
-    <div className={`space-y-8 animate-in fade-in duration-500 pb-20 ${darkCls}`}>
+    <Page wide>
+      <div className="space-y-8 animate-in fade-in duration-500 pb-20">
       {/* Breadcrumb */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 text-sm font-mono uppercase tracking-widest text-muted-foreground">
@@ -370,7 +381,7 @@ export default function ForgeDetail() {
       <div>
         <div className="flex items-center gap-2">
           <Globe2 className="w-5 h-5 text-primary" />
-          <h1 className="vellum-h1">{project.name}</h1>
+          <h1 className="page-h1 truncate">{project.name}</h1>
         </div>
         <div className="gilt-rule w-32" />
         {project.brief && (
@@ -401,7 +412,7 @@ export default function ForgeDetail() {
                     : "border-border/40 bg-card"
                 }`}
                 style={isDone && !(isActive && !isDone)
-                  ? { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }
+                  ? { borderColor: "var(--gd-line-control)", background: "var(--gd-primary-soft)" }
                   : undefined}
               >
                 <div
@@ -409,9 +420,9 @@ export default function ForgeDetail() {
                     (isDone || isRunning || isAwaiting) ? "" : "bg-muted text-muted-foreground"
                   }`}
                   style={
-                    isDone ? { color: "var(--green-2)", background: "var(--green-soft)" }
-                    : isRunning ? { color: "var(--gilt)", background: "var(--gilt-soft)" }
-                    : isAwaiting ? { color: "var(--gilt)", background: "var(--gilt-soft)" }
+                    isDone ? { color: "var(--gd-success)", background: "var(--gd-primary-soft)" }
+                    : isRunning ? { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" }
+                    : isAwaiting ? { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" }
                     : undefined
                   }
                 >
@@ -424,7 +435,7 @@ export default function ForgeDetail() {
                 </div>
                 <div className="text-[11px] font-semibold font-mono">{step.label}</div>
                 {isAwaiting && (
-                  <div className="text-[9px] font-mono uppercase mt-0.5" style={{ color: "var(--gilt)" }}>
+                  <div className="text-[9px] font-mono uppercase mt-0.5" style={{ color: "var(--gd-bronze)" }}>
                     Needs review
                   </div>
                 )}
@@ -492,7 +503,7 @@ export default function ForgeDetail() {
                   onClick={() => approveJob.mutate({ jobId: latestPlan.id })}
                   disabled={approveJob.isPending}
                   className="gap-1.5 hover:brightness-95 dark:hover:brightness-110"
-                  style={{ background: "var(--green-2)", color: "var(--paper)" }}
+                  style={{ background: "var(--gd-success)", color: "var(--gd-accent-ink)" }}
                 >
                   <ThumbsUp className="w-3.5 h-3.5" /> Approve plan
                 </Button>
@@ -508,7 +519,7 @@ export default function ForgeDetail() {
               </div>
             </div>
           ) : latestPlan.status === "passed" ? (
-            <div className="flex items-center gap-2 text-sm" style={{ color: "var(--green-2)" }}>
+            <div className="flex items-center gap-2 text-sm" style={{ color: "var(--gd-success)" }}>
               <CheckCircle2 className="w-4 h-4" /> Plan approved
             </div>
           ) : (
@@ -572,7 +583,7 @@ export default function ForgeDetail() {
                         })}
                         disabled={approveJob.isPending || !selectedConceptId}
                         className="gap-1.5 hover:brightness-95 dark:hover:brightness-110"
-                        style={{ background: "var(--green-2)", color: "var(--paper)" }}
+                        style={{ background: "var(--gd-success)", color: "var(--gd-accent-ink)" }}
                       >
                         <ThumbsUp className="w-3.5 h-3.5" />
                         {selectedConceptId ? "Approve selected concept" : "Select a concept first"}
@@ -593,7 +604,7 @@ export default function ForgeDetail() {
                 )}
               </div>
             ) : latestDesign.status === "passed" ? (
-              <div className="flex items-center gap-2 text-sm" style={{ color: "var(--green-2)" }}>
+              <div className="flex items-center gap-2 text-sm" style={{ color: "var(--gd-success)" }}>
                 <CheckCircle2 className="w-4 h-4" />
                 Design approved
                 {designConcepts.find(c => c.id === latestDesign.meta_data?.selected_concept_id) && (
@@ -670,8 +681,8 @@ export default function ForgeDetail() {
               <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-muted-foreground">Build log</span>
               {streaming && (
-                <span className="flex items-center gap-1" style={{ color: "var(--gilt)" }}>
-                  <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--gilt)" }} />
+                <span className="flex items-center gap-1" style={{ color: "var(--gd-bronze)" }}>
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--gd-bronze)" }} />
                   live
                 </span>
               )}
@@ -750,7 +761,8 @@ export default function ForgeDetail() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </Page>
   );
 }
 

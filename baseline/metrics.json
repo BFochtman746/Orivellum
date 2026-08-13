@@ -1,61 +1,40 @@
 {
-  "collected_at": "2026-08-13T00:05:12.118446+00:00",
+  "collected_at": "2026-08-13T02:30:31.239367+00:00",
   "route_count": 50,
   "hex_literals": {
-    "total": 188,
-    "allowlisted": 94,
-    "counted": 94,
-    "files": {
-      "artifacts/orivellum-ui/src/App.tsx": 4,
-      "artifacts/orivellum-ui/src/components/command-palette.tsx": 6,
-      "artifacts/orivellum-ui/src/components/knowledge-graph.tsx": 16,
-      "artifacts/orivellum-ui/src/components/read-aloud-dock.tsx": 9,
-      "artifacts/orivellum-ui/src/components/sync-status.tsx": 1,
-      "artifacts/orivellum-ui/src/components/ui/badge.tsx": 3,
-      "artifacts/orivellum-ui/src/components/ui/button.tsx": 4,
-      "artifacts/orivellum-ui/src/components/weather-card.tsx": 3,
-      "artifacts/orivellum-ui/src/lib/ontology-kinds.ts": 13,
-      "artifacts/orivellum-ui/src/pages/chat/index.tsx": 16,
-      "artifacts/orivellum-ui/src/pages/studio/VoiceCard.tsx": 1,
-      "artifacts/orivellum-ui/src/pages/studio/VoiceStudio.tsx": 1,
-      "artifacts/orivellum-ui/src/pages/studio/index.tsx": 3,
-      "artifacts/orivellum-ui/src/pages/system/index.tsx": 4,
-      "artifacts/orivellum-ui/src/pages/works/chapter-history.tsx": 3,
-      "artifacts/orivellum-ui/src/pages/works/graph-tab.tsx": 1,
-      "artifacts/orivellum-ui/src/pages/works/pacing.tsx": 3,
-      "artifacts/orivellum-ui/src/pages/works/search-tab.tsx": 2,
-      "artifacts/orivellum-ui/src/pages/write/index.tsx": 1
-    }
+    "total": 77,
+    "allowlisted": 77,
+    "counted": 0,
+    "files": {}
   },
   "assets": {
     "chunks": [
       {
+        "chunk": "index-CK-nwWh2.css",
+        "file": "index-CK-nwWh2.css",
+        "raw_bytes": 164811,
+        "gzip_bytes": 25961
+      },
+      {
         "chunk": "index.js",
-        "file": "index-C8LyZ_Nb.js",
-        "raw_bytes": 1391733,
-        "gzip_bytes": 319762
-      },
-      {
-        "chunk": "index.css",
-        "file": "index-COh5CqxK.css",
-        "raw_bytes": 164965,
-        "gzip_bytes": 26615
-      },
-      {
-        "chunk": "vendor.js",
-        "file": "vendor-B3Jx4Zp3.js",
-        "raw_bytes": 1704451,
-        "gzip_bytes": 516285
+        "file": "index-DiHLFmlz.js",
+        "raw_bytes": 1423017,
+        "gzip_bytes": 329169
       },
       {
         "chunk": "vendor.css",
-        "file": "vendor-ZgkIHsf0.css",
-        "raw_bytes": 857,
-        "gzip_bytes": 404
+        "file": "vendor-DsHkCTKN.css",
+        "raw_bytes": 2750,
+        "gzip_bytes": 751
+      },
+      {
+        "chunk": "vendor-bY5c-WYF.js",
+        "file": "vendor-bY5c-WYF.js",
+        "raw_bytes": 1706101,
+        "gzip_bytes": 516708
       }
     ],
-    "gzip_js_total": 836047,
-    "gzip_css_total": 28977,
-    "css_rebaseline_note": "WP2 (2026-08-13): CSS gzip re-baselined 27,019 -> 28,977 for spec-mandated growth only: self-hosted @font-face rules (zero Google Fonts) + temporary legacy alias sheet (deleted in WP3). Spec budget for initial CSS is <=50 KB gzip; JS/hex/route baselines remain frozen at WP0 values."
+    "gzip_js_total": 845877,
+    "gzip_css_total": 26712
   }
 }

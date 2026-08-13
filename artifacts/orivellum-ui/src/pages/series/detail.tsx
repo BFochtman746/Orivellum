@@ -6,12 +6,11 @@
  * the accumulated state of books 1..N-1), plus series-scoped canon totals.
  */
 import { useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import {
@@ -21,6 +20,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { Page, ErrorState, LoadingState, ConfirmAction } from "@/components/primitives";
 import {
   ArrowLeft, BookOpen, Plus, Loader2, X, ScrollText, ShieldAlert,
   ShieldCheck, GitBranch, ArrowRight,
@@ -52,9 +52,9 @@ interface Overview {
 }
 
 const HEALTH: Record<string, { label: string; icon: typeof ShieldCheck; style: React.CSSProperties }> = {
-  ok: { label: "Continuity clean", icon: ShieldCheck, style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } },
-  warn: { label: "Open findings", icon: ShieldAlert, style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } },
-  attention: { label: "Needs attention", icon: ShieldAlert, style: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } },
+  ok: { label: "Continuity clean", icon: ShieldCheck, style: { color: "var(--gd-success)", background: "var(--gd-olive-soft)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" } },
+  warn: { label: "Open findings", icon: ShieldAlert, style: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 28%, transparent)" } },
+  attention: { label: "Needs attention", icon: ShieldAlert, style: { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" } },
 };
 
 function HealthBadge({ state }: { state: string }) {
@@ -74,6 +74,9 @@ function AddVolumeDialog({
   const queryClient = useQueryClient();
   const [workId, setWorkId] = useState("");
   const [busy, setBusy] = useState(false);
+  // Canon-binding confirmation: a domain serving this series requires an
+  // explicit opt-in before a new volume inherits shared canon.
+  const [canonPrompt, setCanonPrompt] = useState<string | null>(null);
   const { data: worksResp } = useQuery<{ works: { id: string; title: string }[] }>({
     queryKey: ["works-for-series"],
     enabled: open,
@@ -87,35 +90,50 @@ function AddVolumeDialog({
   const candidates = (worksResp?.works ?? []).filter((w) => !memberIds.has(w.id));
   const nextVolume = existing.length ? Math.max(...existing.map((v) => v.volume)) + 1 : 1;
 
+  const send = (confirm: boolean) =>
+    apiFetch(`${BASE}/series/${seriesId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        work_id: workId, volume: nextVolume, confirm_canon_binding: confirm,
+      }),
+    });
+
+  async function finishAdd(resp: Response) {
+    if (!resp.ok) throw new Error((await resp.json())?.detail || `HTTP ${resp.status}`);
+    toast.success(`Added as volume ${nextVolume}`);
+    queryClient.invalidateQueries({ queryKey: ["series-overview", seriesId] });
+    setWorkId("");
+    onClose();
+  }
+
   async function handleAdd() {
     if (!workId) return;
     setBusy(true);
     try {
-      const send = (confirm: boolean) =>
-        apiFetch(`${BASE}/series/${seriesId}/members`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            work_id: workId, volume: nextVolume, confirm_canon_binding: confirm,
-          }),
-        });
-      let resp = await send(false);
+      const resp = await send(false);
       if (!resp.ok && resp.status === 422) {
         const detail = (await resp.clone().json())?.detail || "";
         // A canon domain serves this series — binding is explicit, never silent
         if (String(detail).includes("bind shared canon")) {
-          if (!window.confirm(`${detail}\n\nBind this canon to the new book?`)) {
-            setBusy(false);
-            return;
-          }
-          resp = await send(true);
+          setCanonPrompt(String(detail));
+          setBusy(false);
+          return;
         }
       }
-      if (!resp.ok) throw new Error((await resp.json())?.detail || `HTTP ${resp.status}`);
-      toast.success(`Added as volume ${nextVolume}`);
-      queryClient.invalidateQueries({ queryKey: ["series-overview", seriesId] });
-      setWorkId("");
-      onClose();
+      await finishAdd(resp);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to add volume");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmCanonBinding() {
+    setCanonPrompt(null);
+    setBusy(true);
+    try {
+      await finishAdd(await send(true));
     } catch (e: any) {
       toast.error(e?.message || "Failed to add volume");
     } finally {
@@ -148,23 +166,39 @@ function AddVolumeDialog({
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button onClick={handleAdd} disabled={busy || !workId} data-testid="button-add-volume">
+          <Button variant="outline" className="min-h-11" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button className="min-h-11" onClick={handleAdd} disabled={busy || !workId} data-testid="button-add-volume">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             Add
           </Button>
         </DialogFooter>
       </DialogContent>
+      <ConfirmAction
+        open={canonPrompt !== null}
+        onOpenChange={(v) => !v && setCanonPrompt(null)}
+        title="Bind shared canon to this book?"
+        consequence={`${canonPrompt ?? ""}\n\nThe new volume will inherit this canon. You can review bound facts on the series page afterward.`}
+        confirmLabel="Bind canon"
+        onConfirm={confirmCanonBinding}
+      />
     </Dialog>
   );
 }
 
 export default function SeriesDetail() {
   const { seriesId = "" } = useParams<{ seriesId: string }>();
+  const search = useSearch();
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<VolumeRow | null>(null);
 
-  const { data, isLoading, error } = useQuery<Overview>({
+  // When reached from a Work (deep link carries ?from=<workId>), offer a
+  // direct way back to that owning book; otherwise back goes to the list.
+  const fromWorkId = new URLSearchParams(search).get("from");
+  const backHref = fromWorkId ? `/works/${fromWorkId}` : "/series";
+  const backLabel = fromWorkId ? "Back to book" : "Series";
+
+  const { data, isLoading, isError, error, refetch } = useQuery<Overview>({
     queryKey: ["series-overview", seriesId],
     enabled: !!seriesId,
     queryFn: async () => {
@@ -185,52 +219,57 @@ export default function SeriesDetail() {
     }
   }
 
+  const BackLink = (
+    <Link href={backHref}>
+      <Button variant="ghost" size="sm" className="-ml-2 min-h-11" data-testid="button-series-back">
+        <ArrowLeft className="w-4 h-4" /> {backLabel}
+      </Button>
+    </Link>
+  );
+
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-72" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-24 w-full" />
-      </div>
+      <Page>
+        {BackLink}
+        <LoadingState rows={3} label="Loading series" />
+      </Page>
     );
   }
-  if (error || !data) {
+  if (isError || !data) {
     return (
-      <div className="space-y-3">
-        <Link href="/series">
-          <Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4" /> Series</Button>
-        </Link>
-        <p className="text-sm text-destructive">Couldn't load this series.</p>
-      </div>
+      <Page>
+        {BackLink}
+        <ErrorState
+          title="Couldn't load this series"
+          detail={String((error as Error)?.message ?? "The series overview didn't come back.")}
+          onRetry={() => refetch()}
+        />
+      </Page>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <Page wide>
+      {BackLink}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <Link href="/series">
-            <Button variant="ghost" size="sm" className="-ml-2 mb-1">
-              <ArrowLeft className="w-4 h-4" /> Series
-            </Button>
-          </Link>
-          <h1 className="editorial-title truncate" data-testid="text-series-title">
+          <h1 className="page-h1 truncate" data-testid="text-series-title">
             {data.series.title}
           </h1>
           {data.series.description && (
             <p className="text-sm text-muted-foreground mt-1 max-w-xl">{data.series.description}</p>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
           <HealthBadge state={data.continuity} />
           {data.volumes.length > 0 && (
             <Link href={`/works/${data.volumes[0].work_id}/continuity`}>
-              <Button variant="outline" data-testid="button-series-continuity">
+              <Button variant="outline" className="min-h-11" data-testid="button-series-continuity">
                 Continuity review
               </Button>
             </Link>
           )}
-          <Button onClick={() => setAddOpen(true)} data-testid="button-add-volume-open">
+          <Button onClick={() => setAddOpen(true)} className="min-h-11" data-testid="button-add-volume-open">
             <Plus className="w-4 h-4" /> Add volume
           </Button>
         </div>
@@ -311,8 +350,9 @@ export default function SeriesDetail() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    className="min-h-11 min-w-11"
                     aria-label={`Remove ${v.work_title} from series`}
-                    onClick={() => removeVolume(v.work_id, v.work_title)}
+                    onClick={() => setPendingRemove(v)}
                     data-testid={`button-remove-volume-${v.volume}`}
                   >
                     <X className="w-4 h-4" />
@@ -330,6 +370,19 @@ export default function SeriesDetail() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
       />
-    </div>
+
+      <ConfirmAction
+        open={pendingRemove !== null}
+        onOpenChange={(v) => !v && setPendingRemove(null)}
+        title="Remove this volume from the series?"
+        consequence={`“${pendingRemove?.work_title ?? ""}” leaves the series’ reading order. The book itself is not deleted — you can add it back later.`}
+        confirmLabel="Remove volume"
+        destructive
+        onConfirm={() => {
+          if (pendingRemove) removeVolume(pendingRemove.work_id, pendingRemove.work_title);
+          setPendingRemove(null);
+        }}
+      />
+    </Page>
   );
 }

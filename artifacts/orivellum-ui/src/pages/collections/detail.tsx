@@ -7,12 +7,11 @@
  * member itself — a collection is a grouping, not an owner.
  */
 import { useState } from "react";
-import { Link, useRoute } from "wouter";
+import { Link, useRoute, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import {
@@ -22,6 +21,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { Page, ErrorState, LoadingState, ConfirmAction } from "@/components/primitives";
 import {
   Boxes, Plus, Loader2, ArrowLeft, Library, BookOpen, Globe2, X,
 } from "lucide-react";
@@ -54,6 +54,8 @@ function AddMemberDialog({
   const [kind, setKind] = useState<"series" | "work">("series");
   const [memberId, setMemberId] = useState("");
   const [busy, setBusy] = useState(false);
+  // Canon-binding confirmation prompt (a domain serves this collection).
+  const [canonPrompt, setCanonPrompt] = useState<string | null>(null);
 
   const { data: seriesData } = useQuery<{ series: { id: string; title: string }[] }>({
     queryKey: ["series-list"],
@@ -76,38 +78,52 @@ function AddMemberDialog({
   const options =
     kind === "series" ? (seriesData?.series ?? []) : (worksData?.works ?? []);
 
+  const send = (confirm: boolean) =>
+    apiFetch(`${BASE}/collections/${collectionId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        member_kind: kind, member_id: memberId, confirm_canon_binding: confirm,
+      }),
+    });
+
+  async function finishAdd(resp: Response) {
+    if (!resp.ok) throw new Error((await resp.json())?.detail || `HTTP ${resp.status}`);
+    toast.success("Added to collection");
+    queryClient.invalidateQueries({ queryKey: ["collection-detail", collectionId] });
+    queryClient.invalidateQueries({ queryKey: ["collections-list"] });
+    setMemberId("");
+    onClose();
+  }
+
   async function handleAdd() {
     if (!memberId) return;
     setBusy(true);
     try {
-      const send = (confirm: boolean) =>
-        apiFetch(`${BASE}/collections/${collectionId}/members`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            member_kind: kind, member_id: memberId, confirm_canon_binding: confirm,
-          }),
-        });
-      let resp = await send(false);
+      const resp = await send(false);
       if (!resp.ok) {
-        const detail = (await resp.json())?.detail || `HTTP ${resp.status}`;
+        const detail = (await resp.clone().json())?.detail || `HTTP ${resp.status}`;
         // A canon domain serves this collection — binding is explicit, never silent
         if (resp.status === 422 && String(detail).includes("bind shared canon")) {
-          if (!window.confirm(`${detail}\n\nBind this canon to the new member's books?`)) {
-            setBusy(false);
-            return;
-          }
-          resp = await send(true);
-          if (!resp.ok) throw new Error((await resp.json())?.detail || `HTTP ${resp.status}`);
-        } else {
-          throw new Error(detail);
+          setCanonPrompt(String(detail));
+          setBusy(false);
+          return;
         }
+        throw new Error(detail);
       }
-      toast.success("Added to collection");
-      queryClient.invalidateQueries({ queryKey: ["collection-detail", collectionId] });
-      queryClient.invalidateQueries({ queryKey: ["collections-list"] });
-      setMemberId("");
-      onClose();
+      await finishAdd(resp);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to add member");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmCanonBinding() {
+    setCanonPrompt(null);
+    setBusy(true);
+    try {
+      await finishAdd(await send(true));
     } catch (e: any) {
       toast.error(e?.message || "Failed to add member");
     } finally {
@@ -145,13 +161,21 @@ function AddMemberDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button onClick={handleAdd} disabled={busy || !memberId} data-testid="button-add-member">
+          <Button variant="outline" className="min-h-11" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button className="min-h-11" onClick={handleAdd} disabled={busy || !memberId} data-testid="button-add-member">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             Add
           </Button>
         </DialogFooter>
       </DialogContent>
+      <ConfirmAction
+        open={canonPrompt !== null}
+        onOpenChange={(v) => !v && setCanonPrompt(null)}
+        title="Bind shared canon to this member?"
+        consequence={`${canonPrompt ?? ""}\n\nThe new member's books will inherit this canon. You can review bound domains on the collection afterward.`}
+        confirmLabel="Bind canon"
+        onConfirm={confirmCanonBinding}
+      />
     </Dialog>
   );
 }
@@ -159,10 +183,18 @@ function AddMemberDialog({
 export default function CollectionDetail() {
   const [, params] = useRoute("/collections/:collectionId");
   const collectionId = params?.collectionId ?? "";
+  const search = useSearch();
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<Member | null>(null);
 
-  const { data, isLoading, error } = useQuery<CollectionDetailData>({
+  // Reached from a Work/Library context (deep link carries ?from=<workId>):
+  // offer a direct route back to that owning book; otherwise back to the list.
+  const fromWorkId = new URLSearchParams(search).get("from");
+  const backHref = fromWorkId ? `/works/${fromWorkId}` : "/collections";
+  const backLabel = fromWorkId ? "Back to book" : "Collections";
+
+  const { data, isLoading, isError, error, refetch } = useQuery<CollectionDetailData>({
     queryKey: ["collection-detail", collectionId],
     queryFn: async () => {
       const resp = await apiFetch(`${BASE}/collections/${collectionId}`);
@@ -171,6 +203,12 @@ export default function CollectionDetail() {
     },
     enabled: !!collectionId,
   });
+
+  const BackLink = (
+    <Link href={backHref} className="text-sm text-muted-foreground inline-flex items-center gap-1 min-h-11" data-testid="button-collection-back">
+      <ArrowLeft className="w-4 h-4" /> {backLabel}
+    </Link>
+  );
 
   async function removeMember(m: Member) {
     try {
@@ -205,22 +243,22 @@ export default function CollectionDetail() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-72" />
-        <Skeleton className="h-32 w-full" />
-      </div>
+      <Page>
+        {BackLink}
+        <LoadingState rows={3} label="Loading collection" />
+      </Page>
     );
   }
-  if (error || !data) {
+  if (isError || !data) {
     return (
-      <div className="space-y-3">
-        <Link href="/collections" className="text-sm text-muted-foreground inline-flex items-center gap-1">
-          <ArrowLeft className="w-4 h-4" /> Collections
-        </Link>
-        <p className="text-sm text-destructive">
-          Couldn't load this collection{error ? `: ${String((error as Error).message)}` : ""}.
-        </p>
-      </div>
+      <Page>
+        {BackLink}
+        <ErrorState
+          title="Couldn't load this collection"
+          detail={String((error as Error)?.message ?? "The collection didn't come back.")}
+          onRetry={() => refetch()}
+        />
+      </Page>
     );
   }
 
@@ -228,22 +266,20 @@ export default function CollectionDetail() {
   const workMembers = data.members.filter((m) => m.member_kind === "work");
 
   return (
-    <div className="space-y-6">
+    <Page wide>
       <div>
-        <Link href="/collections" className="text-sm text-muted-foreground inline-flex items-center gap-1">
-          <ArrowLeft className="w-4 h-4" /> Collections
-        </Link>
+        {BackLink}
         <div className="flex items-start justify-between gap-4 mt-2">
-          <div>
-            <h1 className="editorial-title flex items-center gap-2.5">
-              <Boxes className="w-6 h-6" aria-hidden />
-              {data.title}
+          <div className="min-w-0">
+            <h1 className="page-h1 flex items-center gap-2.5 truncate">
+              <Boxes className="w-6 h-6 shrink-0" aria-hidden />
+              <span className="truncate">{data.title}</span>
             </h1>
             {data.description && (
               <p className="text-sm text-muted-foreground mt-1 max-w-xl">{data.description}</p>
             )}
           </div>
-          <Button onClick={() => setAddOpen(true)} data-testid="button-add-to-collection">
+          <Button onClick={() => setAddOpen(true)} className="min-h-11 shrink-0" data-testid="button-add-to-collection">
             <Plus className="w-4 h-4" /> Add member
           </Button>
         </div>
@@ -311,8 +347,8 @@ export default function CollectionDetail() {
               </Link>
               <Button
                 variant="ghost" size="icon"
-                className="opacity-0 group-hover:opacity-100"
-                onClick={() => removeMember(m)}
+                className="min-h-11 min-w-11 shrink-0 opacity-60 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                onClick={() => setPendingRemove(m)}
                 aria-label={`Remove ${m.title}`}
                 data-testid={`button-remove-${m.member_id}`}
               >
@@ -338,8 +374,8 @@ export default function CollectionDetail() {
               </Link>
               <Button
                 variant="ghost" size="icon"
-                className="opacity-0 group-hover:opacity-100"
-                onClick={() => removeMember(m)}
+                className="min-h-11 min-w-11 shrink-0 opacity-60 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                onClick={() => setPendingRemove(m)}
                 aria-label={`Remove ${m.title}`}
                 data-testid={`button-remove-${m.member_id}`}
               >
@@ -351,6 +387,19 @@ export default function CollectionDetail() {
       </section>
 
       <AddMemberDialog collectionId={collectionId} open={addOpen} onClose={() => setAddOpen(false)} />
-    </div>
+
+      <ConfirmAction
+        open={pendingRemove !== null}
+        onOpenChange={(v) => !v && setPendingRemove(null)}
+        title="Remove from this collection?"
+        consequence={`“${pendingRemove?.title ?? ""}” leaves this collection. The ${pendingRemove?.member_kind === "series" ? "series" : "book"} itself is not deleted — you can add it back later.`}
+        confirmLabel="Remove"
+        destructive
+        onConfirm={() => {
+          if (pendingRemove) removeMember(pendingRemove);
+          setPendingRemove(null);
+        }}
+      />
+    </Page>
   );
 }

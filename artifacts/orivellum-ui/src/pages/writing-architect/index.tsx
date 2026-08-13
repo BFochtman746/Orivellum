@@ -18,7 +18,7 @@ import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, EmptyState, ErrorState } from "@/components/primitives";
 import { toast } from "sonner";
 import {
   DraftingCompass, Loader2, Upload, Play, FileArchive, ScrollText,
@@ -75,18 +75,18 @@ interface Proposal {
 type Tab = "archive" | "doctrine" | "proposals";
 
 const STATUS_STYLE: Record<string, React.CSSProperties> = {
-  extracted: { color: "var(--green-2)", borderColor: "var(--green-2)", background: "var(--green-soft)" },
-  deduped: { color: "var(--ink-soft)", borderColor: "var(--line-2)" },
-  deferred: { color: "var(--rust)", borderColor: "var(--rust)", background: "var(--rust-soft)" },
+  extracted: { color: "var(--gd-success)", borderColor: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)" },
+  deduped: { color: "var(--gd-muted)", borderColor: "var(--gd-line-control)" },
+  deferred: { color: "var(--gd-danger)", borderColor: "var(--gd-danger)", background: "var(--gd-danger-soft)" },
 };
 
 const CLASS_ICON: Record<string, typeof Landmark> = {
   HISTORICAL: Landmark, INFERRED: GitBranch, INVENTED: Sparkles,
 };
 const CLASS_STYLE: Record<string, React.CSSProperties> = {
-  HISTORICAL: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
-  INFERRED: { color: "var(--green-2)", borderColor: "var(--green-2)", background: "var(--green-soft)" },
-  INVENTED: { color: "var(--rust)", borderColor: "var(--rust)", background: "var(--rust-soft)" },
+  HISTORICAL: { color: "var(--gd-bronze)", borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)" },
+  INFERRED: { color: "var(--gd-success)", borderColor: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)" },
+  INVENTED: { color: "var(--gd-danger)", borderColor: "var(--gd-danger)", background: "var(--gd-danger-soft)" },
 };
 
 function prettyType(t: string) {
@@ -102,11 +102,10 @@ function fmtBytes(n: number) {
 /* ── page ──────────────────────────────────────────────────────────────── */
 
 export default function WritingArchitectPage() {
-  useGdDark();
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("archive");
 
-  const { data: coverage } = useQuery<Coverage>({
+  const { data: coverage, isError: coverageError, refetch: refetchCoverage } = useQuery<Coverage>({
     queryKey: ["wa-coverage"],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/wa/coverage`);
@@ -134,21 +133,27 @@ export default function WritingArchitectPage() {
   ];
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 space-y-6">
-      <div className="space-y-1">
-        <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-2">
-          <DraftingCompass className="w-3.5 h-3.5" /> Doctrine
-        </div>
-        <h1 className="text-3xl font-serif">Writing Architect</h1>
-        <p className="text-sm text-muted-foreground max-w-2xl">
+    <Page wide eyebrow="Doctrine" title="Writing Architect">
+      <div className="space-y-6">
+      <p className="text-sm text-muted-foreground max-w-2xl -mt-2 flex items-start gap-2">
+        <DraftingCompass className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden />
+        <span>
           The decomposition bench for the Writing Architect archive. Every file is
           explicitly accounted for, doctrine becomes machine-readable records, and
           bible facts wait here as proposals — nothing writes canon without you.
-        </p>
-      </div>
+        </span>
+      </p>
+
+      {coverageError && (
+        <ErrorState
+          title="Couldn't load coverage"
+          detail="The decomposition coverage summary failed to load. Check your connection and try again."
+          onRetry={() => refetchCoverage()}
+        />
+      )}
 
       {/* Tab strip */}
-      <div className="flex items-center gap-1 border-b" style={{ borderColor: "var(--line-2)" }}>
+      <div className="flex items-center gap-1 border-b" style={{ borderColor: "var(--gd-line-control)" }}>
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -157,14 +162,14 @@ export default function WritingArchitectPage() {
               tab === t.id ? "font-medium" : "text-muted-foreground"
             }`}
             style={tab === t.id
-              ? { borderBottomColor: "var(--gilt)", color: "var(--gilt)" }
+              ? { borderBottomColor: "var(--gd-bronze)", color: "var(--gd-bronze)" }
               : { borderBottomColor: "transparent" }}
             data-testid={`wa-tab-${t.id}`}
           >
             {t.label}
             {t.badge ? (
               <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] border"
-                    style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }}>
+                    style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}>
                 {t.badge}
               </span>
             ) : null}
@@ -177,7 +182,8 @@ export default function WritingArchitectPage() {
       )}
       {tab === "doctrine" && <DoctrineTab hasRun={hasRun} />}
       {tab === "proposals" && <ProposalsTab hasRun={hasRun} onDecided={invalidateAll} />}
-    </div>
+      </div>
+    </Page>
   );
 }
 
@@ -236,7 +242,7 @@ function ArchiveTab({
     }
   };
 
-  const { data: inv, isLoading: invLoading } = useQuery<{ items: InventoryItem[] }>({
+  const { data: inv, isLoading: invLoading, isError: invError, refetch: refetchInv } = useQuery<{ items: InventoryItem[] }>({
     queryKey: ["wa-inventory", statusFilter],
     queryFn: async () => {
       const p = statusFilter === "all" ? "" : `?status=${statusFilter}`;
@@ -253,16 +259,16 @@ function ArchiveTab({
     <div className="space-y-5">
       {/* Actions */}
       <div className="border rounded-xl bg-card p-4 flex flex-wrap items-center gap-3"
-           style={{ borderColor: "var(--line-2)" }}>
+           style={{ borderColor: "var(--gd-line-control)" }}>
         <FileArchive className="w-5 h-5 text-muted-foreground" />
         <div className="text-sm flex-1 min-w-[200px]">
           {hasRun
             ? <>Last run covered <span className="font-medium">{coverage!.total_docs}</span> files
                 {coverage!.fully_accounted
-                  ? <span className="inline-flex items-center gap-1 ml-2 text-xs" style={{ color: "var(--green-2)" }}>
+                  ? <span className="inline-flex items-center gap-1 ml-2 text-xs" style={{ color: "var(--gd-success)" }}>
                       <CheckCircle2 className="w-3.5 h-3.5" /> fully accounted
                     </span>
-                  : <span className="inline-flex items-center gap-1 ml-2 text-xs" style={{ color: "var(--rust)" }}>
+                  : <span className="inline-flex items-center gap-1 ml-2 text-xs" style={{ color: "var(--gd-danger)" }}>
                       <AlertTriangle className="w-3.5 h-3.5" /> coverage gap
                     </span>}
               </>
@@ -272,7 +278,7 @@ function ArchiveTab({
                onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
                data-testid="wa-file-input" />
         <Button size="sm" variant="outline" className="h-8 gap-1.5"
-                style={{ borderColor: "var(--line-2)" }}
+                style={{ borderColor: "var(--gd-line-control)" }}
                 disabled={busy !== null}
                 onClick={() => fileRef.current?.click()}
                 data-testid="wa-upload">
@@ -296,8 +302,8 @@ function ArchiveTab({
                     onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
                     className="border rounded-xl bg-card p-3 text-left transition-colors"
                     style={statusFilter === s
-                      ? { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }
-                      : { borderColor: "var(--line-2)" }}
+                      ? { borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)" }
+                      : { borderColor: "var(--gd-line-control)" }}
                     data-testid={`wa-coverage-${s}`}>
               <div className="text-2xl font-serif">{byStatus[s] ?? 0}</div>
               <div className="text-xs text-muted-foreground capitalize">{s}</div>
@@ -310,15 +316,21 @@ function ArchiveTab({
       {hasRun && (
         invLoading ? (
           <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
+        ) : invError ? (
+          <ErrorState
+            title="Couldn't load the inventory"
+            detail="The file inventory failed to load. Check your connection and try again."
+            onRetry={() => refetchInv()}
+          />
         ) : (
           <div className="border rounded-xl bg-card divide-y overflow-hidden"
-               style={{ borderColor: "var(--line-2)" }}>
+               style={{ borderColor: "var(--gd-line-control)" }}>
             {(inv?.items ?? []).map((it) => (
               <div key={it.id} className="px-3 py-2 flex items-center gap-3 text-sm"
-                   style={{ borderColor: "var(--line-2)" }}
+                   style={{ borderColor: "var(--gd-line-control)" }}
                    data-testid={`wa-inv-${it.id}`}>
                 <Badge variant="outline" className="text-[10px] shrink-0 border"
-                       style={STATUS_STYLE[it.status] ?? { borderColor: "var(--line-2)" }}>
+                       style={STATUS_STYLE[it.status] ?? { borderColor: "var(--gd-line-control)" }}>
                   {it.status}
                 </Badge>
                 <span className="font-mono text-xs truncate flex-1" title={it.rel_path}>
@@ -327,7 +339,7 @@ function ArchiveTab({
                 <span className="text-[11px] text-muted-foreground shrink-0">{fmtBytes(it.size_bytes)}</span>
                 {it.reason && (
                   <span className="text-[11px] truncate max-w-[240px]"
-                        style={{ color: "var(--rust)" }} title={it.reason}>
+                        style={{ color: "var(--gd-danger)" }} title={it.reason}>
                     {it.reason}
                   </span>
                 )}
@@ -351,7 +363,7 @@ function DoctrineTab({ hasRun }: { hasRun: boolean }) {
   const [typeFilter, setTypeFilter] = useState<string | "all">("all");
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery<{ items: RecordRow[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ items: RecordRow[] }>({
     queryKey: ["wa-records"],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/wa/records`);
@@ -382,8 +394,8 @@ function DoctrineTab({ hasRun }: { hasRun: boolean }) {
                     typeFilter === t ? "font-medium" : "text-muted-foreground"
                   }`}
                   style={typeFilter === t
-                    ? { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }
-                    : { borderColor: "var(--line-2)" }}
+                    ? { borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }
+                    : { borderColor: "var(--gd-line-control)" }}
                   data-testid={`wa-doctrine-type-${t}`}>
             {t === "all" ? `All (${items.length})` : prettyType(t)}
           </button>
@@ -392,8 +404,14 @@ function DoctrineTab({ hasRun }: { hasRun: boolean }) {
 
       {isLoading ? (
         <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full rounded-lg" />)}</div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load doctrine records"
+          detail="The doctrine record list failed to load. Check your connection and try again."
+          onRetry={() => refetch()}
+        />
       ) : visible.length === 0 ? (
-        <EmptyRunHint text="No doctrine records in this view." />
+        <EmptyState icon={<ScrollText />} title="No doctrine records in this view" />
       ) : (
         <div className="space-y-2">
           {visible.map((rec) => (
@@ -410,7 +428,7 @@ function DoctrineTab({ hasRun }: { hasRun: boolean }) {
 function DoctrineCard({
   rec, open, onToggle,
 }: { rec: RecordRow; open: boolean; onToggle: () => void }) {
-  const { data: detail, isLoading } = useQuery<RecordRow & { payload: unknown }>({
+  const { data: detail, isLoading, isError, refetch } = useQuery<RecordRow & { payload: unknown }>({
     queryKey: ["wa-record", rec.id],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/wa/records/${rec.id}`);
@@ -421,7 +439,7 @@ function DoctrineCard({
   });
 
   return (
-    <div className="border rounded-xl bg-card overflow-hidden" style={{ borderColor: "var(--line-2)" }}>
+    <div className="border rounded-xl bg-card overflow-hidden" style={{ borderColor: "var(--gd-line-control)" }}>
       <button onClick={onToggle}
               className="w-full px-4 py-3 flex items-center gap-3 text-left"
               data-testid={`wa-record-${rec.id}`}>
@@ -432,20 +450,28 @@ function DoctrineCard({
           <div className="text-[11px] text-muted-foreground font-mono truncate">{rec.source_path}</div>
         </div>
         <Badge variant="outline" className="text-[10px] shrink-0"
-               style={{ borderColor: "var(--line-2)", color: "var(--ink-soft)" }}>
+               style={{ borderColor: "var(--gd-line-control)", color: "var(--gd-muted)" }}>
           {prettyType(rec.record_type)}
         </Badge>
       </button>
       {open && (
-        <div className="px-4 pb-4 border-t" style={{ borderColor: "var(--line-2)" }}>
+        <div className="px-4 pb-4 border-t" style={{ borderColor: "var(--gd-line-control)" }}>
           {rec.source_note && (
             <p className="text-xs text-muted-foreground mt-3">{rec.source_note}</p>
           )}
           {isLoading ? (
             <Skeleton className="h-24 w-full rounded-lg mt-3" />
+          ) : isError ? (
+            <div className="mt-3">
+              <ErrorState
+                title="Couldn't load this record"
+                detail="The record payload failed to load. Check your connection and try again."
+                onRetry={() => refetch()}
+              />
+            </div>
           ) : (
             <pre className="mt-3 p-3 rounded-lg text-[11px] leading-relaxed overflow-x-auto max-h-96 overflow-y-auto"
-                 style={{ background: "var(--paper-2, rgba(0,0,0,0.04))", border: "1px solid var(--line-2)" }}
+                 style={{ background: "var(--gd-recessed)", border: "1px solid var(--gd-line-control)" }}
                  data-testid={`wa-record-payload-${rec.id}`}>
               {JSON.stringify(detail?.payload ?? {}, null, 2)}
             </pre>
@@ -467,7 +493,7 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
   );
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery<{ items: Proposal[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ items: Proposal[] }>({
     queryKey: ["wa-proposals", statusFilter],
     queryFn: async () => {
       const p = statusFilter === "all" ? "" : `?status=${statusFilter}`;
@@ -586,8 +612,8 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
                     statusFilter === s ? "font-medium" : "text-muted-foreground"
                   }`}
                   style={statusFilter === s
-                    ? { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }
-                    : { borderColor: "var(--line-2)" }}
+                    ? { borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }
+                    : { borderColor: "var(--gd-line-control)" }}
                   data-testid={`wa-prop-filter-${s}`}>
             {s}
           </button>
@@ -598,19 +624,19 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border p-3"
-           style={{ borderColor: "var(--line-2)" }}>
-        <Landmark className="w-4 h-4 shrink-0" style={{ color: "var(--gilt)" }} />
+           style={{ borderColor: "var(--gd-line-control)" }}>
+        <Landmark className="w-4 h-4 shrink-0" style={{ color: "var(--gd-bronze)" }} />
         <span className="text-xs text-muted-foreground">Sign as</span>
         <input
           value={signature}
           onChange={(e) => setSignature(e.target.value)}
           placeholder="Your name"
           className="h-7 w-36 rounded-md border bg-transparent px-2 text-xs outline-none focus:ring-1"
-          style={{ borderColor: "var(--line-2)" }}
+          style={{ borderColor: "var(--gd-line-control)" }}
           data-testid="wa-ratify-signature"
         />
         <Button size="sm" variant="outline" className="h-7 px-2 gap-1 ml-auto"
-                style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", color: "var(--gd-bronze)" }}
                 disabled={ratifying !== null}
                 onClick={ratifyAllApproved}
                 data-testid="wa-ratify-all">
@@ -621,8 +647,14 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
 
       {isLoading ? (
         <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}</div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load proposals"
+          detail="The canon-proposal queue failed to load. Check your connection and try again."
+          onRetry={() => refetch()}
+        />
       ) : items.length === 0 ? (
-        <EmptyRunHint text={`No ${statusFilter === "all" ? "" : statusFilter + " "}proposals.`} />
+        <EmptyState icon={<ScrollText />} title={`No ${statusFilter === "all" ? "" : statusFilter + " "}proposals`} />
       ) : (
         <div className="space-y-2">
           {items.map((p) => {
@@ -632,29 +664,29 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
               <div key={p.id}
                    className="border border-l-4 rounded-xl bg-card p-4 space-y-2"
                    style={{
-                     borderLeftColor: (CLASS_STYLE[p.classification]?.color as string) ?? "var(--line-2)",
+                     borderLeftColor: (CLASS_STYLE[p.classification]?.color as string) ?? "var(--gd-line-control)",
                      opacity: dimmed ? 0.55 : 1,
                    }}
                    data-testid={`wa-proposal-${p.id}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant="outline" className="gap-1 border"
-                           style={CLASS_STYLE[p.classification] ?? { borderColor: "var(--line-2)" }}>
+                           style={CLASS_STYLE[p.classification] ?? { borderColor: "var(--gd-line-control)" }}>
                       <Icon className="w-3 h-3" />{p.classification}
                     </Badge>
                     <Badge variant="outline" className="text-[10px]"
-                           style={{ borderColor: "var(--line-2)", color: "var(--ink-soft)" }}>
+                           style={{ borderColor: "var(--gd-line-control)", color: "var(--gd-muted)" }}>
                       {p.scope}
                     </Badge>
                     {p.status === "ratified" ? (
                       <Badge variant="outline" className="gap-1 text-[10px]"
-                             style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }}
+                             style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}
                              data-testid={`wa-ratified-badge-${p.id}`}>
                         <Landmark className="w-3 h-3" />In canon
                       </Badge>
                     ) : p.status !== "proposed" ? (
                       <Badge variant="outline" className="text-[10px] capitalize"
-                             style={{ borderColor: "var(--line-2)", color: "var(--ink-soft)" }}>
+                             style={{ borderColor: "var(--gd-line-control)", color: "var(--gd-muted)" }}>
                         {p.status}
                       </Badge>
                     ) : null}
@@ -663,7 +695,7 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
                     {p.status === "proposed" ? (
                       <>
                         <Button size="sm" variant="outline" className="h-7 px-2 gap-1"
-                                style={{ borderColor: "var(--green-2)", color: "var(--green-2)" }}
+                                style={{ borderColor: "var(--gd-success)", color: "var(--gd-success)" }}
                                 disabled={deciding === p.id}
                                 onClick={() => decide(p.id, "approved")}
                                 data-testid={`wa-approve-${p.id}`}>
@@ -671,7 +703,7 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
                           Approve
                         </Button>
                         <Button size="sm" variant="outline" className="h-7 px-2 gap-1"
-                                style={{ borderColor: "var(--rust)", color: "var(--rust)" }}
+                                style={{ borderColor: "var(--gd-danger)", color: "var(--gd-danger)" }}
                                 disabled={deciding === p.id}
                                 onClick={() => decide(p.id, "rejected")}
                                 data-testid={`wa-reject-${p.id}`}>
@@ -683,7 +715,7 @@ function ProposalsTab({ hasRun, onDecided }: { hasRun: boolean; onDecided: () =>
                       <>
                         {p.status === "approved" && (
                           <Button size="sm" variant="outline" className="h-7 px-2 gap-1"
-                                  style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                                  style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", color: "var(--gd-bronze)" }}
                                   disabled={ratifying !== null}
                                   onClick={() => ratifyOne(p.id)}
                                   data-testid={`wa-ratify-${p.id}`}>

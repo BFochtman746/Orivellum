@@ -119,7 +119,7 @@ export function SearchTab({ workId, initialQuery = "" }: { workId: string; initi
   // Monotonic counter so a slow earlier response can't clobber a newer one.
   const searchSeq = useRef(0);
 
-  // Embeddings circuit-breaker status (#203) — no network call, just reads in-process state
+  // Embeddings circuit-breaker status (task 203) — no network call, just reads in-process state
   const { data: embedStatus } = useGetEmbeddingsStatus({
     query: { queryKey: getGetEmbeddingsStatusQueryKey(), staleTime: 30_000, refetchInterval: 30_000 },
   });
@@ -195,7 +195,7 @@ export function SearchTab({ workId, initialQuery = "" }: { workId: string; initi
         </Button>
       </form>
 
-      {/* Semantic search readiness banner (#203) */}
+      {/* Semantic search readiness banner (task 203) */}
       {embedStatus?.circuit_open && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-md border text-xs font-mono" style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }}>
           <Search className="w-3.5 h-3.5 shrink-0" />

@@ -12,7 +12,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,6 +23,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import {
   Boxes, Plus, Loader2, ArrowRight, Library, BookOpen, Globe2,
 } from "lucide-react";
@@ -207,7 +207,7 @@ export default function CollectionsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [domainOpen, setDomainOpen] = useState(false);
 
-  const { data, isLoading, error } = useQuery<{ collections: CollectionSummary[] }>({
+  const { data, isLoading, isError, error, refetch } = useQuery<{ collections: CollectionSummary[] }>({
     queryKey: ["collections-list"],
     queryFn: async () => {
       const resp = await apiFetch(`${BASE}/collections`);
@@ -228,53 +228,57 @@ export default function CollectionsPage() {
   const typeLabel = (v: string) => COLLECTION_TYPES.find((t) => t.value === v)?.label || v;
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="editorial-title flex items-center gap-2.5">
-            <Boxes className="w-6 h-6" aria-hidden />
-            Collections
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1 max-w-xl">
-            Group series and standalone books into reader and production
-            families. Collections carry branding and metadata — shared facts
-            live in canon domains, and reading order stays with each series.
-          </p>
-        </div>
-        <div className="flex gap-2 shrink-0">
-          <Button variant="outline" onClick={() => setDomainOpen(true)} data-testid="button-new-domain">
+    <Page
+      eyebrow="Reader & production"
+      title="Collections"
+      wide
+      actions={
+        <>
+          <Button variant="outline" className="min-h-11" onClick={() => setDomainOpen(true)} data-testid="button-new-domain">
             <Globe2 className="w-4 h-4" /> New domain
           </Button>
-          <Button onClick={() => setCreateOpen(true)} data-testid="button-new-collection">
+          <Button className="min-h-11" onClick={() => setCreateOpen(true)} data-testid="button-new-collection">
             <Plus className="w-4 h-4" /> New collection
           </Button>
-        </div>
-      </div>
+        </>
+      }
+    >
+      <p className="flex items-start gap-2 text-sm text-muted-foreground -mt-2 max-w-xl">
+        <Boxes className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
+        <span>
+          Group series and standalone books into reader and production
+          families. Collections carry branding and metadata — shared facts
+          live in canon domains, and reading order stays with each series.
+        </span>
+      </p>
 
-      {isLoading && (
-        <div className="space-y-3">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-20 w-full" />
-        </div>
+      {isLoading && <LoadingState rows={3} label="Loading collections" />}
+      {isError && (
+        <ErrorState
+          title="Couldn't load your collections"
+          detail={String((error as Error)?.message ?? "The collections list didn't come back.")}
+          onRetry={() => refetch()}
+        />
       )}
-      {error && (
-        <p className="text-sm text-destructive">
-          Couldn't load collections: {String((error as Error).message)}
-        </p>
-      )}
-      {!isLoading && !error && collections.length === 0 && (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            No collections yet. Create one, then add series and standalone books.
-          </CardContent>
-        </Card>
+      {!isLoading && !isError && collections.length === 0 && (
+        <EmptyState
+          icon={<Boxes />}
+          title="No collections yet"
+          description="Create a collection, then add series and standalone books to it."
+          action={
+            <Button onClick={() => setCreateOpen(true)} data-testid="button-new-collection-empty">
+              <Plus className="w-4 h-4" /> New collection
+            </Button>
+          }
+        />
       )}
 
+      {!isLoading && !isError && collections.length > 0 && (
       <div className="space-y-3">
         {collections.map((c) => (
           <Link key={c.id} href={`/collections/${c.id}`}>
             <Card className="cursor-pointer hover-elevate" data-testid={`card-collection-${c.id}`}>
-              <CardContent className="py-4 flex items-center justify-between gap-4">
+              <CardContent className="py-4 min-h-11 flex items-center justify-between gap-4">
                 <div className="min-w-0">
                   <div className="font-medium truncate">{c.title}</div>
                   <div className="text-sm text-muted-foreground truncate">
@@ -298,6 +302,7 @@ export default function CollectionsPage() {
           </Link>
         ))}
       </div>
+      )}
 
       <div className="space-y-3">
         <h2 className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
@@ -330,6 +335,6 @@ export default function CollectionsPage() {
 
       <CreateCollectionDialog open={createOpen} onClose={() => setCreateOpen(false)} />
       <CreateDomainDialog open={domainOpen} onClose={() => setDomainOpen(false)} />
-    </div>
+    </Page>
   );
 }
