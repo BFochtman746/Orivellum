@@ -16,7 +16,14 @@
  * This is a deliberate single-user, private-network trade-off: the key in
  * localStorage is equivalent in power to the session cookie it backs up.
  */
-import { setAuthTokenGetter } from "@workspace/api-client-react";
+import { setAuthTokenGetter, setMutationTracker } from "@workspace/api-client-react";
+import { acquireBusy } from "./app-busy";
+
+// Every mutating request issued through the generated react-query client
+// (orval hooks → customFetch) also holds the same app-busy reason — the PWA
+// update prompt must never reload mid-write regardless of which API path
+// the mutation used.
+setMutationTracker(() => acquireBusy("api-write"));
 
 const STORAGE_KEY = "orivellum.apiKey";
 
@@ -137,24 +144,38 @@ function withAuthHeaders(init?: RequestInit): RequestInit {
  * Thin wrapper around `fetch` for same-origin API calls.
  * Sends the session cookie plus a bearer-token fallback, and on a 401
  * silently re-establishes the session with the stored key and retries once.
+ *
+ * Update-safety: every MUTATING call (anything except GET/HEAD) holds an
+ * app-busy reason for its full duration, so the PWA update prompt can never
+ * reload the page while a write is still on the wire.
  */
 export async function apiFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const resp = await fetch(input, withAuthHeaders(init));
-  if (resp.status !== 401) return resp;
+  const method = (
+    init?.method ??
+    (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")
+  ).toUpperCase();
+  const release =
+    method !== "GET" && method !== "HEAD" ? acquireBusy("api-write") : null;
+  try {
+    const resp = await fetch(input, withAuthHeaders(init));
+    if (resp.status !== 401) return resp;
 
-  // Session + bearer both rejected. If we hold a key, try to re-login once
-  // and retry — unless the body is a one-shot stream that can't be resent.
-  const stored = getStoredKey();
-  const bodyIsStream =
-    typeof ReadableStream !== "undefined" && init?.body instanceof ReadableStream;
-  if (!stored || bodyIsStream) return resp;
+    // Session + bearer both rejected. If we hold a key, try to re-login once
+    // and retry — unless the body is a one-shot stream that can't be resent.
+    const stored = getStoredKey();
+    const bodyIsStream =
+      typeof ReadableStream !== "undefined" && init?.body instanceof ReadableStream;
+    if (!stored || bodyIsStream) return resp;
 
-  const ok = await login(stored);
-  if (!ok) return resp;
-  return fetch(input, withAuthHeaders(init));
+    const ok = await login(stored);
+    if (!ok) return resp;
+    return await fetch(input, withAuthHeaders(init));
+  } finally {
+    release?.();
+  }
 }
 
 /**

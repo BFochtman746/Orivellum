@@ -19,6 +19,23 @@ let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
 
 /**
+ * Optional lifecycle hook for MUTATING requests (anything except GET/HEAD).
+ * Called when such a request starts; the returned function is invoked when
+ * the request settles (success or failure).
+ *
+ * Web apps use this to hold an "unsafe to reload" flag for the duration of
+ * every write, so e.g. a PWA update prompt cannot reload the page while a
+ * PATCH/POST/DELETE is still on the wire.
+ */
+export type MutationTracker = (info: { method: string; url: string }) => (() => void) | void;
+
+let _mutationTracker: MutationTracker | null = null;
+
+export function setMutationTracker(tracker: MutationTracker | null): void {
+  _mutationTracker = tracker;
+}
+
+/**
  * Set a base URL that is prepended to every relative request URL
  * (i.e. paths that start with `/`).
  *
@@ -360,12 +377,24 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  // Hold the mutation-tracker flag for the FULL request lifetime (network +
+  // body parse) so callers observing it never see a write "finish" before
+  // its response has actually settled.
+  const releaseTracker =
+    _mutationTracker && method !== "GET" && method !== "HEAD"
+      ? _mutationTracker(requestInfo)
+      : null;
 
-  if (!response.ok) {
-    const errorData = await parseErrorBody(response, method);
-    throw new ApiError(response, errorData, requestInfo);
+  try {
+    const response = await fetch(input, { ...init, method, headers });
+
+    if (!response.ok) {
+      const errorData = await parseErrorBody(response, method);
+      throw new ApiError(response, errorData, requestInfo);
+    }
+
+    return (await parseSuccessBody(response, responseType, requestInfo)) as T;
+  } finally {
+    releaseTracker?.();
   }
-
-  return (await parseSuccessBody(response, responseType, requestInfo)) as T;
 }

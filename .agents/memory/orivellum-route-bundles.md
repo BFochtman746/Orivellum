@@ -1,21 +1,21 @@
 ---
 name: Route bundles & PWA prompt updates
-description: Code splitting rules, bundle/vitals CI gates, and the app-busy update-gating pattern for the Orivellum UI
+description: Bundle-splitting decisions and the update-safety (app-busy) architecture for the Orivellum UI
 ---
 
-# Code splitting rules
+# Decisions
 
-- Every route loads via React.lazy with destination-level Suspense; heavy deps load at point of use: TipTap → write route only, recharts → pacing only, markdown+highlight.js → `src/components/rich-markdown.tsx` (shared lazy renderer for chat AND workbench detail; Suspense fallback = plain `whitespace-pre-wrap` text).
-- **Only default Rollup chunking.** Never hand-split node_modules with manualChunks. **Why:** a hand-made vendor split caused circular inter-chunk evaluation ("can't access 'forwardRef' of undefined"); the all-in-one vendor chunk it replaced cost Home ~850 KB gzip vs ~170 KB with default chunking.
-- `virtual:pwa-register` (with `injectRegister: false`) statically imports **workbox-window** — it must be a direct devDependency of the UI package or the production build fails to resolve.
+- Routes are lazy; heavy libs (editor, charts, markdown/highlight) load at point of use through shared lazy wrappers rather than static imports.
+- **Only default Rollup chunking — never hand-split node_modules.** **Why:** a manual vendor split caused circular inter-chunk evaluation crashes, and the all-in-one vendor chunk cost ~5x the initial-load budget. **How to apply:** if a chunk is too big, restructure imports (lazy boundaries), don't add manualChunks.
+- Service worker precaches only the app shell; hashed route chunks are cached at runtime. Updates are prompt-based — nothing ever reloads on its own.
 
-# Prompt-based update model
+# Update-safety architecture
 
-- `registerType: 'prompt'`; SW precaches shell only (index.html, `assets/entry-*.js`, css, woff2, icons); route chunks are CacheFirst by content hash.
-- `applyUpdate()` refuses while the app-busy registry (`src/lib/app-busy.ts`) holds any reason. **Why:** an update reload mid-draft/stream/upload destroys work.
-- **How to apply:** any new surface with unsaved/in-flight work must hold a busy reason AND release it on unmount. Debounced autosaves must go through the shared draft-autosave controller, never a hand-rolled setTimeout: saves are serialized (a stale older write can never land after a newer one), the busy hold is generation-tracked across overlapping saves, and unmount flush keeps the hold until the write is durable (server or outbox) — dispatching a request is not persistence.
+- A single global "app-busy" registry gates the update reload. The rule: **holding a busy reason means "a reload right now loses user work"; release only after the work is durable (server response or outbox write), never on dispatch.**
+- Coverage is centralized, not per-feature: both API layers (the raw fetch wrapper and the generated client's mutator hook) hold a busy reason for every non-GET request automatically. Long-lived surfaces (drafts, streams, uploads) add their own reasons on top.
+- Debounced autosaves go through a shared controller, never hand-rolled setTimeout. **Why:** hand-rolled versions get three races wrong — overlapping saves letting a stale write land last, an older save's completion releasing the hold while a newer edit is pending, and unmount dropping the last debounce window. The controller serializes writes, generation-tracks the hold, and flushes durably on dispose.
 
-# CI gates
+# CI gate lessons
 
-- Bundle-budget gate: walk the vite manifest entry closure (static imports) for the initial-load budget; per-chunk budgets exempt the editor chunk plus chunks reachable only from it (importer-fixpoint).
-- Web-vitals gate: vite preview + stubbed `/api/**`. The auth-status stub MUST report authenticated or the script silently measures the LOGIN form instead of Home — always assert an authenticated-only marker before collecting metrics.
+- Bundle budgets must measure the entry's static-import closure from the build manifest, with editor-only chunks exempted transitively.
+- A hermetic web-vitals check must stub the auth-status endpoint as authenticated AND assert an authenticated-only marker — otherwise it silently measures the login form.
