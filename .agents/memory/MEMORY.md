@@ -29,6 +29,7 @@
 - [Chat global knowledge search](orivellum-chat-knowledge.md) — _build_system_prompt now accepts user_query; uses search_knowledge+search_chunks globally, grouped by Work/topic; recency fallback when no query.
 - [Websearch pipeline design](orivellum-websearch-pipeline.md) — Tavily provider; multi-query RRF; BM25 passage ranking; planner overlaps first search wave (never re-serialize); transcripts fetched concurrently.
 - [Chat send failure UX](orivellum-chat-failure.md) — on thrown stream errors, message stays as a red "failed" bubble (failed:true); finally block filters to keep m.incomplete||m.failed; web only; mobile still needs this (task #140).
+- [Truthful chat activity strip](orivellum-chat-activity.md) — steps only from server-journaled events; never synthesize completion on stream end; continuation also journal-recovered; sr-only copy must not collide with e2e getByText.
 - [Library upload path](orivellum-upload-progress.md) — web uses streaming multipart POST /library/upload (XHR progress); body-limit middleware must exempt streaming routes; dedup race handled via sha UNIQUE catch.
 - [Duplicate send guard](orivellum-dup-send.md) — conversations.py checks db._conn directly for a matching user message within 5s before storing; uses db._lock; should be moved to a public db method (task #139).
 - [PKLOS Layer 0 full stack](orivellum-pklos-layer0.md) — authority/verifier/resolver/enforcer/output-validator/adapters all built; USER_ASSERTED/RETRIEVED status names; DERIVED before USER_DECLARED in router; adapterram double-r typo.
