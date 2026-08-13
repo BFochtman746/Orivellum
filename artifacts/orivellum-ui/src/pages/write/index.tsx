@@ -15,7 +15,7 @@ import React, {
   useCallback, useEffect, useRef, useState,
 } from 'react';
 import { apiFetch } from '@/lib/auth';
-import { setBusyFlag } from '@/lib/app-busy';
+import { createDraftAutosave, type DraftAutosave } from '@/lib/draft-autosave';
 import { enqueueOp, isNetworkError } from '@/lib/outbox';
 import { toast } from 'sonner';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -622,11 +622,18 @@ export default function WriteDeskPage() {
   // Defaults to false — on narrow phones the sidebar auto-hides so the editor
   // gets the full width without the user needing to find focus mode.
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const saveTimer                 = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Pending debounced save (WP5 update-safety): lets the unmount cleanup flush
-  // an in-flight draft instead of dropping the last ~1.5 s of typing, and
-  // guarantees the 'write-draft' busy flag never outlives this page.
-  const pendingSaveRef            = useRef<{ ed: NonNullable<ReturnType<typeof useEditor>>; docId: string } | null>(null);
+  // Autosave controller (update-safety): owns the debounce, the 'write-draft'
+  // busy hold across OVERLAPPING saves (generation-tracked, so an older save
+  // completing can never release the hold for a newer edit), and the
+  // flush-on-unmount that persists the last debounce-window of typing.
+  const autosaveRef = useRef<DraftAutosave<{ content_json: unknown; content_text: string }> | null>(null);
+  if (!autosaveRef.current) {
+    autosaveRef.current = createDraftAutosave({
+      reason: 'write-draft',
+      isNetworkError,
+      onSavingChange: setSaving,
+    });
+  }
   const [, navigate] = useLocation();
 
   // ── Editor ────────────────────────────────────────────────────────────────
@@ -723,72 +730,32 @@ export default function WriteDeskPage() {
 
   const scheduleSave = useCallback((ed: typeof editor) => {
     if (!activeDoc || !ed) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    // Update-safety (WP5): from the first unsaved keystroke until the save
-    // lands (or reaches the durable outbox), a PWA update reload is blocked.
-    setBusyFlag('write-draft', true);
-    pendingSaveRef.current = { ed, docId: activeDoc.id };
-    saveTimer.current = setTimeout(async () => {
-      saveTimer.current = null;
-      setSaving(true);
-      try {
-        // Content capture can throw if the editor was destroyed mid-debounce
-        // — keep it INSIDE the try so the finally always releases the flag.
-        const json = ed.getJSON();
-        const text = ed.getText();
-        try {
-          const updated = await apiPatch(`/write/documents/${activeDoc.id}`, {
-            content_json: json,
-            content_text: text,
-          });
-          setDocs((prev) => prev.map((d) => d.id === updated.id ? updated : d));
-          setActiveDoc((prev) => prev?.id === updated.id ? updated : prev);
-        } catch (err) {
-          if (isNetworkError(err)) {
-            // Offline — persist the newest content to the device outbox so it
-            // still reaches the server on reconnect (latest-wins per document).
-            try {
-              await enqueueOp('api_call', {
-                method: 'PATCH',
-                url: `${BASE}/write/documents/${activeDoc.id}`,
-                body: { content_json: json, content_text: text },
-                label: 'Draft save',
-              }, { replaceKey: `write-doc-${activeDoc.id}` });
-            } catch { /* IDB unavailable — next edit retries the network */ }
-          }
-          /* otherwise silent — next save will retry */
-        }
-      } catch { /* editor destroyed — the unmount flush already captured it */ }
-      finally { pendingSaveRef.current = null; setSaving(false); setBusyFlag('write-draft', false); }
-    }, 1500);
+    const docId = activeDoc.id;
+    autosaveRef.current!.schedule({
+      // Capture runs at save time (not schedule time) so the freshest
+      // content wins; the controller handles a destroyed editor safely.
+      capture: () => ({ content_json: ed.getJSON(), content_text: ed.getText() }),
+      save: async (body) => {
+        const updated = await apiPatch(`/write/documents/${docId}`, body);
+        setDocs((prev) => prev.map((d) => d.id === updated.id ? updated : d));
+        setActiveDoc((prev) => prev?.id === updated.id ? updated : prev);
+      },
+      // Offline — persist to the device outbox so the edit still reaches the
+      // server on reconnect (latest-wins per document).
+      fallback: async (body) => {
+        await enqueueOp('api_call', {
+          method: 'PATCH',
+          url: `${BASE}/write/documents/${docId}`,
+          body,
+          label: 'Draft save',
+        }, { replaceKey: `write-doc-${docId}` });
+      },
+    });
   }, [activeDoc]);
 
-  // Unmount flush (WP5): if a debounced save is still pending when the page
-  // unmounts, fire it immediately (network with outbox fallback) so the last
-  // seconds of typing survive navigation, and always release the busy flag.
-  useEffect(() => () => {
-    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
-    const pending = pendingSaveRef.current;
-    pendingSaveRef.current = null;
-    if (pending) {
-      try {
-        const json = pending.ed.getJSON();
-        const text = pending.ed.getText();
-        apiPatch(`/write/documents/${pending.docId}`, { content_json: json, content_text: text })
-          .catch((err) => {
-            if (isNetworkError(err)) {
-              enqueueOp('api_call', {
-                method: 'PATCH',
-                url: `${BASE}/write/documents/${pending.docId}`,
-                body: { content_json: json, content_text: text },
-                label: 'Draft save',
-              }, { replaceKey: `write-doc-${pending.docId}` }).catch(() => { /* IDB unavailable */ });
-            }
-          });
-      } catch { /* editor already destroyed — nothing to capture */ }
-    }
-    setBusyFlag('write-draft', false);
-  }, []);
+  // Unmount: flush any pending draft immediately (network with outbox
+  // fallback) and release the busy hold — navigation never drops typing.
+  useEffect(() => () => autosaveRef.current?.dispose(), []);
 
   // ── Title save ────────────────────────────────────────────────────────────
 
