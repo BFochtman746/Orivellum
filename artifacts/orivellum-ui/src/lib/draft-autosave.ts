@@ -2,15 +2,20 @@
  * Debounced draft autosave with update-safety guarantees.
  *
  * Owns the full lifecycle of a "type → debounce → save (→ offline fallback)"
- * loop and keeps the app-busy registry honest across OVERLAPPING saves:
- * if save A is still on the network when the user types again (scheduling
- * save B), A's completion must NOT release the busy hold or discard B —
- * only the completion of the *latest* scheduled save (tracked by generation)
- * clears the pending state.
+ * loop with three hard rules:
  *
- * `dispose()` (call on unmount) flushes the newest pending content
- * immediately — fire-and-forget with the offline fallback — so navigation
- * never drops the last debounce-window of typing, then releases the hold.
+ * 1. SERIALIZED WRITES — saves run strictly one at a time through an internal
+ *    promise chain, and each save captures content when it STARTS (not when
+ *    scheduled). A newer save can therefore never be overwritten by an older
+ *    in-flight one reaching the server late.
+ * 2. HONEST BUSY HOLD — the app-busy reason is held from the first schedule
+ *    until the latest scheduled save has durably landed (server or outbox).
+ *    An older save completing cannot release the hold while a newer one is
+ *    pending (generation-tracked).
+ * 3. DURABLE FLUSH — `dispose()` (call on unmount) flushes the newest pending
+ *    content and keeps the busy hold until that flush AND any in-flight save
+ *    have settled. Dispatching an async request is not persistence; a PWA
+ *    update reload is blocked until the write is actually durable.
  */
 import { setBusyFlag } from './app-busy';
 
@@ -38,7 +43,7 @@ export interface AutosaveOptions {
 export interface DraftAutosave<B> {
   /** (Re)schedule a save after the debounce delay. Replaces any pending one. */
   schedule: (job: AutosaveJob<B>) => void;
-  /** Flush the newest pending save immediately and release the busy hold. */
+  /** Flush the newest pending save and release the busy hold once durable. */
   dispose: () => void;
 }
 
@@ -47,6 +52,8 @@ export function createDraftAutosave<B>(opts: AutosaveOptions): DraftAutosave<B> 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let gen = 0; // increments per schedule; guards against overlapping saves
   let pending: AutosaveJob<B> | null = null;
+  // All persistence is serialized through this chain — rule 1.
+  let chain: Promise<void> = Promise.resolve();
 
   const persist = async (job: AutosaveJob<B>, body: B): Promise<void> => {
     try {
@@ -59,20 +66,18 @@ export function createDraftAutosave<B>(opts: AutosaveOptions): DraftAutosave<B> 
     }
   };
 
-  const run = async (myGen: number, job: AutosaveJob<B>): Promise<void> => {
+  const runSerialized = async (myGen: number, job: AutosaveJob<B>): Promise<void> => {
     opts.onSavingChange?.(true);
     try {
-      // Capture INSIDE the guarded block — it can throw if the editor was
-      // destroyed mid-debounce; the finally below must still run.
+      // Capture INSIDE the guarded block and only once any previous save has
+      // fully finished — the freshest content always wins, and a throw
+      // (editor destroyed mid-debounce) still reaches the finally.
       const body = job.capture();
       await persist(job, body);
     } catch { /* capture failed — dispose() already flushed what it could */ }
     finally {
       opts.onSavingChange?.(false);
-      // Only the LATEST generation may clear the pending state. If the user
-      // typed again while this save was on the network, a newer save owns
-      // the busy hold now — releasing it here would let an update reload
-      // (or unmount) drop that newer edit.
+      // Only the LATEST generation may clear the pending state — rule 2.
       if (gen === myGen) {
         pending = null;
         setBusyFlag(opts.reason, false);
@@ -88,23 +93,27 @@ export function createDraftAutosave<B>(opts: AutosaveOptions): DraftAutosave<B> 
       setBusyFlag(opts.reason, true);
       timer = setTimeout(() => {
         timer = null;
-        void run(myGen, job);
+        chain = chain.then(() => runSerialized(myGen, job));
       }, delay);
     },
 
     dispose(): void {
+      // Invalidate every generation: no in-flight save may release the busy
+      // hold anymore — only the durable-flush completion below does.
+      gen++;
       if (timer) { clearTimeout(timer); timer = null; }
       const job = pending;
       pending = null;
       if (job) {
-        // Flush the newest content now — fire-and-forget so unmount is not
-        // blocked; the offline fallback still applies.
-        try {
-          const body = job.capture();
-          void persist(job, body);
-        } catch { /* editor already destroyed — nothing capturable remains */ }
+        chain = chain.then(async () => {
+          try {
+            const body = job.capture();
+            await persist(job, body);
+          } catch { /* editor already destroyed — nothing capturable remains */ }
+        });
       }
-      setBusyFlag(opts.reason, false);
+      // Rule 3: release only after the flush and any in-flight save settled.
+      void chain.finally(() => setBusyFlag(opts.reason, false));
     },
   };
 }

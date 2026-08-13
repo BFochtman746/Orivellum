@@ -13,13 +13,9 @@ description: Code splitting rules, bundle/vitals CI gates, and the app-busy upda
 
 - `registerType: 'prompt'`; SW precaches shell only (index.html, `assets/entry-*.js`, css, woff2, icons); route chunks are CacheFirst by content hash.
 - `applyUpdate()` refuses while the app-busy registry (`src/lib/app-busy.ts`) holds any reason. **Why:** an update reload mid-draft/stream/upload destroys work.
-- **How to apply:** any new surface with unsaved/in-flight work must hold a busy reason AND release it on unmount. Debounced autosaves must use `src/lib/draft-autosave.ts` (generation-tracked controller): an older save completing on the network must never release the hold while a newer edit is pending, and dispose() flushes the newest content on unmount. Hand-rolled setTimeout autosaves get this overlap race wrong.
+- **How to apply:** any new surface with unsaved/in-flight work must hold a busy reason AND release it on unmount. Debounced autosaves must go through the shared draft-autosave controller, never a hand-rolled setTimeout: saves are serialized (a stale older write can never land after a newer one), the busy hold is generation-tracked across overlapping saves, and unmount flush keeps the hold until the write is durable (server or outbox) — dispatching a request is not persistence.
 
 # CI gates
 
-- `scripts/check_bundle_budgets.mjs`: walks the vite manifest entry closure (static imports) for the Home budget; per-chunk budget exempts the editor chunk plus chunks reachable only from it (importer-fixpoint).
-- `scripts/measure_web_vitals.mjs`: vite preview + stubbed `/api/**`. The stub MUST return `{"authenticated":true}` for `/api/auth/me` or the script measures the LOGIN form, not Home — it asserts no password input is present before collecting metrics.
-
-# Known stale e2e
-
-- Specs 01-doc-upload / 02-work-link / 05-duplicate / 06-tts-voice-stale fail on selectors removed by the library-convergence redesign (e.g. the "Import Documents" button no longer exists) — pre-existing, confirmed by stash-run on clean HEAD.
+- Bundle-budget gate: walk the vite manifest entry closure (static imports) for the initial-load budget; per-chunk budgets exempt the editor chunk plus chunks reachable only from it (importer-fixpoint).
+- Web-vitals gate: vite preview + stubbed `/api/**`. The auth-status stub MUST report authenticated or the script silently measures the LOGIN form instead of Home — always assert an authenticated-only marker before collecting metrics.
