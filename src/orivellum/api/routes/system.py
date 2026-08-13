@@ -933,13 +933,19 @@ def put_ui_preferences(body: dict = Body(...)):
             raise HTTPException(status_code=422, detail=f"invalid value for {key}")
         cleaned[key] = value
     db = get_db()
-    try:
-        stored = json.loads(db.get_setting("ui_preferences", "{}") or "{}")
-    except (ValueError, TypeError):
-        stored = {}
-    merged = {k: v for k, v in stored.items() if k in _UI_PREF_ALLOWED}
-    merged.update(cleaned)
-    db.set_setting("ui_preferences", json.dumps(merged), actor="user")
+    # Read+merge+write must be ONE serialized transaction: two devices
+    # PUTting different keys concurrently would otherwise both read the same
+    # old record and the later whole-JSON write would drop the earlier key.
+    # atomic() holds the DB write lock for the whole block, and get_setting's
+    # read connection joins the open transaction on this thread.
+    with db.atomic():
+        try:
+            stored = json.loads(db.get_setting("ui_preferences", "{}") or "{}")
+        except (ValueError, TypeError):
+            stored = {}
+        merged = {k: v for k, v in stored.items() if k in _UI_PREF_ALLOWED}
+        merged.update(cleaned)
+        db.set_setting("ui_preferences", json.dumps(merged), actor="user")
     return {"ok": True, **merged}
 
 

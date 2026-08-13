@@ -88,6 +88,36 @@ class UiPreferencesApiTest(unittest.TestCase):
         got = self.client.get(PREFS_URL, headers=self.auth).json()
         self.assertEqual(got, {"theme": "hull"})
 
+    def test_concurrent_puts_from_two_devices_both_survive(self):
+        """Regression: the merge must be atomic under concurrency. Two devices
+        PUTting different keys at the same time must BOTH land — a lost update
+        here silently discards one device's saved preference."""
+        import threading
+
+        rounds = 20
+        for i in range(rounds):
+            theme = "hull" if i % 2 else "daylight"
+            size = "125" if i % 2 else "112"
+            barrier = threading.Barrier(2)
+            errors: list[str] = []
+
+            def put(payload: dict):
+                barrier.wait()
+                r = self.client.put(PREFS_URL, headers=self.auth, json=payload)
+                if r.status_code != 200:
+                    errors.append(f"{payload} -> {r.status_code}")
+
+            t1 = threading.Thread(target=put, args=({"theme": theme},))
+            t2 = threading.Thread(target=put, args=({"textSize": size},))
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+            self.assertEqual(errors, [])
+            got = self.client.get(PREFS_URL, headers=self.auth).json()
+            self.assertEqual(got.get("theme"), theme, f"round {i}: theme lost")
+            self.assertEqual(got.get("textSize"), size, f"round {i}: textSize lost")
+
     def test_corrupt_stored_record_recovers(self):
         self.db.set_setting("ui_preferences", "not-json{{", actor="test")
         r = self.client.put(PREFS_URL, headers=self.auth, json={"theme": "daylight"})

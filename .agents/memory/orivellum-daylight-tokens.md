@@ -1,24 +1,23 @@
 ---
-name: Daylight token system (WP2)
-description: Premium Daylight default theme, design/tokens.json source of truth, ui-preferences sync contract, and the build/test gotchas that bit during WP2.
+name: Daylight token system
+description: Premium Daylight default theme, design/tokens.json source of truth, ui-preferences sync contract, and UI toolchain gotchas.
 ---
 
 # Daylight token system
 
 ## Source of truth
-- `design/tokens.json` (DTCG-style) is the palette authority: raw → semantic (per-mode via `$extensions["orivellum.modes"]`) → per-app `component.accent` AND `component.accent-ink`. `tests/test_design_tokens.py` enforces CSS parity against `gd-tokens.css`, WCAG contrast pairs, per-app ink-on-accent ≥4.5, and that each per-app `--gd-accent-soft` rgba is its own accent's RGB at ≤0.2 alpha.
-- **Why:** the architect review caught hull per-app accent-ink colors living only in CSS — anything not in tokens.json + parity tests silently drifts.
-- Daylight per-app rules must NOT override `--gd-accent-ink` (they inherit the theme block's white); hull per-app rules MUST set it. Tests encode this asymmetry.
+- `design/tokens.json` is the palette authority: raw → semantic (per-mode) → per-app accent AND accent-ink. Parity + contrast tests enforce it against the CSS.
+- **Why:** a review caught hull per-app accent-ink colors living only in CSS — any color not in tokens.json + parity tests silently drifts and can regress contrast undetected.
+- **How to apply:** when adding any themed color, add it to tokens.json first and extend the parity/contrast tests; per-app soft tints must be the app's own accent at low alpha. Daylight per-app rules inherit the theme-block white ink (must NOT override it); hull per-app rules must set their tinted ink.
 
 ## UI preferences sync contract
-- `PUT /api/system/settings/ui-preferences` **merges** partial records; clients send only keys explicitly present in localStorage. `theme.ts` hydrates from GET on init (server fills keys this device never set; local explicit wins) and queues mirrors until hydration settles.
-- **Why:** replace semantics + full-record PUTs meant one device's defaults clobbered another device's saved choices, and fresh installs never restored.
-- E2E reruns: PUT `{}` no longer clears the record — reset by PUTting explicit defaults for all four keys.
+- The ui-preferences endpoint MERGES partial records inside one atomic DB transaction; clients send only keys the user explicitly set on that device, and hydrate from GET on init (server fills unset keys; local explicit wins; mirrors queue until hydration settles).
+- **Why:** replace semantics + full-record PUTs let one device's defaults clobber another device's saved choices; a non-atomic read-merge-write lost keys under concurrent PUTs.
+- **How to apply:** never PUT a full default-filled record; never read-then-write the settings JSON outside `db.atomic()`. Resetting the record means PUTting explicit defaults for all keys (empty PUT is a no-op).
 
-## Build/test gotchas (hard-won)
-- The dev-mode Replit JSX tagger breaks on generic JSX (`<Comp<T> ...>`) — vite 500s with a babel parse error while `tsc`/prod build stay green. Never use explicit type arguments in JSX; let inference work.
-- Playwright: install `playwright-core` as a devDep of orivellum-ui and run scripts from inside that dir (module resolution); launch with `executablePath: CHROMIUM_BIN`. In dev, CSS arrives via JS imports — a transform 500 makes all `--gd-*` vars empty while the boot script (inline in index.html) still works, which looks like a "CSS-only" failure.
-- `scripts/ui_baseline_metrics.py` counts hex literals in comments too (allowlist: index.css + gd-tokens.css only). test_design_tokens greps raw text for `fonts.googleapis` / the font-smoothing property name — never write those literals anywhere in UI source, even comments.
-- @fontsource: import `latin-400`-style subset files, not the full css, to keep the CSS gzip gate happy.
-- CSS gzip baseline was surgically re-baselined (27,019→28,977, note field in baseline/metrics.json) for spec-mandated font self-hosting; JS/hex/route ratchets stay frozen — never re-collect the whole baseline for a single-metric exception.
-- `src/styles/legacy-aliases.css` maps VELLUM/shadcn vars onto `--gd-*` via `html:root` / `html:root.dark` (specificity 0-1-1 beats index.css `:root`). Temporary — WP3 deletes it.
+## Toolchain gotchas
+- The dev-mode JSX tagger breaks on generic JSX (`<Comp<T> ...>`) — vite 500s while tsc/prod build stay green; in dev, CSS arrives via JS imports, so a transform 500 leaves every `--gd-*` var empty while the inline index.html boot script still works (looks like a CSS-only failure). Avoid explicit type arguments in JSX.
+- The UI baseline hex scanner counts hex literals inside comments too; the token test suite greps raw source for the Google Fonts hostname and the font-smoothing property name — never write those literals anywhere in UI source, even comments.
+- @fontsource: import latin-subset files, not the full css, to keep the CSS gzip budget.
+- Size-budget baselines may be surgically re-baselined for spec-mandated growth (with a note field documenting why); never re-collect the whole baseline for a single-metric exception — that loosens the frozen ratchets.
+- The legacy alias sheet bridges unmigrated pages via `html:root` / `html:root.dark` selectors (specificity 0-1-1 beats `:root`); it is temporary and scheduled for deletion in the next work package.
