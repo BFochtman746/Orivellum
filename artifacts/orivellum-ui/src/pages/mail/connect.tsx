@@ -7,7 +7,8 @@ import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
-import { Mail, Copy, ExternalLink, Loader2, CheckCircle2, ArrowLeft } from "lucide-react";
+import { Mail, Copy, ExternalLink, Loader2, ArrowLeft } from "lucide-react";
+import { Status, ErrorState } from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -85,11 +86,11 @@ export default function MailConnectPage() {
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8">
-      <div className="glass-card rounded-xl p-8 max-w-md w-full space-y-6">
+      <div className="rounded-xl border border-card-border bg-card p-8 max-w-md w-full space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-accent/40 flex items-center justify-center">
-            <Mail size={20} style={{ color: "var(--gilt)" }} />
+            <Mail size={20} style={{ color: "var(--gd-bronze)" }} />
           </div>
           <div>
             <h1 className="text-base font-semibold">Connect Outlook</h1>
@@ -108,7 +109,7 @@ export default function MailConnectPage() {
               <li>• Message body is never persisted — only AI analysis is kept</li>
               <li>• You can disconnect at any time from settings</li>
             </ul>
-            <Button className="w-full gap-2" onClick={start}>
+            <Button className="w-full gap-2 min-h-11" onClick={start} data-testid="button-start-connection">
               <Mail size={14} />
               Start connection
             </Button>
@@ -134,14 +135,14 @@ export default function MailConnectPage() {
               <div className="flex-1 text-center py-3 rounded-lg font-mono text-xl font-bold tracking-[0.25em] border border-border/50 bg-muted/30">
                 {userCode}
               </div>
-              <Button variant="outline" size="icon" onClick={copy} title="Copy code">
+              <Button variant="outline" size="icon" className="min-h-11 min-w-11" onClick={copy} title="Copy code">
                 <Copy size={14} />
               </Button>
             </div>
             <div className="flex gap-2">
               <Button
                 variant="outline"
-                className="flex-1 gap-2"
+                className="flex-1 gap-2 min-h-11"
                 onClick={() => window.open(verifyUrl, "_blank")}
               >
                 <ExternalLink size={13} />
@@ -155,7 +156,7 @@ export default function MailConnectPage() {
             <Button
               variant="ghost"
               size="sm"
-              className="w-full gap-1 text-muted-foreground"
+              className="w-full gap-1 min-h-11 text-muted-foreground"
               onClick={() => { stopPoll(); setStep("idle"); }}
             >
               Cancel
@@ -165,24 +166,24 @@ export default function MailConnectPage() {
 
         {step === "done" && (
           <div className="flex flex-col items-center gap-3 py-4">
-            <CheckCircle2 size={32} style={{ color: "var(--green-2)" }} />
-            <p className="text-sm font-medium">Connected successfully</p>
+            <Status kind="ok" label="Connected successfully" />
             <p className="text-xs text-muted-foreground">Redirecting to Mail…</p>
           </div>
         )}
 
         {step === "error" && (
-          <div className="space-y-4">
-            <p className="text-sm text-destructive">{error}</p>
-            <Button className="w-full" onClick={start}>Try again</Button>
-          </div>
+          <ErrorState
+            title="Connection failed"
+            detail={error}
+            onRetry={start}
+          />
         )}
 
         {step !== "polling" && step !== "done" && (
           <Button
             variant="ghost"
             size="sm"
-            className="w-full gap-1 text-muted-foreground"
+            className="w-full gap-1 min-h-11 text-muted-foreground"
             onClick={() => navigate("/mail")}
           >
             <ArrowLeft size={12} />

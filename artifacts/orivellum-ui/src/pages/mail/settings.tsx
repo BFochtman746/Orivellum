@@ -7,13 +7,14 @@ import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
-  ArrowLeft, Save, Trash2, RefreshCw, ShieldCheck, Loader2,
-  AlertTriangle, Settings, CheckCircle2,
+  ArrowLeft, Save, Trash2, Loader2, AlertTriangle,
 } from "lucide-react";
+import {
+  Page, Panel, Status, ErrorState, LoadingState, ConfirmAction,
+} from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -32,6 +33,7 @@ export default function MailSettingsPage() {
   const qc = useQueryClient();
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
 
   const [lemonadeUrl,   setLemonadeUrl]   = useState("");
   const [lemonadeModel, setLemonadeModel] = useState("");
@@ -40,7 +42,7 @@ export default function MailSettingsPage() {
   const [feedsEnabled,  setFeedsEnabled]  = useState(true);
   const [contextDays,   setContextDays]   = useState("30");
 
-  const { data: settings, isLoading } = useQuery<MailSettings>({
+  const { data: settings, isLoading, isError, refetch } = useQuery<MailSettings>({
     queryKey: ["mail-settings"],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/mail/settings`);
@@ -101,7 +103,6 @@ export default function MailSettingsPage() {
   };
 
   const handleDisconnect = async () => {
-    if (!window.confirm("Disconnect Outlook? All synced mail records will remain but no new mail will be fetched.")) return;
     setDisconnecting(true);
     try {
       const r = await apiFetch(`${BASE}/mail/disconnect`, {
@@ -122,52 +123,70 @@ export default function MailSettingsPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-border/40">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate("/mail")}>
-          <ArrowLeft size={14} />
-        </Button>
-        <Settings size={14} style={{ color: "var(--gilt)" }} />
-        <span className="font-semibold text-sm">Mail settings</span>
-      </div>
-
-      <div className="max-w-xl mx-auto w-full p-6 space-y-6">
+      <Page
+        eyebrow="Mail Steward"
+        title="Mail settings"
+        actions={
+          <Button variant="ghost" size="icon" className="min-h-11 min-w-11" onClick={() => navigate("/mail")} title="Back to Mail">
+            <ArrowLeft size={14} />
+          </Button>
+        }
+      >
         {/* Account */}
-        <section className="glass-card rounded-lg p-5 space-y-3">
+        <Panel className="space-y-3">
           <h2 className="text-sm font-semibold">Account</h2>
-          {isLoading ? <Skeleton className="h-4 w-2/3" /> : (
+          {isLoading ? (
+            <LoadingState rows={1} label="Loading account" />
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load mail settings"
+              detail="The settings could not be fetched."
+              onRetry={() => refetch()}
+            />
+          ) : (
             <>
               {settings?.account_display ? (
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 size={14} style={{ color: "var(--green-2)" }} />
-                  <span className="text-sm">{settings.account_display}</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Status kind="ok" label={settings.account_display} />
                   <Badge variant="outline" className="text-[10px]">Connected</Badge>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">Not connected</p>
               )}
               {summary?.connected && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="gap-2"
-                  onClick={handleDisconnect}
-                  disabled={disconnecting}
-                >
-                  {disconnecting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                  Disconnect Outlook
-                </Button>
+                <ConfirmAction
+                  open={disconnectOpen}
+                  onOpenChange={setDisconnectOpen}
+                  title="Disconnect Outlook?"
+                  consequence="All synced mail records will remain but no new mail will be fetched."
+                  confirmLabel="Disconnect"
+                  destructive
+                  onConfirm={handleDisconnect}
+                  trigger={
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="gap-2 min-h-11"
+                      disabled={disconnecting}
+                      data-testid="button-disconnect-outlook"
+                    >
+                      {disconnecting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                      Disconnect Outlook
+                    </Button>
+                  }
+                />
               )}
               {!summary?.connected && (
-                <Button size="sm" className="gap-2" onClick={() => navigate("/mail/connect")}>
+                <Button size="sm" className="gap-2 min-h-11" onClick={() => navigate("/mail/connect")}>
                   Connect Outlook
                 </Button>
               )}
             </>
           )}
-        </section>
+        </Panel>
 
         {/* Send gate */}
-        <section className="glass-card rounded-lg p-5 space-y-3">
+        <Panel className="space-y-3">
           <h2 className="text-sm font-semibold">Send gate</h2>
           <div className="flex items-start gap-3">
             <button
@@ -176,7 +195,7 @@ export default function MailSettingsPage() {
               role="switch"
               aria-checked={sendEnabled}
             >
-              <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${sendEnabled ? "translate-x-4" : "translate-x-0.5"}`} />
+              <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-primary-foreground shadow transition-transform ${sendEnabled ? "translate-x-4" : "translate-x-0.5"}`} />
             </button>
             <div>
               <p className="text-sm font-medium">Enable send</p>
@@ -188,15 +207,15 @@ export default function MailSettingsPage() {
           </div>
           {sendEnabled && (
             <div className="flex items-start gap-2 rounded p-2 text-xs border"
-              style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }}>
+              style={{ borderColor: "var(--gd-line-control)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}>
               <AlertTriangle size={11} className="shrink-0 mt-0.5" />
               Make sure <strong>Mail.Send</strong> is added as a delegated permission in your Entra app before enabling this.
             </div>
           )}
-        </section>
+        </Panel>
 
         {/* AI model */}
-        <section className="glass-card rounded-lg p-5 space-y-3">
+        <Panel className="space-y-3">
           <h2 className="text-sm font-semibold">Local AI model (Lemonade)</h2>
           <div className="space-y-2">
             <label className="text-xs text-muted-foreground">URL</label>
@@ -216,10 +235,10 @@ export default function MailSettingsPage() {
               className="font-mono text-sm"
             />
           </div>
-        </section>
+        </Panel>
 
         {/* Sync */}
-        <section className="glass-card rounded-lg p-5 space-y-3">
+        <Panel className="space-y-3">
           <h2 className="text-sm font-semibold">Sync folders</h2>
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">Comma-separated folder names</label>
@@ -231,10 +250,10 @@ export default function MailSettingsPage() {
             />
             <p className="text-xs text-muted-foreground">e.g. inbox, sentitems, junkemail</p>
           </div>
-        </section>
+        </Panel>
 
         {/* Chat context window */}
-        <section className="glass-card rounded-lg p-5 space-y-3">
+        <Panel className="space-y-3">
           <h2 className="text-sm font-semibold">Chat context window</h2>
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">Days</label>
@@ -251,10 +270,10 @@ export default function MailSettingsPage() {
               Set to <code className="text-[11px] bg-muted px-1 rounded">0</code> to include all time.
             </p>
           </div>
-        </section>
+        </Panel>
 
         {/* Threat feeds */}
-        <section className="glass-card rounded-lg p-5 space-y-3">
+        <Panel className="space-y-3">
           <h2 className="text-sm font-semibold">Threat feeds</h2>
           <div className="flex items-center gap-3">
             <button
@@ -263,17 +282,17 @@ export default function MailSettingsPage() {
               role="switch"
               aria-checked={feedsEnabled}
             >
-              <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${feedsEnabled ? "translate-x-4" : "translate-x-0.5"}`} />
+              <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-primary-foreground shadow transition-transform ${feedsEnabled ? "translate-x-4" : "translate-x-0.5"}`} />
             </button>
             <p className="text-sm">Enable OpenPhish + URLhaus checks</p>
           </div>
-        </section>
+        </Panel>
 
-        <Button className="w-full gap-2" onClick={handleSave} disabled={saving}>
+        <Button className="w-full gap-2 min-h-11" onClick={handleSave} disabled={saving}>
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
           Save settings
         </Button>
-      </div>
+      </Page>
     </div>
   );
 }

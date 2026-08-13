@@ -62,7 +62,7 @@ export function AppearanceCard() {
   const prefs = useUiPreferences();
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6 space-y-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">

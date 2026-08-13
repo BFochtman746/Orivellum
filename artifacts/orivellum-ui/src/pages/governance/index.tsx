@@ -24,7 +24,7 @@ import {
   TrendingDown, Loader2, Link2, Inbox, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 import { useLocation } from "wouter";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, EmptyState, ErrorState, LoadingState, Status, ConfirmAction } from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -52,9 +52,9 @@ function getConfidenceTier(c: number | null): "high" | "medium" | "low" {
 }
 
 const TIER_BADGE_STYLE: Record<string, React.CSSProperties> = {
-  high:   { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", color: "var(--green-2)", background: "var(--green-soft)" },
-  medium: { borderColor: "var(--gilt-line)", color: "var(--gilt)", background: "var(--gilt-soft)" },
-  low:    { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", color: "var(--rust)", background: "var(--rust-soft)" },
+  high:   { borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 14%, transparent)" },
+  medium: { borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" },
+  low:    { borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", color: "var(--gd-danger)", background: "var(--gd-danger-soft)" },
 };
 const TIER_LABEL: Record<string, string> = { high: "High", medium: "Med", low: "Low" };
 
@@ -179,8 +179,8 @@ function ConflictsSection() {
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-2">
-        <AlertTriangle className="w-4 h-4" style={{ color: "var(--gilt)" }} />
-        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gilt)" }}>
+        <AlertTriangle className="w-4 h-4" style={{ color: "var(--gd-bronze)" }} />
+        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gd-bronze)" }}>
           Contradicting claims ({conflicts.length})
         </h2>
       </div>
@@ -188,9 +188,9 @@ function ConflictsSection() {
         {conflicts.map((c) => {
           const busy = resolving.has(c.id);
           return (
-            <div key={c.id} className="rounded-lg border p-3 space-y-2" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+            <div key={c.id} className="rounded-lg border p-3 space-y-2" style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)" }}>
               <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-                <Badge variant="outline" className="text-[10px]" style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}>
+                <Badge variant="outline" className="text-[10px]" style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", color: "var(--gd-bronze)" }}>
                   {c.conflict_type === "negation" ? "Negation" : "Conflicting values"}
                 </Badge>
                 {c.work_title && <span>{c.work_title}</span>}
@@ -208,8 +208,8 @@ function ConflictsSection() {
                       </span>
                       <Button size="sm" variant="outline" disabled={busy}
                         onClick={() => resolve(c.id, res)}
-                        className="h-6 text-[11px] gap-1 text-[var(--green-2)] hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
-                        style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
+                        className="h-6 text-[11px] gap-1 text-[var(--gd-success)] hover:text-[var(--gd-success)] hover:bg-[color-mix(in_srgb,var(--gd-success)_14%,transparent)]"
+                        style={{ borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}>
                         {busy ? <Spin /> : <ThumbsUp className="w-3 h-3" />} Keep {label}
                       </Button>
                     </div>
@@ -290,8 +290,8 @@ function RegressionsSection() {
     <div className="space-y-2.5">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <TrendingDown className="w-4 h-4" style={{ color: "var(--rust)" }} />
-          <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--rust)" }}>
+          <TrendingDown className="w-4 h-4" style={{ color: "var(--gd-danger)" }} />
+          <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gd-danger)" }}>
             Benchmark Regressions{visible.length > 0 ? ` (${visible.length})` : ""}
           </h2>
         </div>
@@ -323,7 +323,7 @@ function RegressionsSection() {
         </div>
       ) : visible.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border/50 p-6 text-center text-muted-foreground">
-          <CheckCircle2 className="w-6 h-6 mx-auto mb-2 opacity-40" style={{ color: "var(--green-2)" }} />
+          <CheckCircle2 className="w-6 h-6 mx-auto mb-2 opacity-40" style={{ color: "var(--gd-success)" }} />
           <p className="text-sm">No benchmark regressions</p>
         </div>
       ) : (
@@ -335,13 +335,13 @@ function RegressionsSection() {
               <div key={reg.run_id}
                 className={`rounded-lg border p-3 flex items-center gap-3 ${
                   reg.acknowledged ? "border-border/50 bg-muted/10 opacity-60" : ""
-                }`} style={!reg.acknowledged ? { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" } : undefined}>
+                }`} style={!reg.acknowledged ? { borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)" } : undefined}>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    {reg.acknowledged && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--green-2)" }} />}
+                    {reg.acknowledged && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gd-success)" }} />}
                     <Badge variant="outline"
                       className="text-[10px] shrink-0"
-                      style={reg.kind === "prompt" ? { borderColor: "var(--gilt-line)", color: "var(--gilt)" } : undefined}
+                      style={reg.kind === "prompt" ? { borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", color: "var(--gd-bronze)" } : undefined}
                     >
                       {reg.kind === "prompt" ? "Prompt" : "Benchmark"}
                     </Badge>
@@ -357,7 +357,7 @@ function RegressionsSection() {
                     <span>{fmtRegTime(reg.finished_at)}</span>
                     <span>{reg.avg_score != null ? `${Math.round(reg.avg_score * 100)}%` : "—"}</span>
                     {deltaPts != null && (
-                      <span className="font-semibold" style={{ color: "var(--rust)" }}>
+                      <span className="font-semibold" style={{ color: "var(--gd-danger)" }}>
                         {deltaPts > 0 ? "+" : ""}{deltaPts} pts
                       </span>
                     )}
@@ -422,32 +422,32 @@ function AuditChainSection() {
         <div className="h-12 rounded-lg bg-muted/20 animate-pulse" />
       ) : isError ? (
         <div className="rounded-lg border border-dashed border-border/60 p-3 flex items-center gap-2 text-xs text-muted-foreground">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gilt)" }} />
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gd-bronze)" }} />
           Could not reach audit-chain endpoint.
         </div>
       ) : data?.ok ? (
-        <div className="rounded-lg border p-3 flex items-center gap-2.5" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
-          <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />
+        <div className="rounded-lg border p-3 flex items-center gap-2.5" style={{ borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", background: "color-mix(in srgb, var(--gd-success) 14%, transparent)" }}>
+          <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "var(--gd-success)" }} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium" style={{ color: "var(--green-2)" }}>
+            <p className="text-sm font-medium" style={{ color: "var(--gd-success)" }}>
               Chain intact
             </p>
-            <p className="text-[11px] font-mono mt-0.5" style={{ color: "color-mix(in srgb, var(--green-2) 70%, transparent)" }}>
+            <p className="text-[11px] font-mono mt-0.5" style={{ color: "color-mix(in srgb, var(--gd-success) 70%, transparent)" }}>
               {data.checked_rows.toLocaleString()} row{data.checked_rows !== 1 ? "s" : ""} verified — no tampering detected
             </p>
           </div>
         </div>
       ) : (
-        <div className="rounded-lg border p-3 flex items-start gap-2.5" style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", background: "var(--rust-soft)" }}>
-          <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--rust)" }} />
+        <div className="rounded-lg border p-3 flex items-start gap-2.5" style={{ borderColor: "color-mix(in srgb, var(--gd-danger) 40%, transparent)", background: "var(--gd-danger-soft)" }}>
+          <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--gd-danger)" }} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold" style={{ color: "var(--rust)" }}>
+            <p className="text-sm font-semibold" style={{ color: "var(--gd-danger)" }}>
               Chain integrity broken
             </p>
-            <p className="text-[11px] font-mono mt-0.5 break-words" style={{ color: "color-mix(in srgb, var(--rust) 80%, transparent)" }}>
+            <p className="text-[11px] font-mono mt-0.5 break-words" style={{ color: "color-mix(in srgb, var(--gd-danger) 80%, transparent)" }}>
               {data?.reason ?? "Unknown reason"}
             </p>
-            <p className="text-[10px] font-mono mt-1" style={{ color: "color-mix(in srgb, var(--rust) 60%, transparent)" }}>
+            <p className="text-[10px] font-mono mt-1" style={{ color: "color-mix(in srgb, var(--gd-danger) 60%, transparent)" }}>
               {(data?.checked_rows ?? 0).toLocaleString()} rows checked
             </p>
           </div>
@@ -486,16 +486,16 @@ function OutboxSection() {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <Inbox className="w-4 h-4" style={{ color: "var(--gilt)" }} />
-        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gilt)" }}>
+        <Inbox className="w-4 h-4" style={{ color: "var(--gd-bronze)" }} />
+        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gd-bronze)" }}>
           Outbox Backlog ({data?.count ?? events.length})
         </h2>
       </div>
 
-      <div className="rounded-lg border divide-y divide-border/30" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+      <div className="rounded-lg border divide-y divide-border/30" style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "var(--gd-bronze-soft)" }}>
         {events.slice(0, 10).map((ev) => (
           <div key={ev.id} className="px-3 py-2 flex items-center gap-3 text-xs font-mono">
-            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px]" style={{ background: "var(--gilt-soft)", color: "var(--gilt)" }}>
+            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px]" style={{ background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}>
               {ev.event_type}
             </span>
             <span className="flex-1 truncate text-muted-foreground">
@@ -538,9 +538,9 @@ interface Finding {
 }
 
 const SEVERITY_BADGE_STYLE: Record<string, React.CSSProperties> = {
-  critical: { borderColor: "color-mix(in srgb, var(--rust) 60%, transparent)", color: "var(--rust)", background: "var(--rust-soft)" },
-  high:     { borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", color: "var(--rust)", background: "var(--rust-soft)" },
-  warning:  { borderColor: "var(--gilt-line)", color: "var(--gilt)", background: "var(--gilt-soft)" },
+  critical: { borderColor: "color-mix(in srgb, var(--gd-danger) 60%, transparent)", color: "var(--gd-danger)", background: "var(--gd-danger-soft)" },
+  high:     { borderColor: "color-mix(in srgb, var(--gd-danger) 40%, transparent)", color: "var(--gd-danger)", background: "var(--gd-danger-soft)" },
+  warning:  { borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" },
   info:     {},
 };
 
@@ -589,11 +589,11 @@ function FindingsSection() {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <AlertTriangle className="w-4 h-4" style={{ color: "var(--gilt)" }} />
-        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gilt)" }}>
+        <AlertTriangle className="w-4 h-4" style={{ color: "var(--gd-bronze)" }} />
+        <h2 className="text-sm font-mono font-semibold" style={{ color: "var(--gd-bronze)" }}>
           Open Findings ({findings.length})
           {blocking.length > 0 && (
-            <span className="ml-2 text-[10px] font-normal" style={{ color: "var(--rust)" }}>
+            <span className="ml-2 text-[10px] font-normal" style={{ color: "var(--gd-danger)" }}>
               · {blocking.length} blocking
             </span>
           )}
@@ -608,7 +608,7 @@ function FindingsSection() {
               key={f.id}
               className="rounded-lg border p-3 flex items-start gap-3"
               style={(f.severity === "critical" || f.severity === "high")
-                ? { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }
+                ? { borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)" }
                 : { borderColor: undefined, background: undefined }}
             >
               <div className="flex-1 min-w-0 space-y-1">
@@ -620,7 +620,7 @@ function FindingsSection() {
                     {f.object_type}
                   </span>
                   {(f.severity === "high" || f.severity === "critical") && (
-                    <span className="text-[10px] font-mono" style={{ color: "var(--rust)" }}>
+                    <span className="text-[10px] font-mono" style={{ color: "var(--gd-danger)" }}>
                       blocks transitions
                     </span>
                   )}
@@ -635,8 +635,8 @@ function FindingsSection() {
                 variant="outline"
                 disabled={busy}
                 onClick={() => resolve(f.id)}
-                className="h-7 text-[11px] gap-1 shrink-0 text-[var(--green-2)] hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
-                style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+                className="h-7 text-[11px] gap-1 shrink-0 text-[var(--gd-success)] hover:text-[var(--gd-success)] hover:bg-[color-mix(in_srgb,var(--gd-success)_14%,transparent)]"
+                style={{ borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}
               >
                 {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
                 Resolve
@@ -658,7 +658,6 @@ function FindingsSection() {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function GovernancePage() {
-  const gdDark = useGdDark();
   const [, navigate] = useLocation();
   const qc = useQueryClient();
 
@@ -678,9 +677,12 @@ export default function GovernancePage() {
     staleTime: 30_000, refetchInterval: 60_000,
   });
 
-  const { data, isLoading, refetch, isFetching } = useQuery<{ items: PendingItem[]; count: number }>({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<{ items: PendingItem[]; count: number }>({
     queryKey: ["governance", "pending"],
-    queryFn: () => apiFetch(`${BASE}/governance/pending?limit=500`).then((r) => r.json()),
+    queryFn: () => apiFetch(`${BASE}/governance/pending?limit=500`).then((r) => {
+      if (!r.ok) throw new Error("Failed to load pending items");
+      return r.json();
+    }),
     staleTime: 30_000,
   });
 
@@ -731,7 +733,6 @@ export default function GovernancePage() {
 
   const handleBatchApprove = useCallback(async (items: PendingItem[]) => {
     if (items.length === 0) return;
-    if (!window.confirm(`Approve all ${items.length} item${items.length !== 1 ? "s" : ""}?`)) return;
     setBulkPending(true);
     try {
       const updated = await batchReview(items.map((i) => i.id), "approved");
@@ -788,39 +789,34 @@ export default function GovernancePage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className={`space-y-6 animate-in fade-in duration-300 max-w-4xl ${gdDark ? "dark text-foreground" : ""}`}>
-
-      {/* Header */}
-      <div className="pb-4" style={{ borderBottom: '1px solid var(--line)' }}>
-        <div className="flex items-start justify-between">
-          <div>
-            <span className="eyebrow mb-1">Nothing unverified becomes true</span>
-            <h1 className="vellum-h1">Review</h1>
-            <div className="gilt-rule w-28" />
-            <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
-              Approve what becomes canon.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="hidden sm:flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50 border border-border/30 rounded px-2 py-1">
-              <Keyboard className="w-3 h-3" /> j/k navigate · a approve · r reject
-            </span>
-            <button onClick={() => refetch()} disabled={isFetching}
-              className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
-              <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
-          </div>
-        </div>
-      </div>
+    <Page
+      wide
+      eyebrow="Nothing unverified becomes true"
+      title="Review"
+      actions={
+        <>
+          <span className="hidden sm:flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50 border border-border/30 rounded px-2 py-1">
+            <Keyboard className="w-3 h-3" /> j/k navigate · a approve · r reject
+          </span>
+          <button onClick={() => refetch()} disabled={isFetching}
+            className="flex items-center gap-1.5 min-h-11 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
+            <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </>
+      }
+    >
+      <p className="text-[13px] -mt-2 text-muted-foreground">
+        Approve what becomes canon.
+      </p>
 
       {/* Stats strip */}
       {statsData && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "Pending",  value: statsData.pending,  cls: statsData.pending > 0 ? "" : "text-muted-foreground", style: statsData.pending > 0 ? { color: "var(--gilt)" } : undefined },
-            { label: "Approved", value: statsData.approved, cls: "", style: { color: "var(--green-2)" } as React.CSSProperties },
-            { label: "Rejected", value: statsData.rejected, cls: "", style: { color: "var(--rust)" } as React.CSSProperties },
+            { label: "Pending",  value: statsData.pending,  cls: statsData.pending > 0 ? "" : "text-muted-foreground", style: statsData.pending > 0 ? { color: "var(--gd-bronze)" } : undefined },
+            { label: "Approved", value: statsData.approved, cls: "", style: { color: "var(--gd-success)" } as React.CSSProperties },
+            { label: "Rejected", value: statsData.rejected, cls: "", style: { color: "var(--gd-danger)" } as React.CSSProperties },
             { label: "Total",    value: statsData.total,    cls: "text-muted-foreground", style: undefined },
           ].map(({ label, value, cls, style }) => (
             <div key={label} className="p-3 rounded-lg border border-border/50 bg-muted/10 text-center">
@@ -861,15 +857,22 @@ export default function GovernancePage() {
                   <span className="text-primary/60"> · {focusedIdx + 1}/{filtered.length} focused</span>
                 )}
               </p>
-              <Button size="sm" variant="outline"
-                onClick={() => handleBatchApprove(filtered)}
-                disabled={bulkPending}
-                className="gap-1.5 text-xs text-[var(--green-2)] hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
-              style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
-                {bulkPending
-                  ? <><Spin /> Approving…</>
-                  : <><CheckCircle2 className="w-3.5 h-3.5" /> Approve all ({filtered.length})</>}
-              </Button>
+              <ConfirmAction
+                title={`Approve all ${filtered.length} item${filtered.length !== 1 ? "s" : ""}?`}
+                consequence="Approved items become canon and feed downstream knowledge. You can still reject them individually later."
+                confirmLabel="Approve all"
+                onConfirm={() => handleBatchApprove(filtered)}
+                trigger={
+                  <Button size="sm" variant="outline"
+                    disabled={bulkPending}
+                    className="gap-1.5 min-h-11 text-xs text-[var(--gd-success)] hover:text-[var(--gd-success)] hover:bg-[color-mix(in_srgb,var(--gd-success)_14%,transparent)]"
+                    style={{ borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}>
+                    {bulkPending
+                      ? <><Spin /> Approving…</>
+                      : <><CheckCircle2 className="w-3.5 h-3.5" /> Approve all ({filtered.length})</>}
+                  </Button>
+                }
+              />
             </div>
           )}
         </div>
@@ -877,31 +880,35 @@ export default function GovernancePage() {
 
       {/* Content */}
       {isLoading ? (
-        <div className="space-y-3">
-          {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-20 w-full" />)}
-        </div>
+        <LoadingState rows={5} label="Loading pending items" />
+      ) : isError ? (
+        <ErrorState
+          title="Could not load pending items"
+          detail="The review queue is unavailable right now."
+          onRetry={() => refetch()}
+        />
       ) : filtered.length === 0 ? (
-        <div className="text-center py-20 border border-dashed rounded-xl text-muted-foreground">
-          <CheckCircle2 className="w-10 h-10 mx-auto mb-4 opacity-40" style={{ color: "var(--green-2)" }} />
-          <p className="font-medium">
-            {allItems.length > 0 ? "No items match the current filters" : "No items pending review"}
-          </p>
-          <p className="text-sm opacity-70 mt-1">
-            {allItems.length > 0
+        <EmptyState
+          icon={<CheckCircle2 />}
+          title={allItems.length > 0 ? "No items match the current filters" : "No items pending review"}
+          description={
+            allItems.length > 0
               ? "Try a different filter combination."
-              : "AI-extracted knowledge will appear here when documents are processed with AI extraction enabled."}
-          </p>
-          {allItems.length === 0 ? (
-            <Button variant="link" size="sm" className="mt-4 text-muted-foreground" onClick={() => navigate("/system")}>
-              Configure AI extraction →
-            </Button>
-          ) : (
-            <Button variant="link" size="sm" className="mt-2 text-muted-foreground"
-              onClick={() => { setKindFilter("all"); setConfFilter("all"); }}>
-              Clear filters
-            </Button>
-          )}
-        </div>
+              : "AI-extracted knowledge will appear here when documents are processed with AI extraction enabled."
+          }
+          action={
+            allItems.length === 0 ? (
+              <Button variant="link" size="sm" className="text-muted-foreground" onClick={() => navigate("/system")}>
+                Configure AI extraction →
+              </Button>
+            ) : (
+              <Button variant="link" size="sm" className="text-muted-foreground"
+                onClick={() => { setKindFilter("all"); setConfFilter("all"); }}>
+                Clear filters
+              </Button>
+            )
+          }
+        />
       ) : (
         <div className="space-y-6">
           {Object.entries(byWork).map(([workId, { title, items: workItems }]) => (
@@ -921,7 +928,7 @@ export default function GovernancePage() {
                   <Button size="sm" variant="ghost"
                     onClick={() => handleBatchApprove(workItems)}
                     disabled={bulkPending}
-                    className="h-6 px-2 text-[10px] font-mono gap-1 text-[var(--green-2)] hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]">
+                    className="h-6 px-2 text-[10px] font-mono gap-1 text-[var(--gd-success)] hover:text-[var(--gd-success)] hover:bg-[color-mix(in_srgb,var(--gd-success)_14%,transparent)]">
                     <CheckCircle2 className="w-3 h-3" /> Approve {workItems.length}
                   </Button>
                 </div>
@@ -941,9 +948,9 @@ export default function GovernancePage() {
                     className={`flex items-start gap-3 p-3.5 rounded-lg border transition-all cursor-pointer select-none ${
                       isFocused ? "border-primary/40 bg-primary/5 ring-1 ring-primary/20 shadow-sm" : ""
                     }`}
-                    style={!isFocused ? { borderColor: "var(--gilt-line)", background: "color-mix(in srgb, var(--gilt-soft) 50%, transparent)" } : undefined}
+                    style={!isFocused ? { borderColor: "color-mix(in srgb, var(--gd-bronze) 40%, transparent)", background: "color-mix(in srgb, var(--gd-bronze-soft) 50%, transparent)" } : undefined}
                   >
-                    <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "var(--gilt)" }} />
+                    <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "var(--gd-bronze)" }} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                         <Badge variant="outline"
@@ -984,7 +991,7 @@ export default function GovernancePage() {
                         disabled={isReviewing}
                         onClick={(e) => { e.stopPropagation(); handleReview(item.id, "approved"); }}
                         title="Approve (a)"
-                        className="p-1.5 rounded transition-colors text-muted-foreground hover:text-[var(--green-2)] hover:bg-[var(--green-soft)] disabled:opacity-40"
+                        className="p-1.5 rounded transition-colors text-muted-foreground hover:text-[var(--gd-success)] hover:bg-[color-mix(in_srgb,var(--gd-success)_14%,transparent)] disabled:opacity-40"
                       >
                         {isReviewing ? <Spin /> : <ThumbsUp className="w-3.5 h-3.5" />}
                       </button>
@@ -992,7 +999,7 @@ export default function GovernancePage() {
                         disabled={isReviewing}
                         onClick={(e) => { e.stopPropagation(); handleReview(item.id, "rejected"); }}
                         title="Reject (r)"
-                        className="p-1.5 rounded transition-colors text-muted-foreground hover:text-[var(--rust)] hover:bg-[var(--rust-soft)] disabled:opacity-40"
+                        className="p-1.5 rounded transition-colors text-muted-foreground hover:text-[var(--gd-danger)] hover:bg-[var(--gd-danger-soft)] disabled:opacity-40"
                       >
                         <ThumbsDown className="w-3.5 h-3.5" />
                       </button>

@@ -4,16 +4,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useListWorks, getListWorksQueryKey } from "@workspace/api-client-react";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, Section, EmptyState, ErrorState, LoadingState, Status } from "@/components/primitives";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Zap, Download, CheckCircle2, XCircle, Loader2,
+  Zap, Download, Loader2,
   FileText, BookOpen, BarChart2, GraduationCap, FileSpreadsheet, History,
 } from "lucide-react";
 
@@ -191,7 +190,7 @@ function ActionCard({
             );
           })}
           {!canRun && (
-            <p className="text-[11px]" style={{ color: "var(--gilt)" }}>
+            <p className="text-[11px]" style={{ color: "var(--gd-caution)" }}>
               {missingWorkId ? "Select a Work to continue." : `Fill in: ${missingTextFields.join(", ")}`}
             </p>
           )}
@@ -210,7 +209,7 @@ function ActionCard({
         <div className="flex items-center gap-2 pl-12">
           <Button
             size="sm"
-            className="h-7 text-xs gap-1.5"
+            className="min-h-11 text-xs gap-1.5"
             disabled={!canRun}
             onClick={() => onRun(action.name, inputs)}
           >
@@ -221,7 +220,7 @@ function ActionCard({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 text-xs"
+              className="min-h-11 text-xs"
               disabled={loadingPreview || !canRun}
               onClick={handlePreview}
             >
@@ -237,34 +236,25 @@ function ActionCard({
 // ── Run row ────────────────────────────────────────────────────────────────────
 
 function RunRow({ run, onDownload }: { run: ActionRun; onDownload: (run: ActionRun) => void }) {
-  const Icon =
-    run.status === "done"
-      ? CheckCircle2
-      : run.status === "error"
-      ? XCircle
-      : Loader2;
-
-  const iconCls =
-    run.status === "done"
-      ? ""
-      : run.status === "error"
-      ? "text-destructive"
-      : "text-muted-foreground animate-spin";
-  const iconStyle: React.CSSProperties | undefined =
-    run.status === "done" ? { color: "var(--green-2)" } : undefined;
+  const statusKind =
+    run.status === "done" ? "ok" : run.status === "error" ? "danger" : "busy";
+  const statusLabel =
+    run.status === "done" ? "Done" : run.status === "error" ? "Failed" : "Running";
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
-      <Icon className={`w-3.5 h-3.5 shrink-0 ${iconCls}`} style={iconStyle} />
+    <div className="flex items-center gap-3 px-4 py-2.5 min-h-11 hover:bg-muted/20 transition-colors">
+      <span className="shrink-0">
+        <Status kind={statusKind} label={statusLabel} />
+      </span>
       <div className="flex-1 min-w-0">
         <span className="text-xs font-mono font-medium">
           {run.action_name.replace(/_/g, " ")}
         </span>
         {run.error && (
-          <span className="text-[11px] text-destructive ml-2">{run.error.slice(0, 80)}</span>
+          <span className="text-[11px] text-destructive ml-2 truncate">{run.error.slice(0, 80)}</span>
         )}
         {run.output_label && !run.error && (
-          <span className="text-[11px] text-muted-foreground ml-2">{run.output_label}</span>
+          <span className="text-[11px] text-muted-foreground ml-2 truncate">{run.output_label}</span>
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
@@ -272,14 +262,14 @@ function RunRow({ run, onDownload }: { run: ActionRun; onDownload: (run: ActionR
           <Button
             size="sm"
             variant="ghost"
-            className="h-6 text-[10px] gap-1 px-2"
+            className="min-h-11 text-[10px] gap-1 px-2"
             onClick={() => onDownload(run)}
           >
             <Download className="w-3 h-3" />
             Download
           </Button>
         )}
-        <span className="text-[10px] font-mono text-muted-foreground/50">
+        <span className="text-[10px] font-mono" style={{ color: "var(--gd-dim)" }}>
           {relTime(run.completed_at ?? run.created_at)}
         </span>
       </div>
@@ -290,8 +280,12 @@ function RunRow({ run, onDownload }: { run: ActionRun; onDownload: (run: ActionR
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function ActionsPage() {
-  const gdDark = useGdDark();
-  const { data: actionsData, isLoading: actionsLoading } = useQuery<{ actions: ActionDef[] }>({
+  const {
+    data: actionsData,
+    isLoading: actionsLoading,
+    isError: actionsError,
+    refetch: refetchActions,
+  } = useQuery<{ actions: ActionDef[] }>({
     queryKey: ["actions", "list"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/actions`);
@@ -301,7 +295,12 @@ export default function ActionsPage() {
     staleTime: 60_000,
   });
 
-  const { data: runsData, isLoading: runsLoading, refetch: refetchRuns } = useQuery<{
+  const {
+    data: runsData,
+    isLoading: runsLoading,
+    isError: runsError,
+    refetch: refetchRuns,
+  } = useQuery<{
     runs: ActionRun[];
     count: number;
   }>({
@@ -354,71 +353,76 @@ export default function ActionsPage() {
   const categories = Array.from(new Set(actions.map((a) => a.category)));
 
   return (
-    <div className={`max-w-4xl mx-auto p-6 space-y-8 ${gdDark ? "dark text-foreground" : ""}`}>
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-serif font-medium flex items-center gap-2">
-          <Zap className="w-6 h-6 text-primary" />
-          Actions
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Typed, grounded actions — each shows a confirmation before running and saves its output to your Library.
-        </p>
-      </div>
+    <Page
+      wide
+      eyebrow="Studio"
+      title="Actions"
+    >
+      <p className="text-sm text-muted-foreground -mt-2">
+        Typed, grounded actions — each shows a confirmation before running and saves its output to your Library.
+      </p>
 
       {/* Action grid */}
       {actionsLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-48 w-full rounded-xl" />)}
-        </div>
+        <LoadingState rows={3} label="Loading actions" />
+      ) : actionsError ? (
+        <ErrorState
+          title="Could not load actions"
+          detail="The actions catalog is unavailable right now."
+          onRetry={() => refetchActions()}
+        />
       ) : actions.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground text-sm border border-dashed rounded-xl">
-          No actions registered.
-        </div>
+        <EmptyState
+          icon={<Zap />}
+          title="No actions registered"
+          description="Typed actions will appear here once they're registered on the server."
+        />
       ) : (
         categories.map((cat) => (
-          <div key={cat} className="space-y-3">
-            <h2 className="text-xs font-mono uppercase tracking-wider text-muted-foreground/60 pl-1">
-              {cat}
-            </h2>
+          <Section key={cat} label={cat}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {actions.filter((a) => a.category === cat).map((action) => (
                 <ActionCard key={action.name} action={action} onRun={handleRun} />
               ))}
             </div>
-          </div>
+          </Section>
         ))
       )}
 
       {/* Recent runs */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium flex items-center gap-2">
-            <History className="w-4 h-4 text-muted-foreground" />
-            Recent runs
-          </h2>
+      <Section
+        label="Recent runs"
+        actions={
           <button
             onClick={() => refetchRuns()}
-            className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
+            className="min-h-11 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
           >
+            <History className="w-3.5 h-3.5" />
             {runsData?.count ?? 0} total · refresh
           </button>
-        </div>
-
+        }
+      >
         {runsLoading ? (
-          [1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)
+          <LoadingState rows={3} label="Loading runs" />
+        ) : runsError ? (
+          <ErrorState
+            title="Could not load recent runs"
+            onRetry={() => refetchRuns()}
+          />
         ) : runs.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground text-xs border border-dashed rounded-lg">
-            No runs yet — fill in the inputs above and click Run.
-          </div>
+          <EmptyState
+            icon={<History />}
+            title="No runs yet"
+            description="Fill in the inputs above and click Run to see results here."
+          />
         ) : (
-          <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30">
+          <div className="rounded-lg border border-card-border overflow-hidden divide-y divide-border/30">
             {runs.map((run) => (
               <RunRow key={run.id} run={run} onDownload={handleDownload} />
             ))}
           </div>
         )}
-      </div>
-    </div>
+      </Section>
+    </Page>
   );
 }

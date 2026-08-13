@@ -23,6 +23,9 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Status, EmptyState, ErrorState, LoadingState,
+} from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -96,9 +99,9 @@ function fmtDate(iso: string | null) {
 }
 
 function attentionStyle(level: string | null) {
-  if (level === "high")   return { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" };
-  if (level === "medium") return { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" };
-  return { color: "var(--ink-soft)", background: "transparent", borderColor: "var(--line)" };
+  if (level === "high")   return { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" };
+  if (level === "medium") return { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "var(--gd-line-control)" };
+  return { color: "var(--gd-dim)", background: "transparent", borderColor: "var(--gd-line-control)" };
 }
 
 function AttentionBadge({ level }: { level: string | null }) {
@@ -115,7 +118,7 @@ function AttentionBadge({ level }: { level: string | null }) {
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const pct = Math.round((value ?? 0) * 100);
-  const color = pct >= 80 ? "var(--green-2)" : pct >= 50 ? "var(--gilt)" : "var(--rust)";
+  const color = pct >= 80 ? "var(--gd-success)" : pct >= 50 ? "var(--gd-bronze)" : "var(--gd-danger)";
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
@@ -148,13 +151,13 @@ function QueueItem({ record, selected, onClick }: { record: MailRecord; selected
         )}
         {record.needs_reply && (
           <span className="text-[10px] border rounded px-1 py-0.5 uppercase tracking-wide"
-            style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+            style={{ color: "var(--gd-bronze)", borderColor: "var(--gd-line-control)", background: "var(--gd-bronze-soft)" }}>
             Reply
           </span>
         )}
         {record.is_high_risk && (
           <span className="text-[10px] border rounded px-1 py-0.5 uppercase tracking-wide"
-            style={{ color: "var(--rust)", borderColor: "color-mix(in srgb,var(--rust) 28%,transparent)", background: "var(--rust-soft)" }}>
+            style={{ color: "var(--gd-danger)", borderColor: "color-mix(in srgb,var(--gd-danger) 28%,transparent)", background: "var(--gd-danger-soft)" }}>
             Risk
           </span>
         )}
@@ -195,13 +198,13 @@ function MessageReader({ detail }: { detail: DecisionDetail | null; loading: boo
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {/* Assessment rationale */}
         {assessment && (
-          <div className="glass-card rounded-lg p-4 space-y-3">
+          <div className="rounded-lg border border-card-border bg-card p-4 space-y-3">
             <div className="flex items-center gap-2">
-              <Shield size={14} className="shrink-0" style={{ color: "var(--gilt)" }} />
-              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--gilt)" }}>
+              <Shield size={14} className="shrink-0" style={{ color: "var(--gd-bronze)" }} />
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--gd-bronze)" }}>
                 AI Assessment
               </span>
-              <span className="ml-auto text-xs text-muted-foreground">{assessment.model_id}</span>
+              <span className="ml-auto text-xs text-muted-foreground truncate max-w-[40%]">{assessment.model_id}</span>
             </div>
             <p className="text-sm leading-relaxed">{assessment.rationale}</p>
             <ConfidenceBar value={assessment.confidence} />
@@ -211,20 +214,20 @@ function MessageReader({ detail }: { detail: DecisionDetail | null; loading: boo
         {/* Threat evidence */}
         {signals.length > 0 && (
           <div className="rounded-lg p-3 border space-y-1"
-            style={{ borderColor: "color-mix(in srgb,var(--rust) 28%,transparent)", background: "var(--rust-soft)" }}>
+            style={{ borderColor: "color-mix(in srgb,var(--gd-danger) 28%,transparent)", background: "var(--gd-danger-soft)" }}>
             <div className="flex items-center gap-1.5 mb-2">
-              <ShieldAlert size={13} style={{ color: "var(--rust)" }} />
-              <span className="text-xs font-semibold" style={{ color: "var(--rust)" }}>Threat signals</span>
+              <ShieldAlert size={13} style={{ color: "var(--gd-danger)" }} />
+              <span className="text-xs font-semibold" style={{ color: "var(--gd-danger)" }}>Threat signals</span>
             </div>
             {signals.map((s, i) => (
-              <p key={i} className="text-xs" style={{ color: "var(--rust)" }}>• {s}</p>
+              <p key={i} className="text-xs" style={{ color: "var(--gd-danger)" }}>• {s}</p>
             ))}
           </div>
         )}
 
         {/* Suggested reply preview */}
         {assessment?.suggested_reply && (
-          <div className="glass-card rounded-lg p-4">
+          <div className="rounded-lg border border-card-border bg-card p-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Suggested reply</p>
             <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{assessment.suggested_reply}</p>
           </div>
@@ -238,7 +241,7 @@ function MessageReader({ detail }: { detail: DecisionDetail | null; loading: boo
 
         {/* Audit timeline — every decision and action taken on this message */}
         {(detail.audit_trail?.length ?? 0) > 0 && (
-          <div className="glass-card rounded-lg p-4" data-testid="section-audit-trail">
+          <div className="rounded-lg border border-card-border bg-card p-4" data-testid="section-audit-trail">
             <div className="flex items-center gap-1.5 mb-3">
               <History size={13} className="text-muted-foreground" />
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -278,7 +281,7 @@ function auditEventLabel(t: string | null): string {
 function AuditEventRow({ event, showSubject }: { event: AuditEvent & { subject?: string | null }; showSubject?: boolean }) {
   return (
     <div className="flex items-start gap-2.5 text-xs" data-testid="row-audit-event">
-      <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "var(--gilt)" }} />
+      <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "var(--gd-bronze)" }} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium capitalize">{auditEventLabel(event.event_type)}</span>
@@ -322,7 +325,7 @@ function MailAuditDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
       <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
-            <History size={15} style={{ color: "var(--gilt)" }} />
+            <History size={15} style={{ color: "var(--gd-bronze)" }} />
             Mail audit history
           </DialogTitle>
           <DialogDescription className="text-xs">
@@ -382,7 +385,7 @@ function AssessmentPanel({
   if (!detail) {
     return (
       <div className="flex flex-col gap-3 p-4">
-        <Button variant="outline" size="sm" className="w-full gap-2" onClick={onSync}>
+        <Button variant="outline" size="sm" className="w-full gap-2 min-h-11" onClick={onSync}>
           <RefreshCw size={13} />
           Sync now
         </Button>
@@ -398,7 +401,7 @@ function AssessmentPanel({
   return (
     <div className="flex flex-col gap-3 p-4 overflow-y-auto">
       {/* Attention level */}
-      <div className="glass-card rounded-lg p-3 space-y-2">
+      <div className="rounded-lg border border-card-border bg-card p-3 space-y-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Attention</p>
         <div className="flex items-center gap-2">
           <AttentionBadge level={record.attention_level} />
@@ -421,7 +424,7 @@ function AssessmentPanel({
       <div className="space-y-2">
         {draftAction && (
           <Button
-            className="w-full gap-2 justify-start"
+            className="w-full gap-2 justify-start min-h-11"
             size="sm"
             onClick={() => onCompose(draftAction)}
             disabled={loading}
@@ -433,7 +436,7 @@ function AssessmentPanel({
         {moveAction && (
           <Button
             variant="outline"
-            className="w-full gap-2 justify-start"
+            className="w-full gap-2 justify-start min-h-11"
             size="sm"
             onClick={() => onMove(moveAction)}
             disabled={loading}
@@ -445,7 +448,7 @@ function AssessmentPanel({
         {undoAction && (
           <Button
             variant="outline"
-            className="w-full gap-2 justify-start"
+            className="w-full gap-2 justify-start min-h-11"
             size="sm"
             onClick={() => onUndo(undoAction)}
             disabled={loading}
@@ -457,7 +460,7 @@ function AssessmentPanel({
         )}
         <Button
           variant="ghost"
-          className="w-full gap-2 justify-start text-muted-foreground"
+          className="w-full gap-2 justify-start min-h-11 text-muted-foreground"
           size="sm"
           onClick={onDefer}
           disabled={loading}
@@ -470,7 +473,7 @@ function AssessmentPanel({
       {/* Risk warning */}
       {record.is_high_risk && (
         <div className="rounded p-2 text-xs border"
-          style={{ color: "var(--rust)", borderColor: "color-mix(in srgb,var(--rust) 28%,transparent)", background: "var(--rust-soft)" }}>
+          style={{ color: "var(--gd-danger)", borderColor: "color-mix(in srgb,var(--gd-danger) 28%,transparent)", background: "var(--gd-danger-soft)" }}>
           <ShieldAlert size={11} className="inline mr-1" />
           High-risk message — compose action unavailable until risk is reviewed.
         </div>
@@ -482,7 +485,7 @@ function AssessmentPanel({
           <Button
             variant="outline"
             size="sm"
-            className="w-full gap-2 justify-start"
+            className="w-full gap-2 justify-start min-h-11"
             onClick={() => setKnowledgeOpen(true)}
             disabled={loading}
           >
@@ -545,7 +548,7 @@ function AssessmentPanel({
         )}
       </div>
 
-      <Button variant="outline" size="sm" className="w-full gap-2 mt-2" onClick={onSync}>
+      <Button variant="outline" size="sm" className="w-full gap-2 min-h-11 mt-2" onClick={onSync}>
         <RefreshCw size={13} />
         Sync inbox
       </Button>
@@ -574,7 +577,7 @@ export default function MailPage() {
   const works = worksResp?.works ?? [];
 
   // Summary (connected state, counts)
-  const { data: summary, isLoading: sumLoading } = useQuery<MailSummary>({
+  const { data: summary, isLoading: sumLoading, isError: sumError, refetch: refetchSummary } = useQuery<MailSummary>({
     queryKey: ["mail-summary"],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/mail/summary`);
@@ -585,7 +588,7 @@ export default function MailPage() {
   });
 
   // Decision queue
-  const { data: queue, isLoading: queueLoading } = useQuery<{ decisions: MailRecord[]; total: number }>({
+  const { data: queue, isLoading: queueLoading, isError: queueError, refetch: refetchQueue } = useQuery<{ decisions: MailRecord[]; total: number }>({
     queryKey: ["mail-attention"],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/mail/attention?limit=100`);
@@ -597,7 +600,7 @@ export default function MailPage() {
   });
 
   // Selected decision detail
-  const { data: detail, isLoading: detailLoading } = useQuery<DecisionDetail>({
+  const { data: detail, isLoading: detailLoading, isError: detailError, refetch: refetchDetail } = useQuery<DecisionDetail>({
     queryKey: ["mail-decision", selectedId],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/mail/decisions/${selectedId}`);
@@ -712,24 +715,39 @@ export default function MailPage() {
     toast("Deferred — message stays in queue");
   }, []);
 
+  // Summary failed to load — recoverable error, never a silent blank
+  if (!sumLoading && sumError) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8">
+        <div className="max-w-sm w-full">
+          <ErrorState
+            title="Couldn't reach Mail Steward"
+            detail="The mail summary could not be loaded."
+            onRetry={() => refetchSummary()}
+          />
+        </div>
+      </div>
+    );
+  }
+
   // Redirect to connect page if not connected
   if (!sumLoading && summary && !summary.connected) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8">
-        <div className="glass-card rounded-xl p-8 max-w-sm text-center space-y-4">
+        <div className="rounded-xl border border-card-border bg-card p-8 max-w-sm text-center space-y-4">
           <div className="w-12 h-12 rounded-full bg-accent/40 flex items-center justify-center mx-auto">
-            <Mail size={24} style={{ color: "var(--gilt)" }} />
+            <Mail size={24} style={{ color: "var(--gd-bronze)" }} />
           </div>
           <h2 className="text-lg font-semibold">Connect your Outlook</h2>
           <p className="text-sm text-muted-foreground leading-relaxed">
             Link your Microsoft account to start reviewing AI-assessed email.
             Your message body is never stored — only metadata and AI analysis.
           </p>
-          <Button className="w-full gap-2" onClick={() => navigate("/mail/connect")}>
+          <Button className="w-full gap-2 min-h-11" onClick={() => navigate("/mail/connect")}>
             <Plug size={14} />
             Connect Outlook
           </Button>
-          <Button variant="ghost" size="sm" className="w-full gap-1" onClick={() => navigate("/mail/settings")}>
+          <Button variant="ghost" size="sm" className="w-full gap-1 min-h-11" onClick={() => navigate("/mail/settings")}>
             <Settings size={12} />
             Settings
           </Button>
@@ -751,8 +769,8 @@ export default function MailPage() {
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-        <div className="flex items-center gap-3">
-          <Mail size={16} style={{ color: "var(--gilt)" }} />
+        <div className="flex items-center gap-3 min-w-0">
+          <Mail size={16} style={{ color: "var(--gd-bronze)" }} />
           <span className="font-semibold text-sm">Correspondence</span>
           {summary?.high_attention ? (
             <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
@@ -762,16 +780,16 @@ export default function MailPage() {
           {summary?.unread ? (
             <span className="text-xs text-muted-foreground">{summary.unread} unread</span>
           ) : null}
-          {sumLoading && <Loader2 size={12} className="animate-spin text-muted-foreground" />}
+          {sumLoading && <Status kind="busy" label="Syncing" />}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleSync} title="Sync now">
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="ghost" size="icon" className="min-h-11 min-w-11" onClick={handleSync} title="Sync now">
             <RefreshCw size={13} />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setAuditOpen(true)} title="Audit history" data-testid="button-mail-audit">
+          <Button variant="ghost" size="icon" className="min-h-11 min-w-11" onClick={() => setAuditOpen(true)} title="Audit history" data-testid="button-mail-audit">
             <History size={13} />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate("/mail/settings")} title="Settings">
+          <Button variant="ghost" size="icon" className="min-h-11 min-w-11" onClick={() => navigate("/mail/settings")} title="Settings">
             <Settings size={13} />
           </Button>
         </div>
@@ -788,18 +806,24 @@ export default function MailPage() {
           </div>
           <div className="flex-1 overflow-y-auto">
             {queueLoading ? (
-              <div className="space-y-px p-1">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="px-3 py-3 space-y-1">
-                    <Skeleton className="h-3.5 w-full" />
-                    <Skeleton className="h-3 w-2/3" />
-                  </div>
-                ))}
+              <div className="p-2">
+                <LoadingState rows={5} label="Loading queue" />
+              </div>
+            ) : queueError ? (
+              <div className="p-3">
+                <ErrorState
+                  title="Couldn't load the queue"
+                  detail="The attention queue could not be fetched."
+                  onRetry={() => refetchQueue()}
+                />
               </div>
             ) : sorted.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 p-6 text-muted-foreground">
-                <Inbox size={28} className="opacity-30" />
-                <p className="text-xs text-center">No messages need attention</p>
+              <div className="p-3">
+                <EmptyState
+                  icon={<Inbox />}
+                  title="Nothing needs attention"
+                  description="New messages will appear here once the steward has assessed them."
+                />
               </div>
             ) : sorted.map(r => (
               <QueueItem
@@ -815,10 +839,16 @@ export default function MailPage() {
         {/* Centre: reader */}
         <div className="flex-1 flex flex-col overflow-hidden border-r border-border/40">
           {detailLoading ? (
-            <div className="flex-1 p-5 space-y-4">
-              <Skeleton className="h-5 w-3/4" />
-              <Skeleton className="h-3 w-1/2" />
-              <Skeleton className="h-24 w-full" />
+            <div className="flex-1 p-5">
+              <LoadingState rows={3} label="Loading message" />
+            </div>
+          ) : detailError ? (
+            <div className="flex-1 p-5">
+              <ErrorState
+                title="Couldn't load this message"
+                detail="The decision could not be fetched."
+                onRetry={() => refetchDetail()}
+              />
             </div>
           ) : (
             <MessageReader detail={detail ?? null} loading={detailLoading} />

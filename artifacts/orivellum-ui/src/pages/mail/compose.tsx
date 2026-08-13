@@ -10,11 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Send, Save, Shield, ShieldCheck, Loader2, AlertTriangle,
+  ArrowLeft, Send, Save, Shield, Loader2, AlertTriangle,
 } from "lucide-react";
+import {
+  Page, Panel, Status, ErrorState, LoadingState,
+} from "@/components/primitives";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -151,7 +153,7 @@ export default function ComposePage() {
   const [sending,  setSending]    = useState(false);
 
   // Load decision detail for context (subject, assessment, send_enabled)
-  const { data: detail, isLoading } = useQuery<any>({
+  const { data: detail, isLoading, isError, refetch } = useQuery<any>({
     queryKey: ["mail-decision", recordId],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/mail/decisions/${recordId}`);
@@ -221,104 +223,105 @@ export default function ComposePage() {
   const sendEnabled = !!summary?.send_enabled;
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-border/40">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate("/mail")}>
-          <ArrowLeft size={14} />
-        </Button>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold truncate">
-            Re: {record?.subject || "…"}
-          </p>
-          {record && (
-            <p className="text-xs text-muted-foreground">
-              to @{record.sender_domain}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={handleSave}
-            disabled={saving || !actionId}
-          >
-            {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-            Save draft
-          </Button>
-          {sendEnabled && (
-            <Button
-              size="sm"
-              className="gap-2"
-              onClick={handleSend}
-              disabled={sending || !actionId}
-            >
-              {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-              Send
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <Page
+        wide
+        eyebrow={record ? `to @${record.sender_domain}` : "Mail Steward"}
+        title={`Re: ${record?.subject || "…"}`}
+        actions={
+          <>
+            <Button variant="ghost" size="icon" className="min-h-11 min-w-11" onClick={() => navigate("/mail")} title="Back to Mail">
+              <ArrowLeft size={14} />
             </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="flex-1 flex overflow-hidden">
-        {/* Editor */}
-        <div className="flex-1 flex flex-col overflow-hidden p-5">
-          {isLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-48 w-full" />
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 min-h-11"
+              onClick={handleSave}
+              disabled={saving || !actionId}
+              data-testid="button-save-draft"
+            >
+              {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+              Save draft
+            </Button>
+            {sendEnabled && (
+              <Button
+                size="sm"
+                className="gap-2 min-h-11"
+                onClick={handleSend}
+                disabled={sending || !actionId}
+                data-testid="button-send"
+              >
+                {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                Send
+              </Button>
+            )}
+          </>
+        }
+      >
+        {isError ? (
+          <ErrorState
+            title="Couldn't load this message"
+            detail="The decision could not be fetched."
+            onRetry={() => refetch()}
+          />
+        ) : (
+          <div className="flex flex-col md:flex-row gap-4">
+            {/* Editor */}
+            <div className="flex-1 flex flex-col min-w-0">
+              {isLoading ? (
+                <LoadingState rows={3} label="Loading draft" />
+              ) : (
+                <>
+                  {!sendEnabled && (
+                    <div className="mb-3 rounded p-2.5 text-xs border flex items-start gap-2"
+                      style={{ borderColor: "var(--gd-line-control)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}>
+                      <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                      <span>
+                        Send is disabled. This draft will be saved in Outlook and you can send it from there.
+                        Enable send in <button className="underline" onClick={() => navigate("/mail/settings")}>Mail settings</button>.
+                      </span>
+                    </div>
+                  )}
+                  <Textarea
+                    className="flex-1 resize-none font-mono text-sm min-h-[280px]"
+                    placeholder="Write your reply…"
+                    value={bodyText ?? ""}
+                    onChange={e => setBodyText(e.target.value)}
+                  />
+                </>
+              )}
             </div>
-          ) : (
-            <>
-              {!sendEnabled && (
-                <div className="mb-3 rounded p-2.5 text-xs border flex items-start gap-2"
-                  style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }}>
-                  <AlertTriangle size={12} className="shrink-0 mt-0.5" />
-                  <span>
-                    Send is disabled. This draft will be saved in Outlook and you can send it from there.
-                    Enable send in <button className="underline" onClick={() => navigate("/mail/settings")}>Mail settings</button>.
-                  </span>
-                </div>
-              )}
-              <Textarea
-                className="flex-1 resize-none font-mono text-sm min-h-[280px]"
-                placeholder="Write your reply…"
-                value={bodyText ?? ""}
-                onChange={e => setBodyText(e.target.value)}
-              />
-            </>
-          )}
-        </div>
 
-        {/* Sidebar */}
-        <div className="w-56 shrink-0 border-l border-border/40 overflow-y-auto p-4 space-y-4">
-          {assessment && (
-            <div className="glass-card rounded-lg p-3 space-y-2">
-              <div className="flex items-center gap-1.5">
-                <Shield size={12} style={{ color: "var(--gilt)" }} />
-                <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--gilt)" }}>Assessment</span>
-              </div>
-              <p className="text-xs leading-relaxed text-muted-foreground">{assessment.rationale}</p>
-              {assessment.is_high_risk && (
-                <Badge variant="destructive" className="text-[10px]">High risk</Badge>
+            {/* Sidebar */}
+            <div className="w-full md:w-56 shrink-0 space-y-4">
+              {assessment && (
+                <Panel padded={false} className="p-3 space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <Shield size={12} style={{ color: "var(--gd-bronze)" }} />
+                    <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--gd-bronze)" }}>Assessment</span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground line-clamp-6">{assessment.rationale}</p>
+                  {assessment.is_high_risk && (
+                    <Badge variant="destructive" className="text-[10px]">High risk</Badge>
+                  )}
+                  {assessment.injection_flagged && (
+                    <Badge variant="outline" className="text-[10px]" style={{ color: "var(--gd-bronze)", borderColor: "var(--gd-bronze)" }}>Injection flag</Badge>
+                  )}
+                </Panel>
               )}
-              {assessment.injection_flagged && (
-                <Badge variant="outline" className="text-[10px]" style={{ color: "var(--gilt)", borderColor: "var(--gilt)" }}>Injection flag</Badge>
-              )}
+              <Panel padded={false} className="p-3 space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Audit</p>
+                <p className="text-xs text-muted-foreground">Draft created in Outlook. Edit freely before sending.</p>
+                {sendEnabled
+                  ? <Status kind="ok" label="Send enabled" />
+                  : <Status kind="idle" label="Send disabled" />
+                }
+              </Panel>
             </div>
-          )}
-          <div className="glass-card rounded-lg p-3 space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Audit</p>
-            <p className="text-xs text-muted-foreground">Draft created in Outlook. Edit freely before sending.</p>
-            {sendEnabled
-              ? <div className="flex items-center gap-1 text-xs" style={{ color: "var(--green-2)" }}><ShieldCheck size={11} />Send enabled</div>
-              : <div className="flex items-center gap-1 text-xs text-muted-foreground"><Shield size={11} />Send disabled</div>
-            }
           </div>
-        </div>
-      </div>
+        )}
+      </Page>
     </div>
   );
 }

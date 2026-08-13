@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useListWorks, getListWorksQueryKey } from "@workspace/api-client-react";
+import { EmptyState, ErrorState, LoadingState, ConfirmAction } from "@/components/primitives";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -78,7 +79,7 @@ function fmtDuration(secs: number | null): string {
 }
 
 function RunStateIcon({ state }: { state: string }) {
-  if (state === "done") return <CheckCircle2 className="w-3.5 h-3.5" style={{ color: "var(--green-2)" }} />;
+  if (state === "done") return <CheckCircle2 className="w-3.5 h-3.5" style={{ color: "var(--gd-success)" }} />;
   if (state === "running" || state === "pending")
     return <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />;
   if (state === "failed") return <XCircle className="w-3.5 h-3.5 text-destructive" />;
@@ -181,7 +182,7 @@ function NewAutomationForm({ playbooks, onDone }: { playbooks: PlaybookOption[];
           />
           <Button
             size="sm"
-            className="h-8 text-xs ml-auto"
+            className="min-h-11 text-xs ml-auto"
             disabled={!playbookId || !time || (needsWork && !workId) || create.isPending}
             onClick={() => create.mutate()}
             data-testid="button-automation-create"
@@ -190,7 +191,7 @@ function NewAutomationForm({ playbooks, onDone }: { playbooks: PlaybookOption[];
           </Button>
         </div>
         {needsWork && !workId && (
-          <p className="text-[11px] text-amber-600">This playbook works on one Work — pick one above.</p>
+          <p className="text-[11px]" style={{ color: "var(--gd-caution)" }}>This playbook works on one Work — pick one above.</p>
         )}
         <p className="text-[11px] text-muted-foreground">
           Times are your computer's local time. If something heavy is already running (like an
@@ -273,7 +274,7 @@ function ScheduleRow({ schedule }: { schedule: Schedule }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setOpen(!open)}
-            className="shrink-0 text-muted-foreground"
+            className="shrink-0 min-h-11 min-w-11 flex items-center justify-center text-muted-foreground"
             data-testid={`button-automation-expand-${schedule.id}`}
           >
             {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -306,7 +307,7 @@ function ScheduleRow({ schedule }: { schedule: Schedule }) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-[11px] gap-1 px-2 text-muted-foreground"
+            className="min-h-11 text-[11px] gap-1 px-2 text-muted-foreground"
             disabled={runNow.isPending || schedule.playbook_missing}
             onClick={() => runNow.mutate()}
             title="Start one run of this automation right now"
@@ -324,15 +325,23 @@ function ScheduleRow({ schedule }: { schedule: Schedule }) {
             onCheckedChange={(v) => toggle.mutate(v)}
             data-testid={`switch-automation-${schedule.id}`}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-            onClick={() => remove.mutate()}
-            data-testid={`button-automation-delete-${schedule.id}`}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+          <ConfirmAction
+            title="Delete this automation?"
+            consequence={`"${schedule.title}" will stop running on its schedule. This can't be undone.`}
+            confirmLabel="Delete automation"
+            destructive
+            onConfirm={() => remove.mutate()}
+            trigger={
+              <Button
+                variant="ghost"
+                size="icon"
+                className="min-h-11 w-11 text-muted-foreground hover:text-destructive"
+                data-testid={`button-automation-delete-${schedule.id}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            }
+          />
         </div>
 
         {open && (
@@ -368,7 +377,7 @@ export function AutomationsSection({ playbooks }: { playbooks: PlaybookOption[] 
   const [showForm, setShowForm] = useState(false);
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery<{ schedules: Schedule[] }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ schedules: Schedule[] }>({
     queryKey: ["operations", "schedules"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/operations/schedules`);
@@ -389,7 +398,7 @@ export function AutomationsSection({ playbooks }: { playbooks: PlaybookOption[] 
         <Button
           variant="outline"
           size="sm"
-          className="h-7 text-xs"
+          className="min-h-11 text-xs"
           onClick={() => setShowForm(!showForm)}
           data-testid="button-automation-new"
         >
@@ -409,12 +418,18 @@ export function AutomationsSection({ playbooks }: { playbooks: PlaybookOption[] 
       )}
 
       {isLoading ? (
-        <Skeleton className="h-16 w-full" />
+        <LoadingState rows={2} label="Loading automations" />
+      ) : isError ? (
+        <ErrorState
+          title="Could not load automations"
+          onRetry={() => refetch()}
+        />
       ) : schedules.length === 0 && !showForm ? (
-        <div className="text-center py-6 text-muted-foreground text-xs border border-dashed rounded-lg">
-          Nothing scheduled yet — automations run playbooks by themselves, like a nightly import
-          or a weekly study refresh.
-        </div>
+        <EmptyState
+          icon={<AlarmClock />}
+          title="Nothing scheduled yet"
+          description="Automations run playbooks by themselves, like a nightly import or a weekly study refresh."
+        />
       ) : (
         <div className="space-y-2">
           {schedules.map((s) => (

@@ -17,11 +17,10 @@ import { Link } from "wouter";
 import { apiFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import { toast } from "sonner";
 import {
-  Inbox, ThumbsUp, ThumbsDown, Clock, CheckCircle2, Sparkles,
+  ThumbsUp, ThumbsDown, Clock, CheckCircle2, Sparkles,
   RefreshCw, Copy, FileQuestion, Lightbulb, Loader2, ExternalLink,
   ShieldAlert,
   NotebookPen,
@@ -60,50 +59,50 @@ const TYPE_META: Record<ReviewItem["item_type"], {
   knowledge: {
     label: "AI knowledge", icon: Sparkles,
     badgeCls: "border",
-    badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
-    borderStyle: { borderLeftColor: 'var(--gilt)' },
+    badgeStyle: { borderColor: 'color-mix(in srgb, var(--gd-bronze) 40%, transparent)', color: 'var(--gd-bronze)', background: 'var(--gd-bronze-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gd-bronze)' },
   },
   reclassify: {
     label: "Reclassify", icon: FileQuestion,
     badgeCls: "border",
-    badgeStyle: { borderColor: 'var(--rust)', color: 'var(--rust)', background: 'var(--rust-soft)' },
-    borderStyle: { borderLeftColor: 'var(--rust)' },
+    badgeStyle: { borderColor: 'var(--gd-danger)', color: 'var(--gd-danger)', background: 'var(--gd-danger-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gd-danger)' },
   },
   suggestion: {
     label: "Suggestion", icon: Lightbulb,
     badgeCls: "border",
-    badgeStyle: { borderColor: 'var(--green-2)', color: 'var(--green-2)', background: 'var(--green-soft)' },
-    borderStyle: { borderLeftColor: 'var(--green-2)' },
+    badgeStyle: { borderColor: 'var(--gd-success)', color: 'var(--gd-success)', background: 'color-mix(in srgb, var(--gd-success) 14%, transparent)' },
+    borderStyle: { borderLeftColor: 'var(--gd-success)' },
   },
   duplicate: {
     label: "Duplicate", icon: Copy,
     badgeCls: "border",
-    badgeStyle: { borderColor: 'var(--line-2)', color: 'var(--ink-soft)', background: 'transparent' },
-    borderStyle: { borderLeftColor: 'var(--ink-soft)' },
+    badgeStyle: { borderColor: 'var(--gd-line-control)', color: 'var(--gd-dim)', background: 'transparent' },
+    borderStyle: { borderLeftColor: 'var(--gd-dim)' },
   },
   quarantine: {
     label: "Quarantined", icon: ShieldAlert,
     badgeCls: "border",
-    badgeStyle: { borderColor: 'var(--rust)', color: 'var(--rust)', background: 'var(--rust-soft)' },
-    borderStyle: { borderLeftColor: 'var(--rust)' },
+    badgeStyle: { borderColor: 'var(--gd-danger)', color: 'var(--gd-danger)', background: 'var(--gd-danger-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gd-danger)' },
   },
   noteblock: {
     label: "Note filing", icon: NotebookPen,
     badgeCls: "border",
-    badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
-    borderStyle: { borderLeftColor: 'var(--gilt)' },
+    badgeStyle: { borderColor: 'color-mix(in srgb, var(--gd-bronze) 40%, transparent)', color: 'var(--gd-bronze)', background: 'var(--gd-bronze-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gd-bronze)' },
   },
   canon_fact: {
     label: "Canon fact", icon: ScrollText,
     badgeCls: "border",
-    badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
-    borderStyle: { borderLeftColor: 'var(--gilt)' },
+    badgeStyle: { borderColor: 'color-mix(in srgb, var(--gd-bronze) 40%, transparent)', color: 'var(--gd-bronze)', background: 'var(--gd-bronze-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gd-bronze)' },
   },
   work_proposal: {
     label: "Proposed Work", icon: Sparkles,
     badgeCls: "border",
-    badgeStyle: { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' },
-    borderStyle: { borderLeftColor: 'var(--gilt)' },
+    badgeStyle: { borderColor: 'color-mix(in srgb, var(--gd-bronze) 40%, transparent)', color: 'var(--gd-bronze)', background: 'var(--gd-bronze-soft)' },
+    borderStyle: { borderLeftColor: 'var(--gd-bronze)' },
   },
 };
 
@@ -115,9 +114,9 @@ type TypeFilter = "all" | ReviewItem["item_type"];
 
 function confidenceColor(c: number | null): string {
   if (c == null) return "color-mix(in srgb, var(--muted-foreground) 40%, transparent)";
-  if (c < 0.5) return "var(--rust)";
-  if (c < 0.8) return "var(--gilt)";
-  return "var(--green-2)";
+  if (c < 0.5) return "var(--gd-danger)";
+  if (c < 0.8) return "var(--gd-caution)";
+  return "var(--gd-success)";
 }
 
 // ── Evidence rendering ────────────────────────────────────────────────────────
@@ -412,16 +411,16 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
             placeholder="Sign as (author)"
-            className="h-8 px-2 rounded-md border bg-background text-xs w-40"
-            style={{ borderColor: 'var(--line-2)' }}
+            className="min-h-11 px-2 rounded-md border bg-background text-xs w-40"
+            style={{ borderColor: 'var(--gd-line-control)' }}
             data-testid={`work-proposal-author-${item.id}`}
           />
           <span className="text-muted-foreground">Domain:</span>
           <select
             value={domain}
             onChange={(e) => setDomain(e.target.value)}
-            className="h-8 px-2 rounded-md border bg-background text-xs"
-            style={{ borderColor: 'var(--line-2)' }}
+            className="min-h-11 px-2 rounded-md border bg-background text-xs"
+            style={{ borderColor: 'var(--gd-line-control)' }}
             data-testid={`work-proposal-domain-${item.id}`}
           >
             <option value="">Pick a domain…</option>
@@ -438,16 +437,16 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
             placeholder="Sign as (author)"
-            className="h-8 px-2 rounded-md border bg-background text-xs w-40"
-            style={{ borderColor: 'var(--line-2)' }}
+            className="min-h-11 px-2 rounded-md border bg-background text-xs w-40"
+            style={{ borderColor: 'var(--gd-line-control)' }}
             data-testid={`canon-author-${item.id}`}
           />
           <span className="text-muted-foreground">Reclassify:</span>
           <select
             value={reclass}
             onChange={(e) => setReclass(e.target.value)}
-            className="h-8 px-2 rounded-md border bg-background text-xs"
-            style={{ borderColor: 'var(--line-2)' }}
+            className="min-h-11 px-2 rounded-md border bg-background text-xs"
+            style={{ borderColor: 'var(--gd-line-control)' }}
             data-testid={`canon-class-${item.id}`}>
             {CLASSIFICATIONS.map((c) => (
               <option key={c} value={c}>{c}</option>
@@ -456,8 +455,8 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
           {reclass !== origClass && (
             <Button size="sm" variant="outline" disabled={pending != null}
                     onClick={() => resolve("reclassify")}
-                    className="h-8 gap-1.5 min-h-[36px]"
-                    style={{ color: 'var(--gilt)', borderColor: 'var(--line-2)' }}
+                    className="gap-1.5 min-h-11"
+                    style={{ color: 'var(--gd-bronze)', borderColor: 'var(--gd-line-control)' }}
                     data-testid={`reclassify-${item.id}`}>
               {pending === "reclassify" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScrollText className="w-3 h-3" />}
               Ratify as {reclass}
@@ -469,23 +468,23 @@ function ReviewCard({ item, onResolved }: { item: ReviewItem; onResolved: () => 
       <div className="flex items-center gap-2 pt-1">
         <Button size="sm" variant="outline" disabled={pending != null}
                 onClick={() => resolve("approve")}
-                className="h-8 gap-1.5 min-h-[36px]"
-                style={{ color: 'var(--green-2)', borderColor: 'var(--line-2)' }}
+                className="gap-1.5 min-h-11"
+                style={{ color: 'var(--gd-success)', borderColor: 'var(--gd-line-control)' }}
                 data-testid={`approve-${item.id}`}>
           {pending === "approve" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />}
           {isCanon || isWorkProposal ? "Ratify" : "Approve"}
         </Button>
         <Button size="sm" variant="outline" disabled={pending != null}
                 onClick={() => resolve("reject")}
-                className="h-8 gap-1.5 min-h-[36px]"
-                style={{ color: 'var(--rust)', borderColor: 'var(--line-2)' }}
+                className="gap-1.5 min-h-11 text-destructive"
+                style={{ borderColor: 'var(--gd-line-control)' }}
                 data-testid={`reject-${item.id}`}>
           {pending === "reject" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsDown className="w-3 h-3" />}
           Reject
         </Button>
         <Button size="sm" variant="ghost" disabled={pending != null}
                 onClick={() => resolve("defer")}
-                className="h-8 gap-1.5 min-h-[36px] text-muted-foreground"
+                className="gap-1.5 min-h-11 text-muted-foreground"
                 data-testid={`defer-${item.id}`}>
           {pending === "defer" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
           Defer
@@ -508,7 +507,6 @@ const FILTERS: { key: TypeFilter; label: string }[] = [
 ];
 
 export default function ReviewPage() {
-  const gdDark = useGdDark();
   const qc = useQueryClient();
   const [filter, setFilter] = useState<TypeFilter>("all");
   const [workFilter, setWorkFilter] = useState<string | null>(null);
@@ -536,7 +534,7 @@ export default function ReviewPage() {
     }
   };
 
-  const { data, isLoading, isFetching, refetch } = useQuery<QueueResponse>({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery<QueueResponse>({
     queryKey: ["review-queue"],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/review/queue`);
@@ -587,34 +585,31 @@ export default function ReviewPage() {
   };
 
   return (
-    <div className={`max-w-3xl mx-auto p-4 md:p-6 space-y-4 ${gdDark ? "dark text-foreground" : ""}`}>
-      {/* VELLUM page header */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <span className="eyebrow mb-1">Governance</span>
-          <h1 className="vellum-h1 flex items-center gap-3 flex-wrap">
-            Review Queue
-            {data && data.count > 0 && (
-              <Badge variant="outline" className="font-mono text-sm align-middle shrink-0">{data.count}</Badge>
-            )}
-          </h1>
-          <div className="gilt-rule w-28" />
-          <p className="text-[13px] mt-1.5 text-balance" style={{ color: 'var(--ink-soft)' }}>
-            Everything here needs your decision before it becomes fact. Most uncertain items first.
-          </p>
-        </div>
-        <div className="flex items-center gap-1 shrink-0 mt-2">
+    <Page
+      eyebrow="Governance"
+      title="Review Queue"
+      actions={
+        <>
           <Button size="sm" variant="ghost" onClick={scanForSubjects} disabled={scanning}
-                  className="min-h-[44px] gap-1.5" data-testid="scan-subjects">
+                  className="min-h-11 gap-1.5" data-testid="scan-subjects">
             <Sparkles className={`w-3.5 h-3.5 ${scanning ? "animate-pulse" : ""}`} />
             {scanning ? "Scanning…" : "Scan for subjects"}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}
-                  className="min-h-[44px] gap-1.5" data-testid="refresh-queue">
+                  className="min-h-11 gap-1.5" data-testid="refresh-queue">
             <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-        </div>
+        </>
+      }
+    >
+      <div className="flex items-center gap-3 flex-wrap -mt-2">
+        {data && data.count > 0 && (
+          <Badge variant="outline" className="font-mono text-sm align-middle shrink-0">{data.count}</Badge>
+        )}
+        <p className="text-[13px] text-balance text-muted-foreground">
+          Everything here needs your decision before it becomes fact. Most uncertain items first.
+        </p>
       </div>
 
       {/* Type filter pills */}
@@ -623,7 +618,7 @@ export default function ReviewPage() {
           const n = f.key === "all" ? workFiltered.length : (counts[f.key] ?? 0);
           return (
             <button key={f.key} onClick={() => setFilter(f.key)}
-                    className={`px-3 py-2 rounded-md text-xs transition-colors min-h-[36px] touch-manipulation ${
+                    className={`px-3 py-2 rounded-md text-xs transition-colors min-h-11 touch-manipulation ${
                       filter === f.key
                         ? "bg-background shadow-sm font-medium"
                         : "text-muted-foreground hover:text-foreground"
@@ -641,7 +636,7 @@ export default function ReviewPage() {
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">Work</span>
           <button
             onClick={() => setWorkFilter(null)}
-            className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
+            className={`px-2.5 min-h-11 rounded-md text-xs border transition-colors ${
               workFilter === null
                 ? "bg-primary/10 border-primary/40 text-primary font-medium"
                 : "border-border text-muted-foreground hover:text-foreground"
@@ -654,7 +649,7 @@ export default function ReviewPage() {
             <button
               key={w.id}
               onClick={() => setWorkFilter(w.id)}
-              className={`px-2.5 py-1 rounded-md text-xs border transition-colors truncate max-w-[180px] ${
+              className={`px-2.5 min-h-11 rounded-md text-xs border transition-colors truncate max-w-[180px] ${
                 workFilter === w.id
                   ? "bg-primary/10 border-primary/40 text-primary font-medium"
                   : "border-border text-muted-foreground hover:text-foreground"
@@ -668,22 +663,25 @@ export default function ReviewPage() {
       )}
 
       {isLoading ? (
-        <div className="space-y-3">
-          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28 rounded-lg" />)}
-        </div>
+        <LoadingState rows={4} label="Loading review queue" />
+      ) : isError ? (
+        <ErrorState
+          title="Could not load the review queue"
+          detail="The queue is unavailable right now."
+          onRetry={() => refetch()}
+        />
       ) : items.length === 0 ? (
-        <div className="vellum-card flex flex-col items-center justify-center py-12 px-8 text-center space-y-3">
-          <CheckCircle2 className="w-10 h-10" style={{ color: 'var(--green-2)' }} />
-          <div className="gilt-rule w-16 mx-auto" />
-          <p className="text-sm font-serif font-medium">All clear</p>
-          <p className="text-xs text-balance" style={{ color: 'var(--ink-soft)' }}>
-            {workFilter !== null
+        <EmptyState
+          icon={<CheckCircle2 />}
+          title="All clear"
+          description={
+            workFilter !== null
               ? "No items for this Work need review."
               : filter === "all"
               ? "Nothing needs your review right now."
-              : "No items of this type need review."}
-          </p>
-        </div>
+              : "No items of this type need review."
+          }
+        />
       ) : (
         <div className="space-y-3">
           {items.map(item => (
@@ -691,6 +689,6 @@ export default function ReviewPage() {
           ))}
         </div>
       )}
-    </div>
+    </Page>
   );
 }

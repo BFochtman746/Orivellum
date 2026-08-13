@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, LoadingState, EmptyState, ErrorState, ConfirmAction } from "@/components/primitives";
 import { AppearanceCard } from "./appearance-card";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
@@ -80,7 +80,7 @@ function ProfileCard() {
   };
 
   return (
-    <Card className="vellum-card" style={{ background: 'var(--green-soft)' }}>
+    <Card className="rounded-lg border border-card-border bg-card" style={{ background: 'var(--gd-primary-soft)' }}>
       <CardContent className="p-6 space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <User className="w-4 h-4 text-primary" />
@@ -201,7 +201,7 @@ function PersonaCard() {
   };
 
   return (
-    <Card className="vellum-card" style={{ background: 'var(--page-bg)' }}>
+    <Card className="rounded-lg border border-card-border bg-card" style={{ background: 'var(--gd-surface)' }}>
       <CardContent className="p-6 space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <Brain className="w-4 h-4 text-primary" />
@@ -213,7 +213,7 @@ function PersonaCard() {
             {isDefault ? (
               <Badge variant="outline" className="text-[10px] font-mono">A-01 default</Badge>
             ) : (
-              <Badge className="text-[10px] font-mono" style={{ background: 'var(--gilt)', color: '#000' }}>customised</Badge>
+              <Badge className="text-[10px] font-mono" style={{ background: 'var(--gd-caution)', color: 'var(--gd-accent-ink)' }}>customised</Badge>
             )}
           </div>
         </div>
@@ -281,10 +281,10 @@ type DiagResult = {
 
 const STATUS_ICON: Record<string, string> = { ok: "✅", warn: "⚠️", error: "❌", info: "ℹ️" };
 const STATUS_STYLE: Record<string, string> = {
-  ok:    'var(--green-2)',
-  warn:  'var(--gilt)',
-  error: 'var(--rust)',
-  info:  'var(--ink-soft)',
+  ok:    'var(--gd-primary)',
+  warn:  'var(--gd-caution)',
+  error: 'var(--gd-danger)',
+  info:  'var(--gd-dim)',
 };
 
 function DiagnosticsCard() {
@@ -331,7 +331,7 @@ function DiagnosticsCard() {
   const issues = result?.all_checks.filter(c => c.status === "error" || c.status === "warn") ?? [];
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-5 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -399,8 +399,8 @@ function DiagnosticsCard() {
                   <div key={i}
                     className="flex items-start gap-2 text-xs px-3 py-2 rounded-lg border"
                     style={c.status === "error"
-                      ? { borderColor: 'var(--rust)', background: 'var(--rust-soft)', color: 'var(--rust)' }
-                      : { borderColor: 'var(--gilt-line)', background: 'var(--gilt-soft)', color: 'var(--gilt)' }}>
+                      ? { borderColor: 'var(--gd-danger)', background: 'var(--gd-danger-soft)', color: 'var(--gd-danger)' }
+                      : { borderColor: 'var(--gd-caution)', background: 'var(--gd-caution-soft)', color: 'var(--gd-caution)' }}>
                     <span className="shrink-0">{STATUS_ICON[c.status]}</span>
                     <div className="min-w-0">
                       <span className="font-medium">{c.name}:</span>{" "}
@@ -413,7 +413,7 @@ function DiagnosticsCard() {
             )}
             {issues.length === 0 && (
               <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border"
-                   style={{ color: 'var(--green-2)', borderColor: 'var(--green-2)', background: 'var(--green-soft)' }}>
+                   style={{ color: 'var(--gd-primary)', borderColor: 'var(--gd-primary)', background: 'var(--gd-primary-soft)' }}>
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                 All {result.summary.total} checks passed — system is healthy
               </div>
@@ -433,7 +433,7 @@ function DiagnosticsCard() {
                         {sec.title}
                         {secIssues > 0 && (
                           <span className="px-1.5 py-0.5 rounded-full text-[10px] leading-none"
-                                style={{ background: 'var(--gilt-soft)', color: 'var(--gilt)' }}>
+                                style={{ background: 'var(--gd-caution-soft)', color: 'var(--gd-caution)' }}>
                             {secIssues}
                           </span>
                         )}
@@ -550,11 +550,11 @@ function MaintenanceCard() {
   const docsRecovered = md.match(/re-queued (\d+) stuck document/)?.[1] ?? null;
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6 space-y-5">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Moon className="w-5 h-5" style={{ color: 'var(--green-raw)' }} />
+            <Moon className="w-5 h-5" style={{ color: 'var(--gd-primary)' }} />
             <h2 className="text-lg font-serif font-medium">Maintenance</h2>
           </div>
           <Button
@@ -645,7 +645,7 @@ function MaintenanceCard() {
 
 function UserMemoryCard() {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["system", "user-memory"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/system/user-memory`);
@@ -684,39 +684,51 @@ function UserMemoryCard() {
   const busy = del.isPending || clearAll.isPending;
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-3">
-            <Brain className="w-5 h-5" style={{ color: 'var(--green-raw)' }} />
+            <Brain className="w-5 h-5" style={{ color: 'var(--gd-primary)' }} />
             <h2 className="text-lg font-serif font-medium">My Memory</h2>
             <span className="text-xs text-muted-foreground">— facts Orivellum remembers about you</span>
           </div>
           {memories.length > 0 && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="text-xs text-destructive hover:text-destructive gap-1.5 shrink-0"
-              disabled={busy}
-              onClick={() => {
-                if (confirm(`Delete all ${memories.length} stored memories? This cannot be undone.`)) {
-                  clearAll.mutate();
-                }
-              }}
-            >
-              {clearAll.isPending
-                ? <Loader2 className="w-3 h-3 animate-spin" />
-                : <Trash2 className="w-3 h-3" />}
-              Clear all
-            </Button>
+            <ConfirmAction
+              title="Clear all memories?"
+              consequence={`This permanently deletes all ${memories.length} stored memories. This cannot be undone.`}
+              confirmLabel="Delete all"
+              destructive
+              onConfirm={() => clearAll.mutate()}
+              trigger={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-11 text-xs text-destructive hover:text-destructive gap-1.5 shrink-0"
+                  disabled={busy}
+                >
+                  {clearAll.isPending
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <Trash2 className="w-3 h-3" />}
+                  Clear all
+                </Button>
+              }
+            />
           )}
         </div>
         {isLoading ? (
-          <Skeleton className="h-12 w-full" />
+          <LoadingState rows={2} label="Loading memories" />
+        ) : isError ? (
+          <ErrorState
+            title="Could not load memories"
+            detail="The memory list failed to load."
+            onRetry={() => refetch()}
+          />
         ) : memories.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No memories yet. Say things like "Remember that I prefer concise answers" and Orivellum will retain them across conversations.
-          </p>
+          <EmptyState
+            icon={<Brain />}
+            title="No memories yet"
+            description={'Say things like "Remember that I prefer concise answers" and Orivellum will retain them across conversations.'}
+          />
         ) : (
           <div className="space-y-2">
             {memories.map(m => (
@@ -731,7 +743,7 @@ function UserMemoryCard() {
                 <button
                   onClick={() => del.mutate(m.id)}
                   disabled={busy}
-                  className="opacity-0 group-hover:opacity-60 hover:!opacity-100 p-1 text-destructive transition-opacity shrink-0"
+                  className="opacity-0 group-hover:opacity-60 hover:!opacity-100 min-h-11 min-w-11 flex items-center justify-center text-destructive transition-opacity shrink-0"
                   title="Delete this memory"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -758,10 +770,10 @@ function VersionCard() {
     staleTime: Infinity,
   });
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-center gap-3 mb-3">
-          <Terminal className="w-5 h-5" style={{ color: 'var(--green-raw)' }} />
+          <Terminal className="w-5 h-5" style={{ color: 'var(--gd-primary)' }} />
           <h2 className="text-lg font-serif font-medium">About</h2>
         </div>
         {isLoading ? <Skeleton className="h-8 w-40" /> : (
@@ -866,7 +878,7 @@ function AutoDedupCard() {
   const pending = stats?.pending ?? 0;
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6 space-y-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -898,7 +910,7 @@ function AutoDedupCard() {
             ].map(({ label, value }) => (
               <div key={label} className="rounded-md bg-muted/40 px-3 py-2 text-center">
                 <p className="text-xl font-mono font-semibold"
-                   style={{ color: label === "Pending" && pending > 0 ? 'var(--gilt)' : undefined }}>{value}</p>
+                   style={{ color: label === "Pending" && pending > 0 ? 'var(--gd-caution)' : undefined }}>{value}</p>
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground mt-0.5">{label}</p>
               </div>
             ))}
@@ -908,7 +920,7 @@ function AutoDedupCard() {
         {/* How it works */}
         <div className="rounded-md bg-muted/30 border border-border/40 px-4 py-3 space-y-1.5 text-xs text-muted-foreground">
           <p className="font-medium text-foreground/70 font-mono uppercase text-[10px] tracking-wider mb-1">Resolution rules</p>
-          <div className="flex items-start gap-2"><Archive className="w-3 h-3 mt-0.5 shrink-0" style={{ color: 'var(--gilt)' }} /><span><strong>Near-duplicate (≥ 85% similar):</strong> the canonical/newer/richer document survives; the other is marked <em>superseded</em>.</span></div>
+          <div className="flex items-start gap-2"><Archive className="w-3 h-3 mt-0.5 shrink-0" style={{ color: 'var(--gd-caution)' }} /><span><strong>Near-duplicate (≥ 85% similar):</strong> the canonical/newer/richer document survives; the other is marked <em>superseded</em>.</span></div>
           <div className="flex items-start gap-2"><GitMerge className="w-3 h-3 mt-0.5 shrink-0 text-primary/60" /><span><strong>Likely revision (60–85% similar):</strong> a DERIVED_FROM version chain is created; both documents are kept.</span></div>
           <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" /><span>If both documents are already set to <em>canonical</em> the pair is left in the Review Queue for you to decide.</span></div>
         </div>
@@ -956,7 +968,7 @@ function WatchedFoldersCard() {
   const [newPath, setNewPath] = useState("");
   const [newWorkId, setNewWorkId] = useState<string>("");
 
-  const { data, isLoading } = useQuery<WatchDirsResponse>({
+  const { data, isLoading, isError, refetch } = useQuery<WatchDirsResponse>({
     queryKey: ["system", "watch-dirs"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/system/watch-dirs`);
@@ -1031,7 +1043,7 @@ function WatchedFoldersCard() {
   const dirs = data?.dirs ?? [];
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -1105,12 +1117,19 @@ function WatchedFoldersCard() {
 
         {/* Directory list */}
         {isLoading ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingState rows={2} label="Loading watched folders" />
+        ) : isError ? (
+          <ErrorState
+            title="Could not load watched folders"
+            detail="The watched folders list failed to load."
+            onRetry={() => refetch()}
+          />
         ) : dirs.length === 0 ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground px-3 py-4 rounded-lg border border-dashed">
-            <FolderOpen className="w-4 h-4 shrink-0" />
-            No folders watched yet — click <span className="font-medium mx-1">Add Folder</span> to get started.
-          </div>
+          <EmptyState
+            icon={<FolderOpen />}
+            title="No folders watched yet"
+            description='Click "Add Folder" above to start importing documents automatically.'
+          />
         ) : (
           <div className="space-y-2">
             {dirs.map((dir, i) => (
@@ -1132,12 +1151,12 @@ function WatchedFoldersCard() {
                       </span>
                     )}
                     {dir.last_scan_error ? (
-                      <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--rust)' }}>
+                      <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--gd-danger)' }}>
                         <XCircle className="w-3 h-3" />
                         {dir.last_scan_error}
                       </span>
                     ) : dir.last_scan_files_imported !== undefined && dir.last_scan_files_imported > 0 ? (
-                      <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--green-2)' }}>
+                      <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--gd-primary)' }}>
                         <CheckCircle2 className="w-3 h-3" />
                         {dir.last_scan_files_imported} imported last scan
                       </span>
@@ -1211,7 +1230,7 @@ function ExtractionTemplatesCard() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["system", "extraction-templates"] });
 
-  const { data, isLoading } = useQuery<{ templates: ExtractionTemplate[]; count: number }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ templates: ExtractionTemplate[]; count: number }>({
     queryKey: ["system", "extraction-templates"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/system/extraction-templates`);
@@ -1302,7 +1321,7 @@ function ExtractionTemplatesCard() {
   const templates = data?.templates ?? [];
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -1401,11 +1420,19 @@ function ExtractionTemplatesCard() {
 
         {/* Template list */}
         {isLoading ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingState rows={2} label="Loading templates" />
+        ) : isError ? (
+          <ErrorState
+            title="Could not load templates"
+            detail="The extraction templates failed to load."
+            onRetry={() => refetch()}
+          />
         ) : templates.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">
-            No templates yet — create one above to override the generic extraction prompt for a document type.
-          </p>
+          <EmptyState
+            icon={<FileSearch />}
+            title="No templates yet"
+            description="Create one above to override the generic extraction prompt for a document type."
+          />
         ) : (
           <div className="space-y-2">
             {templates.map(t => (
@@ -1455,18 +1482,22 @@ function ExtractionTemplatesCard() {
                     >
                       Edit
                     </Button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete template "${t.name ?? t.id}"? This cannot be undone.`)) {
-                          deleteMutation.mutate(t.id);
-                        }
-                      }}
-                      disabled={deleteMutation.isPending}
-                      className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-colors"
-                      title="Delete template"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+                    <ConfirmAction
+                      title="Delete template?"
+                      consequence={`This permanently deletes the template "${t.name ?? t.id}". This cannot be undone.`}
+                      confirmLabel="Delete"
+                      destructive
+                      onConfirm={() => deleteMutation.mutate(t.id)}
+                      trigger={
+                        <button
+                          disabled={deleteMutation.isPending}
+                          className="min-h-11 min-w-11 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-colors"
+                          title="Delete template"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      }
+                    />
                   </div>
                 </div>
               </div>
@@ -1603,11 +1634,11 @@ function AudioEnhancementCard() {
   const settingUp = data?.setting_up ?? false;
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <Mic2 className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
+            <Mic2 className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--gd-primary)' }} />
             <div className="space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-medium text-sm">Audio Enhancement (DeepFilterNet3)</h3>
@@ -1631,7 +1662,7 @@ function AudioEnhancementCard() {
               </p>
               {data && !data.installed && settingUp && (
                 <div className="text-xs mt-1 space-y-1">
-                  <p className="flex items-center gap-1.5" style={{ color: 'var(--gilt)' }}>
+                  <p className="flex items-center gap-1.5" style={{ color: 'var(--gd-caution)' }}>
                     <Loader2 className="w-3 h-3 animate-spin shrink-0" />
                     <span className="font-medium">
                       {SETUP_STAGE_LABELS[data.setup_progress?.stage ?? ""] ?? "Setting up in the background…"}
@@ -1646,7 +1677,7 @@ function AudioEnhancementCard() {
                     <div className="pl-[18px] pr-1 flex items-center gap-2" data-testid="setup-progress-bar">
                       <div
                         className="flex-1 h-1.5 rounded-full overflow-hidden"
-                        style={{ background: 'var(--gilt-soft)' }}
+                        style={{ background: 'var(--gd-caution-soft)' }}
                         role="progressbar"
                         aria-valuemin={0}
                         aria-valuemax={data.setup_progress.packages}
@@ -1656,7 +1687,7 @@ function AudioEnhancementCard() {
                         <div
                           className="h-full rounded-full transition-all duration-500"
                           style={{
-                            background: 'var(--gilt)',
+                            background: 'var(--gd-caution)',
                             width: `${Math.min(100, Math.round((data.setup_progress.done / data.setup_progress.packages) * 100))}%`,
                           }}
                         />
@@ -1685,7 +1716,7 @@ function AudioEnhancementCard() {
               )}
               {data && !data.installed && !settingUp && (
                 <div className="space-y-1.5 mt-1">
-                  <p className="text-xs" style={{ color: 'var(--gilt)' }}>
+                  <p className="text-xs" style={{ color: 'var(--gd-caution)' }}>
                     Not set up yet. Click{" "}
                     <span className="font-medium">Check again</span> and it is
                     installed automatically — no server restart needed.
@@ -1716,7 +1747,7 @@ function AudioEnhancementCard() {
                 </div>
               )}
               {data?.installed && data.enabled && (
-                <p className="text-xs mt-1" style={{ color: 'var(--green-2)' }}>
+                <p className="text-xs mt-1" style={{ color: 'var(--gd-primary)' }}>
                   Active — audio files will be enhanced before transcription
                   {data.mode === "sidecar" ? " (runs in a helper environment)" : ""}.
                 </p>
@@ -1808,11 +1839,11 @@ function DoclingCard() {
   const reprobe = useReprobeDocling();
 
   return (
-    <Card className="vellum-card" data-testid="card-docling">
+    <Card className="rounded-lg border border-card-border bg-card" data-testid="card-docling">
       <CardContent className="p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <FileSearch className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--gilt)' }} />
+            <FileSearch className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--gd-caution)' }} />
             <div className="space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-medium text-sm">Layout-Aware PDF Parsing (Docling)</h3>
@@ -1933,11 +1964,11 @@ function RerankerCard() {
   }
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <ListOrdered className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
+            <ListOrdered className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--gd-primary)' }} />
             <div className="space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-medium text-sm">Search Reranker (Cross-Encoder)</h3>
@@ -1969,12 +2000,12 @@ function RerankerCard() {
                 </p>
               )}
               {data && !data.configured && (
-                <p className="text-xs mt-1" style={{ color: 'var(--gilt)' }}>
+                <p className="text-xs mt-1" style={{ color: 'var(--gd-caution)' }}>
                   No reranker model configured — set <code className="font-mono">serving.reranker_model</code> in config.yaml.
                 </p>
               )}
               {probeResult && (
-                <p className="text-xs mt-1" style={{ color: probeResult.ok ? 'var(--green-2)' : 'var(--gilt)' }}>
+                <p className="text-xs mt-1" style={{ color: probeResult.ok ? 'var(--gd-primary)' : 'var(--gd-caution)' }}>
                   {probeResult.ok
                     ? `Reranker working${probeResult.sane_ordering === false ? " (unexpected score ordering — check the model)" : " — scores look correct."}`
                     : probeResult.detail}
@@ -2141,13 +2172,6 @@ function SemanticSearchCard() {
   }
 
   async function startReindex() {
-    if (!confirm(
-      "This will delete all existing vectors and re-embed your entire library " +
-      "using the current embedder model.\n\n" +
-      "Keyword search (BM25) stays active throughout — only semantic ranking " +
-      "is unavailable while re-indexing runs.\n\n" +
-      "Continue?"
-    )) return;
     setReindexing(true);
     try {
       const r = await apiFetch(`${API_BASE}/api/system/reindex`, { method: "POST" });
@@ -2173,10 +2197,10 @@ function SemanticSearchCard() {
     : null;
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
-          <Brain className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
+          <Brain className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--gd-primary)' }} />
           <div className="flex-1 space-y-3">
             {/* Header row */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -2204,23 +2228,30 @@ function SemanticSearchCard() {
                     ? <><Loader2 className="w-3 h-3 animate-spin" />Testing…</>
                     : <><Brain className="w-3 h-3" />Test Embeddings</>}
                 </Button>
-                <Button
-                  size="sm" variant="outline" className="text-xs gap-1.5 shrink-0"
-                  onClick={startReindex}
-                  disabled={reindexing || rx?.running}
-                  title="Delete all vectors and re-embed everything with the current model"
-                >
-                  {(reindexing || rx?.running)
-                    ? <><Loader2 className="w-3 h-3 animate-spin" />Re-indexing…</>
-                    : <><RotateCcw className="w-3 h-3" />Re-index All</>}
-                </Button>
+                <ConfirmAction
+                  title="Re-index all embeddings?"
+                  consequence="This deletes all existing vectors and re-embeds your entire library using the current embedder model. Keyword search (BM25) stays active throughout — only semantic ranking is unavailable while re-indexing runs."
+                  confirmLabel="Re-index All"
+                  onConfirm={() => { void startReindex(); }}
+                  trigger={
+                    <Button
+                      size="sm" variant="outline" className="text-xs gap-1.5 shrink-0"
+                      disabled={reindexing || rx?.running}
+                      title="Delete all vectors and re-embed everything with the current model"
+                    >
+                      {(reindexing || rx?.running)
+                        ? <><Loader2 className="w-3 h-3 animate-spin" />Re-indexing…</>
+                        : <><RotateCcw className="w-3 h-3" />Re-index All</>}
+                    </Button>
+                  }
+                />
               </div>
             </div>
 
             {/* Dimension mismatch warning */}
             {rx?.mismatch && !rx.running && (
               <div className="flex items-start gap-2 rounded-lg px-3 py-2 border"
-                   style={{ background: 'var(--gilt-soft)', borderColor: 'var(--gilt-line)', color: 'var(--gilt)' }}>
+                   style={{ background: 'var(--gd-caution-soft)', borderColor: 'var(--gd-caution)', color: 'var(--gd-caution)' }}>
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                 <span className="text-xs">
                   <span className="font-semibold">Vector dimension mismatch</span> — stored vectors
@@ -2234,7 +2265,7 @@ function SemanticSearchCard() {
             {/* Last re-index stopped early (endpoint died mid-run) */}
             {rx?.error && !rx.running && (
               <div className="flex items-start gap-2 rounded-lg px-3 py-2 border"
-                   style={{ background: 'var(--rust-soft)', borderColor: 'color-mix(in srgb, var(--rust) 28%, transparent)', color: 'var(--rust)' }}>
+                   style={{ background: 'var(--gd-danger-soft)', borderColor: 'color-mix(in srgb, var(--gd-danger) 28%, transparent)', color: 'var(--gd-danger)' }}>
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                 <span className="text-xs">{rx.error}</span>
               </div>
@@ -2267,7 +2298,7 @@ function SemanticSearchCard() {
                   {rx.counts.done.toLocaleString()} / {rx.counts.total.toLocaleString()} items vectorized
                 </span>
                 {coverage != null && (
-                  <span style={{ color: coverage === 100 ? 'var(--green-2)' : coverage > 80 ? 'var(--gilt)' : 'var(--rust)' }}>
+                  <span style={{ color: coverage === 100 ? 'var(--gd-primary)' : coverage > 80 ? 'var(--gd-caution)' : 'var(--gd-danger)' }}>
                     ({coverage}%)
                   </span>
                 )}
@@ -2278,7 +2309,7 @@ function SemanticSearchCard() {
             {!probeResult && !rx?.running && (
               circuitOpen ? (
                 <div className="flex items-start gap-2 rounded-lg px-3 py-2 border"
-                     style={{ background: 'var(--gilt-soft)', borderColor: 'var(--gilt-line)', color: 'var(--gilt)' }}>
+                     style={{ background: 'var(--gd-caution-soft)', borderColor: 'var(--gd-caution)', color: 'var(--gd-caution)' }}>
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <span className="text-xs">
                     Embedding endpoint is in cooldown after a recent failure.
@@ -2287,7 +2318,7 @@ function SemanticSearchCard() {
                   </span>
                 </div>
               ) : (
-                <p className="text-xs font-mono flex items-center gap-1.5" style={{ color: 'var(--green-2)' }}>
+                <p className="text-xs font-mono flex items-center gap-1.5" style={{ color: 'var(--gd-primary)' }}>
                   <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                   Circuit breaker closed — semantic search active
                 </p>
@@ -2297,8 +2328,8 @@ function SemanticSearchCard() {
             {probeResult && (
               <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border"
                    style={probeResult.ok
-                     ? { background: 'var(--green-soft)', borderColor: 'var(--green-2)', color: 'var(--green-2)' }
-                     : { background: 'var(--rust-soft)', borderColor: 'var(--rust)', color: 'var(--rust)' }}>
+                     ? { background: 'var(--gd-primary-soft)', borderColor: 'var(--gd-primary)', color: 'var(--gd-primary)' }
+                     : { background: 'var(--gd-danger-soft)', borderColor: 'var(--gd-danger)', color: 'var(--gd-danger)' }}>
                 {probeResult.ok
                   ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   : <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
@@ -2463,7 +2494,7 @@ function MeasurementLabCard() {
   const evalChannels = latestEval?.summary?.channels as Record<string, EvalChannel> | undefined;
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
           <Gauge className="w-5 h-5 mt-0.5 shrink-0 text-primary" />
@@ -2560,7 +2591,7 @@ function MeasurementLabCard() {
 }
 
 function DatabaseStatsCard() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch } = useQuery({
     queryKey: ["system", "stats"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/system/stats`);
@@ -2583,16 +2614,20 @@ function DatabaseStatsCard() {
   };
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
-          <Database className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
+          <Database className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--gd-primary)' }} />
           <div className="flex-1 space-y-2">
             <h3 className="font-medium text-sm">Database</h3>
             {isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
+              <LoadingState rows={1} label="Loading database stats" />
             ) : !data ? (
-              <p className="text-sm text-muted-foreground">Could not load stats.</p>
+              <ErrorState
+                title="Could not load stats"
+                detail="The database statistics failed to load."
+                onRetry={() => refetch()}
+              />
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
                 {[
@@ -2677,10 +2712,10 @@ function VisionModelCard() {
   const effectiveModel = data?.model;
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
-          <Eye className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--green-raw)' }} />
+          <Eye className="w-5 h-5 mt-0.5 shrink-0" style={{ color: 'var(--gd-primary)' }} />
           <div className="flex-1 space-y-2">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
@@ -2721,7 +2756,7 @@ function VisionModelCard() {
                 <p className="text-xs font-mono bg-muted/40 rounded px-2 py-1 truncate">{effectiveModel}</p>
               ) : (
                 <div className="flex items-start gap-2 rounded-lg px-3 py-2 border"
-                     style={{ background: 'var(--gilt-soft)', borderColor: 'var(--gilt-line)', color: 'var(--gilt)' }}>
+                     style={{ background: 'var(--gd-caution-soft)', borderColor: 'var(--gd-caution)', color: 'var(--gd-caution)' }}>
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <div className="text-xs leading-snug">
                     <span className="font-medium">No vision model configured.</span>{" "}
@@ -2754,8 +2789,8 @@ function VisionModelCard() {
             {probeResult && (
               <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 mt-1 border"
                    style={probeResult.ok
-                     ? { background: 'var(--green-soft)', borderColor: 'var(--green-2)', color: 'var(--green-2)' }
-                     : { background: 'var(--rust-soft)', borderColor: 'var(--rust)', color: 'var(--rust)' }}>
+                     ? { background: 'var(--gd-primary-soft)', borderColor: 'var(--gd-primary)', color: 'var(--gd-primary)' }
+                     : { background: 'var(--gd-danger-soft)', borderColor: 'var(--gd-danger)', color: 'var(--gd-danger)' }}>
                 {probeResult.ok
                   ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   : <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
@@ -2843,11 +2878,11 @@ function ImageGenUrlCard() {
   const backends = statusData?.backends ?? [];
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6 space-y-5">
         {/* ── Header ──────────────────────────────────────────────────────────── */}
         <div className="flex items-center gap-3">
-          <ImageIcon className="w-5 h-5 shrink-0" style={{ color: 'var(--green-raw)' }} />
+          <ImageIcon className="w-5 h-5 shrink-0" style={{ color: 'var(--gd-primary)' }} />
           <div className="flex-1 min-w-0">
             <h3 className="font-mono text-sm uppercase tracking-wider">Image Generation Backend</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -2943,7 +2978,7 @@ function ImageGenUrlCard() {
                   }`}
                 >
                   {b.online ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--green-2)' }} />
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--gd-primary)' }} />
                   ) : (
                     <XCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                   )}
@@ -2954,7 +2989,7 @@ function ImageGenUrlCard() {
                   <Badge
                     variant={b.online ? "default" : "secondary"}
                     className="text-[10px] shrink-0"
-                    style={b.online ? { background: 'var(--green-soft)', color: 'var(--green-2)', borderColor: 'var(--green-2)' } : undefined}
+                    style={b.online ? { background: 'var(--gd-primary-soft)', color: 'var(--gd-primary)', borderColor: 'var(--gd-primary)' } : undefined}
                   >
                     {b.online ? "Online" : "Offline"}
                   </Badge>
@@ -2964,7 +2999,7 @@ function ImageGenUrlCard() {
           )}
 
           {statusData && !statusData.any_online && (
-            <p className="text-xs flex items-center gap-1.5" style={{ color: 'var(--gilt)' }}>
+            <p className="text-xs flex items-center gap-1.5" style={{ color: 'var(--gd-caution)' }}>
               <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
               No image backend is reachable. Image generation will be unavailable until at least one is online.
             </p>
@@ -2976,7 +3011,6 @@ function ImageGenUrlCard() {
 }
 
 export default function System() {
-  const gdDark = useGdDark();
   const { data: health, isLoading: loadingHealth } = useGetSystemHealth({ query: { queryKey: getGetSystemHealthQueryKey(), refetchInterval: 10_000, staleTime: 8_000 } });
   const { data: capsResp, isLoading: loadingCaps } = useListCapabilities();
   const { data: aiExtraction, isLoading: loadingAiExt } = useAiExtractionSetting();
@@ -2990,13 +3024,8 @@ export default function System() {
   const aiOnline = aiStatus === "ok";
 
   return (
-    <div className={`space-y-8 animate-in fade-in duration-500 max-w-5xl mx-auto ${gdDark ? "dark text-foreground" : ""}`}>
-      <div className="pb-4" style={{ borderBottom: '1px solid var(--line)' }}>
-        <span className="eyebrow mb-1">Under the Hood</span>
-        <h1 className="vellum-h1">The Engine</h1>
-        <div className="gilt-rule w-32" />
-        <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>Infrastructure health and local AI capabilities.</p>
-      </div>
+    <Page wide eyebrow="Under the Hood" title="The Engine">
+      <p className="text-[13px] -mt-2" style={{ color: 'var(--gd-dim)' }}>Infrastructure health and local AI capabilities.</p>
 
       <ProfileCard />
       <AppearanceCard />
@@ -3004,19 +3033,19 @@ export default function System() {
 
       <div className="grid md:grid-cols-3 gap-4">
         {/* Overall */}
-        <div className="vellum-card p-6" style={{ background: 'var(--green-soft)' }}>
+        <div className="rounded-lg border border-card-border bg-card p-6" style={{ background: 'var(--gd-primary-soft)' }}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-mono text-sm uppercase tracking-wider" style={{ color: 'var(--ink-soft)' }}>Overall Status</h3>
-            <Activity className="w-5 h-5" style={{ color: 'var(--green-raw)' }} />
+            <h3 className="font-mono text-sm uppercase tracking-wider" style={{ color: 'var(--gd-dim)' }}>Overall Status</h3>
+            <Activity className="w-5 h-5" style={{ color: 'var(--gd-primary)' }} />
           </div>
           {loadingHealth ? (
             <Skeleton className="h-8 w-24 rounded-lg" />
           ) : (
             <div className="flex items-center gap-2">
               {health?.status === "ok" ? (
-                <CheckCircle2 className="w-6 h-6" style={{ color: 'var(--green-2)' }} />
+                <CheckCircle2 className="w-6 h-6" style={{ color: 'var(--gd-primary)' }} />
               ) : (
-                <AlertCircle className="w-6 h-6" style={{ color: 'var(--gilt)' }} />
+                <AlertCircle className="w-6 h-6" style={{ color: 'var(--gd-caution)' }} />
               )}
               <span className="text-2xl font-serif font-semibold capitalize">
                 {health?.status || "Unknown"}
@@ -3026,8 +3055,8 @@ export default function System() {
         </div>
 
         {/* Database */}
-        <div className="vellum-card p-6">
-          <div className="flex items-center justify-between mb-4" style={{ color: 'var(--ink-soft)' }}>
+        <div className="rounded-lg border border-card-border bg-card p-6">
+          <div className="flex items-center justify-between mb-4" style={{ color: 'var(--gd-dim)' }}>
             <h3 className="font-mono text-sm uppercase tracking-wider">Database</h3>
             <Database className="w-5 h-5" />
           </div>
@@ -3036,9 +3065,9 @@ export default function System() {
           ) : (
             <div className="flex items-center gap-2">
               {dbStatus === "ok" ? (
-                <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--green-2)' }} />
+                <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--gd-primary)' }} />
               ) : (
-                <XCircle className="w-5 h-5" style={{ color: 'var(--rust)' }} />
+                <XCircle className="w-5 h-5" style={{ color: 'var(--gd-danger)' }} />
               )}
               <span className="text-xl font-medium">
                 {dbStatus === "ok" ? "Connected" : "Offline"}
@@ -3048,8 +3077,8 @@ export default function System() {
         </div>
 
         {/* AI Engine */}
-        <div className="vellum-card p-6" style={aiOnline ? {} : { borderColor: 'var(--gilt-line)', background: 'var(--gilt-soft)' }}>
-          <div className="flex items-center justify-between mb-4" style={{ color: 'var(--ink-soft)' }}>
+        <div className="rounded-lg border border-card-border bg-card p-6" style={aiOnline ? {} : { borderColor: 'var(--gd-caution)', background: 'var(--gd-caution-soft)' }}>
+          <div className="flex items-center justify-between mb-4" style={{ color: 'var(--gd-dim)' }}>
             <h3 className="font-mono text-sm uppercase tracking-wider">Local AI Engine</h3>
             <Cpu className="w-5 h-5" />
           </div>
@@ -3059,16 +3088,16 @@ export default function System() {
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 {aiOnline ? (
-                  <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--green-2)' }} />
+                  <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--gd-primary)' }} />
                 ) : (
-                  <XCircle className="w-5 h-5" style={{ color: 'var(--gilt)' }} />
+                  <XCircle className="w-5 h-5" style={{ color: 'var(--gd-caution)' }} />
                 )}
                 <span className="text-xl font-medium">
                   {aiOnline ? "Connected" : "Unavailable"}
                 </span>
               </div>
               {aiEndpoint && (
-                <p className="text-[11px] font-mono truncate" style={{ color: 'var(--ink-faint)' }} title={aiEndpoint}>
+                <p className="text-[11px] font-mono truncate" style={{ color: 'var(--gd-dim)' }} title={aiEndpoint}>
                   {aiEndpoint}
                 </p>
               )}
@@ -3125,7 +3154,7 @@ export default function System() {
                   afterwards and does not delay access to your files.
                 </p>
                 {!aiOnline && (
-                  <p className="text-xs mt-1" style={{ color: 'var(--gilt)' }}>
+                  <p className="text-xs mt-1" style={{ color: 'var(--gd-caution)' }}>
                     Requires the local AI engine to be running. Enable it now and it will activate
                     automatically once the AI service is available.
                   </p>
@@ -3149,7 +3178,7 @@ export default function System() {
       </Card>
 
       {/* AI Re-ranking Setting */}
-      <Card className="vellum-card">
+      <Card className="rounded-lg border border-card-border bg-card">
         <CardContent className="p-6">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
@@ -3163,7 +3192,7 @@ export default function System() {
                   top&nbsp;10 candidates. Adds roughly 1–3&nbsp;s to first response time.
                 </p>
                 {!aiOnline && (
-                  <p className="text-xs mt-1" style={{ color: 'var(--gilt)' }}>
+                  <p className="text-xs mt-1" style={{ color: 'var(--gd-caution)' }}>
                     Requires the local AI engine to be running. Enable it now and it will activate
                     automatically once the AI service is available.
                   </p>
@@ -3188,11 +3217,11 @@ export default function System() {
 
       {/* AI offline setup guide */}
       {!loadingHealth && !aiOnline && (
-        <Card className="vellum-card" style={{ borderColor: 'var(--gilt-line)', background: 'var(--gilt-soft)' }}>
+        <Card className="rounded-lg border border-card-border bg-card" style={{ borderColor: 'var(--gd-caution)', background: 'var(--gd-caution-soft)' }}>
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center gap-2">
-              <Terminal className="w-4 h-4" style={{ color: 'var(--gilt)' }} />
-              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--gilt)' }}>
+              <Terminal className="w-4 h-4" style={{ color: 'var(--gd-caution)' }} />
+              <h3 className="font-mono text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--gd-caution)' }}>
                 Local AI Setup
               </h3>
             </div>
@@ -3332,7 +3361,7 @@ $env:ORIVELLUM_AI_URL="http://127.0.0.1:11434/v1"`}
 
       {/* Audit log */}
       <AuditLogCard />
-    </div>
+    </Page>
   );
 }
 
@@ -3440,10 +3469,10 @@ function ModelPickerCard() {
   };
 
   return (
-    <Card className="vellum-card">
+    <Card className="rounded-lg border border-card-border bg-card">
       <CardContent className="p-6">
         <div className="flex items-start gap-3 mb-5">
-          <Brain className="w-5 h-5 mt-0.5 shrink-0" style={{ color: "var(--green-raw)" }} />
+          <Brain className="w-5 h-5 mt-0.5 shrink-0" style={{ color: "var(--gd-primary)" }} />
           <div className="space-y-1">
             <h3 className="font-medium text-sm">AI Model Overrides</h3>
             <p className="text-sm text-muted-foreground max-w-xl">
@@ -3585,13 +3614,13 @@ function LemonadeEngineCard() {
       ) : !available ? (
         <div
           className="rounded-lg border border-dashed p-5 text-sm"
-          style={{ borderColor: 'var(--gilt-line)', color: 'var(--ink-soft)' }}
+          style={{ borderColor: 'var(--gd-caution)', color: 'var(--gd-dim)' }}
         >
           <div className="flex items-center gap-2 mb-1">
-            <AlertTriangle className="w-4 h-4" style={{ color: 'var(--gilt)' }} />
+            <AlertTriangle className="w-4 h-4" style={{ color: 'var(--gd-caution)' }} />
             <span className="font-medium">Lemonade not reachable</span>
           </div>
-          <p className="text-xs" style={{ color: 'var(--ink-faint)' }}>
+          <p className="text-xs" style={{ color: 'var(--gd-dim)' }}>
             Check that Lemonade Server is running and that{" "}
             <code className="font-mono">base_url</code> in{" "}
             <code className="font-mono">config.yaml</code> ends in{" "}
@@ -3605,7 +3634,7 @@ function LemonadeEngineCard() {
             <div className="flex items-center gap-2">
               <span
                 className="w-2 h-2 rounded-full"
-                style={{ background: health?.status === "ok" || health?.model_loaded ? 'var(--green-2)' : 'var(--gilt)' }}
+                style={{ background: health?.status === "ok" || health?.model_loaded ? 'var(--gd-primary)' : 'var(--gd-caution)' }}
               />
               <span className="text-sm font-medium capitalize">
                 {health?.status ?? "running"}
@@ -3615,7 +3644,7 @@ function LemonadeEngineCard() {
               )}
             </div>
             {tps != null && (
-              <span className="text-xs font-mono" style={{ color: 'var(--ink-soft)' }}>
+              <span className="text-xs font-mono" style={{ color: 'var(--gd-dim)' }}>
                 {Math.round(tps)} tok/s
               </span>
             )}
@@ -3633,7 +3662,7 @@ function LemonadeEngineCard() {
                   <div className="flex items-center gap-2 shrink-0">
                     {m.device && (
                       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                            style={{ background: 'var(--green-soft)', color: 'var(--green)' }}>
+                            style={{ background: 'var(--gd-primary-soft)', color: 'var(--gd-primary)' }}>
                         {m.device}
                       </span>
                     )}
@@ -3708,7 +3737,7 @@ function McpCard() {
         <Skeleton className="h-24 w-full" />
       ) : data ? (
         <div className="space-y-3">
-          <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+          <p className="text-sm" style={{ color: 'var(--gd-dim)' }}>
             {data.description ?? "Orivellum is an MCP server — any MCP client can query your knowledge base directly."}
           </p>
 
@@ -3722,8 +3751,8 @@ function McpCard() {
               onClick={copyEndpoint}
               className="text-[11px] font-mono px-2 py-1 rounded transition-colors shrink-0"
               style={{
-                background: copied ? 'var(--green-soft)' : 'var(--paper-2)',
-                color:      copied ? 'var(--green)'      : 'var(--ink-soft)',
+                background: copied ? 'var(--gd-primary-soft)' : 'var(--gd-surface)',
+                color:      copied ? 'var(--gd-primary)'      : 'var(--gd-dim)',
               }}
             >
               {copied ? "copied ✓" : "copy"}
@@ -3735,14 +3764,14 @@ function McpCard() {
             <div className="flex flex-wrap gap-1.5">
               {data.tools.map(t => (
                 <span key={t} className="text-[10px] font-mono px-2 py-0.5 rounded-full border border-border/50"
-                      style={{ color: 'var(--ink-soft)' }}>
+                      style={{ color: 'var(--gd-dim)' }}>
                   {t}
                 </span>
               ))}
             </div>
           )}
 
-          <p className="text-[11px] font-mono" style={{ color: 'var(--ink-faint)' }}>
+          <p className="text-[11px] font-mono" style={{ color: 'var(--gd-dim)' }}>
             Protocol: {data.protocol} · Paste the URL above into Claude Desktop → Settings → MCP Servers.
           </p>
         </div>
@@ -3877,12 +3906,12 @@ function HardwareCard() {
   }, [data]);
 
   function barColor(p: number) {
-    return p > 90 ? "#ef4444" : p > 70 ? "#f59e0b" : "#22c55e";
+    return p > 90 ? "var(--gd-danger)" : p > 70 ? "var(--gd-caution)" : "var(--gd-primary)";
   }
 
   function bar(pct: number | null | undefined) {
     const p = pct ?? 0;
-    const color = p > 90 ? 'var(--rust)' : p > 70 ? 'var(--gilt)' : 'var(--green-2)';
+    const color = p > 90 ? 'var(--gd-danger)' : p > 70 ? 'var(--gd-caution)' : 'var(--gd-primary)';
     return (
       <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
         <div className="h-full rounded-full transition-all duration-700"
@@ -3912,8 +3941,8 @@ function HardwareCard() {
           {/* LIVE badge — shown while generation is running and poll is accelerated */}
           {isGenerating && (
             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono font-medium border"
-                  style={{ background: 'var(--green-soft)', borderColor: 'var(--green-2)', color: 'var(--green-2)' }}>
-              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--green-2)' }} />
+                  style={{ background: 'var(--gd-primary-soft)', borderColor: 'var(--gd-primary)', color: 'var(--gd-primary)' }}>
+              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--gd-primary)' }} />
               LIVE 2s
             </span>
           )}
@@ -4009,7 +4038,7 @@ function HardwareCard() {
                         <span className="text-muted-foreground">{utilPct}% util</span>
                       )}
                       {gpu.temp_c != null && (
-                        <span style={{ color: gpu.temp_c > 85 ? 'var(--rust)' : gpu.temp_c > 70 ? 'var(--gilt)' : undefined }}>
+                        <span style={{ color: gpu.temp_c > 85 ? 'var(--gd-danger)' : gpu.temp_c > 70 ? 'var(--gd-caution)' : undefined }}>
                           {gpu.temp_c}°C
                         </span>
                       )}
@@ -4130,7 +4159,7 @@ function JobsCard() {
               <div key={j.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
                 {/* State dot */}
                 <span className="w-1.5 h-1.5 rounded-full shrink-0"
-                      style={{ background: j.state === "done" ? 'var(--green-2)' : j.state === "failed" ? 'var(--rust)' : 'var(--gilt)',
+                      style={{ background: j.state === "done" ? 'var(--gd-primary)' : j.state === "failed" ? 'var(--gd-danger)' : 'var(--gd-caution)',
                                animation: j.state !== "done" && j.state !== "failed" ? "pulse 1.5s ease-in-out infinite" : undefined }} />
 
                 {/* Kind badge */}
@@ -4151,7 +4180,7 @@ function JobsCard() {
                 {/* Right side: state + elapsed + retry */}
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-[10px] font-mono"
-                        style={{ color: j.state === "done" ? 'var(--green-2)' : j.state === "failed" ? 'var(--rust)' : 'var(--gilt)' }}>
+                        style={{ color: j.state === "done" ? 'var(--gd-primary)' : j.state === "failed" ? 'var(--gd-danger)' : 'var(--gd-caution)' }}>
                     {j.state}
                   </span>
 
@@ -4203,7 +4232,7 @@ function LlmHealthCard() {
     staleTime: 30_000,
   });
 
-  const overallColor = data?.overall === "ok" ? 'var(--green-2)' : data?.overall === "degraded" ? 'var(--gilt)' : 'var(--rust)';
+  const overallColor = data?.overall === "ok" ? 'var(--gd-primary)' : data?.overall === "degraded" ? 'var(--gd-caution)' : 'var(--gd-danger)';
 
   return (
     <div className="space-y-4">
@@ -4230,7 +4259,7 @@ function LlmHealthCard() {
             <div className="flex items-center gap-3">
               <span className="text-[10px] font-mono text-muted-foreground">{data.primary.latency_ms}ms</span>
               <span className="text-[10px] font-mono"
-                    style={{ color: data.primary.ok ? 'var(--green-2)' : 'var(--rust)' }}>
+                    style={{ color: data.primary.ok ? 'var(--gd-primary)' : 'var(--gd-danger)' }}>
                 {data.primary.ok ? "ok" : "down"}
               </span>
             </div>
@@ -4244,7 +4273,7 @@ function LlmHealthCard() {
               <div className="flex items-center gap-3">
                 <span className="text-[10px] font-mono text-muted-foreground">{data.fallback.latency_ms}ms</span>
                 <span className="text-[10px] font-mono"
-                      style={{ color: data.fallback.ok ? 'var(--green-2)' : 'var(--rust)' }}>
+                      style={{ color: data.fallback.ok ? 'var(--gd-primary)' : 'var(--gd-danger)' }}>
                   {data.fallback.ok ? "ok" : "down"}
                 </span>
               </div>
@@ -4274,7 +4303,7 @@ interface ActionRun {
 }
 
 function ActionHistoryCard() {
-  const { data, isLoading, refetch, isFetching } = useQuery<{ runs: ActionRun[]; count: number }>({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<{ runs: ActionRun[]; count: number }>({
     queryKey: ["actions", "runs"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/actions/runs?limit=20`);
@@ -4308,13 +4337,24 @@ function ActionHistoryCard() {
       </div>
 
       {isLoading ? (
-        [1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)
+        <LoadingState rows={3} label="Loading action history" />
+      ) : isError ? (
+        <ErrorState
+          title="Could not load action history"
+          detail="The action runs failed to load."
+          onRetry={() => refetch()}
+        />
       ) : runs.length === 0 ? (
-        <div className="text-center py-10 text-muted-foreground text-sm border border-dashed rounded-lg">
-          No actions run yet — visit the{" "}
-          <a href={`${import.meta.env.BASE_URL}actions`} className="underline">Actions page</a>{" "}
-          or ask the AI to run one.
-        </div>
+        <EmptyState
+          icon={<Zap />}
+          title="No actions run yet"
+          description="Visit the Actions page or ask the AI to run one."
+          action={
+            <Button asChild variant="outline" size="sm">
+              <a href={`${import.meta.env.BASE_URL}actions`}>Open Actions</a>
+            </Button>
+          }
+        />
       ) : (
         <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30 max-h-80 overflow-y-auto">
           {runs.map((run) => {
@@ -4324,7 +4364,7 @@ function ActionHistoryCard() {
               <div key={run.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors">
                 <span
                   className="w-1.5 h-1.5 rounded-full shrink-0"
-                  style={{ background: isOk ? 'var(--green-2)' : isErr ? 'var(--rust)' : 'var(--gilt)',
+                  style={{ background: isOk ? 'var(--gd-primary)' : isErr ? 'var(--gd-danger)' : 'var(--gd-caution)',
                            animation: !isOk && !isErr ? "pulse 1.5s ease-in-out infinite" : undefined }}
                 />
                 <div className="flex-1 min-w-0">
@@ -4351,7 +4391,7 @@ function ActionHistoryCard() {
                     </Button>
                   )}
                   <span className="text-[10px] font-mono"
-                        style={{ color: isOk ? 'var(--green-2)' : isErr ? 'var(--rust)' : 'var(--gilt)' }}>
+                        style={{ color: isOk ? 'var(--gd-primary)' : isErr ? 'var(--gd-danger)' : 'var(--gd-caution)' }}>
                     {run.status}
                   </span>
                   <span className="text-[10px] font-mono text-muted-foreground/50">
@@ -4376,7 +4416,7 @@ const ACTOR_ICONS: Record<string, React.ElementType> = {
 };
 
 function AuditLogCard() {
-  const { data, isLoading, refetch, isFetching } = useQuery<{
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<{
     entries: Array<{
       id: string; timestamp: string; actor: string; operation: string;
       object_id: string | null; object_type: string | null;
@@ -4412,11 +4452,19 @@ function AuditLogCard() {
       </div>
 
       {isLoading ? (
-        [1,2,3].map((i) => <Skeleton key={i} className="h-10 w-full" />)
+        <LoadingState rows={3} label="Loading audit log" />
+      ) : isError ? (
+        <ErrorState
+          title="Could not load audit log"
+          detail="The audit events failed to load."
+          onRetry={() => refetch()}
+        />
       ) : entries.length === 0 ? (
-        <div className="text-center py-10 text-muted-foreground text-sm border border-dashed rounded-lg">
-          No audit events recorded yet — actions will appear here as you use the system.
-        </div>
+        <EmptyState
+          icon={<ScrollText />}
+          title="No audit events yet"
+          description="Actions will appear here as you use the system."
+        />
       ) : (
         <div className="rounded-lg border border-border/50 overflow-hidden divide-y divide-border/30 max-h-80 overflow-y-auto">
           {entries.map((e) => {
@@ -4433,7 +4481,7 @@ function AuditLogCard() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-[10px] font-mono"
-                        style={{ color: isOk ? 'var(--green-2)' : 'var(--rust)' }}>
+                        style={{ color: isOk ? 'var(--gd-primary)' : 'var(--gd-danger)' }}>
                     {e.result}
                   </span>
                   <span className="text-[10px] font-mono text-muted-foreground/50">

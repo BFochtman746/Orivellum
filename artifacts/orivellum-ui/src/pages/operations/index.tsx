@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useListWorks, getListWorksQueryKey } from "@workspace/api-client-react";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, Section, EmptyState, ErrorState, LoadingState, Status, ConfirmAction, type StatusKind } from "@/components/primitives";
 import { AutomationsSection } from "./automations";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -85,17 +85,19 @@ function relTime(iso: string | null | undefined): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-const STATE_BADGE: Record<Operation["state"], { label: string; cls: string }> = {
-  pending: { label: "Queued", cls: "bg-muted text-muted-foreground" },
-  running: { label: "Running", cls: "bg-primary/15 text-primary" },
-  paused: { label: "Paused", cls: "bg-amber-500/15 text-amber-600" },
-  done: { label: "Done", cls: "bg-emerald-500/15 text-emerald-600" },
-  failed: { label: "Failed", cls: "bg-destructive/15 text-destructive" },
-  cancelled: { label: "Cancelled", cls: "bg-muted text-muted-foreground" },
+// Dual-coded operation states: each carries a Status kind (icon + color) plus
+// a text label so state never reads through color alone.
+const STATE_STATUS: Record<Operation["state"], { label: string; kind: StatusKind }> = {
+  pending: { label: "Queued", kind: "idle" },
+  running: { label: "Running", kind: "busy" },
+  paused: { label: "Paused", kind: "warn" },
+  done: { label: "Done", kind: "ok" },
+  failed: { label: "Failed", kind: "danger" },
+  cancelled: { label: "Cancelled", kind: "idle" },
 };
 
 function StepIcon({ state }: { state: OpStep["state"] }) {
-  if (state === "done") return <CheckCircle2 className="w-3.5 h-3.5" style={{ color: "var(--green-2)" }} />;
+  if (state === "done") return <CheckCircle2 className="w-3.5 h-3.5" style={{ color: "var(--gd-success)" }} />;
   if (state === "running") return <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />;
   if (state === "failed") return <XCircle className="w-3.5 h-3.5 text-destructive" />;
   if (state === "cancelled") return <XCircle className="w-3.5 h-3.5 text-muted-foreground/50" />;
@@ -157,15 +159,23 @@ function PlaybookCard({
             )}
           </div>
           {playbook.custom && onDelete && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-destructive shrink-0"
-              onClick={() => onDelete(playbook.id)}
-              data-testid={`button-delete-${playbook.id}`}
-            >
-              <Trash2 className="w-3 h-3" />
-            </Button>
+            <ConfirmAction
+              title="Delete this playbook?"
+              consequence={`"${playbook.title}" will be removed. Any automations using it will stop working. This can't be undone.`}
+              confirmLabel="Delete playbook"
+              destructive
+              onConfirm={() => onDelete(playbook.id)}
+              trigger={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-11 w-11 p-0 text-muted-foreground/50 hover:text-destructive shrink-0"
+                  data-testid={`button-delete-${playbook.id}`}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </Button>
+              }
+            />
           )}
         </div>
         <ol className="pl-12 space-y-1">
@@ -362,11 +372,12 @@ function JobPlanner({ onStarted }: { onStarted: () => void }) {
           </div>
 
           {result?.status === "clarify" && (
-            <div className="space-y-2 text-xs bg-amber-500/10 rounded-md px-3 py-2.5"
+            <div className="space-y-2 text-xs rounded-md px-3 py-2.5"
+              style={{ background: "var(--gd-caution-soft)" }}
               data-testid="text-plan-clarify">
-              <div className="flex items-start gap-2 text-amber-600">
+              <div className="flex items-start gap-2" style={{ color: "var(--gd-caution)" }}>
                 <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                <span>{result.question}</span>
+                <span className="break-words">{result.question}</span>
               </div>
               {(result.options ?? []).length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pl-5">
@@ -375,7 +386,7 @@ function JobPlanner({ onStarted }: { onStarted: () => void }) {
                       key={opt.id}
                       size="sm"
                       variant="outline"
-                      className="h-6 text-[11px] px-2 rounded-full"
+                      className="min-h-11 text-[11px] px-2 rounded-full"
                       disabled={planMutation.isPending}
                       onClick={() => answerClarify(opt.title, opt.id)}
                       data-testid={`button-clarify-option-${opt.id}`}
@@ -393,14 +404,14 @@ function JobPlanner({ onStarted }: { onStarted: () => void }) {
                     if (e.key === "Enter") answerClarify(clarifyAnswer);
                   }}
                   placeholder="Type your answer…"
-                  className="h-7 text-[11px] w-56"
+                  className="min-h-11 text-[11px] w-56 max-w-full"
                   disabled={planMutation.isPending}
                   data-testid="input-clarify-answer"
                 />
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-7 text-[11px] gap-1 px-2"
+                  className="min-h-11 text-[11px] gap-1 px-2"
                   disabled={!clarifyAnswer.trim() || planMutation.isPending}
                   onClick={() => answerClarify(clarifyAnswer)}
                   data-testid="button-clarify-answer"
@@ -858,10 +869,11 @@ function CustomOperationBuilder({ onStarted }: { onStarted: () => void }) {
             </div>
 
             {steps.length > 0 && problems.length > 0 && (
-              <div className="space-y-0.5 text-[11px] text-amber-600 bg-amber-500/10 rounded-md px-3 py-2"
+              <div className="space-y-0.5 text-[11px] rounded-md px-3 py-2"
+                style={{ color: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}
                 data-testid="text-builder-problems">
                 {problems.slice(0, 5).map((p, i) => (
-                  <div key={i}>{p}</div>
+                  <div key={i} className="break-words">{p}</div>
                 ))}
               </div>
             )}
@@ -905,15 +917,15 @@ function OperationRow({ op }: { op: Operation }) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const badge = STATE_BADGE[op.state] ?? STATE_BADGE.pending;
   const steps = detail?.steps ?? [];
   const state = detail?.state ?? op.state;
   const error = detail?.error ?? op.error;
+  const status = STATE_STATUS[state] ?? STATE_STATUS.pending;
 
   return (
     <div className="border border-border/50 rounded-lg overflow-hidden">
       <button
-        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors text-left"
+        className="w-full flex items-center gap-3 px-4 py-2.5 min-h-11 hover:bg-muted/20 transition-colors text-left"
         onClick={() => setOpen((o) => !o)}
         data-testid={`row-operation-${op.id}`}
       >
@@ -923,9 +935,9 @@ function OperationRow({ op }: { op: Operation }) {
           <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         )}
         <span className="text-xs font-medium flex-1 min-w-0 truncate">{op.title}</span>
-        <Badge className={`text-[10px] h-4 px-1.5 border-0 ${STATE_BADGE[state]?.cls ?? badge.cls}`}>
-          {STATE_BADGE[state]?.label ?? state}
-        </Badge>
+        <span className="shrink-0">
+          <Status kind={status.kind} label={status.label} />
+        </span>
         <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">
           {relTime(op.finished_at ?? op.created_at)}
         </span>
@@ -934,9 +946,12 @@ function OperationRow({ op }: { op: Operation }) {
       {open && (
         <div className="px-4 pb-3 pt-1 space-y-2 border-t border-border/30">
           {error && (
-            <div className="flex items-start gap-2 text-[11px] text-amber-600 bg-amber-500/10 rounded px-2.5 py-1.5">
+            <div
+              className="flex items-start gap-2 text-[11px] rounded px-2.5 py-1.5"
+              style={{ color: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}
+            >
               <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-              <span>{error}</span>
+              <span className="break-words">{error}</span>
             </div>
           )}
           {steps.length === 0 ? (
@@ -958,25 +973,34 @@ function OperationRow({ op }: { op: Operation }) {
           )}
           <div className="flex items-center gap-2 pt-1">
             {state === "running" && (
-              <Button size="sm" variant="outline" className="h-6 text-[11px] gap-1 px-2"
+              <Button size="sm" variant="outline" className="min-h-11 text-[11px] gap-1 px-2"
                 onClick={() => act.mutate("pause")} disabled={act.isPending}
                 data-testid={`button-pause-${op.id}`}>
                 <Pause className="w-3 h-3" /> Pause
               </Button>
             )}
             {(state === "paused" || state === "failed") && (
-              <Button size="sm" variant="outline" className="h-6 text-[11px] gap-1 px-2"
+              <Button size="sm" variant="outline" className="min-h-11 text-[11px] gap-1 px-2"
                 onClick={() => act.mutate("resume")} disabled={act.isPending}
                 data-testid={`button-resume-${op.id}`}>
                 <RotateCcw className="w-3 h-3" /> {state === "failed" ? "Retry" : "Resume"}
               </Button>
             )}
             {ACTIVE_STATES.includes(state) && (
-              <Button size="sm" variant="ghost" className="h-6 text-[11px] gap-1 px-2 text-destructive"
-                onClick={() => act.mutate("cancel")} disabled={act.isPending}
-                data-testid={`button-cancel-${op.id}`}>
-                <XCircle className="w-3 h-3" /> Cancel
-              </Button>
+              <ConfirmAction
+                title="Cancel this operation?"
+                consequence="The run stops where it is. Completed steps stay done, but remaining steps won't run. This can't be undone."
+                confirmLabel="Cancel operation"
+                destructive
+                onConfirm={() => act.mutate("cancel")}
+                trigger={
+                  <Button size="sm" variant="ghost" className="min-h-11 text-[11px] gap-1 px-2 text-destructive"
+                    disabled={act.isPending}
+                    data-testid={`button-cancel-${op.id}`}>
+                    <XCircle className="w-3 h-3" /> Cancel
+                  </Button>
+                }
+              />
             )}
           </div>
         </div>
@@ -988,10 +1012,14 @@ function OperationRow({ op }: { op: Operation }) {
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function OperationsPage() {
-  const gdDark = useGdDark();
   const qc = useQueryClient();
 
-  const { data: playbooksData, isLoading: playbooksLoading } = useQuery<{ playbooks: Playbook[] }>({
+  const {
+    data: playbooksData,
+    isLoading: playbooksLoading,
+    isError: playbooksError,
+    refetch: refetchPlaybooks,
+  } = useQuery<{ playbooks: Playbook[] }>({
     queryKey: ["operations", "playbooks"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/operations/playbooks`);
@@ -1001,7 +1029,12 @@ export default function OperationsPage() {
     staleTime: 60_000,
   });
 
-  const { data: opsData, isLoading: opsLoading } = useQuery<{ operations: Operation[] }>({
+  const {
+    data: opsData,
+    isLoading: opsLoading,
+    isError: opsError,
+    refetch: refetchOps,
+  } = useQuery<{ operations: Operation[] }>({
     queryKey: ["operations", "list"],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE}/api/operations?limit=30`);
@@ -1054,53 +1087,71 @@ export default function OperationsPage() {
   const operations = opsData?.operations ?? [];
 
   return (
-    <div className={`max-w-4xl mx-auto p-6 space-y-8 ${gdDark ? "dark text-foreground" : ""}`}>
-      <div>
-        <h1 className="text-2xl font-serif font-medium flex items-center gap-2">
-          <Workflow className="w-6 h-6 text-primary" />
-          Operations
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Run a whole multi-step job with one button. Every step is checkpointed, so a run can be
-          paused, survive a restart, and picked back up where it left off.
-        </p>
-      </div>
+    <Page wide eyebrow="Studio" title="Operations">
+      <p className="text-sm text-muted-foreground -mt-2">
+        Run a whole multi-step job with one button. Every step is checkpointed, so a run can be
+        paused, survive a restart, and picked back up where it left off.
+      </p>
 
       <JobPlanner onStarted={() => qc.invalidateQueries({ queryKey: ["operations"] })} />
 
       <CustomOperationBuilder onStarted={() => qc.invalidateQueries({ queryKey: ["operations"] })} />
 
-      {playbooksLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-48 w-full rounded-xl" />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {playbooks.map((pb) => (
-            <PlaybookCard
-              key={pb.id}
-              playbook={pb}
-              starting={startMutation.isPending}
-              onStart={(playbookId, workId) => startMutation.mutate({ playbookId, workId })}
-              onDelete={pb.custom ? (id) => deletePlaybook.mutate(id) : undefined}
-            />
-          ))}
-        </div>
-      )}
+      <Section label="Playbooks">
+        {playbooksLoading ? (
+          <LoadingState rows={3} label="Loading playbooks" />
+        ) : playbooksError ? (
+          <ErrorState
+            title="Could not load playbooks"
+            onRetry={() => refetchPlaybooks()}
+          />
+        ) : playbooks.length === 0 ? (
+          <EmptyState
+            icon={<Workflow />}
+            title="No playbooks yet"
+            description="Plan a job above and save it as a playbook to reuse it."
+          />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {playbooks.map((pb) => (
+              <PlaybookCard
+                key={pb.id}
+                playbook={pb}
+                starting={startMutation.isPending}
+                onStart={(playbookId, workId) => startMutation.mutate({ playbookId, workId })}
+                onDelete={pb.custom ? (id) => deletePlaybook.mutate(id) : undefined}
+              />
+            ))}
+          </div>
+        )}
+      </Section>
 
       <AutomationsSection playbooks={playbooks} />
 
-      <div className="space-y-3">
-        <h2 className="text-sm font-medium flex items-center gap-2">
-          <History className="w-4 h-4 text-muted-foreground" />
-          Runs
-        </h2>
+      <Section
+        label="Runs"
+        actions={
+          <button
+            onClick={() => refetchOps()}
+            className="min-h-11 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+          >
+            <History className="w-3.5 h-3.5" /> Refresh
+          </button>
+        }
+      >
         {opsLoading ? (
-          [1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)
+          <LoadingState rows={3} label="Loading runs" />
+        ) : opsError ? (
+          <ErrorState
+            title="Could not load runs"
+            onRetry={() => refetchOps()}
+          />
         ) : operations.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground text-xs border border-dashed rounded-lg">
-            Nothing has run yet — pick a Work above and press Run.
-          </div>
+          <EmptyState
+            icon={<History />}
+            title="Nothing has run yet"
+            description="Pick a Work above and press Run to start your first operation."
+          />
         ) : (
           <div className="space-y-2">
             {operations.map((op) => (
@@ -1108,7 +1159,7 @@ export default function OperationsPage() {
             ))}
           </div>
         )}
-      </div>
-    </div>
+      </Section>
+    </Page>
   );
 }

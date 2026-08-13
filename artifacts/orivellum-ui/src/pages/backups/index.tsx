@@ -2,21 +2,18 @@ import { useListBackups, useCreateBackup, verifyBackup, getListBackupsQueryKey }
 import { apiFetch } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { HardDrive, ShieldCheck, Clock, Download, RefreshCw, History, X } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { useGdDark } from "@/lib/useGdDark";
+import { Page, LoadingState, EmptyState, ErrorState, ConfirmAction } from "@/components/primitives";
 
 const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
 export default function Backups() {
-  const gdDark = useGdDark();
   const queryClient = useQueryClient();
-  const { data: backupsResp, isLoading } = useListBackups();
+  const { data: backupsResp, isLoading, isError, refetch } = useListBackups();
   const createBackup = useCreateBackup();
 
   const [verifying, setVerifying] = useState<string | null>(null);
@@ -31,9 +28,6 @@ export default function Backups() {
   }, []);
 
   const handleRestore = async (name: string) => {
-    if (!window.confirm(
-      `Restore "${name}"?\n\nYour current data will be replaced by this backup the next time the server starts. ` +
-      `A safety copy of today's data is kept automatically, so this can be undone.`)) return;
     setRestoring(name);
     try {
       const resp = await apiFetch(`${BASE}/api/backups/${encodeURIComponent(name)}/restore`, { method: "POST" });
@@ -86,24 +80,43 @@ export default function Backups() {
     }
   };
 
+  const handleDownload = async (name: string) => {
+    try {
+      const resp = await apiFetch(`${BASE}/api/backups/${encodeURIComponent(name)}/download`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch {
+      toast.error("Download failed");
+    }
+  };
+
+  const backups = backupsResp?.backups ?? [];
+
   return (
-    <div className={`space-y-6 animate-in fade-in duration-500 max-w-4xl mx-auto ${gdDark ? "dark text-foreground" : ""}`}>
-      <div className="flex items-center justify-between border-b border-border/50 pb-4">
-        <div>
-          <h1 className="text-3xl font-serif font-semibold tracking-tight">System Backups</h1>
-          <p className="text-muted-foreground mt-1 font-serif">Local, self-contained snapshots of your entire workspace.</p>
-        </div>
-        <Button onClick={handleCreate} disabled={createBackup.isPending} className="gap-2">
+    <Page
+      wide
+      eyebrow="Local, self-contained snapshots"
+      title="System Backups"
+      actions={
+        <Button onClick={handleCreate} disabled={createBackup.isPending} className="min-h-11 gap-2">
           <HardDrive className="w-4 h-4" />
           {createBackup.isPending ? "Creating..." : "Create Backup"}
         </Button>
-      </div>
+      }
+    >
+      <p className="text-muted-foreground -mt-2 font-serif">Snapshots of your entire workspace.</p>
 
       {restorePending && (
-        <Card style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+        <Card style={{ borderColor: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}>
           <CardContent className="p-4 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <History className="w-5 h-5 shrink-0" style={{ color: "var(--gilt)" }} />
+              <History className="w-5 h-5 shrink-0" style={{ color: "var(--gd-caution)" }} />
               <div className="text-sm">
                 <span className="font-medium">A restore is staged.</span>{" "}
                 <span className="text-muted-foreground">
@@ -111,7 +124,7 @@ export default function Backups() {
                 </span>
               </div>
             </div>
-            <Button variant="outline" size="sm" className="gap-1 shrink-0" onClick={handleCancelRestore}>
+            <Button variant="outline" size="sm" className="min-h-11 gap-1 shrink-0" onClick={handleCancelRestore}>
               <X className="w-3.5 h-3.5" /> Cancel restore
             </Button>
           </CardContent>
@@ -120,17 +133,23 @@ export default function Backups() {
 
       <div className="grid gap-4">
         {isLoading ? (
-          [1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full" />)
-        ) : backupsResp?.backups && backupsResp.backups.length > 0 ? (
-          backupsResp.backups.map((backup, i) => (
+          <LoadingState rows={3} label="Loading backups" />
+        ) : isError ? (
+          <ErrorState
+            title="Could not load backups"
+            detail="The backup list failed to load."
+            onRetry={() => refetch()}
+          />
+        ) : backups.length > 0 ? (
+          backups.map((backup, i) => (
             <Card key={i}>
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-4">
+              <CardContent className="p-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-4 min-w-0">
                   <div className="w-10 h-10 rounded bg-primary/10 flex items-center justify-center shrink-0">
                     <ShieldCheck className="w-5 h-5 text-primary" />
                   </div>
-                  <div>
-                    <h3 className="font-medium font-mono text-sm">{backup.name}</h3>
+                  <div className="min-w-0">
+                    <h3 className="font-medium font-mono text-sm truncate">{backup.name}</h3>
                     <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground font-mono">
                       <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3" />
@@ -141,46 +160,40 @@ export default function Backups() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-h-11"
                     onClick={() => handleVerify(backup.name!)}
                     disabled={verifying === backup.name || !backup.name}
                   >
                     {verifying === backup.name ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Verify"}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1"
-                    onClick={() => handleRestore(backup.name!)}
-                    disabled={restoring === backup.name || !backup.name}
-                  >
-                    {restoring === backup.name
-                      ? <RefreshCw className="w-4 h-4 animate-spin" />
-                      : <><History className="w-4 h-4" /> Restore</>}
-                  </Button>
+                  <ConfirmAction
+                    title="Restore this backup?"
+                    consequence={`Restoring "${backup.name}" replaces your current data with this backup the next time the server starts. A safety copy of today's data is kept automatically, so this can be undone.`}
+                    confirmLabel="Restore"
+                    onConfirm={() => { void handleRestore(backup.name!); }}
+                    trigger={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="min-h-11 gap-1"
+                        disabled={restoring === backup.name || !backup.name}
+                      >
+                        {restoring === backup.name
+                          ? <RefreshCw className="w-4 h-4 animate-spin" />
+                          : <><History className="w-4 h-4" /> Restore</>}
+                      </Button>
+                    }
+                  />
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="gap-2"
-                    onClick={async () => {
-                      const base = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
-                      try {
-                        const resp = await apiFetch(`${base}/api/backups/${encodeURIComponent(backup.name!)}/download`);
-                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                        const blob = await resp.blob();
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement("a");
-                        a.href = url;
-                        a.download = backup.name!;
-                        a.click();
-                        setTimeout(() => URL.revokeObjectURL(url), 10_000);
-                      } catch {
-                        toast.error("Download failed");
-                      }
-                    }}
+                    className="min-h-11 gap-2"
+                    onClick={() => handleDownload(backup.name!)}
+                    disabled={!backup.name}
                   >
                     <Download className="w-4 h-4" /> Download
                   </Button>
@@ -189,16 +202,14 @@ export default function Backups() {
             </Card>
           ))
         ) : (
-          <Card className="border-dashed bg-muted/10">
-            <CardContent className="p-12 text-center">
-              <HardDrive className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <h3 className="text-lg font-serif font-medium">No backups found</h3>
-              <p className="text-muted-foreground mt-1 mb-6">Keep your data safe by creating a snapshot.</p>
-              <Button onClick={handleCreate}>Create First Backup</Button>
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={<HardDrive />}
+            title="No backups found"
+            description="Keep your data safe by creating a snapshot."
+            action={<Button onClick={handleCreate}>Create First Backup</Button>}
+          />
         )}
       </div>
-    </div>
+    </Page>
   );
 }
