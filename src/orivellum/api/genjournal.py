@@ -122,6 +122,8 @@ class _Coalescer:
 def _classify(payload: dict) -> str:
     """Journal event kind for a non-token SSE frame."""
     for key in (
+        "activity",
+        "code_progress",
         "sources",
         "clarify",
         "intent",

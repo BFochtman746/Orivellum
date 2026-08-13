@@ -120,6 +120,8 @@ export interface ReplayedReply {
   thinking: string;
   messageId: string | null;
   sources: unknown[] | null;
+  /** Server-authored activity events, in journal order (WP4 replay). */
+  activity: Record<string, unknown>[];
   done: boolean;
   failed: boolean;
   lastSeq: number;
@@ -144,6 +146,9 @@ export function foldEvents(acc: ReplayedReply, events: GenEvent[]): ReplayedRepl
       if (typeof p.thinking === "string") next.thinking += p.thinking;
       if (typeof p.message_id === "string") next.messageId = p.message_id;
       if (Array.isArray(p.sources)) next.sources = p.sources;
+      if (p.activity && typeof p.activity === "object" && !Array.isArray(p.activity)) {
+        next.activity = [...next.activity, p.activity as Record<string, unknown>];
+      }
     } catch {
       /* malformed event — skip */
     }
@@ -157,6 +162,7 @@ export function emptyReplay(): ReplayedReply {
     thinking: "",
     messageId: null,
     sources: null,
+    activity: [],
     done: false,
     failed: false,
     lastSeq: 0,

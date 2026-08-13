@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { toast } from "sonner";
@@ -9,6 +9,10 @@ import {
   foldEvents, emptyReplay, markRecovered, isRecovered,
 } from "@/lib/gen-replay";
 import { SyncStatusChip } from "@/components/sync-status";
+import {
+  applyActivityEvent, stepsFromEvents,
+  type ActivityStep, type ServerActivityEvent,
+} from "./activity";
 import { randomUUID, copyToClipboard } from "@/lib/uuid";
 import { useReadAloud, stripForSpeech } from "@/lib/read-aloud";
 import ReactMarkdown from "react-markdown";
@@ -134,6 +138,9 @@ const CODE_META_PREFIX = "\x02CODEMETA\x02";
 /** Sentinel carrying a single pipeline-stage progress event so the activity
  *  strip can show real-time stage labels (Planning → Generating → Testing). */
 const CODE_PROGRESS_PREFIX = "\x02CGPROG\x02";
+/** Sentinel carrying one server-authored activity event (WP4). The strip and
+ *  drawer render ONLY these events — the client never infers steps. */
+const ACTIVITY_PREFIX = "\x02ACTIVITY\x02";
 
 // ─── Voice-mode sentence chunking ─────────────────────────────────────────────
 // While a reply streams in voice mode, completed sentences are flushed to the
@@ -171,15 +178,8 @@ const INTENT_LABELS: Record<string, { icon: string; label: string }> = {
 };
 
 // ─── Activity types ────────────────────────────────────────────────────────────
-
-interface ActivityStep {
-  id: string;
-  label: string;
-  icon: "search" | "read" | "think" | "write";
-  startMs: number;
-  endMs?: number;
-  done: boolean;
-}
+// ActivityStep + the server-event fold logic live in ./activity — the strip
+// and drawer only ever display steps produced from server-emitted events.
 
 // ─── Models hook (generated) ──────────────────────────────────────────────────
 
@@ -415,6 +415,7 @@ function ActivityStrip({
       className={`px-4 shrink-0 border-t border-primary/10 bg-primary/5
         flex items-center gap-3 ${fading ? "activity-strip-fading" : ""}`}
       style={{ minHeight: 44 }}
+      data-testid="activity-strip"
     >
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <span className="w-2 h-2 rounded-full bg-primary/70 animate-pulse shrink-0" />
@@ -444,11 +445,13 @@ const ACTIVITY_STEP_ICONS: Record<ActivityStep["icon"], React.ReactNode> = {
 };
 
 function ActivitySheet({
-  open, onOpenChange, steps,
+  open, onOpenChange, steps, reasoned,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   steps: ActivityStep[];
+  /** True when the model streamed private reasoning this generation. */
+  reasoned?: boolean;
 }) {
   // Re-render every second while sheet is open so elapsed times update
   const [, setTick] = useState(0);
@@ -469,25 +472,33 @@ function ActivitySheet({
             <p className="text-sm text-muted-foreground text-center py-4">No activity recorded</p>
           ) : (
             steps.map(step => {
-              const elapsed = step.done && step.endMs
-                ? Math.floor((step.endMs - step.startMs) / 1000)
-                : Math.floor((Date.now() - step.startMs) / 1000);
+              // Prefer the server-measured duration over client wall-clock.
+              const elapsed = step.elapsedMs != null
+                ? Math.round(step.elapsedMs / 1000)
+                : step.done && step.endMs
+                  ? Math.floor((step.endMs - step.startMs) / 1000)
+                  : Math.floor((Date.now() - step.startMs) / 1000);
               return (
                 <div key={step.id} className="flex items-center gap-3 min-h-[44px]">
                   <div className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
-                    step.done
-                      ? "bg-primary/10 text-primary"
-                      : "bg-muted/60 text-muted-foreground"
+                    step.failed
+                      ? "bg-destructive/10 text-destructive"
+                      : step.done
+                        ? "bg-primary/10 text-primary"
+                        : "bg-muted/60 text-muted-foreground"
                   }`}>
-                    {step.done
-                      ? <Check className="w-3.5 h-3.5" />
-                      : <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    {step.failed
+                      ? <AlertTriangle className="w-3.5 h-3.5" />
+                      : step.done
+                        ? <Check className="w-3.5 h-3.5" />
+                        : <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     }
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm">{step.label}</p>
-                    <p className="text-[10px] font-mono text-muted-foreground/60">
+                    <p className="text-[10px] font-mono text-muted-foreground/60 flex items-center gap-1.5">
                       {ACTIVITY_STEP_ICONS[step.icon]}
+                      {step.detail && <span>{step.detail}</span>}
                     </p>
                   </div>
                   <span className="text-[11px] font-mono text-muted-foreground/50 shrink-0">
@@ -496,6 +507,12 @@ function ActivitySheet({
                 </div>
               );
             })
+          )}
+          {reasoned && (
+            <p className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground/60 border-t border-border/40 pt-3">
+              <Brain className="w-3 h-3 shrink-0" />
+              <span>The model reasoned privately before answering.</span>
+            </p>
           )}
         </div>
       </SheetContent>
@@ -790,49 +807,26 @@ function ReadMore({ text, streaming }: { text: string; streaming?: boolean }) {
   );
 }
 
-// ─── Reasoning block ──────────────────────────────────────────────────────────
+// ─── Reasoning indicator ──────────────────────────────────────────────────────
+// WP4 truth contract: raw chain-of-thought (`<think>` / reasoning_content) is
+// NEVER displayed. When the model streamed private reasoning we show only the
+// factual indicator that it happened — no content, no expansion.
 
-function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean }) {
-  const [open, setOpen] = useState(!!streaming);
-
-  // Auto-collapse 1.5 s after streaming ends, so the answer takes focus
-  useEffect(() => {
-    if (!streaming && open) {
-      const t = setTimeout(() => setOpen(false), 1500);
-      return () => clearTimeout(t);
-    }
-    return undefined;
-  }, [streaming]);  // eslint-disable-line react-hooks/exhaustive-deps
-
+function ReasoningBlock({ streaming }: { streaming?: boolean }) {
   // No violet VELLUM token — gilt is the nearest processing/reasoning-state equivalent
   return (
-    <div className="mb-2.5 rounded-lg border overflow-hidden" style={{ borderColor: "var(--gd-line-control)", background: "var(--gd-bronze-soft)" }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-left transition-opacity hover:opacity-80"
-      >
-        <Brain
-          className={`w-3 h-3 shrink-0 ${streaming ? "animate-pulse" : ""}`}
-          style={{ color: "var(--gd-bronze)" }}
-        />
-        <span className="text-[11px] font-mono flex-1" style={{ color: "var(--gd-bronze)" }}>
-          {streaming ? "Reasoning…" : "Reasoning"}
-        </span>
-        <ChevronDown
-          className={`w-3 h-3 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-          style={{ color: "var(--gd-bronze)" }}
-        />
-      </button>
-      {open && (
-        <div className="px-3 pb-2.5 pt-1.5 border-t" style={{ borderColor: "var(--gd-line-control)" }}>
-          <p className="text-[12px] font-mono italic leading-relaxed whitespace-pre-wrap" style={{ color: "color-mix(in srgb, var(--gd-bronze) 70%, transparent)" }}>
-            {text}
-            {streaming && (
-              <span className="inline-block w-0.5 h-3 ml-0.5 animate-pulse align-text-bottom" style={{ background: "var(--gd-bronze)" }} />
-            )}
-          </p>
-        </div>
-      )}
+    <div
+      className="mb-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border"
+      style={{ borderColor: "var(--gd-line-control)", background: "var(--gd-bronze-soft)" }}
+      data-testid="reasoning-indicator"
+    >
+      <Brain
+        className={`w-3 h-3 shrink-0 ${streaming ? "animate-pulse" : ""}`}
+        style={{ color: "var(--gd-bronze)" }}
+      />
+      <span className="text-[11px] font-mono" style={{ color: "var(--gd-bronze)" }}>
+        {streaming ? "Reasoning privately…" : "Reasoned privately"}
+      </span>
     </div>
   );
 }
@@ -1016,6 +1010,10 @@ async function* streamChat(
         // human-readable label so the ActivityStrip updates in real time.
         if (parsed.code_progress) {
           yield `${CODE_PROGRESS_PREFIX}${JSON.stringify(parsed.code_progress)}`;
+        }
+        // Server-authored activity event — the only source the strip may render.
+        if (parsed.activity) {
+          yield `${ACTIVITY_PREFIX}${JSON.stringify(parsed.activity)}`;
         }
         // Thinking/reasoning tokens from <think> blocks or reasoning_content
         if (parsed.thinking) yield `${THINKING_PREFIX}${parsed.thinking as string}`;
@@ -1716,6 +1714,57 @@ export default function Chat() {
   });
   const mailConnected = mailSummary?.connected ?? false;
 
+  // ── "+" attach/tools sheet (WP4 composer redesign) ───────────────────────
+  const [plusOpen, setPlusOpen] = useState(false);
+
+  // Shared toggle handlers — used by both the "+" sheet rows and the
+  // removable context chips above the composer.
+  const toggleMailContext = useCallback(async (target?: boolean) => {
+    if (!activeId) return;
+    const next = target ?? !mailContextOn;
+    setMailContextOn(next);
+    try {
+      const resp = await apiFetch(`${API_BASE}/conversations/${activeId}/mail-context`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!resp.ok) {
+        setMailContextOn(!next);
+        const err = await resp.json().catch(() => ({}));
+        toast.error((err as any).detail ?? "Could not toggle mail context");
+      } else {
+        queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
+      }
+    } catch {
+      setMailContextOn(!next);
+      toast.error("Could not toggle mail context");
+    }
+  }, [activeId, mailContextOn, queryClient]);
+
+  const toggleWebSearch = useCallback(async (target?: boolean) => {
+    if (!activeId) return;
+    const next = target ?? !webSearchOn;
+    setWebSearchOn(next);
+    try {
+      const resp = await apiFetch(`${API_BASE}/conversations/${activeId}/web-search`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!resp.ok) {
+        setWebSearchOn(!next);
+        const err = await resp.json().catch(() => ({}));
+        toast.error((err as any).detail ?? "Could not toggle web search");
+      } else {
+        queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
+      }
+    } catch {
+      setWebSearchOn(!next);
+      toast.error("Could not toggle web search");
+    }
+  }, [activeId, webSearchOn, queryClient]);
+
   // ── Activity panel state ─────────────────────────────────────────────────
   const [activitySteps,      setActivitySteps]      = useState<ActivityStep[]>([]);
   const [activitySheetOpen,  setActivitySheetOpen]  = useState(false);
@@ -2037,6 +2086,18 @@ export default function Chat() {
         if (!res) { clearPendingGen(pending.jobId); break; } // pruned/unknown
         acc = foldEvents(acc, res.events);
         const running = res.job.state === "running";
+        // Replay journaled activity events into the strip — same truth source
+        // as the live stream, rebuilt instead of invented.
+        if (acc.activity.length && activeIdRef.current === pending.convId) {
+          // A stale fade timer from the interrupted live stream must not wipe
+          // the replayed steps mid-recovery.
+          if (activityFadeTimer.current !== null) {
+            clearTimeout(activityFadeTimer.current);
+            activityFadeTimer.current = null;
+          }
+          setActivitySteps(stepsFromEvents(acc.activity as unknown as ServerActivityEvent[]));
+          setActivityFading(!running);
+        }
         if (acc.text || acc.thinking) {
           upsertBubble({
             text: acc.text,
@@ -2056,6 +2117,8 @@ export default function Chat() {
           setTimeout(() => {
             if (!sendingRef.current && activeIdRef.current === pending.convId) {
               setLocalMessages((prev) => prev.filter((m) => m.id !== liveId && (m.incomplete || m.status === "failed" || m.status === "queued")));
+              setActivitySteps([]);
+              setActivityFading(false);
             }
           }, 800);
           break;
@@ -2116,8 +2179,6 @@ export default function Chat() {
       lastSentRef.current = text;
       // Capture convId now — activeId may change before the stream finishes
       const convId = activeId;
-      // Capture work context for activity label (closed over at call time)
-      const workIdForActivity = activeConv?.conversation?.work_id ?? undefined;
       setSending(true);
       sendingRef.current = true;
 
@@ -2129,13 +2190,9 @@ export default function Chat() {
       activityGenRef.current += 1;
       const thisGen = activityGenRef.current;
       setActivityFading(false);
-      setActivitySteps([{
-        id: "s1",
-        label: workIdForActivity ? "Searching project files" : "Thinking…",
-        icon: workIdForActivity ? "search" : "think",
-        startMs: Date.now(),
-        done: false,
-      }]);
+      // The strip stays empty until the server emits its first activity event —
+      // the client never invents steps (WP4 truthfulness gate).
+      setActivitySteps([]);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -2221,11 +2278,6 @@ export default function Chat() {
       // On the first token we upgrade the user message from "sending" → "acknowledged"
       // so the "Sending…" indicator disappears as soon as the server starts responding.
       let userAcknowledged = false;
-      let firstTextToken = true; // used to advance activity step to "Writing response"
-      // Set to true when the server is running the code-generation pipeline.
-      // Suppresses the normal s2/s3 activity step advances so the pipeline's
-      // own stage labels (Planning → Generating → Testing) control the strip.
-      let codeGenMode = false;
       try {
         for await (const token of streamChat(convId, text, controller.signal, deepMode, scopeAll ? "all" : "work", capturedImage?.data, capturedImage?.type, opId, capturedFile?.data, capturedFile?.name, capturedFile?.type)) {
           if (token.startsWith(JOBID_PREFIX)) {
@@ -2235,17 +2287,30 @@ export default function Chat() {
             setPendingGen({ jobId, convId, startedAt: Date.now() });
             continue;
           }
-          // ── Code-gen stage progress — handle BEFORE userAcknowledged so the
-          //    normal "Reading context" step never flashes for code-gen sessions.
+          // ── Server activity event — the only permitted source of activity
+          //    steps besides code_progress. Also acknowledges the user message
+          //    (any server frame proves delivery).
+          if (token.startsWith(ACTIVITY_PREFIX)) {
+            if (!userAcknowledged) {
+              userAcknowledged = true;
+              setLocalMessages((prev) => prev.map((m) =>
+                m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m
+              ));
+            }
+            try {
+              const ev = JSON.parse(token.slice(ACTIVITY_PREFIX.length)) as ServerActivityEvent;
+              setActivitySteps(prev => applyActivityEvent(prev, ev));
+            } catch { /* malformed — ignore */ }
+            continue;
+          }
+          // ── Code-gen stage progress — server-authored pipeline stage labels.
           if (token.startsWith(CODE_PROGRESS_PREFIX)) {
             if (!userAcknowledged) {
               userAcknowledged = true;
               setLocalMessages((prev) => prev.map((m) =>
                 m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m
               ));
-              // Do NOT advance to s2 — the progress event below owns the strip.
             }
-            codeGenMode = true;
             try {
               const prog = JSON.parse(token.slice(CODE_PROGRESS_PREFIX.length)) as {
                 stage: string; label: string; n: number; total: number;
@@ -2275,20 +2340,6 @@ export default function Chat() {
             setLocalMessages((prev) => prev.map((m) =>
               m.id === userMsgId ? { ...m, status: "acknowledged" as const } : m
             ));
-            // Activity: step 1 done → advance to "Reading context / Preparing answer"
-            // (skipped for code-gen flows — codeGenMode controls the strip there)
-            if (!codeGenMode) {
-              setActivitySteps(prev => [
-                { ...prev[0], done: true, endMs: Date.now() },
-                {
-                  id: "s2",
-                  label: workIdForActivity ? "Reading context" : "Preparing answer",
-                  icon: workIdForActivity ? "read" : "think" as const,
-                  startMs: Date.now(),
-                  done: false,
-                },
-              ]);
-            }
           }
           if (token.startsWith(SOURCES_PREFIX) && token.endsWith(SOURCES_PREFIX) && token.length > SOURCES_PREFIX.length * 2) {
             try {
@@ -2361,15 +2412,6 @@ export default function Chat() {
                   if (speech) readAloud.enqueueLive(speech);
                 }
               }
-            }
-            // Activity: first real text token → advance to "Writing response"
-            // (skipped in code-gen mode — the pipeline stage labels own the strip)
-            if (firstTextToken && !codeGenMode) {
-              firstTextToken = false;
-              setActivitySteps(prev => [
-                ...prev.slice(0, -1).map(s => s.done ? s : { ...s, done: true, endMs: Date.now() }),
-                { id: "s3", label: "Writing response", icon: "write" as const, startMs: Date.now(), done: false },
-              ]);
             }
           }
         }
@@ -2710,6 +2752,19 @@ export default function Chat() {
     m => m.role === "assistant" && !m.streaming
   )?.id ?? null;
 
+  // ── Accessible live status (WP4) — announces message delivery state and
+  // server activity to screen readers via a visually-hidden polite region.
+  const a11yStatus = useMemo(() => {
+    const parts: string[] = [];
+    const lastUser = [...displayMessages].reverse().find((m) => m.role === "user");
+    if (lastUser?.status === "sending") parts.push("Sending message");
+    else if (lastUser?.status === "queued") parts.push("Message queued — it will send when the connection returns");
+    else if (lastUser?.status === "failed") parts.push("Message failed to send — you can retry");
+    const activeStep = activitySteps.find((s) => !s.done);
+    if (activeStep) parts.push(activeStep.label);
+    return parts.join(". ");
+  }, [displayMessages, activitySteps]);
+
   // ── API-backed message content search ───────────────────────────────────
   // When the user types >= 2 chars, search across message content (not just titles).
   // Debounced 400 ms to avoid spamming the API while typing.
@@ -2967,25 +3022,28 @@ export default function Chat() {
                       </Badge>
                     </a>
                   )}
+                  {/* Scope pill — answers draw from this Work only, or the whole library */}
+                  {convWorkId && (
+                    <button
+                      onClick={() => setScopeAll(v => !v)}
+                      title={scopeAll ? "Searching all works — tap for this work only" : "Searching this work only — tap for all works"}
+                      data-testid="pill-scope"
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono border transition-colors
+                        ${scopeAll
+                          ? "bg-primary/10 text-primary border-primary/30"
+                          : "text-muted-foreground border-border/50 hover:bg-muted/60 hover:text-foreground"}`}
+                    >
+                      {scopeAll ? <Globe className="w-3 h-3" /> : <Layers className="w-3 h-3" />}
+                      <span>{scopeAll ? "All works" : "This work"}</span>
+                    </button>
+                  )}
                 </div>
               </div>
-              {/* Right side: sync state + scope toggle + Files drawer + model picker */}
+              {/* Right side: sync state + Files drawer + model picker
+                  (scope moved to a pill under the title) */}
               <div className="flex items-center gap-2">
                 {/* Sync chip lives here on mobile (sidebar is hidden) */}
                 <span className="md:hidden"><SyncStatusChip compact /></span>
-                {convWorkId && (
-                  <button
-                    onClick={() => setScopeAll(v => !v)}
-                    title={scopeAll ? "Searching all works — click for this work only" : "Searching this work only — click for all works"}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors
-                      ${scopeAll
-                        ? "bg-primary/10 text-primary border-primary/30"
-                        : "text-muted-foreground border-border/50 hover:bg-muted/60 hover:text-foreground"}`}
-                  >
-                    {scopeAll ? <Globe className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />}
-                    <span className="hidden sm:inline">{scopeAll ? "All works" : "This work"}</span>
-                  </button>
-                )}
                 {convWorkId && <WorkFilesDrawer workId={convWorkId} workTitle={linkedWorkTitle ?? "Work"} />}
                 {models.length > 0 && activeId && (
                   <ModelPicker
@@ -3138,10 +3196,7 @@ export default function Chat() {
                             msg.role === "assistant" ? (
                               <>
                                 {msg.thinking && (
-                                  <ReasoningBlock
-                                    text={msg.thinking}
-                                    streaming={!!msg.thinkingStreaming}
-                                  />
+                                  <ReasoningBlock streaming={!!msg.thinkingStreaming} />
                                 )}
                                 <ReadMore text={msg.text} streaming={!!msg.streaming} />
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
@@ -3313,8 +3368,12 @@ export default function Chat() {
               </div>
             </div>
 
-            {/* ── Activity strip — shown while AI is generating ─────────────── */}
-            {(sending || activityFading) && activitySteps.length > 0 && (
+            {/* Screen-reader live status — message delivery + server activity */}
+            <div className="sr-only" role="status" aria-live="polite">{a11yStatus}</div>
+
+            {/* ── Activity strip — renders only server-emitted activity, both
+                live (SSE) and replayed from the journal after a reconnect ── */}
+            {activitySteps.length > 0 && (
               <ActivityStrip
                 steps={activitySteps}
                 fading={activityFading}
@@ -3354,6 +3413,38 @@ export default function Chat() {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
               >
+                {/* ── Selected context chips — removable, shown above the input ── */}
+                {(deepMode || webSearchOn || mailContextOn) && (
+                  <div className="flex items-center gap-1.5 px-1 pb-1.5 flex-wrap">
+                    {deepMode && (
+                      <span className="flex items-center gap-1.5 rounded-full bg-primary/10 border border-primary/30 text-primary px-2.5 py-1 text-[11px] font-mono" data-testid="chip-deep">
+                        <Brain className="w-3 h-3 shrink-0" />
+                        <span>Deep reasoning</span>
+                        <button type="button" onClick={() => setDeepMode(false)} aria-label="Turn off deep reasoning" className="ml-0.5 hover:opacity-70 transition-opacity">
+                          <XIcon className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                    {webSearchOn && (
+                      <span className="flex items-center gap-1.5 rounded-full bg-primary/10 border border-primary/30 text-primary px-2.5 py-1 text-[11px] font-mono" data-testid="chip-web">
+                        <Globe className="w-3 h-3 shrink-0" />
+                        <span>Web search</span>
+                        <button type="button" onClick={() => void toggleWebSearch(false)} aria-label="Turn off web search" className="ml-0.5 hover:opacity-70 transition-opacity">
+                          <XIcon className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                    {mailContextOn && (
+                      <span className="flex items-center gap-1.5 rounded-full bg-primary/10 border border-primary/30 text-primary px-2.5 py-1 text-[11px] font-mono" data-testid="chip-mail">
+                        <Mail className="w-3 h-3 shrink-0" />
+                        <span>Mail context</span>
+                        <button type="button" onClick={() => void toggleMailContext(false)} aria-label="Turn off mail context" className="ml-0.5 hover:opacity-70 transition-opacity">
+                          <XIcon className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                )}
                 {/* Pending file preview chip */}
                 {pendingFile && (
                   <div className="flex items-center gap-2 px-3 pt-2 pb-1">
@@ -3416,7 +3507,7 @@ export default function Chat() {
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     placeholder={dragOver ? "Drop files to import…" : importing ? "Importing…" : aiOnline ? "Ask anything… or drop a file (Enter to send, Shift+Enter for newline)" : "AI offline — messages will be delivered; replies resume when it returns"}
-                    className="pr-56 resize-none py-3 text-base"
+                    className="pl-12 pr-24 resize-none py-3 text-base"
                     rows={2}
                     disabled={sending || importing}
                     onKeyDown={(e) => {
@@ -3438,10 +3529,22 @@ export default function Chat() {
                       if (files.length > 0) { e.preventDefault(); handleImageSelect(files[0]); }
                     }}
                   />
-                {/* ── Composer action buttons ─────────────────────────────────
-                    Flex container inside the textarea row so top-1/2 centers
-                    within the textarea only, and min-44px expansion on mobile
-                    is absorbed by the flex gap rather than causing overlap.   */}
+                {/* ── "+" — opens the attach/tools sheet (left inside textarea) */}
+                <button
+                  type="button"
+                  onClick={() => setPlusOpen(true)}
+                  title="Add — files, images, mail, web search, deep research"
+                  aria-label="Add attachments or tools"
+                  disabled={sending || importing}
+                  data-testid="button-composer-plus"
+                  className={`chat-icon-btn absolute left-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded flex items-center justify-center transition-colors
+                    ${(pendingImage || pendingFile || deepMode || webSearchOn || mailContextOn)
+                      ? "text-primary bg-primary/10 border border-primary/30"
+                      : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+                {/* ── Primary actions — mic + send only (everything else in "+") */}
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
                   {/* Voice input — mic + hands-free toggle */}
                   <VoiceControls
@@ -3452,107 +3555,6 @@ export default function Chat() {
                     onPrimeSpeech={handlePrimeSpeech}
                     autoListenNonce={autoListenNonce}
                   />
-                  {/* Image attach */}
-                  <button
-                    type="button"
-                    onClick={() => imgInputRef.current?.click()}
-                    title="Attach an image"
-                    disabled={sending || importing}
-                    className={`chat-icon-btn h-8 w-8 rounded flex items-center justify-center transition-colors
-                      ${pendingImage ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
-                  >
-                    <ImageIcon className="w-4 h-4" />
-                  </button>
-                  {/* File attach (PDF, DOCX, XLSX, CSV, TXT) */}
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Attach a file — PDF, DOCX, XLSX, CSV, TXT"
-                    disabled={sending || importing}
-                    className={`chat-icon-btn h-8 w-8 rounded flex items-center justify-center transition-colors
-                      ${pendingFile ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
-                  >
-                    <Paperclip className="w-4 h-4" />
-                  </button>
-                  {/* Mail context toggle — only shown when Mail Steward is connected */}
-                  {mailConnected && activeId && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const next = !mailContextOn;
-                        setMailContextOn(next);
-                        try {
-                          const resp = await apiFetch(`${API_BASE}/conversations/${activeId}/mail-context`, {
-                            method: "PUT",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ enabled: next }),
-                          });
-                          if (!resp.ok) {
-                            setMailContextOn(!next);
-                            const err = await resp.json().catch(() => ({}));
-                            toast.error((err as any).detail ?? "Could not toggle mail context");
-                          } else {
-                            queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
-                          }
-                        } catch {
-                          setMailContextOn(!next);
-                          toast.error("Could not toggle mail context");
-                        }
-                      }}
-                      title={mailContextOn
-                        ? "Mail context on — recent email summaries injected into chat (click to disable)"
-                        : "Mail context off — click to inject recent email summaries into chat replies"}
-                      className={`chat-icon-btn h-8 w-8 rounded flex items-center justify-center transition-colors
-                        ${mailContextOn ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
-                    >
-                      <Mail className="w-4 h-4" />
-                    </button>
-                  )}
-                  {/* Web search toggle — only shown when Tavily is configured */}
-                  {tavilyConfigured && activeId && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const next = !webSearchOn;
-                        setWebSearchOn(next);
-                        try {
-                          const resp = await apiFetch(`${API_BASE}/conversations/${activeId}/web-search`, {
-                            method: "PUT",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ enabled: next }),
-                          });
-                          if (!resp.ok) {
-                            setWebSearchOn(!next);
-                            const err = await resp.json().catch(() => ({}));
-                            toast.error((err as any).detail ?? "Could not toggle web search");
-                          } else {
-                            queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(activeId) });
-                          }
-                        } catch {
-                          setWebSearchOn(!next);
-                          toast.error("Could not toggle web search");
-                        }
-                      }}
-                      title={webSearchOn
-                        ? "Web search on — answers augmented with live results (click to disable)"
-                        : "Web search off — click to augment answers with live web results"}
-                      className={`chat-icon-btn h-8 w-8 rounded flex items-center justify-center transition-colors
-                        ${webSearchOn ? "text-primary bg-primary/10 border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
-                    >
-                      <Globe className="w-4 h-4" />
-                    </button>
-                  )}
-                  {/* Deep/Fast toggle */}
-                  <button
-                    type="button"
-                    onClick={() => setDeepMode(v => !v)}
-                    title={deepMode ? "Deep mode — 3-pass council (click for Fast)" : "Fast mode — single call (click for Deep)"}
-                    className={`chat-icon-btn h-8 px-2 rounded flex items-center gap-1 text-xs font-mono transition-colors
-                      ${deepMode ? "bg-primary/15 text-primary border border-primary/30" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
-                  >
-                    {deepMode ? <Brain className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
-                    <span className="hidden sm:inline">{deepMode ? "Deep" : "Fast"}</span>
-                  </button>
                   {/* Send / Stop */}
                   {sending ? (
                     <Button
@@ -3607,6 +3609,90 @@ export default function Chat() {
                   </div>
                 )}
               </form>
+              {/* ── "+" sheet — attachments & per-message tools ─────────────── */}
+              <Sheet open={plusOpen} onOpenChange={setPlusOpen}>
+                <SheetContent side="bottom" className="px-0">
+                  <SheetHeader className="px-6 pb-3 border-b border-border/40">
+                    <SheetTitle className="text-sm font-serif">Add to this message</SheetTitle>
+                  </SheetHeader>
+                  <div className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => { setPlusOpen(false); imgInputRef.current?.click(); }}
+                      className="w-full flex items-center gap-3 min-h-[44px] px-3 rounded-md hover:bg-muted/60 transition-colors text-left"
+                      data-testid="plus-attach-image"
+                    >
+                      <ImageIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span className="text-sm flex-1">Attach an image</span>
+                      {pendingImage && <Check className="w-4 h-4 text-primary shrink-0" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setPlusOpen(false); fileInputRef.current?.click(); }}
+                      className="w-full flex items-center gap-3 min-h-[44px] px-3 rounded-md hover:bg-muted/60 transition-colors text-left"
+                      data-testid="plus-attach-file"
+                    >
+                      <Paperclip className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm block">Attach a file</span>
+                        <span className="text-[11px] text-muted-foreground/60 block">PDF, DOCX, XLSX, CSV, TXT</span>
+                      </div>
+                      {pendingFile && <Check className="w-4 h-4 text-primary shrink-0" />}
+                    </button>
+                    {mailConnected && activeId && (
+                      <button
+                        type="button"
+                        onClick={() => void toggleMailContext()}
+                        className="w-full flex items-center gap-3 min-h-[44px] px-3 rounded-md hover:bg-muted/60 transition-colors text-left"
+                        data-testid="plus-mail-context"
+                      >
+                        <Mail className={`w-4 h-4 shrink-0 ${mailContextOn ? "text-primary" : "text-muted-foreground"}`} />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm block">Mail context</span>
+                          <span className="text-[11px] text-muted-foreground/60 block">Inject recent email summaries into replies</span>
+                        </div>
+                        <span className={`text-[11px] font-mono shrink-0 ${mailContextOn ? "text-primary" : "text-muted-foreground/50"}`}>
+                          {mailContextOn ? "On" : "Off"}
+                        </span>
+                      </button>
+                    )}
+                    {tavilyConfigured && activeId && (
+                      <button
+                        type="button"
+                        onClick={() => void toggleWebSearch()}
+                        className="w-full flex items-center gap-3 min-h-[44px] px-3 rounded-md hover:bg-muted/60 transition-colors text-left"
+                        data-testid="plus-web-search"
+                      >
+                        <Globe className={`w-4 h-4 shrink-0 ${webSearchOn ? "text-primary" : "text-muted-foreground"}`} />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm block">Web search</span>
+                          <span className="text-[11px] text-muted-foreground/60 block">Augment answers with live web results</span>
+                        </div>
+                        <span className={`text-[11px] font-mono shrink-0 ${webSearchOn ? "text-primary" : "text-muted-foreground/50"}`}>
+                          {webSearchOn ? "On" : "Off"}
+                        </span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setDeepMode(v => !v)}
+                      className="w-full flex items-center gap-3 min-h-[44px] px-3 rounded-md hover:bg-muted/60 transition-colors text-left"
+                      data-testid="plus-deep-mode"
+                    >
+                      {deepMode
+                        ? <Brain className="w-4 h-4 text-primary shrink-0" />
+                        : <Zap className="w-4 h-4 text-muted-foreground shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm block">Deep reasoning</span>
+                        <span className="text-[11px] text-muted-foreground/60 block">3-pass council — slower, more thorough</span>
+                      </div>
+                      <span className={`text-[11px] font-mono shrink-0 ${deepMode ? "text-primary" : "text-muted-foreground/50"}`}>
+                        {deepMode ? "On" : "Off"}
+                      </span>
+                    </button>
+                  </div>
+                </SheetContent>
+              </Sheet>
             </div>
           </>
         ) : (
@@ -3691,6 +3777,7 @@ export default function Chat() {
         open={activitySheetOpen}
         onOpenChange={setActivitySheetOpen}
         steps={activitySteps}
+        reasoned={displayMessages.some((m) => m.role === "assistant" && !!m.thinking)}
       />
     </div>
   );

@@ -286,6 +286,58 @@ class ContinueBody(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Server-authored activity events (WP4)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Stages the server may emit. The client renders ONLY these events — it never
+# infers steps — so every frame here must correspond to work that actually ran.
+_ACTIVITY_STAGES = ("retrieval", "tool", "deliberation", "generation", "verification")
+
+
+def _activity_frame(
+    stage: str,
+    state: str,
+    *,
+    action: str | None = None,
+    tool: str | None = None,
+    source_count: int | None = None,
+    elapsed_ms: int | None = None,
+    result: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Build one SSE frame carrying a server-authored activity event.
+
+    Schema (journaled under kind="activity", replayable):
+      stage        — one of _ACTIVITY_STAGES
+      state        — "start" | "done" | "failed"
+      action       — optional sub-action label (e.g. "knowledge_search", "gate")
+      tool         — tool/intent name when stage == "tool"
+      source_count — number of sources found (retrieval/tool done events)
+      elapsed_ms   — measured wall time for the stage (done/failed events)
+      result       — outcome tag (e.g. "passed"/"corrected" for verification,
+                     gate route for deliberation)
+      reason       — failure/block reason when state == "failed"
+
+    The activity display contract (WP4): the client must never claim an action
+    the server did not emit. Only add emission sites for work that truly runs.
+    """
+    evt: dict[str, Any] = {"stage": stage, "state": state}
+    if action is not None:
+        evt["action"] = action
+    if tool is not None:
+        evt["tool"] = tool
+    if source_count is not None:
+        evt["source_count"] = source_count
+    if elapsed_ms is not None:
+        evt["elapsed_ms"] = elapsed_ms
+    if result is not None:
+        evt["result"] = result
+    if reason is not None:
+        evt["reason"] = reason
+    return f"data: {json.dumps({'activity': evt})}\n\n"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Image thumbnail helper
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -3303,25 +3355,8 @@ async def _stream_response(
     conv_id = conv["id"]
     _sources: list = []
     _stream_strategy_meta: dict = {}
-    messages = _build_messages(
-        db,
-        conv,
-        user_text,
-        scope=scope,
-        image_b64=image_b64,
-        image_media_type=image_media_type,
-        out_sources=_sources,
-        out_meta=_stream_strategy_meta,
-        context_doc_ids=context_doc_ids or [],
-    )
-    # Deduplicate sources by doc_id
-    _seen: set = set()
+    messages: list = []
     sources: list = []
-    for s in _sources:
-        key = s.get("id") or s.get("source_doc_id") or s.get("title")
-        if key and key not in _seen:
-            _seen.add(key)
-            sources.append(s)
     full_reply = ""
     thinking_text = ""  # accumulated <think> / reasoning_content text
     _in_think = False  # True while inside a <think>…</think> block
@@ -3349,8 +3384,40 @@ async def _stream_response(
     _usage_prompt: int | None = None
     _usage_completion: int | None = None
     try:
+        # ── Retrieval — build the prompt (knowledge search + optional web
+        # grounding) between truthful start/done activity events so the client
+        # can show real progress instead of inferring it. ─────────────────────
+        yield _activity_frame("retrieval", "start", action="knowledge_search")
+        _retr_t0 = _time.monotonic()
+        messages = _build_messages(
+            db,
+            conv,
+            user_text,
+            scope=scope,
+            image_b64=image_b64,
+            image_media_type=image_media_type,
+            out_sources=_sources,
+            out_meta=_stream_strategy_meta,
+            context_doc_ids=context_doc_ids or [],
+        )
+        # Deduplicate sources by doc_id
+        _seen: set = set()
+        for s in _sources:
+            key = s.get("id") or s.get("source_doc_id") or s.get("title")
+            if key and key not in _seen:
+                _seen.add(key)
+                sources.append(s)
+        yield _activity_frame(
+            "retrieval",
+            "done",
+            action="knowledge_search",
+            source_count=len(sources),
+            elapsed_ms=int((_time.monotonic() - _retr_t0) * 1000),
+        )
+
         # ── Intent routing — runs before deep mode and normal AI ──────────────
         _stream_work_id = conv.get("work_id")
+        _tool_t0 = _time.monotonic()
         tool_result = await _maybe_dispatch_intent(
             db, user_text, cfg.serving.base_url, model, work_id=_stream_work_id
         )
@@ -3368,6 +3435,14 @@ async def _stream_response(
             # it on the gen job so the idempotency claim settles as COMPLETED
             # (without it, retries of the same client_msg_id would regenerate).
             yield f"data: {json.dumps({'message_id': _intent_msg['id'], 'state': 'done'})}\n\n"
+            _tool_sources = tool_meta.get("sources", [])
+            yield _activity_frame(
+                "tool",
+                "done",
+                tool=tool_meta.get("intent"),
+                source_count=len(_tool_sources) if _tool_sources else None,
+                elapsed_ms=int((_time.monotonic() - _tool_t0) * 1000),
+            )
             # Background: embed + infer memory (intent path)
             from orivellum.api.executor import submit_bg as _submit_bg_intent
 
@@ -3399,10 +3474,19 @@ async def _stream_response(
                 update_compass,
             )
 
+            yield _activity_frame("deliberation", "start", action="gate")
+            _deep_t0 = _time.monotonic()
             route = await asyncio.to_thread(
                 classify, user_text, messages[:-1], cfg.serving.base_url, model, db
             )
             logger.debug("Cognition gate for conv %s: %s", conv_id, route)
+            yield _activity_frame(
+                "deliberation",
+                "done",
+                action="gate",
+                result=route,
+                elapsed_ms=int((_time.monotonic() - _deep_t0) * 1000),
+            )
 
             if route == "clarify":
                 question = await asyncio.to_thread(
@@ -3443,8 +3527,17 @@ async def _stream_response(
                 return
 
             if route == "complex":
+                yield _activity_frame("deliberation", "start", action="council")
+                _council_t0 = _time.monotonic()
                 council_reply = await asyncio.to_thread(
                     deliberate, messages, cfg.serving.base_url, model, db
+                )
+                yield _activity_frame(
+                    "deliberation",
+                    "done" if council_reply else "failed",
+                    action="council",
+                    reason=None if council_reply else "council_empty",
+                    elapsed_ms=int((_time.monotonic() - _council_t0) * 1000),
                 )
                 if council_reply:
                     # ── Disconnect-safe persistence ──────────────────────────
@@ -3537,6 +3630,8 @@ async def _stream_response(
         _usage_prompt: int | None = None
         _usage_completion: int | None = None
 
+        yield _activity_frame("generation", "start")
+        _gen_t0 = _time.monotonic()
         try:
             import httpx
 
@@ -3668,6 +3763,12 @@ async def _stream_response(
             # Emit a [TIMEOUT] sentinel so the client can show the re-send affordance
             # immediately without waiting for the [DONE] event.
             yield f"data: {json.dumps({'timeout': True, 'message_id': _assist_id})}\n\n"
+            yield _activity_frame(
+                "generation",
+                "failed",
+                reason="timeout",
+                elapsed_ms=int((_time.monotonic() - _gen_t0) * 1000),
+            )
             if not full_reply:
                 full_reply = _UNAVAILABLE
                 yield f"data: {json.dumps({'token': full_reply})}\n\n"
@@ -3676,8 +3777,21 @@ async def _stream_response(
             logger.warning("AI stream failed: %s", exc)
             _stream_ok = False
             _stream_err = f"{type(exc).__name__}: {exc}"[:500]
+            yield _activity_frame(
+                "generation",
+                "failed",
+                reason="provider_error",
+                elapsed_ms=int((_time.monotonic() - _gen_t0) * 1000),
+            )
             full_reply = _UNAVAILABLE
             yield f"data: {json.dumps({'token': full_reply})}\n\n"
+
+        if _stream_ok:
+            yield _activity_frame(
+                "generation",
+                "done",
+                elapsed_ms=int((_time.monotonic() - _gen_t0) * 1000),
+            )
 
         # Normal completion path (also reached after AI failure fallback)
         # Use finalize_message instead of add_message — the stub already exists.
@@ -3738,6 +3852,7 @@ async def _stream_response(
         # client can update the rendered bubble without a full reload.
         if full_reply and _stream_ok and is_checkable_fact(user_text):
             try:
+                _ver_t0 = _time.monotonic()
                 _ov = OutputValidator(db)
                 _ov_claims = db.search_claims_for_context(user_text, limit=15)
                 _ov_result = _ov.validate(user_text, full_reply, verified_claims=_ov_claims)
@@ -3750,6 +3865,12 @@ async def _stream_response(
                         sum(1 for v in _ov_result.violations if v.startswith("HARD")),
                     )
                     yield f"data: {json.dumps({'pklos_correction': _correction, 'message_id': _assist_id})}\n\n"
+                yield _activity_frame(
+                    "verification",
+                    "done",
+                    result="corrected" if _ov_result.must_regenerate else "passed",
+                    elapsed_ms=int((_time.monotonic() - _ver_t0) * 1000),
+                )
             except Exception as _ov_exc:
                 logger.debug("OutputValidator (stream) skipped (non-fatal): %s", _ov_exc)
 
@@ -3863,6 +3984,8 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
     yield f"data: {json.dumps({'continue_message_id': orig_id})}\n\n"
 
     # Build messages: system + history (excluding cut-short stub) + partial as assistant turn
+    yield _activity_frame("retrieval", "start", action="knowledge_search")
+    _cont_retr_t0 = _time.monotonic()
     system_prompt = _build_system_prompt(db, conv, scope="work", user_query=None)
     history = db.get_messages(conv_id, limit=_HISTORY_LIMIT + 5)
     raw_prior = [m for m in history if m.get("id") != orig_id][-_HISTORY_LIMIT:]
@@ -3880,9 +4003,18 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
     _stream_ok = True
     _stream_err: str | None = None
 
+    yield _activity_frame(
+        "retrieval",
+        "done",
+        action="knowledge_search",
+        elapsed_ms=int((_time.monotonic() - _cont_retr_t0) * 1000),
+    )
+
     # Per-chunk wall-clock timeout — same policy as _stream_response.
     _CONT_TIMEOUT_SEC = 30
     _cont_timed_out = False
+    yield _activity_frame("generation", "start", action="continuation")
+    _cont_gen_t0 = _time.monotonic()
     try:
         import httpx
 
@@ -3911,6 +4043,13 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
                         _cont_timed_out = True
                         _stream_err = f"continuation silent for {_CONT_TIMEOUT_SEC}s"
                         yield f"data: {json.dumps({'timeout': True, 'message_id': orig_id})}\n\n"
+                        yield _activity_frame(
+                            "generation",
+                            "failed",
+                            action="continuation",
+                            reason="timeout",
+                            elapsed_ms=int((_time.monotonic() - _cont_gen_t0) * 1000),
+                        )
                         break
                     if not line.startswith("data: "):
                         continue
@@ -3936,10 +4075,31 @@ async def _stream_continuation(db: Any, conv: dict, cut_short_msg: dict):
         _cont_timed_out = True
         _stream_err = f"continuation silent for {_CONT_TIMEOUT_SEC}s"
         yield f"data: {json.dumps({'timeout': True, 'message_id': orig_id})}\n\n"
+        yield _activity_frame(
+            "generation",
+            "failed",
+            action="continuation",
+            reason="timeout",
+            elapsed_ms=int((_time.monotonic() - _cont_gen_t0) * 1000),
+        )
     except Exception as exc:
         _stream_ok = False
         _stream_err = f"{type(exc).__name__}: {exc}"[:500]
         logger.warning("Continuation stream failed: %s", _stream_err)
+        yield _activity_frame(
+            "generation",
+            "failed",
+            action="continuation",
+            reason="provider_error",
+            elapsed_ms=int((_time.monotonic() - _cont_gen_t0) * 1000),
+        )
+    if _stream_ok:
+        yield _activity_frame(
+            "generation",
+            "done",
+            action="continuation",
+            elapsed_ms=int((_time.monotonic() - _cont_gen_t0) * 1000),
+        )
 
     record_llm_call(
         db,
