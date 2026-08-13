@@ -122,12 +122,45 @@ const PREF_KEYS: Record<keyof UiPreferences, { storage: string; valid: readonly 
   readingFace: { storage: FACE_KEY, valid: ["sans", "serif"] },
 };
 
+/** Provenance marker: which preference keys the user AUTHORED on this
+ *  device (via a setter), as opposed to values hydrated from the server.
+ *  Hydrated values share the same storage keys, so presence alone cannot
+ *  distinguish "the user chose this here" from "restored from elsewhere" —
+ *  mirroring a hydrated (possibly stale) value would overwrite another
+ *  device's newer choice. */
+const AUTHORED_KEY = "orivellum-ui-authored";
+
+function authoredSet(): Set<string> {
+  try {
+    const raw = localStorage.getItem(AUTHORED_KEY);
+    const arr: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(
+      Array.isArray(arr) ? arr.filter((k): k is string => typeof k === "string" && k in PREF_KEYS) : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function markAuthored(...names: (keyof UiPreferences)[]): void {
+  try {
+    const s = authoredSet();
+    for (const n of names) s.add(n);
+    localStorage.setItem(AUTHORED_KEY, JSON.stringify([...s]));
+  } catch {
+    /* private mode */
+  }
+}
+
 /** Only the preferences the user explicitly chose on THIS device.
- *  Untouched settings are never mirrored, so they can't clobber choices
- *  saved from another device (the server merges partial records). */
+ *  Untouched and merely-hydrated settings are never mirrored, so they
+ *  can't clobber choices saved from another device (the server merges
+ *  partial records). */
 function explicitPreferences(): Partial<UiPreferences> {
   const out: Partial<UiPreferences> = {};
+  const authored = authoredSet();
   for (const [name, spec] of Object.entries(PREF_KEYS)) {
+    if (!authored.has(name)) continue;
     try {
       const v = localStorage.getItem(spec.storage);
       if (v && spec.valid.includes(v)) (out as Record<string, string>)[name] = v;
@@ -164,25 +197,29 @@ function mirrorToServer() {
   }, 600);
 }
 
-/** Restore saved preferences on a fresh install: any key the user has NOT
- *  explicitly set on this device adopts the server-saved value. Local
- *  explicit choices always win. */
+/** Restore saved preferences: any key the user has NOT authored on this
+ *  device adopts the server-saved value (fresh installs restore everything;
+ *  returning devices refresh stale hydrated values). Locally authored
+ *  choices always win, and hydration never marks a key as authored. */
 async function hydrateFromServer(): Promise<void> {
   try {
     const res = await apiFetch(`${API_BASE}/system/settings/ui-preferences`);
     if (res.ok) {
       const saved = (await res.json()) as Partial<UiPreferences>;
-      const explicit = explicitPreferences();
+      const authored = authoredSet();
       let adopted = false;
       for (const [name, spec] of Object.entries(PREF_KEYS)) {
         const value = saved[name as keyof UiPreferences];
-        if (
-          value &&
-          spec.valid.includes(value) &&
-          explicit[name as keyof UiPreferences] === undefined
-        ) {
-          persist(spec.storage, value);
-          adopted = true;
+        if (value && spec.valid.includes(value) && !authored.has(name)) {
+          try {
+            if (localStorage.getItem(spec.storage) !== value) {
+              persist(spec.storage, value);
+              adopted = true;
+            }
+          } catch {
+            persist(spec.storage, value);
+            adopted = true;
+          }
         }
       }
       if (adopted) {
@@ -205,15 +242,25 @@ async function hydrateFromServer(): Promise<void> {
 
 export function setThemePreference(pref: ThemePreference): void {
   persist(THEME_KEY, pref);
+  markAuthored("theme");
   applyResolvedTheme(resolveTheme(pref));
   mirrorToServer();
   notify();
 }
 
 export function setCalibration(patch: Partial<Omit<UiPreferences, "theme">>): void {
-  if (patch.textSize) persist(TEXT_KEY, patch.textSize);
-  if (patch.measure) persist(MEASURE_KEY, patch.measure);
-  if (patch.readingFace) persist(FACE_KEY, patch.readingFace);
+  if (patch.textSize) {
+    persist(TEXT_KEY, patch.textSize);
+    markAuthored("textSize");
+  }
+  if (patch.measure) {
+    persist(MEASURE_KEY, patch.measure);
+    markAuthored("measure");
+  }
+  if (patch.readingFace) {
+    persist(FACE_KEY, patch.readingFace);
+    markAuthored("readingFace");
+  }
   applyCalibration(getUiPreferences());
   mirrorToServer();
   notify();
@@ -224,6 +271,8 @@ export function resetUiPreferences(): void {
   persist(TEXT_KEY, UI_PREF_DEFAULTS.textSize);
   persist(MEASURE_KEY, UI_PREF_DEFAULTS.measure);
   persist(FACE_KEY, UI_PREF_DEFAULTS.readingFace);
+  // Reset is an explicit choice of the defaults — it propagates everywhere.
+  markAuthored("theme", "textSize", "measure", "readingFace");
   applyResolvedTheme(resolveTheme(UI_PREF_DEFAULTS.theme));
   applyCalibration(UI_PREF_DEFAULTS);
   mirrorToServer();

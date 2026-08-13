@@ -50,11 +50,15 @@ const browser = await chromium.launch({
   await page.screenshot({ path: '/tmp/wp2-daylight.png' });
 
   // ── 2. Switch to Hull via theme API, verify + persist ─────────────────────
+  // Mark the keys authored: direct localStorage writes simulate real user
+  // choices here, and only authored keys resist server hydration.
   await page.evaluate(() => {
     localStorage.setItem('orivellum-theme', 'hull');
     localStorage.setItem('orivellum-text-size', '112');
     localStorage.setItem('orivellum-measure', 'focused');
     localStorage.setItem('orivellum-reading-face', 'serif');
+    localStorage.setItem('orivellum-ui-authored',
+      JSON.stringify(['theme', 'textSize', 'measure', 'readingFace']));
   });
   await page.reload({ waitUntil: 'networkidle' });
 
@@ -116,7 +120,44 @@ const browser = await chromium.launch({
   });
 }
 
-// ── 4. System preference mode follows OS scheme ─────────────────────────────
+// ── 4. Two-device provenance: hydrated values never mirror back ─────────────
+// Device B hydrates A's old prefs, A then changes an unrelated key, B changes
+// only the theme — A's newer change must survive B's mirror.
+{
+  const prefsUrl = 'http://localhost:8080/api/system/settings/ui-preferences';
+  const put = (body) => fetch(prefsUrl, {
+    method: 'PUT',
+    headers: { 'X-Api-Key': KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await put({ theme: 'hull', textSize: '112', readingFace: 'serif' });
+
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.addInitScript((k) => localStorage.setItem('orivellum.apiKey', k), KEY);
+  await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'hull',
+    null, { timeout: 5000 }).catch(() => {});
+
+  // Device A updates text size AFTER B hydrated 112.
+  await put({ textSize: '125' });
+
+  // Device B changes only the theme through the real UI control.
+  await page.goto(BASE + '/system', { waitUntil: 'networkidle' });
+  const btn = page.getByRole('radio', { name: /daylight/i });
+  await btn.click();
+  await page.waitForTimeout(1500); // debounce (600ms) + request
+
+  const record = await (await fetch(prefsUrl, { headers: { 'X-Api-Key': KEY } })).json();
+  check('device B theme change mirrored', record.theme === 'daylight', JSON.stringify(record));
+  check("device A's newer textSize survives B's mirror", record.textSize === '125', record.textSize);
+  check('untouched keys unchanged', record.readingFace === 'serif', record.readingFace);
+  await ctx.close();
+
+  await put({ theme: 'daylight', textSize: '100', measure: 'standard', readingFace: 'sans' });
+}
+
+// ── 5. System preference mode follows OS scheme ─────────────────────────────
 {
   const ctx = await browser.newContext({ colorScheme: 'dark' });
   const page = await ctx.newPage();
