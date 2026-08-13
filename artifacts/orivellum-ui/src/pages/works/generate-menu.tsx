@@ -1,92 +1,25 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams, Link, useLocation, useSearch } from "wouter";
-import { ErrorBoundary } from "@/components/error-boundary";
+import { useState } from "react";
+import { useLocation } from "wouter";
 import {
-  useGetWork,
-  useGetWorkStats,
-  useUpdateWork,
-  useDeleteWork,
-  useDeleteKnowledgeItem,
-  useGetWorkDocuments,
-  useGetWorkKnowledge,
-  useGetWorkTasks,
-  useGetWorkConversations,
-  useCreateWorkTask,
-  useUpdateWorkTask,
   useCreateConversation,
-  useListLibrary,
-  getGetWorkQueryKey,
   getGetWorkStatsQueryKey,
-  getListWorksQueryKey,
-  getGetWorkTasksQueryKey,
-  getGetWorkDocumentsQueryKey,
-  getGetWorkKnowledgeQueryKey,
   getGetWorkConversationsQueryKey,
   getListConversationsQueryKey,
-  useGetEmbeddingsStatus,
-  getGetEmbeddingsStatusQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import {
-  ArrowLeft,
-  FileText,
-  Network,
-  CheckSquare,
-  MessageSquare,
-  Plus,
-  Clock,
   Loader2,
-  Sparkles,
-  ThumbsUp,
-  ThumbsDown,
-  Pencil,
-  Check,
-  X,
-  Trash2,
-  GraduationCap,
-  RefreshCw,
-  ChevronRight,
   MessageSquarePlus,
-  Unlink,
-  Search,
-  BookOpen,
   ChevronDown,
-  Trophy,
-  BarChart2,
-  AlertTriangle,
-  TrendingUp,
-  Lightbulb,
-  Brain,
-  Star,
-  GitBranch,
-  Share2,
+  FileText,
   FileSpreadsheet,
   FileType,
   Presentation,
   Package,
   Download,
   Zap,
-  Film,
-  Scroll,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -96,16 +29,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Textarea } from "@/components/ui/textarea";
-import { BookTab }       from "./book-tab";
-import { BrainstormTab } from "./brainstorm-tab";
-import { TrailerTab }    from "./trailer-tab";
-import { GenesisTab }    from "./genesis-tab";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
-import { LearnTab } from "@/pages/learning/learn-tab";
-
 
 const GEN_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -221,8 +145,8 @@ export function GenerateMenu({ workId }: { workId: string }) {
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5 text-xs transition-opacity hover:opacity-80"
-          style={{ color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 30%, transparent)" }}
+          className="gap-1.5 text-xs transition-opacity hover:opacity-80 min-h-11"
+          style={{ color: "var(--gd-primary)", borderColor: "var(--gd-primary-soft)" }}
           disabled={!!busy}
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
@@ -254,7 +178,7 @@ export function GenerateMenu({ workId }: { workId: string }) {
         {result && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={downloadResult} className="gap-2 cursor-pointer" style={{ color: "var(--green-2)" }}>
+            <DropdownMenuItem onClick={downloadResult} className="gap-2 cursor-pointer" style={{ color: "var(--gd-primary)" }}>
               <Download className="w-4 h-4" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium">Download last output</div>
@@ -302,6 +226,4 @@ export function QuickChatButton({ workId }: { workId: string }) {
     </button>
   );
 }
-
-// ─── Conversations tab ────────────────────────────────────────────────────────
 

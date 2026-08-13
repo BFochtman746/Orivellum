@@ -178,30 +178,19 @@ export function CommandPalette() {
       onClick={(e) => { if (e.target === e.currentTarget) close(); }}
     >
       <div
-        className="w-full max-w-[640px] mx-4 rounded-2xl overflow-hidden"
-        style={{
-          background: "var(--paper, #FAF8F5)",
-          border: "1px solid rgba(0,0,0,0.08)",
-          boxShadow: "0 24px 64px rgba(0,0,0,0.22), 0 4px 16px rgba(0,0,0,0.12)",
-        }}
+        className="w-full max-w-[640px] mx-4 rounded-2xl overflow-hidden bg-popover text-popover-foreground border border-border"
+        style={{ boxShadow: "var(--gd-shadow)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ── Search input ───────────────────────────────────────────────────── */}
-        <div
-          className="flex items-center gap-3 px-4 py-3 border-b"
-          style={{ borderColor: "rgba(0,0,0,0.07)" }}
-        >
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
           <Search className="w-4 h-4 flex-shrink-0 opacity-40" />
           <Command.Input
             value={search}
             onValueChange={setSearch}
             placeholder="Search pages, knowledge, actions…"
-            className="flex-1 bg-transparent border-none outline-none text-sm"
-            style={{
-              color: "var(--ink, #1A1A1A)",
-              fontSize: "15px",
-              fontFamily: "inherit",
-            }}
+            className="flex-1 bg-transparent border-none outline-none text-sm text-foreground"
+            style={{ fontSize: "15px", fontFamily: "inherit" }}
           />
           {search && (
             <button
@@ -211,10 +200,7 @@ export function CommandPalette() {
               <X className="w-3.5 h-3.5" />
             </button>
           )}
-          <kbd
-            className="text-[10px] px-1.5 py-0.5 rounded opacity-30 font-mono"
-            style={{ background: "rgba(0,0,0,0.07)", border: "1px solid rgba(0,0,0,0.1)" }}
-          >
+          <kbd className="text-[10px] px-1.5 py-0.5 rounded opacity-60 font-mono bg-muted border border-border">
             ESC
           </kbd>
         </div>
@@ -245,8 +231,8 @@ export function CommandPalette() {
                     value={action.id}
                     onSelect={() => go(action.href)}
                     className="flex items-center gap-3 px-4 py-2.5 cursor-pointer rounded-lg mx-2 text-sm
-                               data-[selected=true]:bg-[var(--green,#2D6A4F)] data-[selected=true]:text-white
-                               hover:bg-black/5 transition-colors"
+                               data-[selected=true]:bg-primary data-[selected=true]:text-primary-foreground
+                               hover:bg-accent transition-colors"
                   >
                     <Icon className="w-4 h-4 opacity-70 flex-shrink-0" />
                     <span className="flex-1">{action.label}</span>
@@ -272,8 +258,8 @@ export function CommandPalette() {
                         value={item.href + item.label}
                         onSelect={() => go(item.href)}
                         className="flex items-center gap-3 px-4 py-2.5 cursor-pointer rounded-lg mx-2 text-sm
-                                   data-[selected=true]:bg-[var(--green,#2D6A4F)] data-[selected=true]:text-white
-                                   hover:bg-black/5 transition-colors"
+                                   data-[selected=true]:bg-primary data-[selected=true]:text-primary-foreground
+                                   hover:bg-accent transition-colors"
                       >
                         <Icon className="w-4 h-4 opacity-70 flex-shrink-0" />
                         <span className="flex-1">{item.label}</span>
@@ -299,8 +285,8 @@ export function CommandPalette() {
                           value={item.href + item.label + group}
                           onSelect={() => go(item.href)}
                           className="flex items-center gap-3 px-4 py-2 cursor-pointer rounded-lg mx-2 text-sm
-                                     data-[selected=true]:bg-[var(--green,#2D6A4F)] data-[selected=true]:text-white
-                                     hover:bg-black/5 transition-colors"
+                                     data-[selected=true]:bg-primary data-[selected=true]:text-primary-foreground
+                                     hover:bg-accent transition-colors"
                         >
                           <Icon className="w-4 h-4 opacity-60 flex-shrink-0" />
                           <span className="flex-1">{item.label}</span>
@@ -334,8 +320,8 @@ export function CommandPalette() {
                     else go("/library");
                   }}
                   className="flex items-start gap-3 px-4 py-2.5 cursor-pointer rounded-lg mx-2
-                             data-[selected=true]:bg-[var(--green,#2D6A4F)] data-[selected=true]:text-white
-                             hover:bg-black/5 transition-colors"
+                             data-[selected=true]:bg-primary data-[selected=true]:text-primary-foreground
+                             hover:bg-accent transition-colors"
                 >
                   <Sparkles className="w-4 h-4 opacity-60 flex-shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
@@ -353,10 +339,7 @@ export function CommandPalette() {
         </Command.List>
 
         {/* ── Footer hint ──────────────────────────────────────────────────── */}
-        <div
-          className="flex items-center justify-between px-4 py-2 border-t text-[11px] opacity-30 font-mono"
-          style={{ borderColor: "rgba(0,0,0,0.07)" }}
-        >
+        <div className="flex items-center justify-between px-4 py-2 border-t border-border text-[11px] opacity-40 font-mono">
           <span>↑↓ navigate · Enter select · Esc close</span>
           <span>⌘K</span>
         </div>

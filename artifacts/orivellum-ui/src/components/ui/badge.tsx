@@ -9,13 +9,13 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default:
-          'border border-transparent bg-[var(--green-raw)] text-[#F4EEE1] shadow-[var(--shadow-1)] font-medium dark:text-[#12100b]',
+          'border border-transparent bg-primary text-primary-foreground shadow-[var(--gd-shadow)] font-medium',
         secondary:
           'border border-transparent bg-secondary text-secondary-foreground font-medium',
         destructive:
-          'border border-transparent bg-[var(--rust)] text-[#F4EEE1] shadow-[var(--shadow-1)]',
+          'border border-transparent bg-destructive text-destructive-foreground shadow-[var(--gd-shadow)]',
         outline:
-          'text-foreground border border-[var(--line-2)]',
+          'text-foreground border border-border',
         // ── Tier badges (VELLUM document classification system) ──
         // .tier classes from CSS; these add the font
         canon:
@@ -28,9 +28,9 @@ const badgeVariants = cva(
           'tier tier-conv font-mono tracking-wider',
         claim:
           'tier tier-claim font-mono tracking-wider',
-        // Gilt accent badge (for "now" / current markers)
+        // Bronze accent badge (for "now" / current markers)
         gilt:
-          'border border-[var(--gilt-line)] bg-[var(--gilt-soft)] text-[var(--gilt)] font-mono text-[9.5px] tracking-widest uppercase',
+          'border border-[var(--gd-bronze-soft)] bg-[var(--gd-bronze-soft)] text-[var(--gd-bronze)] font-mono text-[9.5px] tracking-widest uppercase',
       },
     },
     defaultVariants: {

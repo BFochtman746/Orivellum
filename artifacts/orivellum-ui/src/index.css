@@ -668,7 +668,7 @@ body:is(.dark)::before {
   font-size: 10px;
   letter-spacing: 0.26em;
   text-transform: uppercase;
-  color: var(--gilt);
+  color: var(--gd-bronze);
   display: block;
 }
 
@@ -805,6 +805,17 @@ body:is(.dark)::before {
 }
 .dark .vellum-h1 { color: var(--green-2); }
 
+/* ── Page heading — semantic-token twin of .vellum-h1 (tokens flip; no dark
+   override needed). Preferred over .vellum-h1 for migrated screens. ──────── */
+.page-h1 {
+  font-family: var(--app-font-serif);
+  font-weight: 400;
+  font-size: clamp(28px, 5vw, 36px);
+  line-height: 1.05;
+  color: hsl(var(--primary));
+  letter-spacing: -0.01em;
+}
+
 /* Segment control (workspace folios) */
 .vellum-seg {
   display: flex;
@@ -856,7 +867,7 @@ body:is(.dark)::before {
   font-size: 9.5px;
   letter-spacing: 0.20em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--gd-dim);
   display: block;
   margin: 18px 0 8px;
 }

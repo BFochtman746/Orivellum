@@ -70,12 +70,12 @@ export function SyncStatusChip({ compact = false }: { compact?: boolean }) {
 
   const tone =
     state === "synced"
-      ? { color: "var(--green-2)" }
+      ? { color: "hsl(var(--primary))" }
       : state === "offline" || state === "unreachable"
-        ? { color: "var(--destructive, #b91c1c)" }
+        ? { color: "var(--gd-danger)" }
         : state === "ai-offline"
           ? undefined
-          : { color: "var(--gilt)" };
+          : { color: "var(--gd-bronze)" };
 
   return (
     <span

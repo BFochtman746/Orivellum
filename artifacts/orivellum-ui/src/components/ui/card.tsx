@@ -8,14 +8,14 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      // VELLUM card: warm card bg, warm hairline border, 16px radius, warm shadow
+      // Card: warm card bg, hairline border, 16px radius, token shadow
       'rounded-[16px] border bg-card text-card-foreground',
       tap && 'cursor-pointer transition-[box-shadow,border-color,transform] duration-[180ms] ease-out',
-      tap && 'hover:border-[var(--gilt-line)] hover:shadow-[var(--shadow-2)] hover:-translate-y-px',
-      tap && 'active:scale-[0.99] active:shadow-[var(--shadow-1)]',
+      tap && 'hover:border-[var(--gd-bronze-soft)] hover:shadow-[var(--gd-shadow)] hover:-translate-y-px',
+      tap && 'active:scale-[0.99] active:shadow-[var(--gd-shadow)]',
       className,
     )}
-    style={{ boxShadow: 'var(--shadow-1)', borderColor: 'var(--line)', ...props.style }}
+    style={{ boxShadow: 'var(--gd-shadow)', borderColor: 'hsl(var(--border))', ...props.style }}
     {...props}
   />
 ));

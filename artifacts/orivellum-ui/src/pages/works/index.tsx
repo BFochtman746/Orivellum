@@ -6,15 +6,16 @@ import {
 } from "@workspace/api-client-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Page, Panel, EmptyState, ErrorState, LoadingState, Status,
+} from "@/components/primitives";
 import { format } from "date-fns";
 import {
   BookOpen, Plus, Search, Library, FileText, CheckCircle2, Circle,
-  ArrowRight, Loader2,
+  ArrowRight, Loader2, GraduationCap, FlaskConical,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -25,6 +26,26 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// ── One object model — Book / Research / Learning are FILTERS ────────────────
+// A Work has a free-form `work_type`; we bucket it into one of three kinds so
+// the chip row filters a single list instead of pretending they're separate
+// products. Anything unrecognised falls into Research (the neutral default).
+type WorkKind = "book" | "research" | "learning";
+
+function workKind(workType?: string | null): WorkKind {
+  const t = (workType ?? "").toLowerCase();
+  if (["writing", "essay", "reference", "book", "manuscript"].includes(t)) return "book";
+  if (["study", "learning", "learn", "personal", "course"].includes(t)) return "learning";
+  return "research";
+}
+
+const KIND_FILTERS: { id: "all" | WorkKind; label: string }[] = [
+  { id: "all",      label: "All" },
+  { id: "book",     label: "Book" },
+  { id: "research", label: "Research" },
+  { id: "learning", label: "Learning" },
+];
 
 // ── Import-from-Library dialog ────────────────────────────────────────────────
 
@@ -105,13 +126,16 @@ function ImportFromLibraryDialog({
 
         <ScrollArea className="max-h-80 -mx-1 px-1">
           {isLoading ? (
-            <div className="space-y-2 py-2">
-              {[1,2,3].map(i => <Skeleton key={i} className="h-14 w-full rounded-lg" />)}
+            <div className="py-2">
+              <LoadingState rows={3} label="Loading library" />
             </div>
           ) : docs.length === 0 ? (
-            <div className="text-center py-10 text-muted-foreground text-sm">
-              No processed documents in your library yet.
-              Upload files in the Library tab first.
+            <div className="py-2">
+              <EmptyState
+                icon={<Library />}
+                title="No processed documents yet"
+                description="Upload files in the Library tab first, then come back to turn them into Works."
+              />
             </div>
           ) : (
             <div className="space-y-1 py-1">
@@ -126,7 +150,7 @@ function ImportFromLibraryDialog({
                       <button
                         key={doc.id}
                         onClick={() => toggle(doc.id)}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 min-h-11 rounded-lg text-left touch-manipulation transition-colors
                           ${sel ? "bg-primary/10 border border-primary/30" : "hover:bg-muted/50 border border-transparent"}`}
                       >
                         {sel
@@ -156,7 +180,7 @@ function ImportFromLibraryDialog({
                       key={doc.id}
                       className="flex items-center gap-3 px-3 py-2.5 rounded-lg opacity-40 cursor-not-allowed"
                     >
-                      <CheckCircle2 className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />
+                      <CheckCircle2 className="w-4 h-4 shrink-0" style={{ color: "var(--gd-success)" }} />
                       <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium truncate">
@@ -172,11 +196,11 @@ function ImportFromLibraryDialog({
         </ScrollArea>
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy} className="min-h-11">Cancel</Button>
           <Button
             onClick={handleImport}
             disabled={!selected.length || busy}
-            className="gap-2"
+            className="gap-2 min-h-11"
           >
             {busy
               ? <><Loader2 className="w-4 h-4 animate-spin" />Creating…</>
@@ -258,8 +282,8 @@ function NewWorkDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleCreate} disabled={!newWork.title || createWork.isPending}>
+          <Button variant="outline" onClick={onClose} className="min-h-11">Cancel</Button>
+          <Button onClick={handleCreate} disabled={!newWork.title || createWork.isPending} className="min-h-11">
             {createWork.isPending ? "Creating…" : "Create Work"}
           </Button>
         </DialogFooter>
@@ -274,12 +298,13 @@ export default function WorksList() {
   const searchStr = useSearch();
   const [search, setSearch]             = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "archived">("all");
+  const [kindFilter, setKindFilter]     = useState<"all" | WorkKind>("all");
   const [isCreateOpen, setIsCreateOpen] = useState(
     () => new URLSearchParams(searchStr).get("create") === "1"
   );
   const [isImportOpen, setIsImportOpen] = useState(false);
 
-  const { data: worksResp, isLoading } = useListWorks(
+  const { data: worksResp, isLoading, isError, refetch } = useListWorks(
     { query: { refetchInterval: 30_000, staleTime: 20_000 } } as any,
   );
 
@@ -288,39 +313,35 @@ export default function WorksList() {
       || w.title?.toLowerCase().includes(search.toLowerCase())
       || w.description?.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || (w as any).status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const matchesKind = kindFilter === "all" || workKind((w as any).work_type) === kindFilter;
+    return matchesSearch && matchesStatus && matchesKind;
   });
 
+  const headerActions = (
+    <>
+      <Button variant="outline" className="gap-2 min-h-11" onClick={() => setIsImportOpen(true)}>
+        <Library className="w-4 h-4" />
+        Import from Library
+      </Button>
+      <Button className="gap-2 min-h-11" onClick={() => setIsCreateOpen(true)} data-testid="button-new-work">
+        <Plus className="w-4 h-4" />
+        New Work
+      </Button>
+    </>
+  );
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <Page wide eyebrow="In Progress" title="Works" actions={headerActions}>
       {/* Dialogs */}
       <NewWorkDialog       open={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
       <ImportFromLibraryDialog open={isImportOpen}  onClose={() => setIsImportOpen(false)} />
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b pb-4" style={{ borderColor: 'var(--line)' }}>
-        <div>
-          <span className="eyebrow mb-1">In Progress</span>
-          <h1 className="vellum-h1">Works &amp; Books</h1>
-          <div className="gilt-rule w-36" />
-          <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
-            Manuscripts through the pipeline, B0 to B17.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button variant="outline" className="gap-2" onClick={() => setIsImportOpen(true)}>
-            <Library className="w-4 h-4" />
-            Import from Library
-          </Button>
-          <Button className="gap-2" onClick={() => setIsCreateOpen(true)}>
-            <Plus className="w-4 h-4" />
-            New Work
-          </Button>
-        </div>
-      </div>
+      <p className="text-[13px] text-muted-foreground -mt-2">
+        One list. Filter by kind — Book, Research, or Learning — they're facets of the same object.
+      </p>
 
-      {/* Filters */}
-      <div className="flex items-center gap-4">
+      {/* Search + status */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -328,15 +349,16 @@ export default function WorksList() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-9 bg-background/50"
+            data-testid="input-works-search"
           />
         </div>
-        <div className="flex items-center gap-1 border border-border/50 rounded-lg p-0.5 bg-muted/20">
+        <div className="flex items-center gap-1 flex-wrap">
           {(["all", "active", "archived"] as const).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
-              className={`px-3 py-2 rounded-md text-xs font-mono uppercase tracking-wider transition-colors min-h-[36px] touch-manipulation
-                ${statusFilter === s ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              data-active={statusFilter === s}
+              className="gd-chip min-h-11 px-3 text-xs font-mono uppercase tracking-wider touch-manipulation"
             >
               {s}
             </button>
@@ -344,19 +366,40 @@ export default function WorksList() {
         </div>
       </div>
 
+      {/* Kind filter chips — one object model, three facets */}
+      <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filter by kind">
+        {KIND_FILTERS.map(({ id, label }) => (
+          <button
+            key={id}
+            onClick={() => setKindFilter(id)}
+            data-active={kindFilter === id}
+            data-testid={`chip-kind-${id}`}
+            className="gd-chip min-h-11 px-3.5 text-xs font-mono uppercase tracking-wider touch-manipulation"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* List */}
       {isLoading ? (
-        <div className="grid gap-4">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}
-        </div>
+        <LoadingState rows={3} label="Loading works" />
+      ) : isError ? (
+        <ErrorState
+          title="Could not load works"
+          detail="The works list failed to load. Check your connection and try again."
+          onRetry={() => refetch()}
+        />
       ) : filteredWorks && filteredWorks.length > 0 ? (
-        <div className="grid gap-4">
-          {filteredWorks.map(work => (
-            <Link key={work.id} href={`/works/${work.id}`}>
-              <Card className="vellum-card tap spring-scale cursor-pointer group" data-interactive>
-                <CardContent className="p-6">
+        <div className="grid gap-3">
+          {filteredWorks.map(work => {
+            const kind = workKind((work as any).work_type);
+            const KindIcon = kind === "book" ? BookOpen : kind === "learning" ? GraduationCap : FlaskConical;
+            return (
+              <Link key={work.id} href={`/works/${work.id}`} className="block" data-testid={`row-work-${work.id}`}>
+                <Panel className="cursor-pointer transition-transform active:scale-[0.99] hover:bg-accent/40">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    {(work as any).cover_path && (
+                    {(work as any).cover_path ? (
                       <img
                         src={`${BASE}/works/${work.id}/cover`}
                         alt=""
@@ -364,25 +407,30 @@ export default function WorksList() {
                         className="hidden md:block w-14 h-20 object-cover rounded border border-border/50 shadow-sm shrink-0"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                       />
+                    ) : (
+                      <div className="hidden md:flex w-14 h-20 rounded border border-border/50 shrink-0 items-center justify-center text-muted-foreground/40">
+                        <KindIcon className="w-6 h-6" />
+                      </div>
                     )}
                     <div className="space-y-2 flex-1 min-w-0">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <h2 className="text-2xl font-serif font-medium group-hover:text-primary transition-colors truncate text-balance">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-xl font-serif font-medium text-foreground truncate text-balance">
                           {work.title}
                         </h2>
+                        <Badge variant="secondary" className="font-mono text-[10px] uppercase tracking-wider shrink-0 gap-1">
+                          <KindIcon className="w-3 h-3" />
+                          {kind}
+                        </Badge>
                         <Badge variant="outline" className="font-mono text-[10px] uppercase tracking-wider bg-primary/5 text-primary border-primary/20 shrink-0">
                           {work.status}
                         </Badge>
-                        <Badge variant="secondary" className="font-mono text-[10px] uppercase tracking-wider shrink-0">
-                          {work.work_type}
-                        </Badge>
                         <WorkReadinessBadge work={work as any} />
                       </div>
-                      <p className="text-muted-foreground text-sm leading-relaxed">
+                      <p className="text-muted-foreground text-sm leading-relaxed line-clamp-2">
                         {work.description || <span className="italic opacity-50">No description provided.</span>}
                       </p>
                     </div>
-                    <div className="flex items-center gap-6 text-sm text-muted-foreground shrink-0 md:border-l md:border-border/50 md:pl-6">
+                    <div className="flex items-center gap-5 text-sm text-muted-foreground shrink-0 md:border-l md:border-border md:pl-6">
                       {[
                         { label: "Docs",      value: work.doc_count       || 0 },
                         { label: "Knowledge", value: work.knowledge_count || 0 },
@@ -404,40 +452,41 @@ export default function WorksList() {
                       )}
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+                </Panel>
+              </Link>
+            );
+          })}
         </div>
       ) : (
-        /* Empty state */
-        <div className="text-center py-16 bg-muted/10 rounded-xl border border-dashed border-border/50 space-y-4">
-          <BookOpen className="w-12 h-12 text-muted-foreground mx-auto opacity-40" />
-          <div>
-            <h3 className="text-lg font-serif font-medium">
-              {search ? "No works match your search" : "No works yet"}
-            </h3>
-            <p className="text-muted-foreground mt-1 text-sm max-w-sm mx-auto">
-              {search
-                ? "Try a different search term."
-                : "If you've already uploaded books or documents to the Library, use Import to turn them into Works automatically."}
-            </p>
-          </div>
-          {!search && (
-            <div className="flex items-center justify-center gap-3">
-              <Button variant="outline" className="gap-2" onClick={() => setIsImportOpen(true)}>
-                <Library className="w-4 h-4" />
-                Import from Library
-              </Button>
-              <Button className="gap-2" onClick={() => setIsCreateOpen(true)}>
-                <Plus className="w-4 h-4" />
-                New Work
-              </Button>
-            </div>
-          )}
-        </div>
+        <EmptyState
+          icon={<BookOpen />}
+          title={
+            search || kindFilter !== "all" || statusFilter !== "all"
+              ? "No works match your filters"
+              : "No works yet"
+          }
+          description={
+            search || kindFilter !== "all" || statusFilter !== "all"
+              ? "Try clearing the search or a different filter."
+              : "If you've already uploaded books or documents to the Library, use Import to turn them into Works automatically."
+          }
+          action={
+            search || kindFilter !== "all" || statusFilter !== "all" ? undefined : (
+              <div className="flex items-center justify-center gap-3">
+                <Button variant="outline" className="gap-2 min-h-11" onClick={() => setIsImportOpen(true)}>
+                  <Library className="w-4 h-4" />
+                  Import from Library
+                </Button>
+                <Button className="gap-2 min-h-11" onClick={() => setIsCreateOpen(true)}>
+                  <Plus className="w-4 h-4" />
+                  New Work
+                </Button>
+              </div>
+            )
+          }
+        />
       )}
-    </div>
+    </Page>
   );
 }
 
@@ -455,29 +504,14 @@ function WorkReadinessBadge({ work }: { work: WorkWithReadiness }) {
 
   if (!doc_count) return null; // no docs → no badge
 
-  let label: string;
-  let cls: string;
-
-  let badgeStyle: React.CSSProperties;
-
   if (error_doc_count > 0) {
-    label      = `${error_doc_count} error${error_doc_count !== 1 ? "s" : ""}`;
-    badgeStyle = { borderColor: 'var(--rust)', color: 'var(--rust)', background: 'var(--rust-soft)' };
-  } else if (processing_doc_count > 0) {
-    label      = "Processing";
-    badgeStyle = { borderColor: 'var(--gilt-line)', color: 'var(--gilt)', background: 'var(--gilt-soft)' };
-  } else if (ready_doc_count === doc_count) {
-    label      = "Ready";
-    badgeStyle = { borderColor: 'var(--green-2)', color: 'var(--green-2)', background: 'var(--green-soft)' };
-  } else {
-    label      = `${ready_doc_count}/${doc_count} ready`;
-    badgeStyle = { borderColor: 'var(--line-2)', color: 'var(--ink-soft)', background: 'transparent' };
+    return <Status kind="danger" label={`${error_doc_count} error${error_doc_count !== 1 ? "s" : ""}`} />;
   }
-
-  return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-mono font-medium shrink-0"
-          style={badgeStyle}>
-      {label}
-    </span>
-  );
+  if (processing_doc_count > 0) {
+    return <Status kind="busy" label="Processing" />;
+  }
+  if (ready_doc_count === doc_count) {
+    return <Status kind="ok" label="Ready" />;
+  }
+  return <Status kind="idle" label={`${ready_doc_count}/${doc_count} ready`} />;
 }

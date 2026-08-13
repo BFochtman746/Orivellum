@@ -28,7 +28,7 @@ export function Page({
         <header className="flex items-end justify-between gap-3 pt-4">
           <div className="min-w-0">
             {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-            {title && <h1 className="vellum-h1 truncate">{title}</h1>}
+            {title && <h1 className="page-h1 truncate">{title}</h1>}
           </div>
           {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
         </header>

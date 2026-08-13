@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useRef } from "react";
 import { useParams, Link, useLocation, useSearch } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
@@ -6,88 +6,54 @@ import {
   useGetWorkStats,
   useUpdateWork,
   useDeleteWork,
-  useDeleteKnowledgeItem,
-  useGetWorkDocuments,
-  useGetWorkKnowledge,
-  useGetWorkTasks,
-  useGetWorkConversations,
-  useCreateWorkTask,
-  useUpdateWorkTask,
-  useCreateConversation,
-  useListLibrary,
   getGetWorkQueryKey,
   getGetWorkStatsQueryKey,
   getListWorksQueryKey,
-  getGetWorkTasksQueryKey,
-  getGetWorkDocumentsQueryKey,
-  getGetWorkKnowledgeQueryKey,
-  getGetWorkConversationsQueryKey,
-  getListConversationsQueryKey,
-  useGetEmbeddingsStatus,
-  getGetEmbeddingsStatusQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { apiFetch } from "@/lib/auth";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+  Sheet, SheetContent, SheetHeader, SheetTitle,
+} from "@/components/ui/sheet";
 import {
   ArrowLeft,
   FileText,
   Network,
   CheckSquare,
   MessageSquare,
-  Plus,
   Clock,
   Loader2,
-  Sparkles,
-  ThumbsUp,
-  ThumbsDown,
   Pencil,
   Check,
   X,
   Trash2,
   GraduationCap,
-  RefreshCw,
-  ChevronRight,
-  MessageSquarePlus,
-  Unlink,
   Search,
   BookOpen,
-  ChevronDown,
-  Trophy,
   BarChart2,
   AlertTriangle,
-  TrendingUp,
   Lightbulb,
   Brain,
-  Star,
-  GitBranch,
   Share2,
-  FileSpreadsheet,
-  FileType,
-  Presentation,
-  Package,
-  Download,
-  Zap,
   Film,
   Scroll,
   ImagePlus,
+  LayoutDashboard,
+  Sparkles,
+  Wrench,
+  GitBranch,
+  Gauge,
+  Package as PackageIcon,
+  History as HistoryIcon,
+  ChevronRight,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -102,9 +68,7 @@ import { BookTab }       from "./book-tab";
 import { BrainstormTab } from "./brainstorm-tab";
 import { TrailerTab }    from "./trailer-tab";
 import { GenesisTab }    from "./genesis-tab";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
 
 import { DocumentsTab } from "./documents-tab";
@@ -117,6 +81,46 @@ import { GapsTab } from "./gaps-tab";
 import { CompletenessTab } from "./completeness-tab";
 import { GraphTab } from "./graph-tab";
 import { QuizTab } from "./quiz-tab";
+
+import {
+  Page, Panel, Section, ErrorState, Status,
+} from "@/components/primitives";
+
+// ─── View / segment IA (WP3 restructure) ─────────────────────────────────────
+// FIVE primary views replace the old ~14 flat tabs. Each view owns inner
+// segments; advanced tools live in a single Tools overflow menu, never as a
+// primary view.
+type PrimaryView = "overview" | "create" | "knowledge" | "review" | "activity";
+
+const VIEW_SEGMENTS: Record<PrimaryView, string[]> = {
+  overview: [],
+  create: ["book", "brainstorm", "genesis"],
+  knowledge: ["knowledge", "search", "graph"],
+  review: ["gaps", "completeness", "quiz", "study"],
+  activity: ["conversations", "tasks"],
+};
+
+// BACK-COMPAT: every old ?tab= value maps to a { view, segment } pair so deep
+// links from other pages (intelligence, review queue, intake, brainstorm) keep
+// landing on the right content. `trailer` opens the Tools trailer surface.
+const LEGACY_TAB_MAP: Record<string, { view: PrimaryView; segment?: string; trailer?: boolean }> = {
+  book:          { view: "create",   segment: "book" },
+  brainstorm:    { view: "create",   segment: "brainstorm" },
+  genesis:       { view: "create",   segment: "genesis" },
+  documents:     { view: "overview" },
+  docs:          { view: "overview" },
+  knowledge:     { view: "knowledge", segment: "knowledge" },
+  graph:         { view: "knowledge", segment: "graph" },
+  search:        { view: "knowledge", segment: "search" },
+  gaps:          { view: "review",   segment: "gaps" },
+  completeness:  { view: "review",   segment: "completeness" },
+  quiz:          { view: "review",   segment: "quiz" },
+  learn:         { view: "review",   segment: "study" },
+  conversations: { view: "activity", segment: "conversations" },
+  tasks:         { view: "activity", segment: "tasks" },
+  trailer:       { view: "overview", trailer: true },
+};
+
 // ─── Work cover image ─────────────────────────────────────────────────────────
 // Upload / replace / remove a Work's cover. Shown beside the title and used as
 // lock-screen artwork when listening to this Work's documents.
@@ -184,7 +188,7 @@ function WorkCover({ workId, coverPath }: { workId: string; coverPath?: string |
           <img
             src={`${BASE}/works/${workId}/cover?v=${version}`}
             alt="Work cover"
-            className="w-24 h-36 object-cover rounded-md border border-border/60 shadow-md"
+            className="w-24 h-36 object-cover rounded-md border border-border shadow-sm"
           />
           <div className="absolute inset-0 rounded-md bg-background/70 opacity-0 group-hover/cover:opacity-100 focus-within:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5">
             {busy ? (
@@ -212,7 +216,7 @@ function WorkCover({ workId, coverPath }: { workId: string; coverPath?: string |
           onClick={() => fileRef.current?.click()}
           disabled={busy}
           title="Add a cover image (PNG, JPEG, or WebP)"
-          className="w-24 h-36 rounded-md border border-dashed border-border/60 flex flex-col items-center justify-center gap-1.5 text-muted-foreground/50 hover:text-muted-foreground hover:border-border hover:bg-muted/30 transition-colors"
+          className="w-24 h-36 rounded-md border border-dashed border-border flex flex-col items-center justify-center gap-1.5 text-muted-foreground/50 hover:text-muted-foreground hover:border-border hover:bg-muted/30 transition-colors"
         >
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
           <span className="text-[10px] font-mono uppercase tracking-wider">Cover</span>
@@ -253,7 +257,7 @@ function WorkRenderingIndicator({ workId }: { workId: string }) {
       href="/studio?tool=voice&vtab=audiobook"
       title="An audiobook is rendering for this Work — open the Studio to see full progress"
       className="flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded-full border transition-colors"
-      style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}
+      style={{ color: "var(--gd-bronze)", borderColor: "var(--gd-bronze-soft)", background: "var(--gd-bronze-soft)" }}
       data-testid="badge-work-rendering"
     >
       <Loader2 className="w-3 h-3 animate-spin" />
@@ -270,9 +274,10 @@ export default function WorkDetail() {
   const { workId } = useParams();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
-  const { data: workResp, isLoading: loadingWork } = useGetWork(workId!, {
-    query: { enabled: !!workId, queryKey: getGetWorkQueryKey(workId!) },
-  });
+  const { data: workResp, isLoading: loadingWork, isError: workError, refetch: refetchWork } =
+    useGetWork(workId!, {
+      query: { enabled: !!workId, queryKey: getGetWorkQueryKey(workId!) },
+    });
   const work = workResp?.work;
   const { data: statsResp } = useGetWorkStats(workId!, {
     query: {
@@ -292,7 +297,7 @@ export default function WorkDetail() {
 
   // Pipeline status — shared cache key with BookTab so no duplicate fetches
   const PIPELINE_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
-  const { data: pipelineData, refetch: refetchPipeline } = useQuery<{ pipeline: any | null }>({
+  const { data: pipelineData } = useQuery<{ pipeline: any | null }>({
     queryKey: ["pipeline", workId],
     queryFn: () => apiFetch(`${PIPELINE_BASE}/works/${workId}/pipeline`).then(r => r.json()),
     enabled: !!workId,
@@ -300,6 +305,42 @@ export default function WorkDetail() {
   });
   const hasPipeline = !!(pipelineData?.pipeline);
   const pipelineStatus = pipelineData?.pipeline?.status ?? null;
+
+  // ── View / segment routing ──────────────────────────────────────────────
+  const _searchStr   = useSearch();
+  const _urlParams   = new URLSearchParams(_searchStr);
+  const _legacyTab   = _urlParams.get("tab");
+  const _mapped      = _legacyTab ? LEGACY_TAB_MAP[_legacyTab] : undefined;
+  const _initialSearchQuery = _urlParams.get("q") ?? "";
+
+  const [view, setView] = useState<PrimaryView>(() => _mapped?.view ?? "overview");
+  const [segment, setSegment] = useState<Record<PrimaryView, string>>(() => ({
+    overview: "",
+    create: VIEW_SEGMENTS.create[0],
+    knowledge: VIEW_SEGMENTS.knowledge[0],
+    review: VIEW_SEGMENTS.review[0],
+    activity: VIEW_SEGMENTS.activity[0],
+  }));
+  const [trailerOpen, setTrailerOpen] = useState(() => _mapped?.trailer ?? false);
+
+  // Jump helper — moves to a view and (optionally) its inner segment. Replaces
+  // the old flat setActiveTab so internal jumps (pipeline → book, stat cards,
+  // brainstorm-from-gap) keep working across the new IA.
+  const goto = (v: PrimaryView, seg?: string) => {
+    setView(v);
+    if (seg) setSegment((prev) => ({ ...prev, [v]: seg }));
+  };
+    const setViewSegment = (v: PrimaryView) => (seg: string) =>
+    setSegment((prev) => ({ ...prev, [v]: seg }));
+
+  // Brainstorm seed — set when user clicks "Brainstorm this" on a gap card
+  const [brainstormSeed, setBrainstormSeed] = useState(_initialSearchQuery);
+  const [brainstormContext, setBrainstormContext] = useState("general");
+  const handleBrainstormGap = (seed: string) => {
+    setBrainstormSeed(seed);
+    setBrainstormContext("research_planning");
+    goto("create", "brainstorm");
+  };
 
   const startPipeline = useMutation({
     mutationFn: () =>
@@ -310,7 +351,7 @@ export default function WorkDetail() {
       }).then(r => { if (!r.ok) throw new Error("failed"); return r.json(); }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pipeline", workId] });
-      setActiveTab("book");
+      goto("create", "book");
       toast.success("Book pipeline started");
     },
     onError: () => toast.error("Could not start book pipeline"),
@@ -329,21 +370,6 @@ export default function WorkDetail() {
         onError: () => toast.error("Could not delete work"),
       }
     );
-  };
-
-  // Tab state — initialised from ?tab= URL param so deep-links from the
-  // Intelligence page work (e.g. ?tab=search&q=gap+title).
-  const _searchStr   = useSearch();
-  const _urlParams   = new URLSearchParams(_searchStr);
-  const [activeTab, setActiveTab] = useState(() => _urlParams.get("tab") ?? "book");
-  const _initialSearchQuery = _urlParams.get("q") ?? "";
-  // Brainstorm seed — set when user clicks "Brainstorm this" on a gap card
-  const [brainstormSeed, setBrainstormSeed] = useState(_initialSearchQuery);
-  const [brainstormContext, setBrainstormContext] = useState("general");
-  const handleBrainstormGap = (seed: string) => {
-    setBrainstormSeed(seed);
-    setBrainstormContext("research_planning");
-    setActiveTab("brainstorm");
   };
 
   // Inline editing state
@@ -374,71 +400,98 @@ export default function WorkDetail() {
     );
   };
 
+  // ── Advanced tools overflow (contextually available, never a primary view) ─
+  const toolsMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1.5 text-xs min-h-11" data-testid="button-tools">
+          <Wrench className="w-3.5 h-3.5" /> Tools
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+          Advanced tools
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => setTrailerOpen(true)} className="gap-2 cursor-pointer" data-testid="tool-trailer">
+          <Film className="w-4 h-4 text-muted-foreground" /> Trailer
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate(`/works/${workId}/gap-oracle`)} className="gap-2 cursor-pointer">
+          <Sparkles className="w-4 h-4 text-muted-foreground" /> Gap Oracle
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate(`/works/${workId}/intelligence`)} className="gap-2 cursor-pointer">
+          <Brain className="w-4 h-4 text-muted-foreground" /> Intelligence
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate(`/works/${workId}/continuity`)} className="gap-2 cursor-pointer">
+          <GitBranch className="w-4 h-4 text-muted-foreground" /> Continuity
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate(`/works/${workId}/pacing`)} className="gap-2 cursor-pointer">
+          <Gauge className="w-4 h-4 text-muted-foreground" /> Pacing
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => navigate(`/works/${workId}/handoff`)} className="gap-2 cursor-pointer">
+          <PackageIcon className="w-4 h-4 text-muted-foreground" /> Handoff
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => goto("create", "book")} className="gap-2 cursor-pointer">
+          <Wrench className="w-4 h-4 text-muted-foreground" /> Drafting cockpit
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => goto("create", "book")} className="gap-2 cursor-pointer">
+          <HistoryIcon className="w-4 h-4 text-muted-foreground" /> Chapter history
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const headerActions = work ? (
+    <>
+      <WorkRenderingIndicator workId={workId!} />
+      <GenerateMenu workId={workId!} />
+      <QuickChatButton workId={workId!} />
+      {toolsMenu}
+      <button
+        onClick={handleDelete}
+        disabled={deleteWork.isPending}
+        className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/50 hover:text-destructive transition-colors px-2 py-1 rounded hover:bg-destructive/5 min-h-11"
+        data-testid="button-delete-work"
+      >
+        {deleteWork.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+        Delete
+      </button>
+    </>
+  ) : null;
+
+  // ── Page-level error / loading gates (six-state contract) ─────────────────
+  if (workError) {
+    return (
+      <Page wide>
+        <ErrorState
+          title="Could not load this work"
+          detail="The work failed to load. Check your connection and try again."
+          onRetry={() => refetchWork()}
+        />
+      </Page>
+    );
+  }
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 pb-20">
+    <Page wide>
       {/* Breadcrumb */}
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-4 text-sm font-mono uppercase tracking-widest text-muted-foreground">
-          <Link href="/works" className="hover:text-foreground transition-colors flex items-center gap-1">
-            <ArrowLeft className="w-3 h-3" /> Works
-          </Link>
-          <span>/</span>
-          <span className="text-foreground">
-            {loadingWork ? <Skeleton className="w-20 h-4 inline-block align-middle" /> : work?.title}
-          </span>
-        </div>
-        {work && (
-          <div className="flex items-center gap-2">
-            {/* Live audiobook render indicator — links to the Studio */}
-            <WorkRenderingIndicator workId={workId!} />
-            {/* Start Book Pipeline — only shown when no pipeline exists yet */}
-            {!hasPipeline && pipelineData !== undefined && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={startPipeline.isPending}
-                onClick={() => startPipeline.mutate()}
-                className="gap-1.5 text-xs transition-opacity hover:opacity-80"
-                style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)" }}
-              >
-                {startPipeline.isPending
-                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Starting…</>
-                  : <><BookOpen className="w-3.5 h-3.5" /> Start Book Pipeline</>}
-              </Button>
-            )}
-            {/* Show current pipeline stage badge when pipeline already exists */}
-            {hasPipeline && pipelineStatus && (
-              <button
-                onClick={() => setActiveTab("book")}
-                className="flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded-full border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 transition-colors"
-                title="View book pipeline"
-              >
-                <BookOpen className="w-3 h-3" />
-                {pipelineStatus}
-              </button>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => navigate(`/works/${workId}/intelligence`)}
-              className="gap-1.5 text-xs border-primary/30 text-primary hover:bg-primary/5"
-            >
-              <Brain className="w-3.5 h-3.5" />
-              Intelligence
-            </Button>
-            <GenerateMenu workId={workId!} />
-            <QuickChatButton workId={workId!} />
-            <button
-              onClick={handleDelete}
-              disabled={deleteWork.isPending}
-              className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/50 hover:text-destructive transition-colors px-2 py-1 rounded hover:bg-destructive/5"
-            >
-              {deleteWork.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              Delete
-            </button>
-          </div>
-        )}
+      <div className="flex items-center gap-4 text-sm font-mono uppercase tracking-widest text-muted-foreground -mb-1">
+        <Link href="/works" className="hover:text-foreground transition-colors flex items-center gap-1">
+          <ArrowLeft className="w-3 h-3" /> Works
+        </Link>
+        <span>/</span>
+        <span className="text-foreground truncate">
+          {loadingWork ? <Skeleton className="w-20 h-4 inline-block align-middle" /> : work?.title}
+        </span>
       </div>
+
+      {/* Header actions row */}
+      {work && (
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          {headerActions}
+        </div>
+      )}
 
       {/* Header */}
       {loadingWork ? (
@@ -465,11 +518,11 @@ export default function WorkDetail() {
                 rows={2}
               />
               <div className="flex items-center gap-2">
-                <Button size="sm" onClick={saveEdit} disabled={updateWork.isPending || !editTitle.trim()} className="gap-1.5">
+                <Button size="sm" onClick={saveEdit} disabled={updateWork.isPending || !editTitle.trim()} className="gap-1.5 min-h-11">
                   {updateWork.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                   Save
                 </Button>
-                <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={updateWork.isPending} className="gap-1.5">
+                <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={updateWork.isPending} className="gap-1.5 min-h-11">
                   <X className="w-3.5 h-3.5" /> Cancel
                 </Button>
               </div>
@@ -478,29 +531,28 @@ export default function WorkDetail() {
             <div className="flex items-start gap-5">
               <WorkCover workId={workId!} coverPath={(work as any).cover_path} />
               <div className="flex-1 min-w-0">
-              <div className="flex items-start gap-3">
-                <h1 className="vellum-h1">{work.title}</h1>
-                <button
-                  onClick={startEdit}
-                  className="mt-3 p-1.5 rounded text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
-                  title="Edit title and description"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="gilt-rule w-40" />
-              {work.description ? (
-                <p className="text-[14px] mt-1.5 max-w-3xl leading-relaxed epigraph" style={{ fontSize: '14.5px', margin: '6px 0 0', borderLeft: 'none', paddingLeft: 0 }}>
-                  {work.description}
-                </p>
-              ) : (
-                <button
-                  onClick={startEdit}
-                  className="text-sm text-muted-foreground/40 italic mt-2 hover:text-muted-foreground transition-colors"
-                >
-                  Add a description…
-                </button>
-              )}
+                <div className="flex items-start gap-3">
+                  <h1 className="page-h1 min-w-0 break-words">{work.title}</h1>
+                  <button
+                    onClick={startEdit}
+                    className="mt-3 p-1.5 rounded text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
+                    title="Edit title and description"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {work.description ? (
+                  <p className="text-sm mt-1.5 max-w-3xl leading-relaxed text-muted-foreground">
+                    {work.description}
+                  </p>
+                ) : (
+                  <button
+                    onClick={startEdit}
+                    className="text-sm text-muted-foreground/40 italic mt-2 hover:text-muted-foreground transition-colors"
+                  >
+                    Add a description…
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -557,143 +609,305 @@ export default function WorkDetail() {
               Created {work.created_at ? format(new Date(work.created_at), "MMM d, yyyy") : "Unknown"}
             </span>
           </div>
-          {stats && (
-            <div className="flex flex-wrap items-center gap-4 pt-1">
-              {[
-                {
-                  label: "Documents",
-                  value: Object.values(stats.documents_by_kind as Record<string, number> ?? {}).reduce((a, b) => a + b, 0),
-                },
-                {
-                  label: "Knowledge",
-                  value: Object.values(stats.knowledge_by_kind as Record<string, number> ?? {}).reduce((a, b) => a + b, 0),
-                },
-                {
-                  label: "Pending tasks",
-                  value: (stats.tasks_by_status as Record<string, number> ?? {}).pending ?? 0,
-                },
-                {
-                  label: "Conversations",
-                  value: stats.conversation_count ?? 0,
-                },
-              ].map(({ label, value }) => {
-                const tabMap: Record<string, string> = {
-                  "Documents": "docs",
-                  "Knowledge": "knowledge",
-                  "Pending tasks": "tasks",
-                  "Conversations": "conversations",
-                };
-                const target = tabMap[label];
-                return (
-                  <button
-                    key={label}
-                    className={`text-center group ${target ? "cursor-pointer hover:opacity-70 transition-opacity" : ""}`}
-                    onClick={target ? () => setActiveTab(target as typeof activeTab) : undefined}
-                    title={target ? `Go to ${label}` : undefined}
-                  >
-                    <div className={`text-lg font-semibold font-mono leading-none ${target ? "text-primary group-hover:underline" : ""}`}>{value}</div>
-                    <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">{label}</div>
-                  </button>
-                );
-              })}
-              {/* Mastery bar — shown when concepts exist for this work */}
-              {(stats as any).concept_count > 0 && (
-                <div className="flex items-center gap-3 ml-2 pl-4 border-l border-border/50">
-                  <div className="text-center">
-                    <div className="text-lg font-semibold font-mono leading-none">{(stats as any).avg_mastery_pct ?? 0}%</div>
-                    <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">Mastery</div>
-                  </div>
-                  <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-700"
-                      style={{ width: `${(stats as any).avg_mastery_pct ?? 0}%`, background: 'var(--green-2)' }}
-                    />
-                  </div>
-                </div>
-              )}
-              {/* Readiness strip — shown when any doc is still processing or has errors */}
-              {(() => {
-                const byR = stats.documents_by_readiness as Record<string, number> ?? {};
-                const processing = byR.imported ?? 0;
-                const errors = (byR.error ?? 0) + (byR.no_text ?? 0);
-                if (processing === 0 && errors === 0) return null;
-                return (
-                  <div className="flex items-center gap-2 ml-2 pl-4 border-l border-border/50">
-                    {processing > 0 && (
-                      <span className="flex items-center gap-1 text-[10px] font-mono rounded px-1.5 py-0.5"
-                            style={{ color: 'var(--gilt)', background: 'var(--gilt-soft)', border: '1px solid var(--gilt-line)' }}>
-                        <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--gilt)' }} />
-                        {processing} processing
-                      </span>
-                    )}
-                    {errors > 0 && (
-                      <span className="flex items-center gap-1 text-[10px] font-mono rounded px-1.5 py-0.5"
-                            style={{ color: 'var(--rust)', background: 'var(--rust-soft)', border: '1px solid var(--rust)' }}>
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--rust)' }} />
-                        {errors} error{errors !== 1 ? "s" : ""}
-                      </span>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          )}
         </div>
       ) : null}
 
-      {/* Tabs */}
-      <div className="pt-8">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="w-full justify-start border-b border-border/50 rounded-none bg-transparent h-auto p-0 space-x-6">
-            {[
-              { value: "book",         icon: BookOpen,      label: "Book",         badge: null },
-              { value: "documents",    icon: FileText,      label: "Documents",    badge: null },
-              { value: "knowledge",    icon: Network,       label: "Knowledge",    badge: null },
-              { value: "graph",        icon: Share2,        label: "Graph",        badge: null },
-              { value: "completeness", icon: BarChart2,     label: "Completeness", badge: null },
-              { value: "gaps",         icon: AlertTriangle, label: "Hygiene",      badge: null },
-              { value: "tasks",        icon: CheckSquare,   label: "Tasks",        badge: pendingTaskCount ?? null },
-              { value: "conversations",icon: MessageSquare, label: "Conversations",badge: null },
-              { value: "search",       icon: Search,        label: "Search",       badge: null },
-              { value: "quiz",         icon: GraduationCap, label: "Quiz",         badge: null },
-              { value: "learn",        icon: BookOpen,      label: "Learn",        badge: null },
-              { value: "brainstorm",   icon: Lightbulb,     label: "Brainstorm",   badge: null },
-              { value: "trailer",      icon: Film,          label: "Trailer",       badge: ((stats as any)?.trailer_count > 0 ? (stats as any)?.trailer_count : null) as number | null },
-              { value: "genesis",      icon: Scroll,        label: "Origination",       badge: null },
-            ].map(({ value, icon: Icon, label, badge }) => (
-              <TabsTrigger
-                key={value}
-                value={value}
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-1 font-mono text-xs uppercase tracking-wider min-h-[44px] touch-manipulation"
-              >
-                <Icon className="w-4 h-4 mr-2" /> {label}
-                {badge !== null && badge !== undefined && badge > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary leading-none">
-                    {badge}
-                  </span>
-                )}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+      {/* Primary views */}
+      {work && (
+        <div className="pt-4">
+          <Tabs value={view} onValueChange={(v) => setView(v as PrimaryView)} className="w-full">
+            <TabsList className="w-full justify-start border-b border-border rounded-none bg-transparent h-auto p-0 gap-2 flex-wrap">
+              {[
+                { value: "overview", icon: LayoutDashboard, label: "Overview" },
+                { value: "create",   icon: BookOpen,        label: "Create" },
+                { value: "knowledge",icon: Network,         label: "Knowledge" },
+                { value: "review",   icon: BarChart2,       label: "Review" },
+                { value: "activity", icon: MessageSquare,   label: "Activity", badge: pendingTaskCount || null },
+              ].map(({ value, icon: Icon, label, badge }) => (
+                <TabsTrigger
+                  key={value}
+                  value={value}
+                  data-testid={`view-${value}`}
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-2 font-mono text-xs uppercase tracking-wider min-h-11 touch-manipulation"
+                >
+                  <Icon className="w-4 h-4 mr-2" /> {label}
+                  {badge ? (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary leading-none">
+                      {badge}
+                    </span>
+                  ) : null}
+                </TabsTrigger>
+              ))}
+            </TabsList>
 
-          <div className="mt-8">
-            <TabsContent value="book"><ErrorBoundary label="book tab"><BookTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="documents"><ErrorBoundary label="documents tab"><DocumentsTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="knowledge"><ErrorBoundary label="knowledge tab"><KnowledgeTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="graph"><ErrorBoundary label="graph tab"><GraphTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="completeness"><ErrorBoundary label="completeness tab"><CompletenessTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="gaps"><ErrorBoundary label="hygiene tab"><GapsTab workId={workId!} onBrainstorm={handleBrainstormGap} /></ErrorBoundary></TabsContent>
-            <TabsContent value="tasks"><ErrorBoundary label="tasks tab"><TasksTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="conversations"><ErrorBoundary label="conversations tab"><ConversationsTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="search"><ErrorBoundary label="search tab"><SearchTab workId={workId!} initialQuery={_initialSearchQuery} /></ErrorBoundary></TabsContent>
-            <TabsContent value="quiz"><ErrorBoundary label="quiz tab"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></ErrorBoundary></TabsContent>
-            <TabsContent value="learn"><ErrorBoundary label="learn tab"><LearnTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="brainstorm"><ErrorBoundary label="brainstorm tab"><BrainstormTab key={brainstormSeed} workId={workId!} initialSeed={brainstormSeed} initialContext={brainstormContext} /></ErrorBoundary></TabsContent>
-            <TabsContent value="trailer"><ErrorBoundary label="trailer tab"><TrailerTab workId={workId!} /></ErrorBoundary></TabsContent>
-            <TabsContent value="genesis"><ErrorBoundary label="genesis tab"><GenesisTab workId={workId!} /></ErrorBoundary></TabsContent>
+            <div className="mt-6">
+              {/* 1 — OVERVIEW: meta/stats + documents + pipeline status card */}
+              <TabsContent value="overview" className="space-y-6">
+                {stats && (
+                  <div className="flex flex-wrap items-center gap-4">
+                    {[
+                      {
+                        label: "Documents",
+                        value: Object.values(stats.documents_by_kind as Record<string, number> ?? {}).reduce((a, b) => a + b, 0),
+                        onClick: undefined,
+                      },
+                      {
+                        label: "Knowledge",
+                        value: Object.values(stats.knowledge_by_kind as Record<string, number> ?? {}).reduce((a, b) => a + b, 0),
+                        onClick: () => goto("knowledge", "knowledge"),
+                      },
+                      {
+                        label: "Pending tasks",
+                        value: (stats.tasks_by_status as Record<string, number> ?? {}).pending ?? 0,
+                        onClick: () => goto("activity", "tasks"),
+                      },
+                      {
+                        label: "Conversations",
+                        value: stats.conversation_count ?? 0,
+                        onClick: () => goto("activity", "conversations"),
+                      },
+                    ].map(({ label, value, onClick }) => (
+                      <button
+                        key={label}
+                        className={`text-center group ${onClick ? "cursor-pointer hover:opacity-70 transition-opacity" : ""}`}
+                        onClick={onClick}
+                        title={onClick ? `Go to ${label}` : undefined}
+                      >
+                        <div className={`text-lg font-semibold font-mono leading-none ${onClick ? "text-primary group-hover:underline" : ""}`}>{value}</div>
+                        <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">{label}</div>
+                      </button>
+                    ))}
+                    {(stats as any).concept_count > 0 && (
+                      <div className="flex items-center gap-3 ml-2 pl-4 border-l border-border">
+                        <div className="text-center">
+                          <div className="text-lg font-semibold font-mono leading-none">{(stats as any).avg_mastery_pct ?? 0}%</div>
+                          <div className="text-[10px] font-mono uppercase text-muted-foreground mt-0.5">Mastery</div>
+                        </div>
+                        <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-700"
+                            style={{ width: `${(stats as any).avg_mastery_pct ?? 0}%`, background: "var(--gd-primary)" }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {(() => {
+                      const byR = stats.documents_by_readiness as Record<string, number> ?? {};
+                      const processing = byR.imported ?? 0;
+                      const errors = (byR.error ?? 0) + (byR.no_text ?? 0);
+                      if (processing === 0 && errors === 0) return null;
+                      return (
+                        <div className="flex items-center gap-3 ml-2 pl-4 border-l border-border">
+                          {processing > 0 && <Status kind="busy" label={`${processing} processing`} />}
+                          {errors > 0 && <Status kind="danger" label={`${errors} error${errors !== 1 ? "s" : ""}`} />}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Pipeline status card — links into Create */}
+                <Panel>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <BookOpen className="w-5 h-5 text-primary shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-foreground">Book pipeline</div>
+                        <div className="text-xs text-muted-foreground">
+                          {hasPipeline && pipelineStatus
+                            ? <span className="inline-flex items-center gap-2"><Status kind="busy" label={String(pipelineStatus)} /></span>
+                            : pipelineData !== undefined
+                              ? "No pipeline yet — start one to draft this Work into a book."
+                              : "Checking pipeline status…"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {!hasPipeline && pipelineData !== undefined ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={startPipeline.isPending}
+                          onClick={() => startPipeline.mutate()}
+                          className="gap-1.5 text-xs min-h-11"
+                          data-testid="button-start-pipeline"
+                        >
+                          {startPipeline.isPending
+                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Starting…</>
+                            : <><BookOpen className="w-3.5 h-3.5" /> Start Book Pipeline</>}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={() => goto("create", "book")}
+                          className="gap-1.5 text-xs min-h-11"
+                          data-testid="button-open-book"
+                        >
+                          Open Create <ChevronRight className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </Panel>
+
+                <Section label="Documents">
+                  <ErrorBoundary label="documents tab"><DocumentsTab workId={workId!} /></ErrorBoundary>
+                </Section>
+              </TabsContent>
+
+              {/* 2 — CREATE: Book / Brainstorm / Genesis */}
+              <TabsContent value="create">
+                <SegmentedView
+                  segments={[
+                    { id: "book",       icon: BookOpen,   label: "Book" },
+                    { id: "brainstorm", icon: Lightbulb,  label: "Brainstorm" },
+                    { id: "genesis",    icon: Scroll,     label: "Origination" },
+                  ]}
+                  value={segment.create}
+                  onChange={setViewSegment("create")}
+                >
+                  {segment.create === "book" && (
+                    <ErrorBoundary label="book tab"><BookTab workId={workId!} /></ErrorBoundary>
+                  )}
+                  {segment.create === "brainstorm" && (
+                    <ErrorBoundary label="brainstorm tab">
+                      <BrainstormTab key={brainstormSeed} workId={workId!} initialSeed={brainstormSeed} initialContext={brainstormContext} />
+                    </ErrorBoundary>
+                  )}
+                  {segment.create === "genesis" && (
+                    <ErrorBoundary label="genesis tab"><GenesisTab workId={workId!} /></ErrorBoundary>
+                  )}
+                </SegmentedView>
+              </TabsContent>
+
+              {/* 3 — KNOWLEDGE: Knowledge / Search / Graph */}
+              <TabsContent value="knowledge">
+                <SegmentedView
+                  segments={[
+                    { id: "knowledge", icon: Network, label: "Knowledge" },
+                    { id: "search",    icon: Search,  label: "Search" },
+                    { id: "graph",     icon: Share2,  label: "Graph" },
+                  ]}
+                  value={segment.knowledge}
+                  onChange={setViewSegment("knowledge")}
+                >
+                  {segment.knowledge === "knowledge" && (
+                    <ErrorBoundary label="knowledge tab"><KnowledgeTab workId={workId!} /></ErrorBoundary>
+                  )}
+                  {segment.knowledge === "search" && (
+                    <ErrorBoundary label="search tab"><SearchTab workId={workId!} initialQuery={_initialSearchQuery} /></ErrorBoundary>
+                  )}
+                  {segment.knowledge === "graph" && (
+                    <ErrorBoundary label="graph tab"><GraphTab workId={workId!} /></ErrorBoundary>
+                  )}
+                </SegmentedView>
+              </TabsContent>
+
+              {/* 4 — REVIEW: Gaps / Completeness / Quiz / Study */}
+              <TabsContent value="review">
+                <SegmentedView
+                  segments={[
+                    { id: "gaps",         icon: AlertTriangle, label: "Gaps" },
+                    { id: "completeness", icon: BarChart2,     label: "Completeness" },
+                    { id: "quiz",         icon: GraduationCap, label: "Quiz" },
+                    { id: "study",        icon: BookOpen,      label: "Study" },
+                  ]}
+                  value={segment.review}
+                  onChange={setViewSegment("review")}
+                >
+                  {segment.review === "gaps" && (
+                    <ErrorBoundary label="hygiene tab"><GapsTab workId={workId!} onBrainstorm={handleBrainstormGap} /></ErrorBoundary>
+                  )}
+                  {segment.review === "completeness" && (
+                    <ErrorBoundary label="completeness tab"><CompletenessTab workId={workId!} /></ErrorBoundary>
+                  )}
+                  {segment.review === "quiz" && (
+                    <ErrorBoundary label="quiz tab"><QuizTab workId={workId!} workTitle={(work as any)?.title ?? "this Work"} /></ErrorBoundary>
+                  )}
+                  {segment.review === "study" && (
+                    <ErrorBoundary label="learn tab"><LearnTab workId={workId!} /></ErrorBoundary>
+                  )}
+                </SegmentedView>
+              </TabsContent>
+
+              {/* 5 — ACTIVITY: Conversations / Tasks */}
+              <TabsContent value="activity">
+                <SegmentedView
+                  segments={[
+                    { id: "conversations", icon: MessageSquare, label: "Conversations" },
+                    { id: "tasks",         icon: CheckSquare,   label: "Tasks", badge: pendingTaskCount || null },
+                  ]}
+                  value={segment.activity}
+                  onChange={setViewSegment("activity")}
+                >
+                  {segment.activity === "conversations" && (
+                    <ErrorBoundary label="conversations tab"><ConversationsTab workId={workId!} /></ErrorBoundary>
+                  )}
+                  {segment.activity === "tasks" && (
+                    <ErrorBoundary label="tasks tab"><TasksTab workId={workId!} /></ErrorBoundary>
+                  )}
+                </SegmentedView>
+              </TabsContent>
+            </div>
+          </Tabs>
+        </div>
+      )}
+
+      {/* Trailer — a dedicated surface reached from Tools, NOT a primary view */}
+      <Sheet open={trailerOpen} onOpenChange={setTrailerOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2 font-serif">
+              <Film className="w-5 h-5 text-primary" /> Trailer
+            </SheetTitle>
+          </SheetHeader>
+          <div className="mt-4">
+            {workId && (
+              <ErrorBoundary label="trailer tab"><TrailerTab workId={workId} /></ErrorBoundary>
+            )}
           </div>
-        </Tabs>
+        </SheetContent>
+      </Sheet>
+    </Page>
+  );
+}
+
+// ─── Inner segmented control (≥44px) for views that host multiple tabs ────────
+
+function SegmentedView({
+  segments,
+  value,
+  onChange,
+  children,
+}: {
+  segments: { id: string; icon: React.ElementType; label: string; badge?: number | null }[];
+  value: string;
+  onChange: (id: string) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-1.5 flex-wrap" role="tablist">
+        {segments.map(({ id, icon: Icon, label, badge }) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={value === id}
+            data-active={value === id}
+            data-testid={`segment-${id}`}
+            onClick={() => onChange(id)}
+            className="gd-chip min-h-11 px-3.5 text-xs font-mono uppercase tracking-wider inline-flex items-center gap-1.5 touch-manipulation"
+          >
+            <Icon className="w-3.5 h-3.5" /> {label}
+            {badge ? (
+              <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary leading-none">
+                {badge}
+              </span>
+            ) : null}
+          </button>
+        ))}
       </div>
+      <div>{children}</div>
     </div>
   );
 }

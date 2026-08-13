@@ -9,19 +9,19 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // Forest green solid (VELLUM .btn)
+        // Forest green solid — semantic primary (tokens flip for dark)
         default:
-          'bg-[var(--green-raw)] text-[#F4EEE1] shadow-[var(--shadow-1)] border border-[var(--green-2)] dark:text-[#12100b] hover:bg-[var(--green-2)] hover:shadow-[var(--shadow-2)]',
+          'bg-primary text-primary-foreground shadow-[var(--gd-shadow)] border border-primary hover:bg-primary/90',
         destructive:
-          'bg-[var(--rust)] text-[#F4EEE1] shadow-[var(--shadow-1)] border border-[rgba(178,67,30,0.6)] hover:bg-[#a33a18]',
-        // Ghost: transparent with gilt hairline border (VELLUM .btn.ghost)
+          'bg-destructive text-destructive-foreground shadow-[var(--gd-shadow)] border border-destructive/60 hover:bg-destructive/90',
+        // Ghost: transparent with bronze hairline border (VELLUM .btn.ghost)
         outline:
-          'bg-transparent text-[var(--green-raw)] border border-[var(--gilt-line)] hover:bg-[var(--gilt-soft)] hover:border-[var(--gilt)] dark:text-[var(--green-2)]',
+          'bg-transparent text-primary border border-[var(--gd-bronze-soft)] hover:bg-[var(--gd-bronze-soft)] hover:border-[var(--gd-bronze)]',
         secondary:
-          'bg-[var(--gilt-soft)] text-[var(--ink-raw)] border border-[var(--gilt-line)] hover:bg-[var(--gilt-soft)] dark:text-[var(--ink-soft)]',
+          'bg-[var(--gd-bronze-soft)] text-foreground border border-[var(--gd-bronze-soft)] hover:bg-[var(--gd-bronze-soft)]',
         ghost:
-          'border border-transparent hover:border-[var(--line-2)] hover:bg-[var(--green-soft)]',
-        link: 'text-[var(--green-raw)] underline-offset-4 hover:underline dark:text-[var(--green-2)]',
+          'border border-transparent hover:border-border hover:bg-accent',
+        link: 'text-primary underline-offset-4 hover:underline',
       },
       size: {
         default: 'min-h-10 px-4 py-2.5',

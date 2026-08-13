@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { toast } from "sonner";
 import { apiFetch, buildAuthHeaders } from "@/lib/auth";
@@ -31,7 +31,6 @@ import {
   useGetWebSearchStatus,
 } from "@workspace/api-client-react";
 import { useConnectivity } from "@/lib/useConnectivity";
-import { useGdDark } from "@/lib/useGdDark";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card } from "@/components/ui/card";
@@ -55,6 +54,7 @@ import {
   Sparkles, History, RefreshCw, ExternalLink, Mail, Volume2, CloudOff,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import { VoiceControls } from "./voice-controls";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import rehypeHighlight from "rehype-highlight";
@@ -533,13 +533,13 @@ function ExcelDownloadCard({
     <div
       className="mt-3 flex items-center gap-3 px-4 py-3 rounded-xl border"
       style={{
-        borderColor: "color-mix(in srgb, var(--green-2, #16a34a) 25%, transparent)",
-        background: "color-mix(in srgb, var(--green-2, #16a34a) 8%, transparent)",
+        borderColor: "color-mix(in srgb, var(--gd-success) 25%, transparent)",
+        background: "color-mix(in srgb, var(--gd-success) 8%, transparent)",
       }}
     >
       <FileSpreadsheet
         className="w-5 h-5 shrink-0"
-        style={{ color: "var(--green-2, #16a34a)" }}
+        style={{ color: "var(--gd-success)" }}
       />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{title ?? filename}</p>
@@ -550,8 +550,8 @@ function ExcelDownloadCard({
         onClick={handleDownload}
         className="shrink-0 gap-1.5 h-8"
         style={{
-          background: "var(--green-2, #16a34a)",
-          color: "#fff",
+          background: "var(--gd-success)",
+          color: "var(--gd-accent-ink)",
           border: "none",
         }}
       >
@@ -593,16 +593,17 @@ function ProgramDownloadCard({
     document.body.removeChild(a);
   };
 
-  // Per-language accent colours
+  // Per-language accent tokens — semantic accents keyed off the language so
+  // the badge still differentiates ecosystems without hard-coded palette values.
   const LANG_COLORS: Record<string, string> = {
-    python:     "#3b82f6",
-    javascript: "#f59e0b",
-    typescript: "#6366f1",
-    bash:       "#10b981",
-    shell:      "#10b981",
-    golang:     "#06b6d4",
-    ruby:       "#ef4444",
-    rust:       "#f97316",
+    python:     "var(--gd-info)",
+    javascript: "var(--gd-caution)",
+    typescript: "var(--gd-violet)",
+    bash:       "var(--gd-success)",
+    shell:      "var(--gd-success)",
+    golang:     "var(--gd-sonar)",
+    ruby:       "var(--gd-danger)",
+    rust:       "var(--gd-bronze)",
   };
   const langColor = LANG_COLORS[(language ?? "").toLowerCase()] ?? "var(--gd-accent)";
 
@@ -623,7 +624,7 @@ function ProgramDownloadCard({
             {language && (
               <span
                 className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                style={{ background: `${langColor}25`, color: langColor }}
+                style={{ background: `color-mix(in srgb, ${langColor} 15%, transparent)`, color: langColor }}
               >
                 {language}
               </span>
@@ -634,12 +635,12 @@ function ProgramDownloadCard({
               </span>
             )}
             {testPassed === true && (
-              <span className="text-[10px] font-mono" style={{ color: "var(--green-raw, #16a34a)" }}>
+              <span className="text-[10px] font-mono" style={{ color: "var(--gd-success)" }}>
                 ✅ tests pass
               </span>
             )}
             {testPassed === false && (
-              <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400">
+              <span className="text-[10px] font-mono" style={{ color: "var(--gd-caution)" }}>
                 ⚠️ tests partial
               </span>
             )}
@@ -649,7 +650,7 @@ function ProgramDownloadCard({
           size="sm"
           onClick={handleDownload}
           className="shrink-0 gap-1.5 h-8"
-          style={{ background: "var(--gd-accent)", color: "#fff", border: "none" }}
+          style={{ background: "var(--gd-accent)", color: "var(--gd-accent-ink)", border: "none" }}
         >
           <Download className="w-3.5 h-3.5" />
           Download
@@ -705,9 +706,9 @@ function ActionConfirmCard({
 
   if (status === "done" && result) {
     return (
-      <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs" style={{ borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
-        <Check className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--green-2)" }} />
-        <span className="flex-1" style={{ color: "var(--green-2)" }}>
+      <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs" style={{ borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", background: "color-mix(in srgb, var(--gd-success) 10%, transparent)" }}>
+        <Check className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gd-success)" }} />
+        <span className="flex-1" style={{ color: "var(--gd-success)" }}>
           {result.summary ?? result.output_label ?? "Action complete"}
         </span>
         {result.download_url && (
@@ -716,7 +717,7 @@ function ActionConfirmCard({
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1 px-2 py-1 rounded transition-opacity hover:opacity-80 font-medium shrink-0"
-            style={{ background: "var(--green-2)", color: "var(--paper)" }}
+            style={{ background: "var(--gd-success)", color: "var(--gd-accent-ink)" }}
           >
             <Download className="w-3 h-3" />
             Download
@@ -805,29 +806,29 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming?: boolean
 
   // No violet VELLUM token — gilt is the nearest processing/reasoning-state equivalent
   return (
-    <div className="mb-2.5 rounded-lg border overflow-hidden" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+    <div className="mb-2.5 rounded-lg border overflow-hidden" style={{ borderColor: "var(--gd-line-control)", background: "var(--gd-bronze-soft)" }}>
       <button
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-2 px-3 py-1.5 text-left transition-opacity hover:opacity-80"
       >
         <Brain
           className={`w-3 h-3 shrink-0 ${streaming ? "animate-pulse" : ""}`}
-          style={{ color: "var(--gilt)" }}
+          style={{ color: "var(--gd-bronze)" }}
         />
-        <span className="text-[11px] font-mono flex-1" style={{ color: "var(--gilt)" }}>
+        <span className="text-[11px] font-mono flex-1" style={{ color: "var(--gd-bronze)" }}>
           {streaming ? "Reasoning…" : "Reasoning"}
         </span>
         <ChevronDown
           className={`w-3 h-3 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-          style={{ color: "var(--gilt)" }}
+          style={{ color: "var(--gd-bronze)" }}
         />
       </button>
       {open && (
-        <div className="px-3 pb-2.5 pt-1.5 border-t" style={{ borderColor: "var(--gilt-line)" }}>
-          <p className="text-[12px] font-mono italic leading-relaxed whitespace-pre-wrap" style={{ color: "color-mix(in srgb, var(--gilt) 70%, transparent)" }}>
+        <div className="px-3 pb-2.5 pt-1.5 border-t" style={{ borderColor: "var(--gd-line-control)" }}>
+          <p className="text-[12px] font-mono italic leading-relaxed whitespace-pre-wrap" style={{ color: "color-mix(in srgb, var(--gd-bronze) 70%, transparent)" }}>
             {text}
             {streaming && (
-              <span className="inline-block w-0.5 h-3 ml-0.5 animate-pulse align-text-bottom" style={{ background: "var(--gilt)" }} />
+              <span className="inline-block w-0.5 h-3 ml-0.5 animate-pulse align-text-bottom" style={{ background: "var(--gd-bronze)" }} />
             )}
           </p>
         </div>
@@ -860,7 +861,7 @@ function CodeBlock({ lang, className, children }: { lang: string; className?: st
           title="Copy code"
           className="flex items-center gap-1 text-[10px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
         >
-          {copied ? <Check className="w-3 h-3" style={{ color: "var(--green-2)" }} /> : <Copy className="w-3 h-3" />}
+          {copied ? <Check className="w-3 h-3" style={{ color: "var(--gd-success)" }} /> : <Copy className="w-3 h-3" />}
           <span>{copied ? "Copied" : "Copy"}</span>
         </button>
       </span>
@@ -1258,15 +1259,15 @@ type MemoryFact = {
   evidence_message_id?: string | null;
 };
 
-// Memory-kind badges. The blue/violet/amber hues map onto distinct VELLUM
-// tokens (via `style`); gray/teal have no semantic-colour equivalent to remove
-// so they keep neutral Tailwind classes in `cls`.
+// Memory-kind badges. Each kind maps onto a distinct semantic accent token
+// (via `style`) so they read apart in both themes; working memory stays neutral
+// via a Tailwind class in `cls`.
 const MEMORY_TYPE_STYLE: Record<string, { label: string; cls: string; style?: React.CSSProperties }> = {
-  episodic:     { label: "episodic",     cls: "", style: { color: "var(--gilt)", background: "var(--gilt-soft)" } },
-  semantic:     { label: "semantic",     cls: "", style: { color: "color-mix(in srgb, var(--gilt) 55%, var(--rust))", background: "color-mix(in srgb, color-mix(in srgb, var(--gilt) 55%, var(--rust)) 12%, transparent)" } },
-  procedural:   { label: "procedural",   cls: "", style: { color: "var(--green-raw)", background: "color-mix(in srgb, var(--green-raw) 12%, transparent)" } },
-  working:      { label: "working",      cls: "bg-gray-100 text-gray-500 dark:bg-gray-800/50 dark:text-gray-400" },
-  zettelkasten: { label: "zettelkasten", cls: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400" },
+  episodic:     { label: "episodic",     cls: "", style: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" } },
+  semantic:     { label: "semantic",     cls: "", style: { color: "var(--gd-caution)", background: "var(--gd-caution-soft)" } },
+  procedural:   { label: "procedural",   cls: "", style: { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)" } },
+  working:      { label: "working",      cls: "bg-muted text-muted-foreground" },
+  zettelkasten: { label: "zettelkasten", cls: "", style: { color: "var(--gd-sonar)", background: "var(--gd-sonar-soft)" } },
 };
 
 // ─── Memory conflict types ────────────────────────────────────────────────────
@@ -1394,11 +1395,11 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
   const conflictCount = conflicts.length;
 
   return (
-    <div className="border-b border-border/50" style={{ background: "var(--gilt-soft)" }}>
+    <div className="border-b border-border/50" style={{ background: "var(--gd-bronze-soft)" }}>
       <div className="px-4 py-2.5 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <Sparkles className="w-3 h-3" style={{ color: "var(--gilt)" }} />
-          <span className="text-xs font-medium" style={{ color: "var(--gilt)" }}>
+          <Sparkles className="w-3 h-3" style={{ color: "var(--gd-bronze)" }} />
+          <span className="text-xs font-medium" style={{ color: "var(--gd-bronze)" }}>
             Memory
           </span>
           {facts.length > 0 && (
@@ -1411,7 +1412,7 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
               onClick={() => setShowConflicts(v => !v)}
               title={`${conflictCount} unresolved conflict${conflictCount !== 1 ? "s" : ""} — click to review`}
               className="flex items-center gap-0.5 px-1.5 py-0.5 rounded transition-opacity hover:opacity-80"
-              style={{ background: "var(--rust-soft)", color: "var(--rust)" }}
+              style={{ background: "var(--gd-danger-soft)", color: "var(--gd-danger)" }}
             >
               <AlertTriangle className="w-2.5 h-2.5" />
               <span className="text-[9px] font-semibold">{conflictCount}</span>
@@ -1430,28 +1431,28 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
 
       {/* ── Conflicts panel ── */}
       {showConflicts && conflictCount > 0 && (
-        <div className="px-4 pb-3 space-y-2 border-b" style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
-          <div className="text-[9px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: "var(--rust)" }}>
+        <div className="px-4 pb-3 space-y-2 border-b" style={{ borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" }}>
+          <div className="text-[9px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: "var(--gd-danger)" }}>
             Conflicting memories ({conflictCount})
           </div>
           {conflicts.map(c => (
             <div
               key={c.id}
               className="rounded border p-2 space-y-1.5"
-              style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}
+              style={{ borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)" }}
             >
               <div className="flex gap-2 text-[10px]">
                 {/* Side A — memory_id_a (newer by convention when set by dedup) */}
                 <div className="flex-1 space-y-0.5">
                   <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Newer</div>
-                  <div className="font-mono truncate" style={{ color: "var(--gilt)" }}>{c.key_a ?? "—"}:</div>
+                  <div className="font-mono truncate" style={{ color: "var(--gd-bronze)" }}>{c.key_a ?? "—"}:</div>
                   <div className="text-foreground/70 line-clamp-2">{c.value_a ?? "—"}</div>
                 </div>
-                <div className="w-px self-stretch" style={{ background: "color-mix(in srgb, var(--rust) 28%, transparent)" }} />
+                <div className="w-px self-stretch" style={{ background: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" }} />
                 {/* Side B — memory_id_b (older by convention) */}
                 <div className="flex-1 space-y-0.5">
                   <div className="text-[9px] text-muted-foreground/50 font-mono uppercase">Older</div>
-                  <div className="font-mono truncate" style={{ color: "var(--gilt)" }}>{c.key_b ?? "—"}:</div>
+                  <div className="font-mono truncate" style={{ color: "var(--gd-bronze)" }}>{c.key_b ?? "—"}:</div>
                   <div className="text-foreground/70 line-clamp-2">{c.value_b ?? "—"}</div>
                 </div>
               </div>
@@ -1512,7 +1513,7 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
                       <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 ${typeStyle.cls}`} style={typeStyle.style}>
                         {typeStyle.label}
                       </span>
-                      <span className="font-mono shrink-0" style={{ color: "var(--gilt)" }}>
+                      <span className="font-mono shrink-0" style={{ color: "var(--gd-bronze)" }}>
                         {f.key}:
                       </span>
                     </div>
@@ -1526,14 +1527,14 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
                         if (e.key === "Escape") cancelEdit();
                       }}
                       className="w-full text-[11px] border rounded px-2 py-1 bg-background focus:outline-none focus:ring-1"
-                      style={{ borderColor: "var(--gilt-line)", ["--tw-ring-color" as string]: "var(--gilt-line)" }}
+                      style={{ borderColor: "var(--gd-line-control)", ["--tw-ring-color" as string]: "var(--gd-line-control)" }}
                     />
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => saveFact(fid, f.key, f.value)}
                         disabled={savingId === fid || !editValue.trim() || editValue.trim() === f.value}
                         className="text-[9px] px-1.5 py-0.5 rounded disabled:opacity-40 transition-opacity hover:opacity-80 flex items-center gap-0.5"
-                        style={{ background: "var(--gilt)", color: "var(--paper)" }}
+                        style={{ background: "var(--gd-bronze)", color: "var(--gd-accent-ink)" }}
                       >
                         {savingId === fid
                           ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
@@ -1554,7 +1555,7 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
                     <span className={`text-[9px] font-mono font-semibold px-1 py-0.5 rounded shrink-0 mt-px ${typeStyle.cls}`} style={typeStyle.style}>
                       {typeStyle.label}
                     </span>
-                    <span className="font-mono shrink-0" style={{ color: "var(--gilt)" }}>
+                    <span className="font-mono shrink-0" style={{ color: "var(--gd-bronze)" }}>
                       {f.key}:
                     </span>
                     <span className="text-foreground/80 flex-1">{f.value}</span>
@@ -1602,7 +1603,7 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
                       <a
                         href={`/chat?id=${f.evidence_conversation_id}`}
                         className="inline-flex items-center gap-0.5 text-[9px] transition-opacity hover:opacity-80"
-                        style={{ color: "var(--gilt)" }}
+                        style={{ color: "var(--gd-bronze)" }}
                       >
                         <ExternalLink className="w-2.5 h-2.5" />
                         View conversation
@@ -1623,7 +1624,11 @@ function MemoryPanel({ apiBase }: { apiBase: string }) {
 
 export default function Chat() {
   const [, setLocation] = useLocation();
-  const searchParams = new URLSearchParams(window.location.search);
+  // Selection lives in the ?id= search param so back-button and deep links work
+  // on phone. useSearch (not useLocation) re-renders on query-string-only
+  // navigation, since the pathname stays /chat.
+  const searchStr = useSearch();
+  const searchParams = new URLSearchParams(searchStr);
   const activeId = searchParams.get("id");
   // When arriving from a message-search result, this holds the target message id.
   const highlightMsgId = searchParams.get("msg");
@@ -1676,11 +1681,11 @@ export default function Chat() {
   const predictDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const predictAbortRef = useRef<AbortController | null>(null);
 
-  const { data: convsResp, isLoading: loadingList } = useListConversations(
+  const { data: convsResp, isLoading: loadingList, isError: listError, refetch: refetchList } = useListConversations(
     { archived: showArchived || undefined },
     { query: { queryKey: getListConversationsQueryKey({ archived: showArchived || undefined }), refetchInterval: 15_000, staleTime: 10_000 } }
   );
-  const { data: activeConv, isLoading: loadingActive } = useGetConversation(activeId!, {
+  const { data: activeConv, isLoading: loadingActive, isError: activeError, refetch: refetchActive } = useGetConversation(activeId!, {
     query: { enabled: !!activeId, queryKey: getGetConversationQueryKey(activeId!) },
   });
   const { aiReachable: aiOnline, recheckNow: recheckHealth } = useConnectivity();
@@ -2751,15 +2756,14 @@ export default function Chat() {
 
   const conv = activeConv?.conversation;
 
-  // Inside the GD Chat app the whole surface flips to the dark token set so
-  // the thread reads as one continuous dark workspace; the legacy console
-  // keeps the light parchment look untouched.  The wrapper class below
-  // covers the first paint before the hook's effect runs.
-  const gdDark = useGdDark();
-
+  // Split layout: on md+ the conversation list pane (left, ~300px) sits beside
+  // the active conversation (right). On phone the list is the route content
+  // when no conversation is selected (?id=), and the thread takes over the
+  // full screen once one is — semantic tokens flip with the theme, so the
+  // surface never branches on the resolved theme.
   return (
-    <div className={`flex-1 min-h-0 flex gap-0 md:gap-6 animate-in fade-in duration-500 ${gdDark ? "dark text-foreground" : ""}`}>
-      {/* ── Sidebar — full-width on mobile when no conv selected ─────── */}
+    <div className="flex-1 min-h-0 flex gap-0 md:gap-6 animate-in fade-in duration-500 text-foreground">
+      {/* ── List pane — full-width route on phone when no conv selected ─── */}
       <Card className={`flex flex-col shrink-0 rounded-xl overflow-hidden border-border/50 w-full md:w-72 ${activeId ? "hidden md:flex" : "flex"}`}>
         <div className="p-4 border-b border-border/50 bg-muted/10 space-y-3">
           <div className="flex items-center justify-between">
@@ -2769,7 +2773,7 @@ export default function Chat() {
                 onClick={() => setShowMemory((v) => !v)}
                 title="Memory — facts I've learned about you"
                 className={`p-1.5 rounded transition-colors ${showMemory ? "" : "text-muted-foreground hover:text-foreground"}`}
-                style={showMemory ? { color: "var(--gilt)", background: "var(--gilt-soft)" } : undefined}
+                style={showMemory ? { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" } : undefined}
               >
                 <Sparkles className="w-3.5 h-3.5" />
               </button>
@@ -2820,10 +2824,18 @@ export default function Chat() {
                         </div>
                       </div>
                     ))
+            ) : listError ? (
+              <div className="p-2">
+                <ErrorState
+                  title="Couldn't load conversations"
+                  detail="The conversation list failed to load. Check your connection and try again."
+                  onRetry={() => refetchList()}
+                />
+              </div>
             ) : (
             <>
             {loadingList
-              ? [1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full rounded-md mb-1" />)
+              ? <div className="p-1"><LoadingState rows={4} label="Loading conversations" /></div>
               : filteredConvs?.map((c) => (
                   <div
                     key={c.id}
@@ -2905,11 +2917,23 @@ export default function Chat() {
                     </div>
                   </div>
                 ))}
-            {!loadingList && !filteredConvs?.length && (
-              <div className="py-8 text-center px-4">
-                <p className="text-[11px] font-mono" style={{ color: 'var(--ink-faint)' }}>
-                  {search ? "No conversations match" : "No conversations yet"}
-                </p>
+            {!loadingList && !listError && !filteredConvs?.length && (
+              <div className="p-2">
+                <EmptyState
+                  icon={<MessageSquare />}
+                  title={search ? "No conversations match" : showArchived ? "No archived conversations" : "No conversations yet"}
+                  description={search
+                    ? "Try a different search term."
+                    : showArchived
+                      ? "Conversations you archive will appear here."
+                      : "Start a new conversation to chat with your AI."}
+                  action={search || showArchived ? undefined : (
+                    <Button size="sm" onClick={() => handleCreate()} disabled={createConv.isPending} data-testid="button-empty-new-conversation" className="gap-1.5">
+                      <Plus className="w-4 h-4" />
+                      New conversation
+                    </Button>
+                  )}
+                />
               </div>
             )}
             </>
@@ -2982,16 +3006,22 @@ export default function Chat() {
             <div ref={msgsContainerRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-6">
               <div className="max-w-3xl mx-auto space-y-6">
                 {loadingActive && !localOverride ? (
-                  <div className="space-y-6">
-                    <Skeleton className="h-16 w-2/3 ml-auto rounded-xl" />
-                    <Skeleton className="h-24 w-2/3 rounded-xl" />
-                  </div>
+                  <LoadingState rows={4} label="Loading conversation" />
+                ) : activeError && !localOverride ? (
+                  <ErrorState
+                    title="Couldn't load this conversation"
+                    detail="The messages failed to load. Check your connection and try again."
+                    onRetry={() => refetchActive()}
+                  />
                 ) : displayMessages.length === 0 ? (
-                  <div className="text-center py-16">
-                    <Bot className="w-10 h-10 mx-auto mb-3" style={{ opacity: 0.2, color: 'var(--green-raw)' }} />
-                    <p className="text-[13px] font-serif italic" style={{ color: 'var(--ink-soft)' }}>
-                      {aiOnline ? "Send a message to start the conversation." : "AI is offline — start your local AI engine to enable responses."}
-                    </p>
+                  <div className="py-16">
+                    <EmptyState
+                      icon={<Bot />}
+                      title={aiOnline ? "Start the conversation" : "AI is offline"}
+                      description={aiOnline
+                        ? "Send a message below to begin. Your AI can search your knowledge, run tools, and more."
+                        : "Start your local AI engine to enable responses. Your message will queue and send once it reconnects."}
+                    />
                   </div>
                 ) : (
                   <ErrorBoundary label="message list">
@@ -3019,7 +3049,7 @@ export default function Chat() {
                           : msg.role === "user"
                             ? "bg-secondary text-secondary-foreground"
                             : "bg-primary text-primary-foreground"}`}
-                        style={msg.isClarification ? { color: "var(--gilt)", background: "color-mix(in srgb, var(--gilt) 15%, transparent)" } : undefined}
+                        style={msg.isClarification ? { color: "var(--gd-bronze)", background: "color-mix(in srgb, var(--gd-bronze) 15%, transparent)" } : undefined}
                       >
                         {msg.isClarification ? <HelpCircle className="w-3.5 h-3.5" /> : msg.role === "user" ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
                       </div>
@@ -3027,7 +3057,7 @@ export default function Chat() {
                         <div className="flex items-center gap-2">
                           <span
                             className={`text-[10px] font-mono uppercase tracking-wider ${msg.isClarification ? "" : "text-muted-foreground"}`}
-                            style={msg.isClarification ? { color: "var(--gilt)" } : undefined}
+                            style={msg.isClarification ? { color: "var(--gd-bronze)" } : undefined}
                           >
                             {msg.isClarification ? "Needs clarification" : msg.role}
                           </span>
@@ -3060,7 +3090,7 @@ export default function Chat() {
                         {msg.role === "user" && msg.status === "queued" && (
                           <div
                             className="flex items-center gap-1 mt-1 justify-end text-[10px] font-mono"
-                            style={{ color: "var(--gilt)" }}
+                            style={{ color: "var(--gd-bronze)" }}
                             data-testid="status-queued"
                           >
                             <CloudOff className="w-2.5 h-2.5" />
@@ -3101,7 +3131,7 @@ export default function Chat() {
                                 ? "bg-secondary/60 border border-secondary whitespace-pre-wrap"
                                 : "bg-muted/40 border border-border/40"}`}
                           style={msg.isClarification && !(msg.status === "failed" && msg.role === "assistant")
-                            ? { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", color: "var(--gilt)" }
+                            ? { background: "var(--gd-bronze-soft)", borderColor: "var(--gd-line-control)", color: "var(--gd-bronze)" }
                             : undefined}
                         >
                           {msg.text ? (
@@ -3117,8 +3147,8 @@ export default function Chat() {
                                 {msg.streaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-text-bottom" />}
                                 {msg.incomplete && (() => {
                                   return (
-                                    <div className="mt-2 flex items-center justify-between gap-2 border-t pt-2" style={{ borderColor: "var(--gilt-line)" }}>
-                                      <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--gilt)" }}>
+                                    <div className="mt-2 flex items-center justify-between gap-2 border-t pt-2" style={{ borderColor: "var(--gd-line-control)" }}>
+                                      <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--gd-bronze)" }}>
                                         <AlertTriangle className="w-3 h-3 shrink-0" />
                                         <span>Response was cut short.</span>
                                       </div>
@@ -3126,7 +3156,7 @@ export default function Chat() {
                                         onClick={() => handleContinue(msg.id)}
                                         disabled={sending}
                                         className="text-xs font-mono underline underline-offset-2 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity hover:opacity-80"
-                                        style={{ color: "var(--gilt)" }}
+                                        style={{ color: "var(--gd-bronze)" }}
                                       >
                                         Continue
                                       </button>
@@ -3161,7 +3191,7 @@ export default function Chat() {
                             {(msg.recovered || isRecovered(msg.id)) && (
                               <span
                                 className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono border"
-                                style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                                style={{ background: "var(--gd-bronze-soft)", borderColor: "var(--gd-line-control)", color: "var(--gd-bronze)" }}
                                 data-testid="badge-recovered"
                               >
                                 <History className="w-2.5 h-2.5" />
