@@ -60,6 +60,7 @@
 - [GENESIS Book Origination System](orivellum-genesis.md) — schema v92; 10-gate ledger; _deps not auth import; ON CONFLICT uses excluded.updated_at; ledger_append needs UUID id.
 - [DeepFilterNet3 audio enhancement](orivellum-audio-enhancement.md) — step 0 in _extract_audio(); db setting audio_enhance_enabled; GET/PUT /system/settings/audio-enhance; AudioEnhancementCard in system page.
 - [VELLUM design system](vellum-design-system.md) — fonts, glass utilities, tokens, tier badges, editorial typography all applied; follow the page header pattern for new pages.
+- [Daylight token system](orivellum-daylight-tokens.md) — tokens.json is palette authority w/ parity tests; ui-prefs PUT merges + client hydrates; JSX generics break dev tagger; hex scanner reads comments.
 - [GD-industrial shell](gd-industrial-shell.md) — GD tokens + WP1 ResponsiveShell (5 destinations in destinations.ts; apps.ts/AppFrame deleted); content host must mirror AppLayout surface; --shell-tabbar-h offsets fixed overlays.
 - [Forge Website Factory integration](forge-integration.md) — native Python capability (schema v103–v106); build dirs under data/forge-builds/; design-standards gates (a11y/perf/contrast/design) are conditional-only, parser-based, palette-aware.
 - [A-01 Mail Steward](orivellum-mail-steward.md) — schema v107; Fernet token vault; lazy imports in __init__; nonce-gated actions; send requires send_enabled+Mail.Send scope; Phases 2–4 queued.

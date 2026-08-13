@@ -55,6 +55,7 @@
       }
     ],
     "gzip_js_total": 836047,
-    "gzip_css_total": 27019
+    "gzip_css_total": 28977,
+    "css_rebaseline_note": "WP2 (2026-08-13): CSS gzip re-baselined 27,019 -> 28,977 for spec-mandated growth only: self-hosted @font-face rules (zero Google Fonts) + temporary legacy alias sheet (deleted in WP3). Spec budget for initial CSS is <=50 KB gzip; JS/hex/route baselines remain frozen at WP0 values."
   }
 }

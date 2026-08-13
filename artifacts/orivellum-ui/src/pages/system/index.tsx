@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useGdDark } from "@/lib/useGdDark";
+import { AppearanceCard } from "./appearance-card";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -2998,6 +2999,7 @@ export default function System() {
       </div>
 
       <ProfileCard />
+      <AppearanceCard />
       <PersonaCard />
 
       <div className="grid md:grid-cols-3 gap-4">

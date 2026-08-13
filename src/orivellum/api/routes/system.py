@@ -889,6 +889,60 @@ def set_audio_enhance_setting(body: AudioEnhanceUpdate):
     return {"enabled": body.enabled, "ok": True, "installed": installed}
 
 
+_UI_PREF_ALLOWED: dict[str, set[str]] = {
+    "theme": {"daylight", "hull", "system"},
+    "textSize": {"100", "112", "125"},
+    "measure": {"focused", "standard", "wide"},
+    "readingFace": {"sans", "serif"},
+}
+
+
+@router.get("/system/settings/ui-preferences")
+def get_ui_preferences():
+    """Personal appearance/calibration record (WP2).
+
+    localStorage on each device is authoritative for pre-paint rendering;
+    this record exists so a fresh install can restore the user's choices.
+    """
+    db = get_db()
+    try:
+        stored = json.loads(db.get_setting("ui_preferences", "{}") or "{}")
+    except (ValueError, TypeError):
+        stored = {}
+    return {k: v for k, v in stored.items() if k in _UI_PREF_ALLOWED}
+
+
+@router.put("/system/settings/ui-preferences")
+def put_ui_preferences(body: dict = Body(...)):
+    """Merge the client's appearance/calibration preferences into the record.
+
+    MERGE, not replace: clients send only the keys the user explicitly chose
+    on that device, so one device's partial update can never clobber choices
+    saved from another. Unknown keys and invalid values are rejected
+    explicitly — the record is tiny and its shape is a contract with the
+    boot script.
+    """
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="body must be an object")
+    cleaned: dict[str, str] = {}
+    for key, value in body.items():
+        allowed = _UI_PREF_ALLOWED.get(key)
+        if allowed is None:
+            raise HTTPException(status_code=422, detail=f"unknown preference: {key}")
+        if not isinstance(value, str) or value not in allowed:
+            raise HTTPException(status_code=422, detail=f"invalid value for {key}")
+        cleaned[key] = value
+    db = get_db()
+    try:
+        stored = json.loads(db.get_setting("ui_preferences", "{}") or "{}")
+    except (ValueError, TypeError):
+        stored = {}
+    merged = {k: v for k, v in stored.items() if k in _UI_PREF_ALLOWED}
+    merged.update(cleaned)
+    db.set_setting("ui_preferences", json.dumps(merged), actor="user")
+    return {"ok": True, **merged}
+
+
 @router.get("/system/settings/docling")
 def get_docling_setting():
     """Return Docling availability and whether the layout-aware PDF tier is enabled.

@@ -1,0 +1,114 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   LEGACY ALIAS SHEET — TEMPORARY (introduced in WP2, deleted at end of WP3)
+
+   Maps every legacy VELLUM variable and every shadcn HSL triple onto the
+   semantic token system in gd-tokens.css, so the whole app — including the
+   51 not-yet-migrated screens — renders from ONE palette (Premium Daylight
+   by default, Hull when chosen) with no page-by-page edits.
+
+   Rules:
+   - `html:root` / `html:root.dark` outranks the `:root` / `.dark` blocks in
+     index.css regardless of import order (specificity 0-1-1 vs 0-1-0).
+   - Everything references var(--gd-*) or an HSL triple derived from
+     design/tokens.json. tests/test_design_tokens.py checks triple parity.
+   - WP3 migrates each usage to the semantic token, then deletes this file
+     AND the original definitions in index.css in one commit.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+html:root {
+  /* ── VELLUM raw aliases — theme-agnostic: gd tokens flip themselves ──── */
+  --paper: var(--gd-bg);
+  --paper-2: var(--gd-surface);
+  --card-raw: var(--gd-card);
+  --ink-raw: var(--gd-text);
+  --ink-soft: var(--gd-muted);
+  --ink-faint: var(--gd-dim);
+  --green-raw: var(--gd-primary);
+  --green-2: var(--gd-primary);
+  --green-soft: var(--gd-primary-soft);
+  --gilt: var(--gd-bronze);
+  --gilt-2: var(--gd-bronze);
+  --gilt-soft: var(--gd-bronze-soft);
+  --gilt-line: var(--gd-line-control);
+  --rust: var(--gd-danger);
+  --rust-soft: var(--gd-danger-soft);
+  --line: var(--gd-line-decorative);
+  --line-2: var(--gd-line-control);
+  --vellum: var(--gd-glass);
+  --vellum-strong: var(--gd-glass);
+  --shadow-1: var(--gd-shadow);
+  --shadow-2: var(--gd-shadow);
+  --t-canon: var(--gd-primary);
+  --t-source: var(--gd-bronze);
+  --t-artifact: var(--gd-dim);
+  --t-conv: var(--gd-sonar);
+  --t-claim: var(--gd-danger);
+  --vellum-hi: hsl(0 0% 100% / 0.55);
+  --page-bg: var(--gd-bg);
+
+  /* ── shadcn HSL triples — Daylight (from design/tokens.json) ─────────── */
+  --background: 43.6 33.3% 93.5%;        /* semantic.canvas */
+  --foreground: 208.9 37% 14.3%;         /* semantic.text */
+  --border: 41.1 19.6% 81%;              /* line-decorative */
+  --card: 0 0% 100%;                     /* semantic.raised */
+  --card-foreground: 208.9 37% 14.3%;
+  --card-border: 41.1 19.6% 81%;
+  --sidebar: 48 38.5% 97.5%;             /* semantic.surface */
+  --sidebar-foreground: 208.9 37% 14.3%;
+  --sidebar-border: 41.1 19.6% 81%;
+  --sidebar-primary: 206.2 58.2% 21.6%;  /* semantic.primary */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 42.9 25% 89%;        /* semantic.recessed */
+  --sidebar-accent-foreground: 208.9 37% 14.3%;
+  --sidebar-ring: 206.2 58.2% 21.6%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 208.9 37% 14.3%;
+  --popover-border: 41.1 19.6% 81%;
+  --primary: 206.2 58.2% 21.6%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 42.9 25% 89%;
+  --secondary-foreground: 208.9 37% 14.3%;
+  --muted: 42.9 25% 89%;
+  --muted-foreground: 207.1 18.1% 33.5%; /* semantic.text-muted */
+  --accent: 42.9 25% 89%;
+  --accent-foreground: 208.9 37% 14.3%;
+  --destructive: 5.7 55.2% 41.2%;        /* semantic.danger */
+  --destructive-foreground: 0 0% 100%;
+  --input: 38.2 8.9% 51.4%;              /* line-control */
+  --ring: 206.2 58.2% 21.6%;             /* semantic.focus */
+}
+
+html:root.dark {
+  --vellum-hi: hsl(42 19% 90% / 0.10);
+
+  /* ── shadcn HSL triples — Hull (from design/tokens.json) ─────────────── */
+  --background: 213.3 18.4% 9.6%;        /* semantic.canvas */
+  --foreground: 42 19.2% 89.8%;          /* semantic.text */
+  --border: 211.6 14.3% 26.1%;           /* line-decorative */
+  --card: 212.3 15.7% 16.3%;             /* semantic.raised */
+  --card-foreground: 42 19.2% 89.8%;
+  --card-border: 211.6 14.3% 26.1%;
+  --sidebar: 212.7 16.9% 12.7%;          /* semantic.surface */
+  --sidebar-foreground: 42 19.2% 89.8%;
+  --sidebar-border: 211.6 14.3% 26.1%;
+  --sidebar-primary: 212.6 35.1% 62%;    /* semantic.primary */
+  --sidebar-primary-foreground: 213.3 18.4% 9.6%;
+  --sidebar-accent: 212.3 15.7% 16.3%;
+  --sidebar-accent-foreground: 42 19.2% 89.8%;
+  --sidebar-ring: 212.6 35.1% 62%;
+  --popover: 212.3 15.7% 16.3%;
+  --popover-foreground: 42 19.2% 89.8%;
+  --popover-border: 211.6 14.3% 26.1%;
+  --primary: 212.6 35.1% 62%;
+  --primary-foreground: 213.3 18.4% 9.6%;
+  --secondary: 212.3 15.7% 16.3%;
+  --secondary-foreground: 42 19.2% 89.8%;
+  --muted: 212.3 15.7% 16.3%;
+  --muted-foreground: 210 14.1% 69.4%;   /* semantic.text-muted */
+  --accent: 212.3 15.7% 16.3%;
+  --accent-foreground: 42 19.2% 89.8%;
+  --destructive: 8.5 74.9% 59.4%;        /* semantic.danger */
+  --destructive-foreground: 213.3 18.4% 9.6%;
+  --input: 210 14.3% 32.9%;              /* --gd-line-2 */
+  --ring: 212.6 35.1% 62%;               /* semantic.focus */
+}

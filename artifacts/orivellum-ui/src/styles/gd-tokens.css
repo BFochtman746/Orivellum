@@ -1,83 +1,137 @@
 /* ══════════════════════════════════════════════════════════════════════════
-   GD-INDUSTRIAL — TOKEN LAYER
-   Spec + rationale: design/GD-INDUSTRIAL.md (LCH values, contrast table,
-   deuteranopia pass). No component that uses this layer ever writes a hex.
+   ORIVELLUM TOKEN LAYER — Premium Daylight + Hull
+   Source of truth: design/tokens.json (DTCG 2025.10-compatible).
+   tests/test_design_tokens.py enforces contrast for every documented pair
+   AND parity between that file and this one — edit tokens.json first.
 
    Themes ride <html data-theme>:
-     hull      — dark gunmetal (default; night-usable command console)
-     daylight  — warm bone ground, steel figure (opponent-process mapping)
+     daylight  — warm drafting paper + shipyard navy (the authored DEFAULT)
+     hull      — dark gunmetal, the explicit low-light choice
 
    Per-app accent tint rides <html data-app>:
      writing · learning · chat · studio · command · mail · library
 
-   Six layout laws (see spec §9): one scroll container at 100dvh; three
-   primitives (.gd-tile / .gd-row / .gd-panel); 4 tiles above the fold;
-   48px thumb targets; state is ambient (ribbon, not toasts); the shell
-   never moves.
-
    Hard rules carried across every theme:
    - --gd-violet marks machine-written text ONLY. Never decorative.
    - --gd-danger appears on exactly one control per screen.
-   - Body text ≥ 7:1 (AAA) on every surface in the ramp.
+   - Primary body text ≥ 7:1 on every surface in the ramp.
+   - Interactive edges use --gd-line-control (≥3:1); --gd-line is decorative.
+   - No hex outside this file, index.css, and design/tokens.json.
    ══════════════════════════════════════════════════════════════════════════ */
-
-@import url('https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Allerta+Stencil&family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&display=swap');
 
 :root {
   /* geometry + motion — theme-independent */
   --gd-s1: 4px;  --gd-s2: 8px;  --gd-s3: 12px; --gd-s4: 16px;
   --gd-s5: 24px; --gd-s6: 32px; --gd-s7: 48px;
   --gd-pad: var(--gd-s4);
-  --gd-r: 10px;          /* machined corner — tighter than VELLUM's 14px */
+  --gd-r: 10px;
   --gd-r-sm: 6px;
-  --gd-tap: 48px;        /* minimum thumb target */
+  --gd-tap: 48px;
   --gd-spring: cubic-bezier(0.22, 0.68, 0, 1);
   --gd-fast: 130ms;
   --gd-base: 220ms;
 
-  /* type — engineering plate / stencil / body / machine */
+  /* type — self-hosted subsets (see main.tsx @fontsource imports).
+     Interface copy uses the platform stack; the OS renders its own fonts. */
   --gd-display: 'Saira Condensed', 'Arial Narrow', system-ui, sans-serif;
   --gd-stencil: 'Allerta Stencil', 'Saira Condensed', system-ui, sans-serif;
   --gd-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
   --gd-data: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* ── HULL — dark gunmetal, the default ─────────────────────────────────── */
-html[data-theme='hull'] {
-  /* dominant: hull-steel ramp, ΔL=4 per step (≈ constant ΔE) */
-  --gd-bg:      #14181D;
-  --gd-surface: #1B2026;
-  --gd-card:    #232930;
-  --gd-card-hi: #2B323A;
-  --gd-line:    #39424C;
-  --gd-line-2:  #485460;
+/* ── DAYLIGHT — the authored default ───────────────────────────────────────
+   ~70% warm neutral / 20% navy-ink / ≤10% accents. No large navy surfaces. */
+html[data-theme='daylight'] {
+  /* four-layer surface ramp */
+  --gd-canvas:   #F4F1E9;   /* app background */
+  --gd-raised:   #FFFFFF;   /* editor, active card, menu, sheet */
+  --gd-recessed: #EAE6DC;   /* inset fields, progress tracks, wells */
+  --gd-bg:      var(--gd-canvas);
+  --gd-surface: #FBFAF6;    /* shell, rails, grouped regions */
+  --gd-card:    var(--gd-raised);
+  --gd-card-hi: var(--gd-canvas);  /* pressed card sinks toward canvas */
 
-  /* neutral: bone text family (warm figure on cool ground) */
-  --gd-text:  #EAE7E0;   /* 13.9:1 on bg — AAA */
-  --gd-muted: #A6B1BC;   /*  7.4:1 on bg — AAA */
+  /* lines: decorative hairline vs interactive boundary (≥3:1) */
+  --gd-line-decorative: #D8D2C5;
+  --gd-line-control:    #8E8678;
+  --gd-line:   var(--gd-line-decorative);
+  --gd-line-2: var(--gd-line-control);
+
+  /* ink */
+  --gd-text:  #172532;   /* 13.81:1 on canvas — AAA */
+  --gd-muted: #465765;   /*  6.62:1 on canvas */
+  --gd-dim:   #5D6A74;   /*  4.92:1 — metadata floor, never lighter */
+
+  /* structural + accents */
+  --gd-primary: #173B57;  /* structural navy — nav, trust, primary action */
+  --gd-focus:   #173B57;  /* 2px ring + 2px canvas offset */
+  --gd-olive:  #5D6839;
+  --gd-bronze: #865B19;
+  --gd-sonar:  #006F6B;
+  --gd-slate:  #3C6281;
+
+  --gd-danger:  #A33A2F;
+  --gd-caution: #8A6412;
+  --gd-success: #1F7A44;
+  --gd-info:    #3C6281;
+  --gd-violet:  #6D4FD8;
+
+  --gd-accent: #173B57;
+  --gd-accent-ink: #FFFFFF;
+  --gd-accent-soft: rgba(23, 59, 87, 0.10);
+
+  --gd-primary-soft: rgba(23, 59, 87, 0.10);
+  --gd-danger-soft:  rgba(163, 58, 47, 0.10);
+  --gd-olive-soft:   rgba(93, 104, 57, 0.12);
+  --gd-bronze-soft:  rgba(134, 91, 25, 0.12);
+  --gd-sonar-soft:   rgba(0, 111, 107, 0.10);
+  --gd-slate-soft:   rgba(60, 98, 129, 0.12);
+  --gd-caution-soft: rgba(138, 100, 18, 0.12);
+
+  /* near-opaque in daylight — premium is low visual noise, not glass */
+  --gd-glass: rgba(251, 250, 246, 0.96);
+  --gd-shadow: 0 1px 2px rgba(23, 37, 50, 0.06), 0 2px 8px rgba(23, 37, 50, 0.08);
+  --gd-scheme: light;
+}
+
+/* ── HULL — dark gunmetal, the explicit low-light choice ───────────────── */
+html[data-theme='hull'] {
+  --gd-canvas:   #14181D;
+  --gd-raised:   #232930;
+  --gd-recessed: #101418;
+  --gd-bg:      var(--gd-canvas);
+  --gd-surface: #1B2026;
+  --gd-card:    var(--gd-raised);
+  --gd-card-hi: #2B323A;
+
+  --gd-line-decorative: #39424C;
+  --gd-line-control:    #707D8A;  /* 3.49:1 on raised */
+  --gd-line:   var(--gd-line-decorative);
+  --gd-line-2: #485460;
+
+  --gd-text:  #EAE7E0;   /* 14.43:1 on canvas — AAA */
+  --gd-muted: #A6B1BC;   /*  8.18:1 on canvas */
   --gd-dim:   #76838F;   /* metadata only, never body copy */
 
-  /* land accents (GDLS) */
-  --gd-olive:  #A8B36B;  /* grouping / classification */
-  --gd-bronze: #C9964B;  /* figure emphasis — the thing being worked on */
+  --gd-primary: #7C9BC0;
+  --gd-focus:   #7C9BC0;
+  --gd-olive:  #A8B36B;
+  --gd-bronze: #C9964B;
+  --gd-sonar:  #3FC9B8;
+  --gd-slate:  #7C9BC0;
 
-  /* sea accents (GDEB) */
-  --gd-sonar: #3FC9B8;   /* live signal / common fate */
-  --gd-slate: #7C9BC0;   /* reference / continuity */
-
-  /* semantic states — adjusted off pure primaries */
-  --gd-danger:  #E5604A; /* ONE control per screen */
+  --gd-danger:  #E5604A;
   --gd-caution: #E0A93E;
   --gd-success: #5FBF7E;
   --gd-info:    #7C9BC0;
-  --gd-violet:  #A78BFA; /* machine-written text only */
+  --gd-violet:  #A78BFA;
 
-  /* default accent (overridden per app below) */
   --gd-accent: #3FC9B8;
-  --gd-accent-ink: #04120F;  /* text on an accent-filled control */
+  --gd-accent-ink: #14181D;
   --gd-accent-soft: rgba(63, 201, 184, 0.13);
 
-  /* soft plaques for fixed-identity accents (Home tiles) */
+  --gd-primary-soft: rgba(124, 155, 192, 0.14);
+  --gd-danger-soft:  rgba(229, 96, 74, 0.13);
   --gd-olive-soft:   rgba(168, 179, 107, 0.13);
   --gd-bronze-soft:  rgba(201, 150, 75, 0.13);
   --gd-sonar-soft:   rgba(63, 201, 184, 0.13);
@@ -89,46 +143,15 @@ html[data-theme='hull'] {
   --gd-scheme: dark;
 }
 
-/* ── DAYLIGHT — warm bone ground, steel figure (not an inversion) ──────── */
-html[data-theme='daylight'] {
-  --gd-bg:      #E6E2D8;
-  --gd-surface: #EFECE3;
-  --gd-card:    #F7F5EE;
-  --gd-card-hi: #FFFEFA;
-  --gd-line:    #C9C4B7;
-  --gd-line-2:  #B1AC9E;
+/* ── Per-app accent tint — surfaces never change, only the accent ──────── */
+html[data-theme='daylight'][data-app='writing']  { --gd-accent: #865B19; --gd-accent-soft: rgba(134, 91, 25, 0.12); }
+html[data-theme='daylight'][data-app='learning'] { --gd-accent: #5D6839; --gd-accent-soft: rgba(93, 104, 57, 0.12); }
+html[data-theme='daylight'][data-app='chat']     { --gd-accent: #006F6B; --gd-accent-soft: rgba(0, 111, 107, 0.10); }
+html[data-theme='daylight'][data-app='studio']   { --gd-accent: #3C6281; --gd-accent-soft: rgba(60, 98, 129, 0.12); }
+html[data-theme='daylight'][data-app='command']  { --gd-accent: #173B57; --gd-accent-soft: rgba(23, 59, 87, 0.10); }
+html[data-theme='daylight'][data-app='mail']     { --gd-accent: #3C6281; --gd-accent-soft: rgba(60, 98, 129, 0.12); }
+html[data-theme='daylight'][data-app='library']  { --gd-accent: #5D6839; --gd-accent-soft: rgba(93, 104, 57, 0.12); }
 
-  --gd-text:  #20262D;   /* 12.1:1 on bg — AAA */
-  --gd-muted: #4E5A66;   /*  7.1:1 on bg — AAA */
-  --gd-dim:   #6D7985;
-
-  --gd-olive:  #5F6E2A;
-  --gd-bronze: #8A6320;
-  --gd-sonar:  #0F7E71;
-  --gd-slate:  #3E608C;
-
-  --gd-danger:  #B23A24;
-  --gd-caution: #8A6412;
-  --gd-success: #1F7A44;
-  --gd-info:    #3E608C;
-  --gd-violet:  #6D4FD8;
-
-  --gd-accent: #0F7E71;
-  --gd-accent-ink: #F7F5EE;
-  --gd-accent-soft: rgba(15, 126, 113, 0.12);
-
-  --gd-olive-soft:   rgba(95, 110, 42, 0.12);
-  --gd-bronze-soft:  rgba(138, 99, 32, 0.12);
-  --gd-sonar-soft:   rgba(15, 126, 113, 0.12);
-  --gd-slate-soft:   rgba(62, 96, 140, 0.12);
-  --gd-caution-soft: rgba(138, 100, 18, 0.12);
-
-  --gd-glass: rgba(239, 236, 227, 0.80);
-  --gd-shadow: 0 1px 2px rgba(32, 38, 45, 0.08), 0 8px 24px rgba(32, 38, 45, 0.12);
-  --gd-scheme: light;
-}
-
-/* ── Per-app accent tint — the steel never changes, only the accent ────── */
 html[data-theme='hull'][data-app='writing']   { --gd-accent: #C9964B; --gd-accent-ink: #171004; --gd-accent-soft: rgba(201, 150, 75, 0.13); }
 html[data-theme='hull'][data-app='learning']  { --gd-accent: #A8B36B; --gd-accent-ink: #101206; --gd-accent-soft: rgba(168, 179, 107, 0.13); }
 html[data-theme='hull'][data-app='chat']      { --gd-accent: #3FC9B8; --gd-accent-ink: #04120F; --gd-accent-soft: rgba(63, 201, 184, 0.13); }
@@ -137,18 +160,49 @@ html[data-theme='hull'][data-app='command']   { --gd-accent: #E0A93E; --gd-accen
 html[data-theme='hull'][data-app='mail']      { --gd-accent: #7C9BC0; --gd-accent-ink: #0A1017; --gd-accent-soft: rgba(124, 155, 192, 0.14); }
 html[data-theme='hull'][data-app='library']   { --gd-accent: #A8B36B; --gd-accent-ink: #101206; --gd-accent-soft: rgba(168, 179, 107, 0.13); }
 
-html[data-theme='daylight'][data-app='writing']  { --gd-accent: #8A6320; --gd-accent-soft: rgba(138, 99, 32, 0.12); }
-html[data-theme='daylight'][data-app='learning'] { --gd-accent: #5F6E2A; --gd-accent-soft: rgba(95, 110, 42, 0.12); }
-html[data-theme='daylight'][data-app='chat']     { --gd-accent: #0F7E71; --gd-accent-soft: rgba(15, 126, 113, 0.12); }
-html[data-theme='daylight'][data-app='studio']   { --gd-accent: #3E608C; --gd-accent-soft: rgba(62, 96, 140, 0.12); }
-html[data-theme='daylight'][data-app='command']  { --gd-accent: #8A6412; --gd-accent-soft: rgba(138, 100, 18, 0.12); }
-html[data-theme='daylight'][data-app='mail']     { --gd-accent: #3E608C; --gd-accent-soft: rgba(62, 96, 140, 0.12); }
-html[data-theme='daylight'][data-app='library']  { --gd-accent: #5F6E2A; --gd-accent-soft: rgba(95, 110, 42, 0.12); }
+/* ── Preference media contexts — first-class token contexts ────────────── */
+
+/* prefers-contrast: more — harden edges and lift the metadata tier */
+@media (prefers-contrast: more) {
+  html[data-theme='daylight'] {
+    --gd-line: var(--gd-line-control);
+    --gd-line-decorative: #8E8678;
+    --gd-dim:   #465765;
+    --gd-muted: #172532;
+    --gd-glass: #FBFAF6;
+  }
+  html[data-theme='hull'] {
+    --gd-line: var(--gd-line-control);
+    --gd-line-decorative: #707D8A;
+    --gd-dim:   #A6B1BC;
+    --gd-muted: #EAE7E0;
+    --gd-glass: #1B2026;
+  }
+}
+
+/* prefers-reduced-transparency — glass becomes fully opaque */
+@media (prefers-reduced-transparency: reduce) {
+  html[data-theme='daylight'] { --gd-glass: #FBFAF6; }
+  html[data-theme='hull']     { --gd-glass: #1B2026; }
+  .gd-head { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* forced-colors (Windows High Contrast) — preserve native semantics;
+   targeted fixes only, never a recreated palette. */
+@media (forced-colors: active) {
+  :root { --gd-shadow: none; }
+  .gd-tile, .gd-row, .gd-panel, .gd-iconbtn { forced-color-adjust: auto; }
+  .gd-ribbon, .gd-ribbon i { forced-color-adjust: none; }
+}
+
+/* prefers-reduced-motion — zero out motion tokens */
+@media (prefers-reduced-motion: reduce) {
+  :root { --gd-fast: 0ms; --gd-base: 0ms; }
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    GD SHELL + THE THREE PRIMITIVES
-   Scoped under .gd-shell so legacy VELLUM pages keep their look during the
-   transition. Every value reads a token above — no hex below this line.
+   Every value reads a token above — no hex below this line.
    ══════════════════════════════════════════════════════════════════════════ */
 
 .gd-shell {
@@ -159,7 +213,6 @@ html[data-theme='daylight'][data-app='library']  { --gd-accent: #5F6E2A; --gd-ac
   background: var(--gd-bg);
   color: var(--gd-text);
   font-family: var(--gd-body);
-  -webkit-font-smoothing: antialiased;
 }
 
 /* navigation layer — the only glass */
@@ -314,7 +367,8 @@ html[data-theme='daylight'][data-app='library']  { --gd-accent: #5F6E2A; --gd-ac
   background: var(--gd-surface);
 }
 
-/* nav chip — used in the app frame's per-app nav strip */
+/* nav chip — used by in-page filter/toggle strips (36px; page-level nav
+   uses the ≥44px shell context bar instead) */
 .gd-chip {
   display: inline-flex;
   align-items: center;

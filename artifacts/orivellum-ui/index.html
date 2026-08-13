@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="daylight" data-text-size="100" data-measure="standard" data-reading-face="sans">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
@@ -15,25 +15,49 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- PWA / Home Screen install meta -->
     <link rel="apple-touch-icon" href="/icon-192.png" />
-    <meta name="theme-color" content="#14181D" />
-    <!-- GD-industrial theme init — runs before first paint so tokens resolve.
-         'hull' (dark gunmetal) is the default; 'daylight' is opt-in later. -->
+    <meta name="theme-color" content="#F4F1E9" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Orivellum" />
+    <!-- Theme + calibration boot — runs before first paint so first paint is
+         always the saved preference (Premium Daylight by default; 'system'
+         follows the OS scheme). src/lib/theme.ts owns everything after mount.
+         Palette source of truth: design/tokens.json (chrome colors mirrored
+         here because CSS has not loaded yet at this point). -->
     <script>
       (function () {
-        try {
-          var t = localStorage.getItem('orivellum-theme');
-          document.documentElement.dataset.theme =
-            t === 'daylight' ? 'daylight' : 'hull';
-        } catch (e) {
-          document.documentElement.dataset.theme = 'hull';
+        var root = document.documentElement;
+        function get(k) {
+          try { return localStorage.getItem(k); } catch (e) { return null; }
         }
+        var pref = get('orivellum-theme');
+        if (pref !== 'daylight' && pref !== 'hull' && pref !== 'system') pref = 'daylight';
+        var resolved = pref;
+        if (pref === 'system') {
+          try {
+            resolved = window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'hull' : 'daylight';
+          } catch (e) { resolved = 'daylight'; }
+        }
+        root.dataset.theme = resolved;
+        root.style.colorScheme = resolved === 'hull' ? 'dark' : 'light';
+        if (resolved === 'hull') {
+          root.classList.add('dark');
+          var tc = document.querySelector('meta[name="theme-color"]');
+          if (tc) tc.setAttribute('content', '#14181D');
+          var sb = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+          if (sb) sb.setAttribute('content', 'black-translucent');
+        }
+        var ts = get('orivellum-text-size');
+        if (ts === '112' || ts === '125') root.dataset.textSize = ts;
+        var m = get('orivellum-measure');
+        if (m === 'focused' || m === 'wide') root.dataset.measure = m;
+        var f = get('orivellum-reading-face');
+        if (f === 'serif') root.dataset.readingFace = f;
       })();
     </script>
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Orivellum" />
-    <!-- Inter removed: system San Francisco / Segoe UI is used for sans-serif;
-         Bricolage Grotesque + Fraunces + Space Mono load async from index.css -->
+    <!-- Fonts are self-hosted (@fontsource, bundled at build time). Interface
+         copy uses the platform stack — no third-party font requests. -->
     <!--
       VisualViewport controller — sets --visual-viewport-height and
       --visual-viewport-offset-top on :root so the CSS app shell can
