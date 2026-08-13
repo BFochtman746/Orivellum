@@ -19,9 +19,9 @@ import type { LucideIcon } from "lucide-react";
 import {
   Workflow, Search, Plus, RefreshCcw, ArrowRight, Sparkles, X, LayoutGrid, NotebookPen,
 } from "lucide-react";
-import { APPS } from "@/lib/apps";
+import { DESTINATIONS, MORE_GROUPS } from "@/lib/destinations";
 
-// ── Navigation items (derived from the app registry) ───────────────────────
+// ── Navigation items (derived from the destination registry) ───────────────
 
 interface NavItem {
   href: string;
@@ -31,18 +31,30 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Home Screen", icon: LayoutGrid, group: "Home" },
-  ...APPS.flatMap((app) =>
-    app.routes.map((r) => ({
-      href: r.href,
-      label: r.name,
-      icon: app.icon,
-      group: app.name,
+  { href: "/", label: "Home", icon: LayoutGrid, group: "Home" },
+  ...DESTINATIONS.filter((d) => d.id !== "home").flatMap((d) =>
+    (d.tabs ?? [{ name: d.name, href: d.entry }]).map((t) => ({
+      href: t.href,
+      label: t.name,
+      icon: d.icon,
+      group: d.name,
+    })),
+  ),
+  ...MORE_GROUPS.flatMap((g) =>
+    g.items.map((t) => ({
+      href: t.href,
+      label: t.name,
+      icon: g.icon,
+      group: g.name,
     })),
   ),
 ];
 
-const NAV_GROUPS = ["Home", ...APPS.map((a) => a.name)];
+const NAV_GROUPS = [
+  "Home",
+  ...DESTINATIONS.filter((d) => d.id !== "home").map((d) => d.name),
+  ...MORE_GROUPS.map((g) => g.name),
+];
 
 // ── Quick actions ─────────────────────────────────────────────────────────────
 

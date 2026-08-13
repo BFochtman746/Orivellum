@@ -70,12 +70,16 @@ export function ReadAloudDock() {
         <div
           ref={dockRef}
           data-testid="dock-read-aloud"
-          className="fixed inset-x-0 bottom-0 z-40"
+          className="fixed inset-x-0 z-40"
           style={{
+            // Sit above the mobile bottom tab bar (0px when the rail shows).
+            bottom: "var(--shell-tabbar-h, 0px)",
             background: CHROME.bg,
             borderTop: `1px solid ${CHROME.line}`,
             color: CHROME.text,
-            paddingBottom: "env(safe-area-inset-bottom)",
+            // The tab bar already absorbs the safe-area inset when raised.
+            paddingBottom:
+              "max(0px, calc(env(safe-area-inset-bottom) - var(--shell-tabbar-h, 0px)))",
             boxShadow: "0 -6px 24px rgba(0,0,0,0.35)",
           }}
         >

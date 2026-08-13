@@ -62,8 +62,7 @@ import ComposePage from '@/pages/mail/compose';
 import MailSettingsPage from '@/pages/mail/settings';
 import NotFound from '@/pages/not-found';
 import HomeScreen from '@/pages/home/index';
-import { AppFrame } from '@/components/app-frame';
-import { getAppForPath } from '@/lib/apps';
+import { ResponsiveShell } from '@/components/shell/responsive-shell';
 import { ReadAloudProvider } from '@/lib/read-aloud';
 import { ReadAloudDock } from '@/components/read-aloud-dock';
 import { toast } from 'sonner';
@@ -98,19 +97,6 @@ function RouteWithBoundary({ component: Page }: { component: React.ComponentType
   );
 }
 
-/**
- * Shell — picks the frame that wraps a routed page:
- *   - path owned by an app → GD-industrial AppFrame (full-screen, app nav only)
- *   - unknown paths (NotFound) → rendered bare, no frame
- */
-function Shell({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
-  const path = location.split('?')[0];
-  const app = getAppForPath(path);
-  if (app) return <AppFrame app={app}>{children}</AppFrame>;
-  return <>{children}</>;
-}
-
 /** Mounted once (authenticated tree only): polls the server's notification
  * feed and shows browser alerts / toasts for finished documents & audiobooks. */
 function BrowserNotificationsWatcher() {
@@ -127,24 +113,19 @@ function OutboxSyncWatcher() {
 }
 
 function Router() {
+  // Every route — including Home and unknown paths — renders inside the one
+  // ResponsiveShell (WP1 gate: no page lives outside the shell).
   return (
-    <Switch>
-      {/* Home Screen launcher — full-screen, no app shell around it */}
-      <Route path="/">{() => <RouteWithBoundary component={HomeScreen} />}</Route>
-      <Route>
-        {() => (
-          <Shell>
-            <RoutedPages />
-          </Shell>
-        )}
-      </Route>
-    </Switch>
+    <ResponsiveShell>
+      <RoutedPages />
+    </ResponsiveShell>
   );
 }
 
 function RoutedPages() {
   return (
       <Switch>
+        <Route path="/">{() => <RouteWithBoundary component={HomeScreen} />}</Route>
         <Route path="/works">{() => <RouteWithBoundary component={WorksList} />}</Route>
         <Route path="/works/:workId">{() => <RouteWithBoundary component={WorkDetail} />}</Route>
         <Route path="/works/:workId/intelligence">{() => <RouteWithBoundary component={WorkIntelligence} />}</Route>

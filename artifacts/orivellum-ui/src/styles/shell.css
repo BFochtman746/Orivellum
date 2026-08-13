@@ -1,0 +1,237 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE SHELL — WP1
+   One shell, five destinations. Token-only (no hex below this line).
+
+   Width behaviors:
+     320–767px   — fixed bottom tab bar (safe-area aware); rail hidden
+     768–1199px  — compact left rail (icons); tab bar hidden
+     1200px+     — labeled left rail
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Published for fixed overlays (Read Aloud dock) that must sit ABOVE the
+   mobile tab bar. 0 when the rail is showing. */
+:root {
+  --shell-tabbar-h: 0px;
+}
+@media (max-width: 767px) {
+  :root {
+    --shell-tabbar-h: calc(60px + var(--sai-bottom, 0px));
+  }
+}
+
+.shell-root {
+  flex-direction: row; /* rail | main column (overrides .gd-shell column) */
+}
+
+.shell-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Mobile bottom tab bar ─────────────────────────────────────────────── */
+.shell-tabbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  z-index: 30;
+  padding-bottom: var(--sai-bottom, 0px);
+  background: var(--gd-glass);
+  -webkit-backdrop-filter: saturate(160%) blur(18px);
+  backdrop-filter: saturate(160%) blur(18px);
+  border-top: 1px solid var(--gd-line);
+}
+
+.shell-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 60px; /* ≥ 48px thumb target */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--gd-muted);
+  font-family: var(--gd-data);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--gd-fast) linear;
+}
+.shell-tab[data-active='true'] {
+  color: var(--gd-accent);
+}
+.shell-tab svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* ── Desktop / tablet left rail ────────────────────────────────────────── */
+.shell-rail {
+  flex: 0 0 auto;
+  width: 68px;
+  display: none; /* shown ≥768px */
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--gd-s1);
+  z-index: 30;
+  padding: calc(var(--sai-top, 0px) + var(--gd-s3)) var(--gd-s2) var(--gd-s3);
+  background: var(--gd-surface);
+  border-right: 1px solid var(--gd-line);
+  overflow-y: auto;
+}
+
+.shell-rail-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--gd-tap);
+  margin-bottom: var(--gd-s3);
+  font-family: var(--gd-stencil);
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gd-text);
+  white-space: nowrap;
+}
+.shell-rail-brand em { font-style: normal; color: var(--gd-accent); }
+.shell-rail-brand .shell-rail-label { display: none; }
+
+.shell-rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 56px;
+  border-radius: var(--gd-r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gd-muted);
+  font-family: var(--gd-data);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--gd-fast) linear, color var(--gd-fast) linear;
+}
+.shell-rail-item:hover { background: var(--gd-card); color: var(--gd-text); }
+.shell-rail-item[data-active='true'] {
+  border-color: var(--gd-accent);
+  background: var(--gd-accent-soft);
+  color: var(--gd-accent);
+}
+.shell-rail-item svg { width: 22px; height: 22px; flex: 0 0 auto; }
+
+@media (min-width: 768px) {
+  .shell-rail { display: flex; }
+  .shell-tabbar { display: none; }
+}
+
+/* Labeled rail at 1200px+ */
+@media (min-width: 1200px) {
+  .shell-rail { width: 188px; padding-left: var(--gd-s3); padding-right: var(--gd-s3); }
+  .shell-rail-brand { justify-content: flex-start; padding: 0 var(--gd-s2); }
+  .shell-rail-item {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--gd-s3);
+    min-height: var(--gd-tap);
+    padding: 0 var(--gd-s3);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+  }
+}
+
+/* ── Contextual tabs (ContextBar) ──────────────────────────────────────────
+   Replaces the 36px .gd-chip route strips: ≥44px targets, scrolls inside
+   its own container (never forces page-level horizontal scrolling).      */
+.shell-context-bar {
+  display: flex;
+  gap: var(--gd-s1);
+  margin-top: var(--gd-s2);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.shell-context-bar::-webkit-scrollbar { display: none; }
+
+.shell-context-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--gd-s4);
+  border-radius: var(--gd-r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gd-muted);
+  font-family: var(--gd-data);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--gd-fast) linear, background var(--gd-fast) linear;
+}
+.shell-context-tab:active { background: var(--gd-card-hi); }
+.shell-context-tab[data-active='true'] {
+  border-color: var(--gd-accent);
+  background: var(--gd-accent-soft);
+  color: var(--gd-accent);
+}
+
+/* ── PageHeader ────────────────────────────────────────────────────────── */
+.shell-page-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gd-s3);
+  padding: var(--gd-s4) 0 var(--gd-s3);
+}
+.shell-page-header h2 {
+  margin: 0;
+  font-family: var(--gd-stencil);
+  font-size: 17px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gd-text);
+}
+.shell-page-header .shell-page-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--gd-s2);
+}
+
+/* ── More sheet (GlobalActionSheet) rows ───────────────────────────────── */
+.shell-sheet-group {
+  padding: var(--gd-s3) 0 var(--gd-s2);
+}
+.shell-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gd-s3);
+  min-height: var(--gd-tap);
+  padding: 0 var(--gd-s3);
+  border-radius: var(--gd-r-sm);
+  color: var(--gd-text);
+  font-size: 14px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--gd-fast) linear;
+}
+.shell-sheet-row:hover, .shell-sheet-row:active { background: var(--gd-card); }
+.shell-sheet-row svg { width: 18px; height: 18px; color: var(--gd-muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-tab, .shell-rail-item, .shell-context-tab, .shell-sheet-row { transition: none; }
+}
