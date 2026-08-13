@@ -21,7 +21,8 @@ Blockers (see baseline/RELEASE_BLOCKERS.md for full write-ups):
 
 from __future__ import annotations
 
-import inspect
+import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -87,21 +88,34 @@ def test_d1_artifact_gate_fails_open_when_artifact_check_raises():
 # ── D2: gates are percentage thresholds, not ratified predicates ─────────────
 
 
-def test_d2_stage_gates_use_percentage_thresholds():
-    """DEFECT D2: B-stage advancement gates on *_pct percentages computed
-    over assumed denominators, not on ratified predicates.
+def test_d2_stage_gate_decision_is_a_percentage_threshold(monkeypatch):
+    """DEFECT D2 (behavioral): the B2→B3 gate flips purely on the
+    research_pct percentage crossing 40% — a percentage over an assumed
+    denominator, not a ratified predicate. If gates become predicate-based,
+    feeding a bare percentage will no longer decide the outcome and this
+    test FAILS.
 
     Contrast: the promote-to-book path is already predicate-based
     (promotion_eligibility in capabilities/readiness.py)."""
+    import orivellum.capabilities.book_intelligence as bi
     from orivellum.api.routes.works import _check_stage_gate
 
-    src = inspect.getsource(_check_stage_gate)
-    assert "_COMPLETENESS_GATES" in src
-    for pct_metric in ("structural_pct", "research_pct", "content_pct", "editorial_pct"):
-        assert pct_metric in src, (
-            f"D2 appears (partially) FIXED: {pct_metric} no longer gates "
-            "stage advancement. Update baseline/RELEASE_BLOCKERS.md."
-        )
+    def intel_with(pct):
+        return lambda work_id, db: {"completeness": {"research_pct": pct}}
+
+    monkeypatch.setattr(bi, "build_book_intelligence", intel_with(39.9))
+    blocked = _check_stage_gate("B2", "B3", "work-x", db=_StubDB(), pipeline_id=None)
+    assert blocked is not None and blocked["metric"] == "research_pct", (
+        "D2 appears FIXED: the gate no longer blocks on a bare percentage. "
+        "Update baseline/RELEASE_BLOCKERS.md and rewrite this test."
+    )
+
+    monkeypatch.setattr(bi, "build_book_intelligence", intel_with(40.0))
+    passed = _check_stage_gate("B2", "B3", "work-x", db=_StubDB(), pipeline_id=None)
+    assert passed is None, (
+        "D2 appears FIXED: 40% research coverage alone no longer satisfies "
+        "the gate. Update baseline/RELEASE_BLOCKERS.md and rewrite this test."
+    )
 
     # The healthy contrast must keep existing: predicate-based promotion.
     from orivellum.capabilities.readiness import promotion_eligibility  # noqa: F401
@@ -123,6 +137,38 @@ def test_d3_ai_extraction_defaults_off():
     assert 'get_setting("ai_extraction_enabled", "false")' in pipeline_src, (
         "The ai_extraction_enabled gate moved or changed its default — "
         "update baseline/RELEASE_BLOCKERS.md (D3) accordingly."
+    )
+
+
+# ── Static baseline metrics guard (route count / hex literals) ───────────────
+
+
+def test_ui_baseline_static_metrics_hold():
+    """CI wiring for the build-free half of the WP0 metrics gate: routed
+    path count must never DECREASE and the hard-coded hex-literal count
+    outside the token allowlist must never INCREASE versus
+    baseline/metrics.json. (Bundle-size checks need a production build —
+    run `uv run python scripts/ui_baseline_metrics.py check` for those.)"""
+    spec = importlib.util.spec_from_file_location(
+        "ui_baseline_metrics", REPO_ROOT / "scripts" / "ui_baseline_metrics.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    baseline = json.loads((REPO_ROOT / "baseline" / "metrics.json").read_text(encoding="utf-8"))
+
+    routes = mod.count_routes()
+    assert routes >= baseline["route_count"], (
+        f"Routed path count decreased ({baseline['route_count']} -> {routes}) — "
+        "every baseline deep link must keep working."
+    )
+
+    hex_counted = mod.count_hex_literals()["counted"]
+    assert hex_counted <= baseline["hex_literals"]["counted"], (
+        f"Hard-coded hex literals outside token files increased "
+        f"({baseline['hex_literals']['counted']} -> {hex_counted}) — "
+        "use design tokens instead. If literals were intentionally removed, "
+        "recollect the baseline to ratchet down."
     )
 
 

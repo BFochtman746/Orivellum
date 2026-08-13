@@ -26,6 +26,14 @@ if (!KEY) {
   console.error('No login key: set ORIVELLUM_LOGIN_KEY or SESSION_SECRET.');
   process.exit(2);
 }
+if (!process.env.ORIVELLUM_LOGIN_KEY && process.env.SESSION_SECRET) {
+  console.warn(
+    'WARNING: using SESSION_SECRET as the login key (deprecated fallback). ' +
+      'Set a dedicated ORIVELLUM_LOGIN_KEY instead.',
+  );
+}
+
+const EXPECTED_CAPTURES = 15; // 5 screens x 3 viewports — fail closed on fewer
 
 const VIEWPORTS = [
   { name: 'w320', width: 320, height: 568 },
@@ -50,12 +58,13 @@ async function main() {
     { name: 'works', path: '/works' },
     { name: 'library', path: '/library' },
   ];
-  if (workId) {
-    screens.push({ name: 'work-detail', path: `/works/${workId}` });
-  } else {
-    console.warn('No Works exist — skipping work-detail screen.');
+  if (!workId) {
+    console.error('No Works exist — cannot capture the work-detail screen. Seed a Work first.');
+    process.exit(1);
   }
+  screens.push({ name: 'work-detail', path: `/works/${workId}` });
 
+  let captured = 0;
   const browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_BIN || undefined,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
@@ -81,14 +90,27 @@ async function main() {
           // polling endpoints can keep the network busy — proceed after settle delay
         }
         await page.waitForTimeout(1500);
+        // Fail closed on unauthenticated/unrouted renders — a baseline of
+        // login forms or 404 pages is worse than no baseline.
+        const bodyText = await page.evaluate(() => document.body.innerText || '');
+        if (/Page not found/i.test(bodyText)) {
+          throw new Error(`${screen.name} at ${vp.name} rendered the 404 page (${url})`);
+        }
+        if (/API key/i.test(bodyText) && /log ?in|sign ?in|unlock/i.test(bodyText)) {
+          throw new Error(`${screen.name} at ${vp.name} rendered the login form — auth failed (${url})`);
+        }
         const file = path.join(OUT, `${screen.name}-${vp.name}.png`);
         await page.screenshot({ path: file });
+        captured += 1;
         console.log(`captured ${path.relative(process.cwd(), file)}`);
       }
       await context.close();
     }
   } finally {
     await browser.close();
+  }
+  if (captured !== EXPECTED_CAPTURES) {
+    throw new Error(`expected ${EXPECTED_CAPTURES} captures, produced ${captured}`);
   }
 }
 

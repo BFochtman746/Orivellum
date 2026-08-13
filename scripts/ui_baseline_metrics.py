@@ -105,6 +105,15 @@ def collect_assets() -> dict:
             gzip_js_total += gz
         else:
             gzip_css_total += gz
+    # Fail closed: an empty/stale assets dir must never pass the size gate.
+    if gzip_js_total == 0 or gzip_css_total == 0:
+        print(
+            f"ERROR: no JS/CSS assets found in {DIST_ASSETS.relative_to(REPO_ROOT)} — "
+            "stale or incomplete build? Rebuild before collecting/checking:\n"
+            "  cd artifacts/orivellum-ui && NODE_ENV=production pnpm run build",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     return {
         "chunks": chunks,
         "gzip_js_total": gzip_js_total,
@@ -138,6 +147,9 @@ def cmd_check() -> int:
         print(f"ERROR: no baseline at {BASELINE_FILE.relative_to(REPO_ROOT)}; run `collect` first.", file=sys.stderr)
         return 2
     baseline = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
+    if not baseline["assets"]["gzip_js_total"] or not baseline["assets"]["gzip_css_total"]:
+        print("ERROR: baseline has zero asset totals — recollect from a real build.", file=sys.stderr)
+        return 2
     current = collect()
     failures: list[str] = []
 

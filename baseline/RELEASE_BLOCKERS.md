@@ -2,10 +2,12 @@
 
 Frozen at the `ui-baseline-wp0` tag. These four defects are tracked as
 **explicit release blockers** for the UI completion / personal lockdown
-project. None may be closed silently: each is pinned by a characterization
-test in `tests/test_wp0_release_blockers.py` that PASSES while the defect
-exists and FAILS the moment behavior changes — forcing the fix to update
-both the test and this document.
+project. None may be closed silently: D1, D2, and D4 are pinned by
+behavioral characterization tests in `tests/test_wp0_release_blockers.py`
+that PASS while the defect exists and FAIL the moment the behavior changes —
+forcing the fix to update both the test and this document. D3 is an
+operational runbook item; its test only guards that this document stays
+accurate about the toggle's default.
 
 Baseline artifacts in this directory:
 
