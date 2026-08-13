@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import {
   BookOpen,
   Crown,
@@ -123,20 +123,20 @@ const GAUGES: { key: keyof BookIntelligence["completeness"]; label: string; hint
 ];
 
 function gaugeColor(pct: number): React.CSSProperties {
-  if (pct >= 75) return { background: "var(--green-2)", opacity: 0.75 };
-  if (pct >= 40) return { background: "var(--gilt)", opacity: 0.75 };
-  return { background: "var(--rust)", opacity: 0.65 };
+  if (pct >= 75) return { background: "var(--gd-success)", opacity: 0.75 };
+  if (pct >= 40) return { background: "var(--gd-caution)", opacity: 0.75 };
+  return { background: "var(--gd-danger)", opacity: 0.65 };
 }
 
 const STATUS_CHIP: Record<OutlineChapter["chapter_status"], { label: string; style: React.CSSProperties; Icon: typeof CheckCircle2 }> = {
-  present:    { label: "Present",    style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }, Icon: CheckCircle2 },
-  incomplete: { label: "Incomplete", style: { color: "var(--gilt)",   background: "var(--gilt-soft)",  borderColor: "var(--gilt-line)" }, Icon: CircleDashed },
-  missing:    { label: "Missing",    style: { color: "var(--rust)",   background: "var(--rust-soft)",  borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }, Icon: CircleAlert },
+  present:    { label: "Present",    style: { color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }, Icon: CheckCircle2 },
+  incomplete: { label: "Incomplete", style: { color: "var(--gd-caution)", background: "var(--gd-caution-soft)",  borderColor: "var(--gd-line-control)" }, Icon: CircleDashed },
+  missing:    { label: "Missing",    style: { color: "var(--gd-danger)",  background: "var(--gd-danger-soft)",  borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" }, Icon: CircleAlert },
 };
 
 const SEV_STYLE: Record<BookGap["severity"], React.CSSProperties> = {
-  high:   { color: "var(--rust)", background: "var(--rust-soft)",  borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" },
-  medium: { color: "var(--gilt)", background: "var(--gilt-soft)",  borderColor: "var(--gilt-line)" },
+  high:   { color: "var(--gd-danger)", background: "var(--gd-danger-soft)",  borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" },
+  medium: { color: "var(--gd-caution)", background: "var(--gd-caution-soft)",  borderColor: "var(--gd-line-control)" },
   low:    {},
 };
 
@@ -252,7 +252,7 @@ function ArtifactSummary({ type, content }: { type: string; content: Record<stri
     const issues = (content.issues as unknown[] | undefined) ?? [];
     return (
       <div className="space-y-1.5 pt-2">
-        <div className={issues.length > 0 ? "text-destructive" : ""} style={issues.length === 0 ? { color: "var(--green-2)" } : undefined}>
+        <div className={issues.length > 0 ? "text-destructive" : ""} style={issues.length === 0 ? { color: "var(--gd-success)" } : undefined}>
           {issues.length === 0 ? "✓ No continuity issues found" : `${issues.length} issue${issues.length !== 1 ? "s" : ""} detected`}
         </div>
         {content.summary && <div className="normal-case font-sans opacity-80">{String(content.summary)}</div>}
@@ -267,7 +267,7 @@ function ArtifactSummary({ type, content }: { type: string; content: Record<stri
           <div><span className="opacity-60">Confidence: </span>{String(content.overall_confidence)}</div>
         )}
         {claims.length > 0 && (
-          <div style={{ color: "var(--gilt)" }}>{claims.length} unverified claim{claims.length !== 1 ? "s" : ""}</div>
+          <div style={{ color: "var(--gd-caution)" }}>{claims.length} unverified claim{claims.length !== 1 ? "s" : ""}</div>
         )}
         {content.summary && <div className="normal-case font-sans opacity-80">{String(content.summary)}</div>}
       </div>
@@ -311,7 +311,7 @@ function ArtifactDisplay({ artifact }: { artifact: PipelineArtifact }) {
         className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-muted/30 transition-colors"
         onClick={() => setOpen(!open)}
       >
-        <span className="flex items-center gap-1.5 uppercase tracking-widest text-[10px]" style={{ color: "var(--green-2)" }}>
+        <span className="flex items-center gap-1.5 uppercase tracking-widest text-[10px]" style={{ color: "var(--gd-success)" }}>
           <CheckCircle2 className="w-3 h-3" />
           {typeLabel}
         </span>
@@ -351,9 +351,9 @@ function FindingsList({ findings, workId }: { findings: PipelineFinding[]; workI
   };
 
   const SEV: Record<string, React.CSSProperties> = {
-    critical: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" },
-    high:     { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 22%, transparent)" },
-    medium:   { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" },
+    critical: { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" },
+    high:     { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 22%, transparent)" },
+    medium:   { color: "var(--gd-caution)", background: "var(--gd-caution-soft)", borderColor: "var(--gd-line-control)" },
     low:      {},
   };
 
@@ -371,8 +371,9 @@ function FindingsList({ findings, workId }: { findings: PipelineFinding[]; workI
         >
           <span className="flex-1 leading-snug">{f.description}</span>
           <button
-            className="shrink-0 opacity-60 hover:opacity-100 transition-opacity mt-0.5"
+            className="shrink-0 opacity-60 hover:opacity-100 transition-opacity flex items-center justify-center min-h-11 min-w-11 -my-2"
             title="Resolve finding"
+            aria-label="Resolve finding"
             onClick={() => handleDismiss(f.id)}
             disabled={dismissing === f.id}
           >
@@ -467,11 +468,11 @@ function PipelinePanel({ workId }: { workId: string }) {
   const [blockerMsg, setBlockerMsg] = useState<string | null>(null);
   const [gateDetail, setGateDetail] = useState<{ gate: string; metric: string; threshold: number; actual: number } | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["pipeline", workId],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/works/${workId}/pipeline`);
-      if (!r.ok) throw new Error();
+      if (!r.ok) throw new Error("Failed to load the production pipeline");
       return r.json() as Promise<{ pipeline: Pipeline | null }>;
     },
     staleTime: 15_000,
@@ -563,7 +564,16 @@ function PipelinePanel({ workId }: { workId: string }) {
     },
   });
 
-  if (isLoading) return <Skeleton className="h-16 w-full" />;
+  if (isLoading) return <LoadingState rows={1} label="Loading production pipeline" />;
+  if (isError) {
+    return (
+      <ErrorState
+        title="Could not load the production pipeline"
+        detail="The pipeline status is temporarily unavailable."
+        onRetry={() => refetch()}
+      />
+    );
+  }
 
   const pipeline = data?.pipeline ?? null;
 
@@ -589,7 +599,7 @@ function PipelinePanel({ workId }: { workId: string }) {
           {promoteRefusal && (
             <div
               className="p-3 rounded-lg border text-sm space-y-1"
-              style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+              style={{ color: "var(--gd-caution)", background: "var(--gd-caution-soft)", borderColor: "var(--gd-line-control)" }}
             >
               <p className="text-[10px] font-mono uppercase tracking-wider opacity-70">Not ready for promotion</p>
               <ul className="space-y-0.5">
@@ -649,7 +659,7 @@ function PipelinePanel({ workId }: { workId: string }) {
             {isTerminal && (
               <Badge
                 className="border"
-                style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+                style={{ color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}
               >Complete</Badge>
             )}
           </div>
@@ -835,14 +845,14 @@ function TrailerStatusBadge({ status, phase }: { status: string; phase: string }
   }
   if (status === "ready") {
     return (
-      <span className="flex items-center gap-1 text-[10px] font-mono" style={{ color: "var(--green-2)" }}>
+      <span className="flex items-center gap-1 text-[10px] font-mono" style={{ color: "var(--gd-success)" }}>
         <CheckCircle className="w-3 h-3" /> READY
       </span>
     );
   }
   if (status === "blocked") {
     return (
-      <span className="flex items-center gap-1 text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
+      <span className="flex items-center gap-1 text-[10px] font-mono" style={{ color: "var(--gd-caution)" }}>
         <AlertCircle className="w-3 h-3" /> BLOCKED
       </span>
     );
@@ -900,8 +910,8 @@ function TrailerPackageView({ trailer }: { trailer: TrailerPackage }) {
       <div
         className="flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-mono"
         style={statusReady
-          ? { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }
-          : { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+          ? { color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }
+          : { color: "var(--gd-caution)", background: "var(--gd-caution-soft)", borderColor: "var(--gd-line-control)" }}
       >
         {statusReady
           ? <CheckCircle className="w-3.5 h-3.5 shrink-0" />
@@ -1068,7 +1078,7 @@ function TrailerItem({ trailer, workId }: { trailer: TrailerListItem; workId: st
 function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string }) {
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery<{ trailers: TrailerListItem[]; count: number }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ trailers: TrailerListItem[]; count: number }>({
     queryKey: ["trailers", workId],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/works/${workId}/trailers`);
@@ -1134,14 +1144,19 @@ function TrailerPanel({ workId, lifecycle }: { workId: string; lifecycle: string
 
         {/* Trailer list */}
         {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
+          <LoadingState rows={2} label="Loading trailers" />
+        ) : isError ? (
+          <ErrorState
+            title="Could not load trailers"
+            detail="The trailer list is temporarily unavailable."
+            onRetry={() => refetch()}
+          />
         ) : !data || data.count === 0 ? (
-          <div className="text-sm text-muted-foreground italic font-serif py-6 text-center border border-dashed border-border/60 rounded-lg">
-            No trailers generated yet. Add at least one processed document, then click &ldquo;Generate Trailer&rdquo;.
-          </div>
+          <EmptyState
+            icon={<Film />}
+            title="No trailers generated yet"
+            description="Add at least one processed document, then generate a trailer to preview it here."
+          />
         ) : (
           <div className="space-y-2">
             {data.trailers.map((t) => (
@@ -1233,11 +1248,11 @@ function ContinuityItem({ item, workId }: { item: ContinuityError; workId: strin
   return (
     <div
       className={`rounded-lg border p-4 space-y-3 ${resolved ? "opacity-60" : ""}`}
-      style={resolved ? undefined : { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}
+      style={resolved ? undefined : { borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" }}
       data-testid={`row-continuity-${item.id}`}
     >
       <div className="flex items-start gap-2">
-        <GitCompareArrows className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "var(--rust)" }} />
+        <GitCompareArrows className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "var(--gd-danger)" }} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium leading-snug">{item.description}</p>
           {item.reasoning && (
@@ -1259,7 +1274,7 @@ function ContinuityItem({ item, workId }: { item: ContinuityError; workId: strin
         <ContinuityQuote
           label={`Contradicts · ${chapterRef(item.chapter_title, item.chapter_seq)}`}
           quote={item.current_quote}
-          style={{ borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}
+          style={{ borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)" }}
         />
       </div>
 
@@ -1315,7 +1330,7 @@ function ContinuityItem({ item, workId }: { item: ContinuityError; workId: strin
               onClick={() => setStatus.mutate({ status: "fixed" })}
               data-testid={`button-continuity-fixed-${item.id}`}
             >
-              <CheckCircle2 className="w-3 h-3" style={{ color: "var(--green-2)" }} /> Fixed it
+              <CheckCircle2 className="w-3 h-3" style={{ color: "var(--gd-success)" }} /> Fixed it
             </Button>
             <Button
               variant="outline" size="sm" className="h-7 text-xs gap-1.5"
@@ -1344,7 +1359,7 @@ function ContinuityItem({ item, workId }: { item: ContinuityError; workId: strin
 function ContinuityPanel({ workId }: { workId: string }) {
   const [showResolved, setShowResolved] = useState(false);
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["continuity", workId],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/works/${workId}/inconsistencies`);
@@ -1373,7 +1388,7 @@ function ContinuityPanel({ workId }: { workId: string }) {
         {open.length > 0 && (
           <span
             className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
-            style={{ color: "var(--rust)", background: "var(--rust-soft)" }}
+            style={{ color: "var(--gd-danger)", background: "var(--gd-danger-soft)" }}
           >
             {open.length}
           </span>
@@ -1390,15 +1405,17 @@ function ContinuityPanel({ workId }: { workId: string }) {
       </h3>
 
       {isLoading ? (
-        <Skeleton className="h-24 w-full" />
+        <LoadingState rows={2} label="Loading continuity errors" />
       ) : isError ? (
-        <div className="text-sm text-muted-foreground py-4 text-center border rounded-lg">
-          Could not load continuity errors.
-        </div>
+        <ErrorState
+          title="Could not load continuity errors"
+          detail="The continuity review is temporarily unavailable."
+          onRetry={() => refetch()}
+        />
       ) : visible.length === 0 ? (
         <div
           className="text-sm font-serif py-4 text-center border rounded-lg"
-          style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+          style={{ color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}
         >
           No open continuity errors — every verified contradiction has been addressed.
         </div>
@@ -1593,7 +1610,7 @@ export function BookTab({ workId }: { workId: string }) {
   });
   const workLifecycle = workData?.lifecycle ?? "";
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["book-intelligence", workId],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/works/${workId}/book-intelligence`);
@@ -1623,19 +1640,15 @@ export function BookTab({ workId }: { workId: string }) {
   };
 
   if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
+    return <LoadingState rows={4} label="Loading book intelligence" />;
   }
   if (isError || !data) {
     return (
-      <div className="text-center py-16 text-muted-foreground font-mono text-sm">
-        Could not load the book intelligence view. Is the server running?
-      </div>
+      <ErrorState
+        title="Could not load the book intelligence view"
+        detail="The server may be unreachable. Check your connection and try again."
+        onRetry={() => refetch()}
+      />
     );
   }
 
@@ -1696,9 +1709,11 @@ export function BookTab({ workId }: { workId: string }) {
             </span>
           </h3>
           {outline.length === 0 ? (
-            <div className="text-sm text-muted-foreground italic font-serif py-6 text-center border border-dashed border-border/60 rounded-lg">
-              No chapter structure detected yet — link a manuscript with headings, or reprocess an existing one.
-            </div>
+            <EmptyState
+              icon={<BookOpen />}
+              title="No chapter structure detected yet"
+              description="Link a manuscript with headings, or reprocess an existing one."
+            />
           ) : (
             <div className="space-y-1">
               {outline.map((c) => {
@@ -1729,9 +1744,9 @@ export function BookTab({ workId }: { workId: string }) {
                       href={`/works/${workId}/intelligence?chapter=${c.id}`}
                       className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded border hover:opacity-75 transition-opacity"
                       style={c.knowledge_count === 0
-                        ? { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }
+                        ? { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" }
                         : c.knowledge_count < 3
-                        ? { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
+                        ? { color: "var(--gd-caution)", background: "var(--gd-caution-soft)", borderColor: "var(--gd-line-control)" }
                         : {}}
                       title={`${c.knowledge_count} knowledge item${c.knowledge_count !== 1 ? "s" : ""} — view on Intelligence page`}
                     >
@@ -1753,9 +1768,11 @@ export function BookTab({ workId }: { workId: string }) {
               <FileText className="w-3.5 h-3.5" /> Manuscript versions
             </h3>
             {versions.length === 0 ? (
-              <div className="text-sm text-muted-foreground italic font-serif py-4 text-center border border-dashed border-border/60 rounded-lg">
-                No documents linked to this Work yet.
-              </div>
+              <EmptyState
+                icon={<FileText />}
+                title="No documents linked to this Work yet"
+                description="Link a manuscript from the Library to track its versions here."
+              />
             ) : (
               <div className="space-y-1.5">
                 {versions.map((v) => (
@@ -1795,11 +1812,11 @@ export function BookTab({ workId }: { workId: string }) {
             <h3 className="text-xs font-mono uppercase tracking-widest text-muted-foreground flex items-center gap-2">
               <AlertTriangle className="w-3.5 h-3.5" /> Gaps
               {gaps.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none" style={{ color: "var(--gilt)", background: "var(--gilt-soft)" }}>{gaps.length}</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none" style={{ color: "var(--gd-caution)", background: "var(--gd-caution-soft)" }}>{gaps.length}</span>
               )}
             </h3>
             {gaps.length === 0 ? (
-              <div className="text-sm font-serif py-4 text-center border rounded-lg" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
+              <div className="text-sm font-serif py-4 text-center border rounded-lg" style={{ color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}>
                 No gaps detected — this book looks well covered.
               </div>
             ) : (

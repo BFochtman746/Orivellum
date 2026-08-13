@@ -105,13 +105,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
+import { LoadingState, EmptyState, ErrorState, ConfirmAction } from "@/components/primitives";
 
 
 const WORK_API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
 export function TasksTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
-  const { data: tasksResp, isLoading } = useGetWorkTasks(workId, {}, {
+  const { data: tasksResp, isLoading, isError, refetch } = useGetWorkTasks(workId, {}, {
     query: { enabled: !!workId, queryKey: getGetWorkTasksQueryKey(workId) },
   });
   const createTask = useCreateWorkTask();
@@ -184,7 +185,6 @@ export function TasksTab({ workId }: { workId: string }) {
 
   const [taskFilter, setTaskFilter] = useState<"all" | "pending" | "completed">("all");
 
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
   const allTasks = tasksResp?.tasks ?? [];
   const tasks = taskFilter === "all" ? allTasks : allTasks.filter((t) => t.status === taskFilter);
 
@@ -196,7 +196,7 @@ export function TasksTab({ workId }: { workId: string }) {
           <button
             key={f}
             onClick={() => setTaskFilter(f)}
-            className={`px-3 py-1 rounded-full text-xs font-mono uppercase tracking-wider border transition-colors ${
+            className={`px-3 min-h-11 rounded-full text-xs font-mono uppercase tracking-wider border transition-colors ${
               taskFilter === f
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-transparent text-muted-foreground border-border hover:border-primary/50"
@@ -225,17 +225,25 @@ export function TasksTab({ workId }: { workId: string }) {
           <option value={2}>P2</option>
           <option value={3}>P3</option>
         </select>
-        <Button type="submit" disabled={!newTaskText.trim() || createTask.isPending}>
+        <Button type="submit" className="min-h-11" disabled={!newTaskText.trim() || createTask.isPending}>
           {createTask.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add"}
         </Button>
       </form>
 
       <div className="space-y-2">
-        {tasks.length > 0 ? (
+        {isLoading ? (
+          <LoadingState rows={4} label="Loading tasks" />
+        ) : isError ? (
+          <ErrorState
+            title="Couldn't load tasks"
+            detail="The tasks for this work failed to load."
+            onRetry={() => refetch()}
+          />
+        ) : tasks.length > 0 ? (
           tasks.map((task) => (
             <div
               key={task.id}
-              className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/30 transition-colors group border border-transparent hover:border-border/50"
+              className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/30 transition-colors group border border-transparent hover:border-border/50 min-h-11"
             >
               <Checkbox
                 id={task.id}
@@ -260,7 +268,7 @@ export function TasksTab({ workId }: { workId: string }) {
                 ) : (
                   <label
                     htmlFor={task.id}
-                    className={`text-sm font-medium leading-none cursor-pointer ${
+                    className={`block text-sm font-medium leading-snug cursor-pointer line-clamp-3 ${
                       task.status === "completed" ? "line-through text-muted-foreground" : ""
                     }`}
                     onDoubleClick={() => handleStartEdit(task)}
@@ -272,24 +280,28 @@ export function TasksTab({ workId }: { workId: string }) {
               </div>
               <button
                 onClick={() => handleChangePriority(task.id!, task.priority ?? 0)}
-                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                className="opacity-0 group-hover:opacity-100 transition-opacity min-h-11 flex items-center shrink-0"
                 title="Click to cycle priority"
               >
                 <Badge
                   variant="outline"
                   className="text-[9px] uppercase font-mono cursor-pointer hover:bg-primary/10"
                   style={
-                    task.priority === 1 ? { borderColor: "color-mix(in srgb, var(--rust) 55%, transparent)", color: "var(--rust)" } :
-                    task.priority === 2 ? { borderColor: "var(--gilt-line)", color: "var(--gilt)" } :
-                    task.priority === 3 ? { borderColor: "var(--ink-soft)", color: "var(--ink-soft)" } :
+                    task.priority === 1 ? { borderColor: "color-mix(in srgb, var(--gd-danger) 55%, transparent)", color: "var(--gd-danger)" } :
+                    task.priority === 2 ? { borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)", color: "var(--gd-bronze)" } :
+                    task.priority === 3 ? { borderColor: "var(--gd-line-control)", color: "var(--gd-dim)" } :
                     undefined
                   }
                 >
                   P{task.priority || 0}
                 </Badge>
               </button>
-              <button
-                onClick={() => {
+              <ConfirmAction
+                title="Delete task?"
+                consequence="This task will be permanently removed from this work. This cannot be undone."
+                confirmLabel="Delete"
+                destructive
+                onConfirm={() => {
                   if (!task.id) return;
                   apiFetch(`${WORK_API_BASE}/works/${workId}/tasks/${task.id}`, { method: "DELETE" })
                     .then(() => {
@@ -298,15 +310,24 @@ export function TasksTab({ workId }: { workId: string }) {
                     })
                     .catch(() => toast.error("Could not delete task"));
                 }}
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground"
-                title="Delete task"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+                trigger={
+                  <button
+                    className="opacity-0 group-hover:opacity-100 transition-opacity min-h-11 px-1 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground shrink-0"
+                    title="Delete task"
+                    data-testid={`delete-task-${task.id}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                }
+              />
             </div>
           ))
         ) : (
-          <p className="text-sm text-muted-foreground italic">No tasks yet for this work.</p>
+          <EmptyState
+            icon={<CheckSquare />}
+            title="No tasks yet for this work"
+            description="Add a task above to start tracking work items."
+          />
         )}
       </div>
     </div>

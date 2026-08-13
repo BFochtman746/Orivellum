@@ -105,6 +105,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
+import { ErrorState } from "@/components/primitives";
 
 
 interface QuizQuestion {
@@ -275,11 +276,15 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
           </p>
         </div>
         {error && (
-          <div className="px-4 py-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive max-w-sm text-center">
-            {error}
+          <div className="w-full max-w-sm">
+            <ErrorState
+              title="Couldn't generate a quiz"
+              detail={error}
+              onRetry={generate}
+            />
           </div>
         )}
-        <Button onClick={generate} disabled={phase === "loading"} className="gap-2 px-8">
+        <Button onClick={generate} disabled={phase === "loading"} className="gap-2 px-8 min-h-11">
           {phase === "loading"
             ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
             : <><Sparkles className="w-4 h-4" /> Generate Quiz</>}
@@ -299,12 +304,12 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
         <div
           className="p-6 rounded-2xl border space-y-3"
           style={
-            tier === "excellent" ? { background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 30%, transparent)" }
-            : tier === "good"    ? { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
-            : { background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 30%, transparent)" }
+            tier === "excellent" ? { background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 30%, transparent)" }
+            : tier === "good"    ? { background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }
+            : { background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 30%, transparent)" }
           }
         >
-          <Trophy className="w-10 h-10 mx-auto" style={{ color: tier === "excellent" ? "var(--green-2)" : tier === "good" ? "var(--gilt)" : "var(--rust)" }} />
+          <Trophy className="w-10 h-10 mx-auto" style={{ color: tier === "excellent" ? "var(--gd-success)" : tier === "good" ? "var(--gd-bronze)" : "var(--gd-danger)" }} />
           <p className="text-3xl font-serif font-bold">{correctCount}/{total}</p>
           <p className="text-sm text-muted-foreground">
             {tier === "excellent" ? "Excellent! You've mastered this material." : tier === "good" ? "Good effort — a bit more practice and you'll have it." : "Keep studying — review the knowledge items for this Work."}
@@ -317,7 +322,7 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
               <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all duration-700"
-                  style={{ width: `${masterySummary.mastery_pct}%`, background: "color-mix(in srgb, var(--green-2) 70%, transparent)" }}
+                  style={{ width: `${masterySummary.mastery_pct}%`, background: "color-mix(in srgb, var(--gd-success) 70%, transparent)" }}
                 />
               </div>
               <span className="text-sm font-semibold font-mono tabular-nums">
@@ -334,7 +339,7 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
             Seed learning concepts in the Learn tab to track mastery progress.
           </p>
         )}
-        <Button onClick={reset} variant="outline" className="gap-2">
+        <Button onClick={reset} variant="outline" className="gap-2 min-h-11">
           <RefreshCw className="w-4 h-4" /> New Quiz
         </Button>
       </div>
@@ -384,8 +389,8 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
             let cls = "flex items-center gap-3 px-4 py-3 rounded-lg border text-sm transition-colors ";
             let optStyle: React.CSSProperties | undefined;
             if (isFeedback) {
-              if (showCorrect)        optStyle = { background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 40%, transparent)", color: "var(--green-2)" };
-              else if (showWrong)     optStyle = { background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", color: "var(--rust)" };
+              if (showCorrect)        optStyle = { background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 40%, transparent)", color: "var(--gd-success)" };
+              else if (showWrong)     optStyle = { background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 40%, transparent)", color: "var(--gd-danger)" };
               else               cls += "border-border/30 text-muted-foreground/60";
             } else {
               cls += isChosen
@@ -394,13 +399,13 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
               if (isSubmitting) cls += " opacity-60 pointer-events-none";
             }
             return (
-              <div key={oi} className={cls} style={optStyle} onClick={() => !isFeedback && !isSubmitting && submitAnswer(oi)}>
+              <div key={oi} className={`${cls} min-h-11`} style={optStyle} onClick={() => !isFeedback && !isSubmitting && submitAnswer(oi)}>
                 <span className="w-6 h-6 rounded-full border border-current flex items-center justify-center text-[10px] font-mono shrink-0">
                   {String.fromCharCode(65 + oi)}
                 </span>
                 <span className="flex-1">{opt}</span>
-                {showCorrect && <Check className="w-4 h-4 shrink-0" style={{ color: "var(--green-2)" }} />}
-                {showWrong   && <X    className="w-4 h-4 shrink-0" style={{ color: "var(--rust)" }} />}
+                {showCorrect && <Check className="w-4 h-4 shrink-0" style={{ color: "var(--gd-success)" }} />}
+                {showWrong   && <X    className="w-4 h-4 shrink-0" style={{ color: "var(--gd-danger)" }} />}
               </div>
             );
           })}
@@ -418,10 +423,10 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
           <div
             className="rounded-lg border p-3 space-y-1"
             style={feedback.is_correct
-              ? { background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 30%, transparent)" }
-              : { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+              ? { background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 30%, transparent)" }
+              : { background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }}
           >
-            <p className="text-xs font-semibold" style={{ color: feedback.is_correct ? "var(--green-2)" : "var(--gilt)" }}>
+            <p className="text-xs font-semibold" style={{ color: feedback.is_correct ? "var(--gd-success)" : "var(--gd-bronze)" }}>
               {feedback.is_correct ? "✓ Correct" : "✗ Incorrect"}
             </p>
             {feedback.feedback && (
@@ -434,7 +439,7 @@ export function QuizTab({ workId, workTitle }: { workId: string; workTitle: stri
       {/* Next button */}
       {isFeedback && (
         <div className="flex justify-end">
-          <Button onClick={nextQuestion} className="gap-2">
+          <Button onClick={nextQuestion} className="gap-2 min-h-11">
             {current + 1 >= questions.length ? <><Trophy className="w-4 h-4" /> See Results</> : <><ChevronRight className="w-4 h-4" /> Next Question</>}
           </Button>
         </div>

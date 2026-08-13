@@ -30,8 +30,33 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/auth";
 import { enqueueOp, isNetworkError } from "@/lib/outbox";
-import { DocTypeBadge } from "./index";
+import { DocTypeBadge, lifecycleStageFor } from "./index";
+import {
+  Page, Status, EmptyState, ErrorState, LoadingState, ConfirmAction,
+  type StatusKind,
+} from "@/components/primitives";
 import { useReadAloud } from "@/lib/read-aloud";
+
+/** Download the original file through apiFetch (blob) rather than window.open /
+ *  bare anchor, so the Bearer-token fallback works in the installed PWA. */
+async function downloadOriginal(docId: string, fallbackName = "download") {
+  try {
+    const r = await apiFetch(`${BASE}/library/${docId}/download`);
+    if (!r.ok) throw new Error(`Download failed (${r.status})`);
+    const disposition = r.headers.get("content-disposition") ?? "";
+    const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallbackName;
+    const blobUrl = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch (err: any) {
+    toast.error(err?.message ?? "Download failed");
+  }
+}
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -124,7 +149,7 @@ function TextSearchableContent({ text }: { text: string }) {
         <pre className="text-sm font-mono whitespace-pre-wrap leading-relaxed text-foreground/80">
           {highlighted.map((part: { text: string; match: boolean }, i: number) =>
             part.match ? (
-              <mark key={i} className="text-foreground rounded-[2px]" style={{ background: "color-mix(in srgb, var(--gilt) 28%, transparent)" }}>{part.text}</mark>
+              <mark key={i} className="text-foreground rounded-[2px]" style={{ background: "var(--gd-bronze-soft)" }}>{part.text}</mark>
             ) : (
               <span key={i}>{part.text}</span>
             )
@@ -168,47 +193,22 @@ function EditableTitle({ docId: _docId, title, onSave }: { docId: string; title:
 
 // ── Readiness badge ───────────────────────────────────────────────────────────
 
-const READINESS_CFG: Record<string, {
-  label: string;
-  Icon: React.ElementType;
-  cls: string;
-  style: React.CSSProperties;
-}> = {
-  ready:        {
-    label: "READY",        Icon: CheckCircle2,
-    cls: "", style: { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
-  },
-  imported:     {
-    label: "PROCESSING",   Icon: Clock,
-    cls: "", style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
-  },
-  transcribing: {
-    label: "TRANSCRIBING", Icon: Clock,
-    // No violet VELLUM token — gilt is the nearest processing-state equivalent
-    cls: "", style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
-  },
-  no_text:      {
-    label: "NO TEXT",      Icon: FileQuestion,
-    cls: "", style: { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
-  },
-  error:        {
-    label: "ERROR",        Icon: AlertCircle,
-    cls: "", style: { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
-  },
+// Durable lifecycle labels derived from the existing readiness field (+ live
+// SSE stage when available), dual-coded via the Status primitive.
+const LIFECYCLE_STATUS: Record<string, { kind: StatusKind; label: string }> = {
+  received:     { kind: "busy",   label: "Received" },
+  extracting:   { kind: "busy",   label: "Extracting" },
+  classifying:  { kind: "busy",   label: "Classifying" },
+  indexing:     { kind: "busy",   label: "Indexing" },
+  ready:        { kind: "ok",     label: "Ready" },
+  needs_review: { kind: "warn",   label: "Needs review" },
+  failed:       { kind: "danger", label: "Failed" },
 };
 
-function ReadinessBadge({ readiness }: { readiness: string }) {
-  const cfg = READINESS_CFG[readiness] ?? READINESS_CFG.imported;
-  const { Icon } = cfg;
-  return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-medium border ${cfg.cls}`}
-      style={cfg.style}
-    >
-      <Icon className="w-3 h-3" />
-      {cfg.label}
-    </span>
-  );
+function ReadinessBadge({ readiness, stage }: { readiness: string; stage?: string | null }) {
+  const lc = lifecycleStageFor(readiness, stage);
+  const cfg = LIFECYCLE_STATUS[lc] ?? LIFECYCLE_STATUS.received;
+  return <Status kind={cfg.kind} label={cfg.label} />;
 }
 
 // ── Review-status badge ───────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
   if (!status) return null;
   if (status === "ai_auto") {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gd-bronze)", borderColor: "var(--gd-bronze-soft)", background: "var(--gd-bronze-soft)" }}>
         <Sparkles className="w-2.5 h-2.5" />
         AI
       </span>
@@ -225,14 +225,14 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
   }
   if (status === "approved") {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" }}>
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gd-success)", borderColor: "var(--gd-primary-soft)", background: "var(--gd-primary-soft)" }}>
         ✓ approved
       </span>
     );
   }
   if (status === "rejected") {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" }}>
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gd-danger)", borderColor: "var(--gd-danger-soft)", background: "var(--gd-danger-soft)" }}>
         ✕ rejected
       </span>
     );
@@ -247,9 +247,9 @@ function ReviewBadge({ status }: { status: string | null | undefined }) {
 // ── Confidence bar ────────────────────────────────────────────────────────────
 
 function confidenceTier(pct: number): { label: string; color: string } {
-  if (pct >= 80) return { label: "High confidence",   color: "var(--green-2)" };
-  if (pct >= 50) return { label: "Medium confidence", color: "var(--gilt)" };
-  return               { label: "Low confidence",    color: "var(--rust)" };
+  if (pct >= 80) return { label: "High confidence",   color: "var(--gd-success)" };
+  if (pct >= 50) return { label: "Medium confidence", color: "var(--gd-bronze)" };
+  return               { label: "Low confidence",    color: "var(--gd-danger)" };
 }
 
 /** Human label for the extraction tier that produced the document's text. */
@@ -309,15 +309,15 @@ function ConfidenceLegend() {
           <p className="font-semibold text-xs mb-1">Confidence score</p>
           <div className="space-y-1 text-[11px]">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--green-2)" }} />
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--gd-success)" }} />
               <span>≥ 80% — High · typically LLM-extracted</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--gilt)" }} />
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--gd-bronze)" }} />
               <span>50–79% — Medium · sentence or heading match</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--rust)" }} />
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "var(--gd-danger)" }} />
               <span>{"< 50% — Low · heuristic noun-phrase mention"}</span>
             </div>
           </div>
@@ -344,9 +344,9 @@ function itemConfTier(item: KnowledgeItem): "high" | "medium" | "low" {
 
 const CONF_FILTERS: { key: ConfTier; label: string; dot: string }[] = [
   { key: "all",    label: "All",    dot: "" },
-  { key: "high",   label: "High",   dot: "var(--green-2)" },
-  { key: "medium", label: "Medium", dot: "var(--gilt)" },
-  { key: "low",    label: "Low",    dot: "var(--rust)" },
+  { key: "high",   label: "High",   dot: "var(--gd-success)" },
+  { key: "medium", label: "Medium", dot: "var(--gd-bronze)" },
+  { key: "low",    label: "Low",    dot: "var(--gd-danger)" },
 ];
 
 // ── AI-extracted knowledge section ────────────────────────────────────────────
@@ -383,7 +383,7 @@ function AiKindSection({
               key={item.id}
               data-item-id={item.id}
               className={`group flex items-start gap-3 p-3 rounded-lg border transition-opacity ${isRejected ? "opacity-50" : ""}`}
-              style={{ background: "color-mix(in srgb, var(--gilt-soft) 60%, transparent)", borderColor: "var(--gilt-line)" }}
+              style={{ background: "var(--gd-bronze-soft)", borderColor: "var(--gd-bronze-soft)" }}
             >
               <div className="flex-1 min-w-0">
                 {kind === "relationship" && item.subject && item.predicate && item.object ? (
@@ -407,8 +407,8 @@ function AiKindSection({
                       title="Approve"
                       className={`p-1 rounded transition-colors disabled:opacity-40 ${
                         isApproved
-                          ? "text-[var(--green-2)] bg-[var(--green-soft)]"
-                          : "text-muted-foreground/50 hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
+                          ? "text-[var(--gd-success)] bg-[var(--gd-primary-soft)]"
+                          : "text-muted-foreground/50 hover:text-[var(--gd-success)] hover:bg-[var(--gd-primary-soft)]"
                       }`}
                     >
                       <ThumbsUp className="w-3 h-3" />
@@ -419,21 +419,29 @@ function AiKindSection({
                       title="Dismiss"
                       className={`p-1 rounded transition-colors disabled:opacity-40 ${
                         isRejected
-                          ? "text-[var(--rust)] bg-[var(--rust-soft)]"
-                          : "text-muted-foreground/50 hover:text-[var(--rust)] hover:bg-[var(--rust-soft)]"
+                          ? "text-[var(--gd-danger)] bg-[var(--gd-danger-soft)]"
+                          : "text-muted-foreground/50 hover:text-[var(--gd-danger)] hover:bg-[var(--gd-danger-soft)]"
                       }`}
                     >
                       <ThumbsDown className="w-3 h-3" />
                     </button>
                   </>
                 )}
-                <button
-                  onClick={() => onDelete(item.id)}
-                  title="Delete"
-                  className="p-1 rounded text-muted-foreground/30 hover:text-destructive hover:bg-destructive/5 transition-colors opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
+                <ConfirmAction
+                  destructive
+                  title="Delete this knowledge item?"
+                  consequence="This removes the extracted item from the document's knowledge."
+                  confirmLabel="Delete"
+                  onConfirm={() => onDelete(item.id)}
+                  trigger={
+                    <button
+                      title="Delete"
+                      className="p-1 rounded text-muted-foreground/30 hover:text-destructive hover:bg-destructive/5 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  }
+                />
               </div>
             </div>
           );
@@ -555,15 +563,13 @@ function KnowledgeTabContent({
   // disabled (so there's no AI section to show at all).
   if (items.length === 0 && !aiEnabled) {
     return (
-      <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
-        <Cpu className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
-        <p className="text-muted-foreground">No knowledge items extracted from this document yet.</p>
-        {docWorkId && (
-          <p className="text-xs text-muted-foreground mt-1">
-            Knowledge extraction runs automatically after import.
-          </p>
-        )}
-      </div>
+      <EmptyState
+        icon={<Cpu />}
+        title="No knowledge items yet"
+        description={docWorkId
+          ? "Knowledge extraction runs automatically after import."
+          : "No knowledge items have been extracted from this document."}
+      />
     );
   }
 
@@ -634,10 +640,10 @@ function KnowledgeTabContent({
       {(aiItems.length > 0 || aiEnabled) && (
         <div>
           <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <Sparkles className="w-4 h-4" style={{ color: "var(--gilt)" }} />
-            <h3 className="text-sm font-semibold" style={{ color: "var(--gilt)" }}>AI-Extracted Knowledge</h3>
+            <Sparkles className="w-4 h-4" style={{ color: "var(--gd-bronze)" }} />
+            <h3 className="text-sm font-semibold" style={{ color: "var(--gd-bronze)" }}>AI-Extracted Knowledge</h3>
             {aiItems.length > 0 && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ color: "var(--gilt)", background: "var(--gilt-soft)" }}>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)" }}>
                 {aiConfFilter === "all"
                   ? `${aiItems.length} item${aiItems.length !== 1 ? "s" : ""}`
                   : `${filteredAiItems.length} / ${aiItems.length}`}
@@ -646,14 +652,14 @@ function KnowledgeTabContent({
             <ConfidenceLegend />
             {/* Confidence filter chips — only shown when there are AI items */}
             {aiItems.length > 0 && (
-              <div className="ml-auto flex items-center gap-1 p-1 rounded-lg border" style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
+              <div className="ml-auto flex items-center gap-1 p-1 rounded-lg border" style={{ background: "var(--gd-bronze-soft)", borderColor: "var(--gd-bronze-soft)" }}>
                 {CONF_FILTERS.map(({ key, label, dot }) => (
                   <button
                     key={key}
                     onClick={() => setAiConfFilter(key)}
                     className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
                       aiConfFilter === key
-                        ? "bg-white shadow-sm font-semibold"
+                        ? "bg-card shadow-sm font-semibold"
                         : "text-muted-foreground"
                     }`}
                   >
@@ -668,8 +674,8 @@ function KnowledgeTabContent({
           </div>
 
           {aiItems.length === 0 ? (
-            <div className="py-8 border border-dashed rounded-lg text-center" style={{ borderColor: "var(--gilt-line)", background: "color-mix(in srgb, var(--gilt-soft) 40%, transparent)" }}>
-              <Sparkles className="w-6 h-6 mx-auto mb-2" style={{ color: "var(--gilt)" }} />
+            <div className="py-8 border border-dashed rounded-lg text-center" style={{ borderColor: "var(--gd-bronze-soft)", background: "var(--gd-bronze-soft)" }}>
+              <Sparkles className="w-6 h-6 mx-auto mb-2" style={{ color: "var(--gd-bronze)" }} />
               <p className="text-sm text-muted-foreground">
                 {!aiEnabled
                   ? "Enable AI extraction in System settings to extract entities, claims, and relationships."
@@ -679,12 +685,12 @@ function KnowledgeTabContent({
               </p>
             </div>
           ) : filteredAiItems.length === 0 ? (
-            <div className="py-6 border border-dashed rounded-lg text-center" style={{ borderColor: "var(--gilt-line)", background: "color-mix(in srgb, var(--gilt-soft) 30%, transparent)" }}>
+            <div className="py-6 border border-dashed rounded-lg text-center" style={{ borderColor: "var(--gd-bronze-soft)", background: "var(--gd-bronze-soft)" }}>
               <p className="text-sm text-muted-foreground">
                 No {aiConfFilter}-confidence items found.{" "}
                 <button
                   onClick={() => setAiConfFilter("all")}
-                  className="underline" style={{ color: "var(--gilt)" }}
+                  className="underline" style={{ color: "var(--gd-bronze)" }}
                 >
                   Show all
                 </button>
@@ -735,7 +741,7 @@ function KnowledgeTabContent({
                         ? "bg-background text-foreground shadow-sm font-semibold"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
-                    style={key === "pending" && pendingCount > 0 ? { color: "var(--gilt)" } : undefined}
+                    style={key === "pending" && pendingCount > 0 ? { color: "var(--gd-bronze)" } : undefined}
                   >
                     {label}
                   </button>
@@ -779,8 +785,8 @@ function KnowledgeTabContent({
                                 title="Approve"
                                 className={`p-1.5 rounded transition-colors disabled:opacity-40 ${
                                   isApproved
-                                    ? "text-[var(--green-2)] bg-[var(--green-soft)]"
-                                    : "text-muted-foreground/50 hover:text-[var(--green-2)] hover:bg-[var(--green-soft)]"
+                                    ? "text-[var(--gd-success)] bg-[var(--gd-primary-soft)]"
+                                    : "text-muted-foreground/50 hover:text-[var(--gd-success)] hover:bg-[var(--gd-primary-soft)]"
                                 }`}
                               >
                                 <ThumbsUp className="w-3.5 h-3.5" />
@@ -791,21 +797,29 @@ function KnowledgeTabContent({
                                 title="Dismiss"
                                 className={`p-1.5 rounded transition-colors disabled:opacity-40 ${
                                   isRejected
-                                    ? "text-[var(--rust)] bg-[var(--rust-soft)]"
-                                    : "text-muted-foreground/50 hover:text-[var(--rust)] hover:bg-[var(--rust-soft)]"
+                                    ? "text-[var(--gd-danger)] bg-[var(--gd-danger-soft)]"
+                                    : "text-muted-foreground/50 hover:text-[var(--gd-danger)] hover:bg-[var(--gd-danger-soft)]"
                                 }`}
                               >
                                 <ThumbsDown className="w-3.5 h-3.5" />
                               </button>
                             </>
                           )}
-                          <button
-                            onClick={() => onDelete(item.id)}
-                            title="Delete item"
-                            className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <ConfirmAction
+                            destructive
+                            title="Delete this knowledge item?"
+                            consequence="This removes the extracted item from the document's knowledge."
+                            confirmLabel="Delete"
+                            onConfirm={() => onDelete(item.id)}
+                            trigger={
+                              <button
+                                title="Delete item"
+                                className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            }
+                          />
                         </div>
                       </div>
                     </CardContent>
@@ -875,9 +889,12 @@ export default function DocumentDetail() {
   const [, navigate] = useLocation();
   // Deep-link: ?tab=<tab> switches to that tab on arrival; ?item=<id> highlights a knowledge item.
   const _libSearch = useSearch();
+  // Reading-first: the extracted text leads. A ?tab= deep-link still wins
+  // (e.g. the review queue arrives at ?tab=knowledge), but the default surface
+  // is the reading content, not metadata.
   const [activeTab, setActiveTab] = useState<Tab>(() => {
     const p = new URLSearchParams(_libSearch);
-    return (p.get("tab") as Tab | null) ?? "overview";
+    return (p.get("tab") as Tab | null) ?? "text";
   });
   const highlightKnItemId = useMemo(() => new URLSearchParams(_libSearch).get("item"), [_libSearch]);
   const [reprocessing, setReprocessing] = useState(false);
@@ -1072,7 +1089,6 @@ export default function DocumentDetail() {
       }),
   });
   const handleDeleteKnowledge = (itemId: string) => {
-    if (!window.confirm("Delete this knowledge item?")) return;
     deleteKnowledge.mutate(itemId, {
       onSuccess: () => {
         toast.success("Knowledge item deleted");
@@ -1243,13 +1259,18 @@ export default function DocumentDetail() {
 
           if (status.state === "done") {
             _clearAbPoll();
-            // Trigger download via anchor — session cookies are sent automatically.
+            // Download via apiFetch (blob) so the Bearer-token fallback works
+            // in the installed PWA, not just with session cookies.
+            const dr = await apiFetch(`${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`);
+            if (!dr.ok) throw new Error(`Download failed (${dr.status})`);
+            const blobUrl = URL.createObjectURL(await dr.blob());
             const a = document.createElement("a");
-            a.href = `${BASE}/studio/outputs/serve?path=${encodeURIComponent(status.mp3_path)}`;
+            a.href = blobUrl;
             a.download = status.filename ?? "audiobook.mp3";
             document.body.appendChild(a);
             a.click();
-            document.body.removeChild(a);
+            a.remove();
+            URL.revokeObjectURL(blobUrl);
             _resetAb();
             toast.success("Audiobook downloaded!");
           } else if (status.state === "failed") {
@@ -1277,7 +1298,7 @@ export default function DocumentDetail() {
   };
 
   const handleDelete = () => {
-    if (!docId || !confirm("Delete this document? This cannot be undone.")) return;
+    if (!docId) return;
     deleteDoc.mutate(
       { docId },
       {
@@ -1289,23 +1310,27 @@ export default function DocumentDetail() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6 animate-in fade-in duration-300">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
+      <Page wide>
+        <div className="animate-in fade-in duration-300">
+          <LoadingState rows={5} label="Loading document" />
+        </div>
+      </Page>
     );
   }
 
   if (error || !doc) {
     return (
-      <div className="text-center py-20">
-        <AlertCircle className="w-10 h-10 text-destructive mx-auto mb-3" />
-        <p className="text-lg font-medium">Document not found</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate("/library")}>
-          <ArrowLeft className="w-4 h-4 mr-2" /> Back to Library
-        </Button>
-      </div>
+      <Page wide>
+        <ErrorState
+          title="Document not found"
+          detail="This document could not be loaded. It may have been deleted, or the connection failed."
+          action={
+            <Button variant="outline" onClick={() => navigate("/library")}>
+              <ArrowLeft className="w-4 h-4 mr-2" /> Back to Library
+            </Button>
+          }
+        />
+      </Page>
     );
   }
 
@@ -1336,7 +1361,7 @@ export default function DocumentDetail() {
 
   const lifecycleOptions = [
     { value: "draft",      label: "Draft",      className: "text-muted-foreground" },
-    { value: "canonical",  label: "Canonical",  className: "font-semibold", style: { color: "var(--gilt)" } as React.CSSProperties },
+    { value: "canonical",  label: "Canonical",  className: "font-semibold", style: { color: "var(--gd-bronze)" } as React.CSSProperties },
     { value: "reference",  label: "Reference",  className: "" },
     { value: "superseded", label: "Superseded", className: "text-muted-foreground" },
   ] as const;
@@ -1355,14 +1380,15 @@ export default function DocumentDetail() {
     }
   };
 
+  // Reading content leads; metadata, knowledge, provenance follow.
   const tabs: { key: Tab; label: string; icon: React.ElementType; badge?: number }[] = [
-    { key: "overview",  label: "Overview",  icon: FileText },
-    { key: "chapters",  label: "Chapters",  icon: List,    badge: chapData?.count ?? 0 },
-    { key: "versions",  label: "Versions",  icon: History },
-    { key: "text",      label: "Text",      icon: BookOpen },
-    { key: "chunks",    label: "Chunks",    icon: Hash,    badge: chunksData?.count },
+    { key: "text",      label: "Read",      icon: BookOpen },
     { key: "knowledge", label: "Knowledge", icon: Cpu },
+    { key: "chapters",  label: "Chapters",  icon: List,    badge: chapData?.count ?? 0 },
     { key: "related",   label: "Related",   icon: Network, badge: relatedData?.related?.length },
+    { key: "overview",  label: "Details",   icon: Info },
+    { key: "versions",  label: "Versions",  icon: History },
+    { key: "chunks",    label: "Chunks",    icon: Hash,    badge: chunksData?.count },
   ];
 
   const snapshotVersion = async () => {
@@ -1386,13 +1412,14 @@ export default function DocumentDetail() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300 max-w-4xl">
+    <Page wide>
+    <div className="space-y-6 animate-in fade-in duration-300">
       {/* Back + actions */}
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={() => navigate("/library")} className="-ml-2">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <Button variant="ghost" size="sm" onClick={() => navigate("/library")} className="-ml-2 min-h-11">
           <ArrowLeft className="w-4 h-4 mr-1.5" /> Library
         </Button>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <Button
             variant="outline"
             size="sm"
@@ -1507,32 +1534,38 @@ export default function DocumentDetail() {
           <Button
             variant="outline"
             size="sm"
-            asChild
             title="Download original file"
+            onClick={() => downloadOriginal(docId!, title)}
           >
-            <a href={`${BASE}/library/${docId}/download`} download>
-              <Download className="w-3.5 h-3.5 mr-1.5" /> Download
-            </a>
+            <Download className="w-3.5 h-3.5 mr-1.5" /> Download
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleDelete}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/30"
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
-          </Button>
+          <ConfirmAction
+            destructive
+            title="Delete this document?"
+            consequence="This removes the document and its extracted text, knowledge, and versions. This cannot be undone."
+            confirmLabel="Delete"
+            onConfirm={handleDelete}
+            trigger={
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/30"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
+              </Button>
+            }
+          />
         </div>
       </div>
 
       {/* Quarantine banner — ingestion shield tripped at import */}
       {quarantined > 0 && (
         <div className="rounded-lg border p-4"
-             style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", background: "var(--rust-soft)" }}>
+             style={{ borderColor: "var(--gd-danger-soft)", background: "var(--gd-danger-soft)" }}>
           <div className="flex items-start gap-3">
-            <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "var(--rust)" }} />
+            <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "var(--gd-danger)" }} />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium" style={{ color: "var(--rust)" }}>
+              <p className="text-sm font-medium" style={{ color: "var(--gd-danger)" }}>
                 {quarantined === 2 ? "Kept in quarantine" : "Quarantined at import"}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
@@ -1593,9 +1626,9 @@ export default function DocumentDetail() {
         <div className="flex items-start gap-3 mb-3">
           <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${
             hasError ? "" : "bg-muted/50 border-border/50"
-          }`} style={hasError ? { background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } : undefined}>
+          }`} style={hasError ? { background: "var(--gd-danger-soft)", borderColor: "var(--gd-danger-soft)" } : undefined}>
             {hasError
-              ? <AlertCircle className="w-5 h-5" style={{ color: "var(--rust)" }} />
+              ? <AlertCircle className="w-5 h-5" style={{ color: "var(--gd-danger)" }} />
               : <FileText className="w-5 h-5 text-muted-foreground" />
             }
           </div>
@@ -1605,7 +1638,7 @@ export default function DocumentDetail() {
               <Badge variant="secondary" className="font-mono text-[10px] uppercase">
                 {doc.kind ?? "file"}
               </Badge>
-              <ReadinessBadge readiness={readiness} />
+              <ReadinessBadge readiness={readiness} stage={processingProgress?.stage} />
               <DocTypeBadge docType={doc.doc_type} by={doc.doc_type_by} />
               {/* Lifecycle badge + inline picker */}
               <Select value={docLifecycle} onValueChange={handleSetLifecycle}>
@@ -1619,13 +1652,13 @@ export default function DocumentDetail() {
                   }`}
                   style={
                     docLifecycle === "canonical"
-                      ? { background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", color: "var(--gilt)" }
+                      ? { background: "var(--gd-bronze-soft)", borderColor: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }
                       : docLifecycle === "reference"
-                      ? { background: "transparent", borderColor: "var(--line)", color: "var(--ink-soft)" }
+                      ? { background: "transparent", borderColor: "var(--gd-line)", color: "var(--gd-dim)" }
                       : undefined
                   }
                 >
-                  {docLifecycle === "canonical" && <Star className="w-2.5 h-2.5" style={{ color: "var(--gilt)" }} />}
+                  {docLifecycle === "canonical" && <Star className="w-2.5 h-2.5" style={{ color: "var(--gd-bronze)" }} />}
                   <SelectValue />
                   <ChevronDown className="w-3 h-3 opacity-50" />
                 </SelectTrigger>
@@ -1690,19 +1723,19 @@ export default function DocumentDetail() {
 
         {/* Error banner */}
         {hasError && doc.error_message && (
-          <div className="mt-3 p-3 rounded-lg border" style={{ background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
-            <p className="text-xs font-mono break-all" style={{ color: "var(--rust)" }}>{doc.error_message}</p>
+          <div className="mt-3 p-3 rounded-lg border" style={{ background: "var(--gd-danger-soft)", borderColor: "var(--gd-danger-soft)" }}>
+            <p className="text-xs font-mono break-all" style={{ color: "var(--gd-danger)" }}>{doc.error_message}</p>
           </div>
         )}
 
         {/* Extraction warnings (non-fatal issues from the pipeline) */}
         {Array.isArray(doc.warnings) && doc.warnings.length > 0 && (
-          <div className="mt-3 p-3 rounded-lg border space-y-1" style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
-            <p className="text-[10px] font-mono font-semibold uppercase tracking-wide mb-1.5" style={{ color: "var(--gilt)" }}>
+          <div className="mt-3 p-3 rounded-lg border space-y-1" style={{ background: "var(--gd-bronze-soft)", borderColor: "var(--gd-bronze-soft)" }}>
+            <p className="text-[10px] font-mono font-semibold uppercase tracking-wide mb-1.5" style={{ color: "var(--gd-bronze)" }}>
               Extraction warnings ({doc.warnings.length})
             </p>
             {(doc.warnings as any[]).map((w, i) => (
-              <p key={i} className="text-xs font-mono break-all" style={{ color: "var(--gilt)" }}>
+              <p key={i} className="text-xs font-mono break-all" style={{ color: "var(--gd-bronze)" }}>
                 <span className="font-semibold">{w.kind}:</span> {w.detail}
               </p>
             ))}
@@ -1737,13 +1770,14 @@ export default function DocumentDetail() {
 
       <Separator />
 
-      {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b border-border/50">
+      {/* Tab bar — reading content leads; scrolls on narrow viewports */}
+      <div className="flex items-center gap-1 border-b border-border overflow-x-auto">
         {tabs.map(({ key, label, icon: Icon, badge }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            aria-selected={activeTab === key}
+            className={`flex items-center gap-1.5 px-4 min-h-11 text-sm font-medium transition-colors border-b-2 -mb-px shrink-0 ${
               activeTab === key
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
@@ -1800,8 +1834,8 @@ export default function DocumentDetail() {
                   .map((m: any, i: number) => (
                     <div key={i} className="flex items-center gap-3 px-4 py-2">
                       <span className="w-2 h-2 rounded-full shrink-0" style={{
-                        background: m.status === "ok" ? "var(--green-2)" :
-                        m.status === "empty" ? "var(--gilt)" : "var(--rust)"
+                        background: m.status === "ok" ? "var(--gd-success)" :
+                        m.status === "empty" ? "var(--gd-bronze)" : "var(--gd-danger)"
                       }} />
                       <span className="text-xs font-mono flex-1 truncate text-foreground/80">
                         {m.name.split("/").pop()}
@@ -1847,17 +1881,26 @@ export default function DocumentDetail() {
         <div>
           {doc.extracted_text ? (
             <TextSearchableContent text={doc.extracted_text} />
+          ) : readiness === "error" || readiness === "no_text" ? (
+            <EmptyState
+              icon={<BookOpen />}
+              title={readiness === "error" ? "Extraction failed" : "No text extracted"}
+              description={readiness === "error"
+                ? "Extraction failed for this document."
+                : "No readable text was found in this document."}
+              action={
+                <Button variant="outline" onClick={handleReprocess} disabled={reprocessing}>
+                  <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${reprocessing ? "animate-spin" : ""}`} />
+                  {reprocessing ? "Queued…" : "Re-extract"}
+                </Button>
+              }
+            />
           ) : (
-            <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
-              <BookOpen className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
-              <p className="text-muted-foreground">
-                {readiness === "imported"
-                  ? "Extraction is still in progress — check back in a moment."
-                  : readiness === "error"
-                  ? "Extraction failed. Use Re-extract to try again."
-                  : "No text was extracted from this document."}
-              </p>
-            </div>
+            <EmptyState
+              icon={<BookOpen />}
+              title="Extraction in progress"
+              description="The reading content will appear here once extraction finishes — check back in a moment."
+            />
           )}
         </div>
       )}
@@ -1868,10 +1911,11 @@ export default function DocumentDetail() {
           {chunksLoading ? (
             <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
           ) : (chunksData?.chunks ?? []).length === 0 ? (
-            <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
-              <Hash className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
-              <p className="text-muted-foreground text-sm">No text chunks available. Re-extract the document to populate them.</p>
-            </div>
+            <EmptyState
+              icon={<Hash />}
+              title="No text chunks"
+              description="Re-extract the document to populate its text chunks."
+            />
           ) : (
             (chunksData?.chunks ?? []).map((chunk, i) => (
               <div key={chunk.id ?? i} className="border border-border/50 rounded-lg p-3.5 bg-muted/10 group hover:bg-muted/20 transition-colors">
@@ -1899,11 +1943,11 @@ export default function DocumentDetail() {
           {versLoading ? (
             [1,2].map(i => <div key={i} className="h-14 rounded-lg bg-muted/30 animate-pulse" />)
           ) : (versData?.versions ?? []).length === 0 ? (
-            <div className="text-center py-14 border border-dashed rounded-lg text-muted-foreground">
-              <History className="w-7 h-7 mx-auto mb-3 opacity-40" />
-              <p className="text-sm">No version snapshots yet.</p>
-              <p className="text-xs opacity-60 mt-1">Click "Save Snapshot" to record the current state of this document.</p>
-            </div>
+            <EmptyState
+              icon={<History />}
+              title="No version snapshots yet"
+              description={'Click "Save Snapshot" to record the current state of this document.'}
+            />
           ) : (
             <div className="space-y-2">
               {(versData?.versions ?? []).map((v) => (
@@ -1945,17 +1989,13 @@ export default function DocumentDetail() {
           {chapLoading ? (
             [1,2,3].map((i) => <div key={i} className="h-16 rounded-lg bg-muted/30 animate-pulse" />)
           ) : (chapData?.chapters ?? []).length === 0 ? (
-            <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg">
-              <List className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-50" />
-              <p className="text-muted-foreground text-sm">
-                {readiness === "imported"
-                  ? "Extraction in progress — chapters will appear when ready."
-                  : "No chapter structure detected in this document."}
-              </p>
-              <p className="text-xs text-muted-foreground/60 mt-1">
-                Chapter extraction works on DOCX, PDF, and Markdown files with headings.
-              </p>
-            </div>
+            <EmptyState
+              icon={<List />}
+              title={readiness === "imported" ? "Extraction in progress" : "No chapter structure detected"}
+              description={readiness === "imported"
+                ? "Chapters will appear here when extraction finishes."
+                : "Chapter extraction works on DOCX, PDF, and Markdown files with headings."}
+            />
           ) : (
             <>
               <p className="text-xs font-mono text-muted-foreground">
@@ -2024,14 +2064,11 @@ export default function DocumentDetail() {
               {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
             </div>
           ) : !relatedData?.related?.length ? (
-            <div className="text-center py-16 bg-muted/10 border border-dashed rounded-lg space-y-3">
-              <Network className="w-9 h-9 text-muted-foreground mx-auto opacity-30" />
-              <p className="text-muted-foreground font-serif text-sm">No related documents found yet.</p>
-              <p className="text-xs text-muted-foreground/60 max-w-xs mx-auto">
-                Related documents appear after the Night Scriptorium clustering pass runs.
-                Make sure this document has been processed and has extracted text.
-              </p>
-            </div>
+            <EmptyState
+              icon={<Network />}
+              title="No related documents found yet"
+              description="Related documents appear after the clustering pass runs. Make sure this document has been processed and has extracted text."
+            />
           ) : (
             <div className="space-y-2">
               {relatedData.related.map((rel) => (
@@ -2050,12 +2087,12 @@ export default function DocumentDetail() {
                         </Badge>
                       )}
                       {rel.similarity != null && (
-                        <span className="text-[10px] font-mono rounded border px-1.5 py-0.5" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 20%, transparent)" }}>
+                        <span className="text-[10px] font-mono rounded border px-1.5 py-0.5" style={{ color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "var(--gd-primary-soft)" }}>
                           {(rel.similarity * 100).toFixed(0)}% similar
                         </span>
                       )}
                       {rel.shared_topics.slice(0, 2).map((t) => (
-                        <span key={t.id} className="text-[10px] font-mono rounded border px-1.5 py-0.5 truncate max-w-[140px]" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
+                        <span key={t.id} className="text-[10px] font-mono rounded border px-1.5 py-0.5 truncate max-w-[140px]" style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "var(--gd-bronze-soft)" }}>
                           {t.name}
                         </span>
                       ))}
@@ -2069,5 +2106,6 @@ export default function DocumentDetail() {
         </div>
       )}
     </div>
+    </Page>
   );
 }

@@ -105,6 +105,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
+import { LoadingState, EmptyState, ErrorState } from "@/components/primitives";
 
 
 export function SearchTab({ workId, initialQuery = "" }: { workId: string; initialQuery?: string }) {
@@ -189,21 +190,27 @@ export function SearchTab({ workId, initialQuery = "" }: { workId: string; initi
             autoFocus
           />
         </div>
-        <Button type="submit" disabled={!query.trim() || loading}>
+        <Button type="submit" className="min-h-11" disabled={!query.trim() || loading}>
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Search"}
         </Button>
       </form>
 
       {/* Semantic search readiness banner (#203) */}
       {embedStatus?.circuit_open && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md border text-xs font-mono" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border text-xs font-mono" style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }}>
           <Search className="w-3.5 h-3.5 shrink-0" />
           <span>Semantic search is temporarily unavailable — showing keyword results only. The embeddings service will retry automatically.</span>
         </div>
       )}
 
+      {loading && !results && <LoadingState rows={4} label="Searching" />}
+
       {error && (
-        <p className="text-sm text-destructive">{error}</p>
+        <ErrorState
+          title="Search failed"
+          detail={error}
+          onRetry={() => submitted && runSearch(submitted)}
+        />
       )}
 
       {results && (
@@ -226,9 +233,9 @@ export function SearchTab({ workId, initialQuery = "" }: { workId: string; initi
                         {item.kind ?? "fact"}
                       </Badge>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm">{item.text}</p>
+                        <p className="text-sm line-clamp-4 break-words">{item.text}</p>
                         {item.subject && (
-                          <p className="text-xs font-mono text-muted-foreground mt-1">
+                          <p className="text-xs font-mono text-muted-foreground mt-1 truncate">
                             {item.subject}
                             {item.relation && <> · {item.relation}</>}
                             {item.object && <> · {item.object}</>}
@@ -238,9 +245,9 @@ export function SearchTab({ workId, initialQuery = "" }: { workId: string; initi
                       {item.confidence != null && (() => {
                         const pct = item.confidence * 100;
                         const tier: { label: string; style: React.CSSProperties } =
-                          pct >= 80 ? { label: "High", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } }
-                          : pct >= 50 ? { label: "Med", style: { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" } }
-                          : { label: "Low", style: { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } };
+                          pct >= 80 ? { label: "High", style: { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" } }
+                          : pct >= 50 ? { label: "Med", style: { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" } }
+                          : { label: "Low", style: { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" } };
                         return (
                           <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border shrink-0" style={tier.style}>
                             {pct.toFixed(0)}% {tier.label}
@@ -283,20 +290,21 @@ export function SearchTab({ workId, initialQuery = "" }: { workId: string; initi
           )}
 
           {total === 0 && (
-            <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
-              <Search className="w-8 h-8 mx-auto mb-3 opacity-20" />
-              <p className="text-muted-foreground text-sm">No results found for "{submitted}"</p>
-              <p className="text-xs text-muted-foreground mt-1">Try different keywords or check that documents have been fully extracted.</p>
-            </div>
+            <EmptyState
+              icon={<Search />}
+              title={`No results found for "${submitted}"`}
+              description="Try different keywords or check that documents have been fully extracted."
+            />
           )}
         </div>
       )}
 
-      {!results && !loading && (
-        <div className="text-center py-16 text-muted-foreground">
-          <Search className="w-10 h-10 mx-auto mb-4 opacity-15" />
-          <p className="text-sm">Search across all knowledge items and document text in this Work.</p>
-        </div>
+      {!results && !loading && !error && (
+        <EmptyState
+          icon={<Search />}
+          title="Search this Work"
+          description="Search across all knowledge items and document text in this Work."
+        />
       )}
     </div>
   );

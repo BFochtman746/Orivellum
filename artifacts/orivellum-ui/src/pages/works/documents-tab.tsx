@@ -105,6 +105,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
+import { LoadingState, EmptyState, ErrorState, ConfirmAction } from "@/components/primitives";
 
 
 const DOC_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -129,7 +130,7 @@ export function DocumentsTab({ workId }: { workId: string }) {
   const [docSort, setDocSort] = useState<DocSortKey>("date");
   const [retrying, setRetrying] = useState<string | null>(null);
 
-  const { data: docsResp, isLoading } = useGetWorkDocuments(workId, {
+  const { data: docsResp, isLoading, isError, refetch } = useGetWorkDocuments(workId, {
     query: {
       enabled: !!workId,
       queryKey: getGetWorkDocumentsQueryKey(workId),
@@ -241,7 +242,14 @@ export function DocumentsTab({ workId }: { workId: string }) {
     }
   };
 
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (isLoading) return <LoadingState rows={5} label="Loading documents" />;
+  if (isError) return (
+    <ErrorState
+      title="Couldn't load documents"
+      detail="The source material for this work failed to load."
+      onRetry={() => refetch()}
+    />
+  );
   const docs = docsResp?.documents ?? [];
 
   // Compute readiness counts
@@ -308,7 +316,7 @@ export function DocumentsTab({ workId }: { workId: string }) {
               <SelectItem value="readiness" className="text-xs font-mono">Readiness</SelectItem>
             </SelectContent>
           </Select>
-          <Button size="sm" variant="outline" className="gap-2" onClick={() => setOpen(true)}>
+          <Button size="sm" variant="outline" className="gap-2 min-h-11" onClick={() => setOpen(true)}>
             <Plus className="w-4 h-4" /> Add Document
           </Button>
         </div>
@@ -320,12 +328,12 @@ export function DocumentsTab({ workId }: { workId: string }) {
           {/* Summary line */}
           {hasNonReady ? (
             <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-              <span className="font-semibold" style={{ color: "var(--green-2)" }}>{readyCnt} ready</span>
+              <span className="font-semibold" style={{ color: "var(--gd-success)" }}>{readyCnt} ready</span>
               {processingCnt > 0 && (
                 <>
                   <span className="text-muted-foreground/40">·</span>
-                  <span className="flex items-center gap-1" style={{ color: "var(--gilt)" }}>
-                    <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: "var(--gilt)" }} />
+                  <span className="flex items-center gap-1" style={{ color: "var(--gd-bronze)" }}>
+                    <span className="w-1.5 h-1.5 rounded-full animate-pulse inline-block" style={{ background: "var(--gd-bronze)" }} />
                     {processingCnt} processing
                   </span>
                 </>
@@ -333,12 +341,12 @@ export function DocumentsTab({ workId }: { workId: string }) {
               {errorCnt > 0 && (
                 <>
                   <span className="text-muted-foreground/40">·</span>
-                  <span style={{ color: "var(--rust)" }}>{errorCnt} error{errorCnt !== 1 ? "s" : ""}</span>
+                  <span style={{ color: "var(--gd-danger)" }}>{errorCnt} error{errorCnt !== 1 ? "s" : ""}</span>
                 </>
               )}
             </div>
           ) : (
-            <div className="text-[11px] font-mono" style={{ color: "var(--green-2)" }}>
+            <div className="text-[11px] font-mono" style={{ color: "var(--gd-success)" }}>
               {readyCnt} document{readyCnt !== 1 ? "s" : ""} ready
             </div>
           )}
@@ -354,7 +362,7 @@ export function DocumentsTab({ workId }: { workId: string }) {
                     ? "bg-background text-foreground shadow-sm font-semibold"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
-                style={key === "error" && count > 0 && readinessFilter !== key ? { color: "var(--rust)" } : undefined}
+                style={key === "error" && count > 0 && readinessFilter !== key ? { color: "var(--gd-danger)" } : undefined}
               >
                 {label}
                 {count > 0 && <span className="ml-1 opacity-60">{count}</span>}
@@ -367,10 +375,10 @@ export function DocumentsTab({ workId }: { workId: string }) {
       {/* ── Version-relationship suggestions ──────────────────────────── */}
       {dupePairs.length > 0 && (
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--gilt)" }}>
+          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--gd-bronze)" }}>
             <GitBranch className="w-4 h-4" />
             <span>Version relationships detected</span>
-            <span className="text-[10px] font-mono rounded px-1.5 py-0.5 border" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)", opacity: 0.8 }}>
+            <span className="text-[10px] font-mono rounded px-1.5 py-0.5 border" style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)", opacity: 0.8 }}>
               {dupePairs.length} pair{dupePairs.length !== 1 ? "s" : ""}
             </span>
           </div>
@@ -378,11 +386,11 @@ export function DocumentsTab({ workId }: { workId: string }) {
             <div
               key={pair.id}
               className="rounded-lg p-3 space-y-2 border"
-              style={{ background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+              style={{ background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }}
             >
-              <p className="text-xs leading-relaxed" style={{ color: "var(--gilt)" }}>
+              <p className="text-xs leading-relaxed" style={{ color: "var(--gd-bronze)" }}>
                 <span className="font-semibold text-foreground">{pair.doc_a_title || "Untitled"}</span>
-                <span className="mx-1.5" style={{ color: "var(--gilt)" }}>&amp;</span>
+                <span className="mx-1.5" style={{ color: "var(--gd-bronze)" }}>&amp;</span>
                 <span className="font-semibold text-foreground">{pair.doc_b_title || "Untitled"}</span>
                 <span className="ml-1.5 opacity-80">
                   ({pair.kind === "near_duplicate" ? "near duplicates" : "likely revisions"} · {Math.round(pair.similarity * 100)}% similar)
@@ -395,26 +403,26 @@ export function DocumentsTab({ workId }: { workId: string }) {
                 <button
                   disabled={resolvingDupe === pair.id}
                   onClick={() => handleDeclareCanonicaL(pair.id, pair.doc_a_id)}
-                  className="text-[11px] px-2.5 py-1 rounded border bg-background hover:bg-muted/40 transition-colors disabled:opacity-50 font-mono"
-                  style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                  className="text-[11px] px-2.5 min-h-11 rounded border bg-background hover:bg-muted/40 transition-colors disabled:opacity-50 font-mono"
+                  style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)", color: "var(--gd-bronze)" }}
                 >
                   {pair.doc_a_title || "Doc A"} is canonical
                 </button>
                 <button
                   disabled={resolvingDupe === pair.id}
                   onClick={() => handleDeclareCanonicaL(pair.id, pair.doc_b_id)}
-                  className="text-[11px] px-2.5 py-1 rounded border bg-background hover:bg-muted/40 transition-colors disabled:opacity-50 font-mono"
-                  style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                  className="text-[11px] px-2.5 min-h-11 rounded border bg-background hover:bg-muted/40 transition-colors disabled:opacity-50 font-mono"
+                  style={{ borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)", color: "var(--gd-bronze)" }}
                 >
                   {pair.doc_b_title || "Doc B"} is canonical
                 </button>
                 <button
                   onClick={() => setDismissedDupes((prev) => new Set([...prev, pair.id]))}
-                  className="text-[11px] px-2 py-1 rounded text-muted-foreground hover:text-foreground transition-colors font-mono"
+                  className="text-[11px] px-2 min-h-11 rounded text-muted-foreground hover:text-foreground transition-colors font-mono"
                 >
                   Dismiss
                 </button>
-                {resolvingDupe === pair.id && <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--gilt)" }} />}
+                {resolvingDupe === pair.id && <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--gd-bronze)" }} />}
               </div>
             </div>
           ))}
@@ -423,7 +431,7 @@ export function DocumentsTab({ workId }: { workId: string }) {
 
       {provCollections.length > 0 && (
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--gilt)" }}>
+          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--gd-bronze)" }}>
             <GitBranch className="w-4 h-4" />
             <span>Contributed by</span>
           </div>
@@ -432,7 +440,7 @@ export function DocumentsTab({ workId }: { workId: string }) {
               <span
                 key={c.collection_id}
                 className="text-[11px] font-mono rounded px-2 py-1 border"
-                style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+                style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }}
                 title={c.source_kind ? `source: ${c.source_kind}` : undefined}
               >
                 {c.label || "collection"} · {c.doc_count} doc{c.doc_count !== 1 ? "s" : ""}
@@ -451,32 +459,32 @@ export function DocumentsTab({ workId }: { workId: string }) {
             <Card
               key={doc.id}
               className="hover-elevate cursor-pointer group"
-              style={isError ? { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } : undefined}
+              style={isError ? { borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" } : undefined}
               onClick={() => navigate(`/library/${doc.id}`)}
             >
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <FileText className={`w-5 h-5 ${isError ? "" : "text-muted-foreground"}`} style={isError ? { color: "var(--rust)" } : undefined} />
-                  <div>
-                    <h4 className="font-medium">{doc.title || doc.source || "Untitled"}</h4>
+              <CardContent className="p-4 flex items-center justify-between gap-3 min-h-11">
+                <div className="flex items-center gap-3 min-w-0">
+                  <FileText className={`w-5 h-5 shrink-0 ${isError ? "" : "text-muted-foreground"}`} style={isError ? { color: "var(--gd-danger)" } : undefined} />
+                  <div className="min-w-0">
+                    <h4 className="font-medium truncate">{doc.title || doc.source || "Untitled"}</h4>
                     <div className="flex gap-2 mt-1 flex-wrap">
                       <Badge variant="secondary" className="text-[10px] uppercase font-mono">{doc.kind}</Badge>
                       <Badge
                         variant="outline"
                         className="text-[10px] uppercase font-mono"
                         style={isError
-                          ? { color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }
+                          ? { color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" }
                           : isProcessing
-                          ? { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
-                          : { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+                          ? { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }
+                          : { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}
                       >
-                        {isProcessing && <span className="w-1.5 h-1.5 rounded-full animate-pulse mr-1 inline-block" style={{ background: "var(--gilt)" }} />}
+                        {isProcessing && <span className="w-1.5 h-1.5 rounded-full animate-pulse mr-1 inline-block" style={{ background: "var(--gd-bronze)" }} />}
                         {doc.readiness}
                       </Badge>
                       {(doc as any).lifecycle === "canonical" && (
                         <span
                           className="text-[10px] font-mono flex items-center gap-0.5 rounded px-1.5 py-0.5 border"
-                          style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+                          style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }}
                         >
                           <Star className="w-2.5 h-2.5" />canonical
                         </span>
@@ -487,14 +495,14 @@ export function DocumentsTab({ workId }: { workId: string }) {
                         </span>
                       )}
                       {(doc as any).lifecycle === "reference" && (
-                        <span className="text-[10px] font-mono rounded px-1.5 py-0.5 border" style={{ color: "var(--ink-soft)", borderColor: "var(--line)" }}>
+                        <span className="text-[10px] font-mono rounded px-1.5 py-0.5 border text-muted-foreground" style={{ borderColor: "var(--gd-line-control)" }}>
                           reference
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <div className="text-xs font-mono text-muted-foreground">
                     {doc.created_at ? format(new Date(doc.created_at), "MMM d, yyyy") : ""}
                   </div>
@@ -504,17 +512,21 @@ export function DocumentsTab({ workId }: { workId: string }) {
                       onClick={(e) => handleRetry(e, doc.id!)}
                       disabled={retrying === doc.id}
                       title="Retry extraction"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded disabled:opacity-40 hover:bg-muted/40"
-                      style={{ color: "var(--gilt)" }}
+                      data-testid={`retry-doc-${doc.id}`}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity min-h-11 min-w-11 flex items-center justify-center rounded disabled:opacity-40 hover:bg-muted/40"
+                      style={{ color: "var(--gd-bronze)" }}
                     >
                       {retrying === doc.id
                         ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         : <RefreshCw className="w-3.5 h-3.5" />}
                     </button>
                   )}
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
+                  <ConfirmAction
+                    title="Unlink this document?"
+                    consequence="The document stays in your library but is detached from this work. You can re-link it later."
+                    confirmLabel="Unlink"
+                    destructive
+                    onConfirm={async () => {
                       const r = await apiFetch(`${DOC_BASE}/library/${doc.id}`, {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
@@ -530,11 +542,17 @@ export function DocumentsTab({ workId }: { workId: string }) {
                         toast.error("Could not unlink document");
                       }
                     }}
-                    title="Unlink from this work"
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/5"
-                  >
-                    <Unlink className="w-3.5 h-3.5" />
-                  </button>
+                    trigger={
+                      <button
+                        onClick={(e) => e.stopPropagation()}
+                        title="Unlink from this work"
+                        data-testid={`unlink-doc-${doc.id}`}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity min-h-11 min-w-11 flex items-center justify-center rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/5"
+                      >
+                        <Unlink className="w-3.5 h-3.5" />
+                      </button>
+                    }
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -542,26 +560,34 @@ export function DocumentsTab({ workId }: { workId: string }) {
           })}
         </div>
       ) : docFilter.trim() || readinessFilter !== "all" ? (
-        <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
-          <p className="text-muted-foreground text-sm">
-            {docFilter.trim()
-              ? `No documents match "${docFilter}".`
-              : `No ${readinessFilter === "imported" ? "processing" : readinessFilter} documents.`}
-          </p>
-          <button
-            onClick={() => { setDocFilter(""); setReadinessFilter("all"); }}
-            className="text-xs text-primary underline mt-2"
-          >
-            Clear filter
-          </button>
-        </div>
+        <EmptyState
+          icon={<Search />}
+          title={docFilter.trim()
+            ? `No documents match "${docFilter}"`
+            : `No ${readinessFilter === "imported" ? "processing" : readinessFilter} documents`}
+          description="Adjust or clear the filter to see all source material."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              className="min-h-11"
+              onClick={() => { setDocFilter(""); setReadinessFilter("all"); }}
+            >
+              Clear filter
+            </Button>
+          }
+        />
       ) : (
-        <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
-          <p className="text-muted-foreground">No documents added to this work yet.</p>
-          <Button size="sm" variant="outline" className="gap-2 mt-4" onClick={() => setOpen(true)}>
-            <Plus className="w-4 h-4" /> Add from Library
-          </Button>
-        </div>
+        <EmptyState
+          icon={<FileText />}
+          title="No documents added to this work yet"
+          description="Link a document from your library to give this work source material."
+          action={
+            <Button size="sm" variant="outline" className="gap-2 min-h-11" onClick={() => setOpen(true)}>
+              <Plus className="w-4 h-4" /> Add from Library
+            </Button>
+          }
+        />
       )}
 
       {/* Document picker dialog */}
@@ -586,7 +612,7 @@ export function DocumentsTab({ workId }: { workId: string }) {
                     key={doc.id}
                     disabled={linking}
                     onClick={() => handleLink(doc.id!)}
-                    className="w-full text-left flex items-center gap-3 p-3 rounded-lg border border-border/50 hover:bg-muted/50 transition-colors disabled:opacity-50"
+                    className="w-full text-left flex items-center gap-3 p-3 min-h-11 rounded-lg border border-border/50 hover:bg-muted/50 transition-colors disabled:opacity-50"
                   >
                     <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                     <div className="min-w-0 flex-1">

@@ -106,9 +106,23 @@ import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { useDomainKindChips } from "@/lib/ontology-kinds";
 import { LearnTab } from "@/pages/learning/learn-tab";
+import { ErrorState } from "@/components/primitives";
 
 
 const API_BASE_GRAPH = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// Ordered semantic accent palette for the kind-filter legend dots. Kinds are
+// mapped by their position in the chip list so the legend reads as tokens
+// rather than the raw hex the ontology hook returns.
+const KIND_DOT_TOKENS = [
+  "var(--gd-info)",
+  "var(--gd-success)",
+  "var(--gd-caution)",
+  "var(--gd-violet)",
+  "var(--gd-bronze)",
+  "var(--gd-sonar)",
+  "var(--gd-danger)",
+];
 
 export function GraphTab({ workId }: { workId: string }) {
   const [, navigate]      = useLocation();
@@ -127,7 +141,7 @@ export function GraphTab({ workId }: { workId: string }) {
   });
   const kindChips = useDomainKindChips(graphWork?.domain);
 
-  const { data: graphData, isLoading, error } = useQuery({
+  const { data: graphData, isLoading, error, refetch } = useQuery({
     queryKey: ["workGraph", workId],
     queryFn: async () => {
       const r = await apiFetch(`${API_BASE_GRAPH}/works/${workId}/graph?limit=150`);
@@ -157,20 +171,20 @@ export function GraphTab({ workId }: { workId: string }) {
       {!!graphData?.nodes?.length && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground font-medium">Show:</span>
-          {kindChips.map(({ value, label, color }) => {
+          {kindChips.map(({ value, label }, i) => {
             const on = !hiddenKinds.has(value);
             return (
               <button
                 key={value}
                 onClick={() => toggleKind(value)}
-                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all
+                className={`flex items-center gap-1.5 px-2 min-h-11 rounded-full text-[11px] font-medium border transition-all
                   ${on
                     ? "bg-background border-border text-foreground"
                     : "bg-transparent border-border/30 text-muted-foreground/50"
                   }`}
               >
                 <span className="w-2 h-2 rounded-full shrink-0"
-                  style={{ background: on ? color : "#94a3b8" }} />
+                  style={{ background: on ? KIND_DOT_TOKENS[i % KIND_DOT_TOKENS.length] : "var(--gd-dim)" }} />
                 {label}
               </button>
             );
@@ -178,17 +192,24 @@ export function GraphTab({ workId }: { workId: string }) {
         </div>
       )}
 
-      <KnowledgeGraph
-        nodes={graphData?.nodes ?? []}
-        edges={graphData?.edges ?? []}
-        hiddenKinds={hiddenKinds}
-        onNavigate={handleNavigate}
-        height={480}
-        loading={isLoading}
-        error={error ? String(error) : undefined}
-        nodeCount={graphData?.node_count}
-        edgeCount={graphData?.edge_count}
-      />
+      {error ? (
+        <ErrorState
+          title="Couldn't load the knowledge graph"
+          detail={String(error)}
+          onRetry={() => refetch()}
+        />
+      ) : (
+        <KnowledgeGraph
+          nodes={graphData?.nodes ?? []}
+          edges={graphData?.edges ?? []}
+          hiddenKinds={hiddenKinds}
+          onNavigate={handleNavigate}
+          height={480}
+          loading={isLoading}
+          nodeCount={graphData?.node_count}
+          edgeCount={graphData?.edge_count}
+        />
+      )}
     </div>
   );
 }

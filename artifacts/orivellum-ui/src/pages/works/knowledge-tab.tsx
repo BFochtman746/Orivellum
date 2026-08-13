@@ -106,6 +106,7 @@ import { toast } from "sonner";
 import { enqueueOp, isNetworkError } from "@/lib/outbox";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
+import { LoadingState, EmptyState, ErrorState, ConfirmAction } from "@/components/primitives";
 
 
 const BASE_KN = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -248,7 +249,7 @@ function ReharvestPanel({ workId, domain }: { workId: string; domain: string | n
   return (
     <div className="rounded-lg border border-border/60 p-3 space-y-2 bg-muted/20">
       <div className="flex items-center gap-2 flex-wrap">
-        <Sparkles className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+        <Sparkles className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gd-violet)" }} />
         <span className="text-xs font-medium">Domain re-harvest</span>
         <Badge variant="outline" className="text-[10px]">{domain}</Badge>
         {running && (
@@ -281,11 +282,11 @@ function ReharvestPanel({ workId, domain }: { workId: string; domain: string | n
           <span>state: {report.state}</span>
           <span>docs: {report.docs_processed}</span>
           <span>created: {report.items_created}</span>
-          <span className={report.items_discarded_off_schema > 0 ? "text-amber-600" : ""}>
+          <span style={report.items_discarded_off_schema > 0 ? { color: "var(--gd-caution)" } : undefined}>
             off-schema discarded: {report.items_discarded_off_schema}
           </span>
           {report.docs_skipped_doc_type > 0 && <span>skipped (doc type): {report.docs_skipped_doc_type}</span>}
-          {report.llm_calls_failed > 0 && <span className="text-red-500">LLM failures: {report.llm_calls_failed}</span>}
+          {report.llm_calls_failed > 0 && <span style={{ color: "var(--gd-danger)" }}>LLM failures: {report.llm_calls_failed}</span>}
         </div>
       )}
       {isPilot && !signed && report?.state === "done" && (
@@ -379,7 +380,7 @@ export function KnowledgeTab({ workId }: { workId: string }) {
     query: { enabled: !!workId, queryKey: getGetWorkQueryKey(workId) },
   });
   const workDomain: string | null = ((workResp as any)?.domain ?? null) || null;
-  const { data: knowResp, isLoading } = useGetWorkKnowledge(workId, {}, {
+  const { data: knowResp, isLoading, isError, refetch } = useGetWorkKnowledge(workId, {}, {
     query: { enabled: !!workId, queryKey: getGetWorkKnowledgeQueryKey(workId, {}) },
   });
   const { data: docsResp } = useGetWorkDocuments(workId, {
@@ -470,7 +471,6 @@ export function KnowledgeTab({ workId }: { workId: string }) {
   };
 
   const handleDeleteKnowledge = (itemId: string) => {
-    if (!window.confirm("Delete this knowledge item?")) return;
     deleteKnowledge.mutate(
       { itemId },
       {
@@ -484,7 +484,6 @@ export function KnowledgeTab({ workId }: { workId: string }) {
     );
   };
 
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
   const allKnowledge = knowResp?.knowledge ?? [];
   const pendingCount = allKnowledge.filter((k) => k.review_status === "ai_auto").length;
 
@@ -697,7 +696,7 @@ export function KnowledgeTab({ workId }: { workId: string }) {
                         ? "bg-background text-foreground shadow-sm font-semibold"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
-                    style={key === "pending" && pendingCount > 0 ? { color: "var(--gilt)" } : undefined}
+                    style={key === "pending" && pendingCount > 0 ? { color: "var(--gd-bronze)" } : undefined}
                   >
                     {label}
                   </button>
@@ -708,7 +707,15 @@ export function KnowledgeTab({ workId }: { workId: string }) {
         </div>
       </div>
 
-      {knowledge.length > 0 ? (
+      {isLoading ? (
+        <LoadingState rows={5} label="Loading knowledge" />
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load knowledge"
+          detail="The structured knowledge for this work failed to load."
+          onRetry={() => refetch()}
+        />
+      ) : knowledge.length > 0 ? (
         <div className="grid gap-3">
           {knowledge.map((item) => {
             const isAI = item.review_status === "ai_auto";
@@ -725,15 +732,15 @@ export function KnowledgeTab({ workId }: { workId: string }) {
                         {item.kind}
                       </Badge>
                       {item.review_status === "ai_auto" ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }}>
                           <Sparkles className="w-2.5 h-2.5" /> AI
                         </span>
                       ) : item.review_status === "approved" ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}>
                           ✓ approved
                         </span>
                       ) : item.review_status === "rejected" ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" }}>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border" style={{ color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" }}>
                           ✕ rejected
                         </span>
                       ) : (
@@ -749,7 +756,7 @@ export function KnowledgeTab({ workId }: { workId: string }) {
                         <span className="font-semibold">{item.object}</span>
                       </div>
                     ) : (
-                      <p className="text-sm font-serif leading-relaxed">{item.text}</p>
+                      <p className="text-sm font-serif leading-relaxed line-clamp-5 break-words">{item.text}</p>
                     )}
                     {(item as any).source_doc_id && (
                       <a
@@ -765,9 +772,9 @@ export function KnowledgeTab({ workId }: { workId: string }) {
                     {item.confidence !== undefined && item.confidence !== null && (() => {
                       const pct = item.confidence * 100;
                       const tier =
-                        pct >= 80 ? { label: "High", style: { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } as React.CSSProperties, bar: { background: "var(--green-2)" } as React.CSSProperties }
-                        : pct >= 50 ? { label: "Med",  style: { color: "var(--gilt)",   background: "var(--gilt-soft)",  borderColor: "var(--gilt-line)" } as React.CSSProperties, bar: { background: "var(--gilt)" } as React.CSSProperties }
-                        : { label: "Low",  style: { color: "var(--rust)",  background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } as React.CSSProperties, bar: { background: "var(--rust)" } as React.CSSProperties };
+                        pct >= 80 ? { label: "High", style: { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" } as React.CSSProperties, bar: { background: "var(--gd-success)" } as React.CSSProperties }
+                        : pct >= 50 ? { label: "Med",  style: { color: "var(--gd-bronze)",   background: "var(--gd-bronze-soft)",  borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" } as React.CSSProperties, bar: { background: "var(--gd-bronze)" } as React.CSSProperties }
+                        : { label: "Low",  style: { color: "var(--gd-danger)",  background: "var(--gd-danger-soft)", borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)" } as React.CSSProperties, bar: { background: "var(--gd-danger)" } as React.CSSProperties };
                       return (
                         <div className="flex flex-col items-end gap-0.5" title={`Confidence: ${pct.toFixed(1)}% (estimated) — ${tier.label === "High" ? "Well-evidenced: corroborated by multiple sources, recent, reviewed" : tier.label === "Med" ? "Partially evidenced: some corroboration or review present" : "Thin evidence: single source, unreviewed, or old — verify before relying on this"}`}>
                           <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border" style={tier.style}>
@@ -788,8 +795,8 @@ export function KnowledgeTab({ workId }: { workId: string }) {
                           disabled={isReviewing || isApproved}
                           onClick={() => handleReview(item.id!, "approved", isRejected)}
                           title="Approve"
-                          className="p-1.5 rounded transition-colors disabled:opacity-40"
-                          style={isApproved ? { color: "var(--green-2)", background: "var(--green-soft)" } : undefined}
+                          className="min-h-11 min-w-11 flex items-center justify-center rounded transition-colors disabled:opacity-40"
+                          style={isApproved ? { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)" } : undefined}
                         >
                           <ThumbsUp className="w-3.5 h-3.5" />
                         </button>
@@ -797,20 +804,29 @@ export function KnowledgeTab({ workId }: { workId: string }) {
                           disabled={isReviewing || isRejected}
                           onClick={() => handleReview(item.id!, "rejected", isApproved)}
                           title="Dismiss"
-                          className="p-1.5 rounded transition-colors disabled:opacity-40"
-                          style={isRejected ? { color: "var(--rust)", background: "var(--rust-soft)" } : undefined}
+                          className="min-h-11 min-w-11 flex items-center justify-center rounded transition-colors disabled:opacity-40"
+                          style={isRejected ? { color: "var(--gd-danger)", background: "var(--gd-danger-soft)" } : undefined}
                         >
                           <ThumbsDown className="w-3.5 h-3.5" />
                         </button>
                       </>
                     )}
-                    <button
-                      onClick={() => handleDeleteKnowledge(item.id!)}
-                      title="Delete item"
-                      className="p-1.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <ConfirmAction
+                      title="Delete knowledge item?"
+                      consequence="This knowledge item will be permanently removed from this work. This cannot be undone."
+                      confirmLabel="Delete"
+                      destructive
+                      onConfirm={() => handleDeleteKnowledge(item.id!)}
+                      trigger={
+                        <button
+                          title="Delete item"
+                          data-testid={`delete-knowledge-${item.id}`}
+                          className="min-h-11 min-w-11 flex items-center justify-center rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/5 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      }
+                    />
                   </div>
                 </div>
               </CardContent>
@@ -819,17 +835,22 @@ export function KnowledgeTab({ workId }: { workId: string }) {
           })}
         </div>
       ) : searchText.trim() ? (
-        <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
-          <p className="text-muted-foreground text-sm">No knowledge items match "{searchText}".</p>
-          <button onClick={() => setSearchText("")} className="text-xs text-primary underline mt-2">Clear filter</button>
-        </div>
+        <EmptyState
+          icon={<Search />}
+          title={`No knowledge items match "${searchText}"`}
+          description="Try a different search or clear the filter to see all items."
+          action={
+            <Button variant="outline" size="sm" className="min-h-11" onClick={() => setSearchText("")}>
+              Clear filter
+            </Button>
+          }
+        />
       ) : (
-        <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
-          <p className="text-muted-foreground">No knowledge extracted yet.</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Link a document and Orivellum will extract concepts, facts, and excerpts automatically.
-          </p>
-        </div>
+        <EmptyState
+          icon={<Sparkles />}
+          title="No knowledge extracted yet"
+          description="Link a document and Orivellum will extract concepts, facts, and excerpts automatically."
+        />
       )}
     </div>
   );

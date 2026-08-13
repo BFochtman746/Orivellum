@@ -12,11 +12,11 @@ import { apiFetch } from "@/lib/auth";
 import { useGetWork, useUpdateWork, getGetWorkQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   BarChart2, Check, CheckCircle2, Loader2, Pencil, X, AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { LoadingState, ErrorState } from "@/components/primitives";
 
 const WORK_API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
@@ -130,17 +130,14 @@ export function CompletenessTab({ workId }: { workId: string }) {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  if (isLoading) return (
-    <div className="space-y-4">
-      {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-16 w-full" />)}
-    </div>
-  );
+  if (isLoading) return <LoadingState rows={5} label="Loading completeness report" />;
 
   if (error || !data) return (
-    <div className="text-center py-16 text-muted-foreground border border-dashed rounded-lg">
-      <BarChart2 className="w-8 h-8 mx-auto mb-3 opacity-40" />
-      <p className="text-sm">Could not load completeness — re-extract documents first.</p>
-    </div>
+    <ErrorState
+      title="Couldn't load completeness"
+      detail="The readiness report failed to load — re-extract documents first, then retry."
+      onRetry={() => refetch()}
+    />
   );
 
   const predicatesMet = data.predicates.filter(p => p.value).length;
@@ -154,8 +151,8 @@ export function CompletenessTab({ workId }: { workId: string }) {
         className="flex items-center justify-between p-4 rounded-xl border"
         style={
           allMet
-            ? { color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }
-            : { color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }
+            ? { color: "var(--gd-success)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }
+            : { color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)" }
         }
       >
         <div>
@@ -172,7 +169,7 @@ export function CompletenessTab({ workId }: { workId: string }) {
           <button
             onClick={() => refetch()}
             disabled={isFetching}
-            className="text-[10px] font-mono opacity-60 hover:opacity-100 transition-opacity mt-1"
+            className="text-[10px] font-mono opacity-60 hover:opacity-100 transition-opacity mt-1 min-h-11 px-2"
           >
             {isFetching ? "updating…" : "refresh"}
           </button>
@@ -187,16 +184,16 @@ export function CompletenessTab({ workId }: { workId: string }) {
         {data.predicates.map((p) => (
           <div key={p.name} className="p-4 rounded-lg border border-border/50 bg-muted/10 flex items-start gap-3">
             {p.value ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--green-2)" }} />
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--gd-success)" }} />
             ) : (
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--rust)" }} />
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: "var(--gd-danger)" }} />
             )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium text-sm">{p.label}</span>
                 <span
                   className="text-xs font-mono font-semibold shrink-0"
-                  style={{ color: p.value ? "var(--green-2)" : "var(--rust)" }}
+                  style={{ color: p.value ? "var(--gd-success)" : "var(--gd-danger)" }}
                 >
                   {p.value ? "yes" : "no"}
                 </span>
@@ -265,7 +262,7 @@ export function CompletenessTab({ workId }: { workId: string }) {
           {!editingTargets && (
             <button
               onClick={openTargetEditor}
-              className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors min-h-11 px-2 shrink-0"
             >
               <Pencil className="w-3 h-3" /> Edit targets
             </button>
@@ -364,7 +361,7 @@ function ProgressRow({ label, current, target }: {
   label: string; current: number; target: number | null;
 }) {
   const barColor = (pct: number): string =>
-    pct >= 70 ? "var(--green-2)" : pct >= 30 ? "var(--gilt)" : "var(--rust)";
+    pct >= 70 ? "var(--gd-success)" : pct >= 30 ? "var(--gd-bronze)" : "var(--gd-danger)";
 
   if (target == null) {
     return (

@@ -73,6 +73,7 @@ import {
   Trophy,
   BarChart2,
   AlertTriangle,
+  CheckCircle2,
   TrendingUp,
   Lightbulb,
   ShieldCheck,
@@ -106,6 +107,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
+import { LoadingState, EmptyState, ErrorState } from "@/components/primitives";
 
 
 const WORK_API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -140,14 +142,14 @@ interface GapReport {
   gaps: GapItem[]; suggested_queries: string[]; evaluated_at: string;
 }
 
-// Three distinct severity tiers — high (rust), medium (gilt), low (green-2).
+// Three distinct severity tiers — high (danger), medium (bronze), low (success).
 const GAP_SEVERITY_STYLE: Record<string, React.CSSProperties> = {
-  high:   { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)", color: "var(--rust)" },
-  medium: { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" },
-  low:    { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)", color: "var(--green-2)" },
+  high:   { borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)", color: "var(--gd-danger)" },
+  medium: { borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" },
+  low:    { borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", background: "color-mix(in srgb, var(--gd-success) 12%, transparent)", color: "var(--gd-success)" },
 };
 const GAP_DOT: Record<string, string> = {
-  high: "var(--rust)", medium: "var(--gilt)", low: "var(--green-2)",
+  high: "var(--gd-danger)", medium: "var(--gd-bronze)", low: "var(--gd-success)",
 };
 
 // ── Completeness assertions (review §4.1) ────────────────────────────────────
@@ -600,14 +602,13 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
     finally { setActionPending(null); }
   };
 
-  if (isLoading) return (
-    <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20 w-full" />)}</div>
-  );
+  if (isLoading) return <LoadingState rows={3} label="Loading hygiene analysis" />;
   if (error || !data) return (
-    <div className="text-center py-16 text-muted-foreground border border-dashed rounded-lg">
-      <AlertTriangle className="w-8 h-8 mx-auto mb-3 opacity-40" />
-      <p className="text-sm">Could not load hygiene analysis.</p>
-    </div>
+    <ErrorState
+      title="Couldn't load hygiene analysis"
+      detail="The gap analysis for this work failed to load."
+      onRetry={() => refetch()}
+    />
   );
 
   const byKind = data.gaps.reduce<Record<string, GapItem[]>>((acc, g) => {
@@ -687,9 +688,11 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
 
       {/* Hygiene findings list */}
       {data.gaps.length === 0 ? (
-        <div className="text-center py-10 border border-dashed rounded-lg text-muted-foreground text-sm">
-          No hygiene findings — all chapters have sufficient research coverage.
-        </div>
+        <EmptyState
+          icon={<CheckCircle2 />}
+          title="No hygiene findings"
+          description="All chapters have sufficient research coverage."
+        />
       ) : (
         <div className="space-y-4">
           {(["high", "medium", "low"] as const).map((sev) => {
@@ -744,8 +747,8 @@ export function GapsTab({ workId, onBrainstorm }: { workId: string; onBrainstorm
                         {onBrainstorm && (
                           <button
                             onClick={() => onBrainstorm(g.title)}
-                            className="flex items-center gap-1.5 text-[11px] font-mono opacity-80 hover:opacity-100 transition-opacity"
-                            style={{ color: "var(--gilt)" }}
+                            className="flex items-center gap-1.5 text-[11px] font-mono opacity-80 hover:opacity-100 transition-opacity min-h-11"
+                            style={{ color: "var(--gd-bronze)" }}
                           >
                             <Lightbulb className="w-3 h-3" />
                             Brainstorm this →
@@ -850,8 +853,8 @@ interface RecallPeer {
 }
 
 const NODE_CLASS_STYLE: Record<string, React.CSSProperties> = {
-  required:  { borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" },
-  contested: { borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)", color: "var(--rust)" },
+  required:  { borderColor: "color-mix(in srgb, var(--gd-bronze) 45%, transparent)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" },
+  contested: { borderColor: "color-mix(in srgb, var(--gd-danger) 28%, transparent)", background: "var(--gd-danger-soft)", color: "var(--gd-danger)" },
   optional:  { borderColor: "var(--border)", background: "transparent", color: "var(--muted-foreground)" },
 };
 
@@ -1030,7 +1033,7 @@ function DomainModelSection({ workId }: { workId: string }) {
               </button>
             </div>
             {structural > 0 && structural < 3 && (
-              <p className="text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
+              <p className="text-[10px] font-mono" style={{ color: "var(--gd-bronze)" }}>
                 {structural} of 3 independent sources — required-core triangulation needs at least 3.
               </p>
             )}
@@ -1098,7 +1101,7 @@ function DomainModelSection({ workId }: { workId: string }) {
                 <span>{p.matched}/{p.peer_total} · {Math.round(p.relative_recall * 100)}%</span>
               </div>
               <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                <div className="h-full rounded-full" style={{ width: `${Math.round(p.relative_recall * 100)}%`, background: "var(--gilt)" }} />
+                <div className="h-full rounded-full" style={{ width: `${Math.round(p.relative_recall * 100)}%`, background: "var(--gd-bronze)" }} />
               </div>
               {p.missing.length > 0 && (
                 <p className="text-[10px] font-mono text-muted-foreground/70 truncate" title={p.missing.map((m) => m.cited).join(", ")}>

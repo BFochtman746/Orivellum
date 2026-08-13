@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import { toast } from "sonner";
 import {
   BookOpen, CheckCircle, XCircle, Clock, ChevronRight,
@@ -69,7 +70,7 @@ interface StageDetail {
 
 function GateIcon({ status, size = 4 }: { status: string; size?: number }) {
   const cls = `w-${size} h-${size} shrink-0`;
-  if (status === "PASSED") return <CheckCircle className={cls} style={{ color: "var(--green-2)" }} />;
+  if (status === "PASSED") return <CheckCircle className={cls} style={{ color: "var(--gd-success)" }} />;
   if (status === "FAILED") return <XCircle className={`${cls} text-destructive`} />;
   return <Clock className={`${cls} text-muted-foreground`} />;
 }
@@ -147,7 +148,7 @@ function CodexDrawer({
       <DialogContent className="max-w-xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-serif">
-            <Lightbulb className="w-4 h-4" style={{ color: "var(--gilt)" }} />
+            <Lightbulb className="w-4 h-4" style={{ color: "var(--gd-bronze)" }} />
             Brainstorm Codex — {stageCode}
           </DialogTitle>
         </DialogHeader>
@@ -315,7 +316,7 @@ function GateDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className={`flex items-center gap-2 font-serif ${isPass ? "" : "text-destructive"}`} style={isPass ? { color: "var(--green-2)" } : undefined}>
+          <DialogTitle className={`flex items-center gap-2 font-serif ${isPass ? "" : "text-destructive"}`} style={isPass ? { color: "var(--gd-success)" } : undefined}>
             {isPass ? <CheckSquare className="w-4 h-4" /> : <XSquare className="w-4 h-4" />}
             {isPass ? "Pass" : "Fail"} Gate {code}
           </DialogTitle>
@@ -399,7 +400,7 @@ function SealDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 font-serif" style={{ color: "var(--green-2)" }}>
+          <DialogTitle className="flex items-center gap-2 font-serif" style={{ color: "var(--gd-success)" }}>
             <ShieldCheck className="w-4 h-4" />
             Seal the Origination Package
           </DialogTitle>
@@ -426,7 +427,7 @@ function SealDialog({
             onClick={() => sealMutation.mutate()}
             disabled={sealMutation.isPending || !author.trim()}
             className="text-white hover:opacity-90"
-            style={{ background: "var(--green-2)" }}
+            style={{ background: "var(--gd-success)" }}
           >
             {sealMutation.isPending ? "Sealing…" : "Seal Package"}
           </Button>
@@ -526,7 +527,7 @@ function StageEditor({
             {status === "PASSED" && (
               <span
                 className="flex items-center gap-1 text-[10px] font-mono rounded-full px-2 py-0.5 border"
-                style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+                style={{ color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}
               >
                 <CheckCircle className="w-3 h-3" /> PASSED
               </span>
@@ -548,7 +549,7 @@ function StageEditor({
           className="gap-1.5 h-7 text-xs"
           onClick={() => setCodexOpen(true)}
         >
-          <Lightbulb className="w-3 h-3" style={{ color: "var(--gilt)" }} />
+          <Lightbulb className="w-3 h-3" style={{ color: "var(--gd-bronze)" }} />
           Codex
         </Button>
       </div>
@@ -557,10 +558,10 @@ function StageEditor({
       {hasPlaceholders && (
         <div
           className="flex items-start gap-2 px-3 py-2 rounded border text-xs"
-          style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)", color: "var(--gilt)" }}
+          style={{ borderColor: "var(--gd-line-control)", background: "var(--gd-caution-soft)", color: "var(--gd-caution)" }}
         >
           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          This artifact still has <code className="font-mono" style={{ color: "var(--gilt)" }}>{"<<FILL>>"}</code> placeholders. Replace all of them before passing the gate.
+          This artifact still has <code className="font-mono" style={{ color: "var(--gd-caution)" }}>{"<<FILL>>"}</code> placeholders. Replace all of them before passing the gate.
         </div>
       )}
 
@@ -575,7 +576,7 @@ function StageEditor({
           className={`font-mono text-xs leading-relaxed resize-y ${
             sealed ? "opacity-60" : ""
           }`}
-          style={hasPlaceholders ? { borderColor: "var(--gilt-line)" } : undefined}
+          style={hasPlaceholders ? { borderColor: "var(--gd-line-control)" } : undefined}
           placeholder="Write your artifact content here…"
           spellCheck={false}
         />
@@ -654,7 +655,7 @@ function StageEditor({
               <Button
                 size="sm"
                 className="gap-1.5 h-7 text-xs text-white hover:opacity-90"
-                style={{ background: "var(--green-2)" }}
+                style={{ background: "var(--gd-success)" }}
                 disabled={hasPlaceholders}
                 onClick={() => setPassOpen(true)}
               >
@@ -699,12 +700,12 @@ export function GenesisTab({ workId }: { workId: string }) {
   const [sealOpen, setSealOpen] = useState(false);
   const [activeCode, setActiveCode] = useState("G0");
 
-  const { data: book, isLoading, error } = useQuery<GenesisBook>({
+  const { data: book, isLoading, error, refetch } = useQuery<GenesisBook>({
     queryKey: ["genesis", workId],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/works/${workId}/genesis`);
       if (r.status === 404) return null as any;
-      if (!r.ok) throw new Error("Failed");
+      if (!r.ok) throw new Error("Failed to load the origination package");
       return r.json();
     },
     staleTime: 30_000,
@@ -725,6 +726,17 @@ export function GenesisTab({ workId }: { workId: string }) {
   const passedCount = book?.stages.filter((s) => s.status === "PASSED").length ?? 0;
   const allGatesPassed = passedCount === 10;
 
+  // ── Recoverable error ─────────────────────────────────────────────────────────
+  if (!isLoading && error) {
+    return (
+      <ErrorState
+        title="Could not load origination"
+        detail="The ten-gate origination package is temporarily unavailable. Check your connection and try again."
+        onRetry={() => refetch()}
+      />
+    );
+  }
+
   // ── Not yet initialized ──────────────────────────────────────────────────────
   if (!isLoading && !book) {
     return (
@@ -739,23 +751,17 @@ export function GenesisTab({ workId }: { workId: string }) {
           </p>
         </div>
 
-        <Card className="border-dashed border-border/50 bg-muted/10">
-          <CardContent className="py-10 text-center space-y-4">
-            <Scroll className="w-8 h-8 text-muted-foreground/40 mx-auto" />
-            <p className="text-sm text-muted-foreground font-serif italic">
-              No origination package yet.
-            </p>
-            <p className="text-xs text-muted-foreground max-w-md mx-auto">
-              Origination walks you through ten locked gates — G0 Spark Slate through G9 Ready-to-Write Seal.
-              Each gate requires your explicit sign-off before the next opens.
-              The tamper-evident ledger records every decision.
-            </p>
-            <Button onClick={() => setInitOpen(true)} className="gap-2 mt-2">
+        <EmptyState
+          icon={<Scroll />}
+          title="No origination package yet"
+          description="Origination walks you through ten locked gates — G0 Spark Slate through G9 Ready-to-Write Seal. Each gate requires your explicit sign-off before the next opens, and the tamper-evident ledger records every decision."
+          action={
+            <Button onClick={() => setInitOpen(true)} className="gap-2">
               <Sparkles className="w-4 h-4" />
               Start Origination
             </Button>
-          </CardContent>
-        </Card>
+          }
+        />
 
         <InitDialog workId={workId} open={initOpen} onClose={() => setInitOpen(false)} />
       </div>
@@ -764,13 +770,7 @@ export function GenesisTab({ workId }: { workId: string }) {
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
+    return <LoadingState rows={4} label="Loading origination" />;
   }
 
   const b = book!;
@@ -787,7 +787,7 @@ export function GenesisTab({ workId }: { workId: string }) {
           <div className="flex items-center gap-3 mt-1 text-xs font-mono text-muted-foreground flex-wrap">
             <span className="uppercase">{b.mode}</span>
             <span>{b.length} chapters · {b.acts} acts</span>
-            <span className={b.sealed ? "" : "text-foreground font-semibold"} style={b.sealed ? { color: "var(--green-2)", fontWeight: 600 } : undefined}>
+            <span className={b.sealed ? "" : "text-foreground font-semibold"} style={b.sealed ? { color: "var(--gd-success)", fontWeight: 600 } : undefined}>
               {b.sealed ? "🔒 READY_FOR_B0" : b.state}
             </span>
             <span>{b.ledger_entries} ledger entries</span>
@@ -812,7 +812,7 @@ export function GenesisTab({ workId }: { workId: string }) {
             <Button
               size="sm"
               className="gap-1.5 h-7 text-xs text-white hover:opacity-90"
-              style={{ background: "var(--green-2)" }}
+              style={{ background: "var(--gd-success)" }}
               onClick={() => setSealOpen(true)}
             >
               <ShieldCheck className="w-3 h-3" />
@@ -827,7 +827,7 @@ export function GenesisTab({ workId }: { workId: string }) {
         <div
           className="flex items-center gap-2 px-3 py-2 rounded border text-xs font-mono"
           style={verifyQuery.data.ok
-            ? { borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)", color: "var(--green-2)" }
+            ? { borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)", background: "var(--gd-primary-soft)", color: "var(--gd-success)" }
             : undefined}
         >
           {verifyQuery.data.ok
@@ -846,7 +846,7 @@ export function GenesisTab({ workId }: { workId: string }) {
         <div className="h-1.5 bg-muted rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-700"
-            style={{ background: "var(--green-2)", opacity: 0.65, width: `${passedCount * 10}%` }}
+            style={{ background: "var(--gd-success)", opacity: 0.65, width: `${passedCount * 10}%` }}
           />
         </div>
       </div>
@@ -896,8 +896,8 @@ export function GenesisTab({ workId }: { workId: string }) {
 
       {/* Sealed manifest */}
       {b.sealed && b.manifest && (
-        <div className="border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--green-2) 20%, transparent)" }}>
-          <div className="text-[10px] font-mono uppercase tracking-widest mb-2" style={{ color: "var(--green-2)" }}>
+        <div className="border-t pt-4" style={{ borderColor: "color-mix(in srgb, var(--gd-success) 20%, transparent)" }}>
+          <div className="text-[10px] font-mono uppercase tracking-widest mb-2" style={{ color: "var(--gd-success)" }}>
             Sealed Manifest
           </div>
           <pre className="text-[10px] font-mono bg-muted/40 rounded-lg p-3 overflow-x-auto text-muted-foreground max-h-48">

@@ -10,37 +10,57 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Search, Upload, FileText, Database, Filter,
   Library as LibraryIcon, AlertCircle, RefreshCw, Trash2,
-  CheckCircle2, Clock, FileQuestion, X, Package, Layers,
-  FolderOpen, Sparkles, GitMerge, Star, GitBranch, Download, Network, StopCircle,
-  BookHeadphones,
+  FileQuestion, X, Package, Layers,
+  FolderOpen, Sparkles, GitMerge, Star, Download, Network, StopCircle,
+  BookHeadphones, Plus,
 } from "lucide-react";
 import {
   useListeningProgressBadges,
   type ListeningProgress,
 } from "@/lib/read-aloud";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-  DialogTrigger, DialogFooter,
-} from "@/components/ui/dialog";
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetFooter,
+} from "@/components/ui/sheet";
 import {
-  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
-} from "@/components/ui/tooltip";
+  Page, Panel, Status, EmptyState, ErrorState, LoadingState, FilterSheet, ConfirmAction,
+  type StatusKind,
+} from "@/components/primitives";
 import { toast } from "sonner";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
 
-// ── Lifecycle badge ────────────────────────────────────────────────────────────
+/**
+ * Download the original file through apiFetch (blob) rather than window.open,
+ * so the Bearer-token fallback works in the PWA (window.open only carries the
+ * session cookie, which the installed app can lose).
+ */
+async function downloadOriginal(docId: string, fallbackName = "download") {
+  try {
+    const r = await apiFetch(`${BASE}/library/${docId}/download`);
+    if (!r.ok) throw new Error(`Download failed (${r.status})`);
+    const disposition = r.headers.get("content-disposition") ?? "";
+    const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallbackName;
+    const blobUrl = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch (err: any) {
+    toast.error(err?.message ?? "Download failed");
+  }
+}
 
-type Lifecycle = "draft" | "canonical" | "superseded" | "reference";
+// ── Lifecycle badge ────────────────────────────────────────────────────────────
 
 const LIFECYCLE_CFG: Record<string, {
   label: string;
@@ -51,7 +71,7 @@ const LIFECYCLE_CFG: Record<string, {
   canonical:  {
     label: "canonical",
     cls: "",
-    style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
+    style: { color: "var(--gd-bronze)", borderColor: "var(--gd-bronze-soft)", background: "var(--gd-bronze-soft)" },
     icon: Star,
   },
   superseded: {
@@ -61,8 +81,8 @@ const LIFECYCLE_CFG: Record<string, {
   },
   reference:  {
     label: "reference",
-    cls: "",
-    style: { color: "var(--ink-soft)", borderColor: "var(--line)", background: "transparent" },
+    cls: "text-muted-foreground border-border bg-transparent",
+    style: {},
   },
 };
 
@@ -163,8 +183,8 @@ function DuplicatePairRow({
   };
 
   return (
-    <div className="flex flex-col gap-1.5 py-2 border-t first:border-t-0 first:pt-0" style={{ borderColor: "var(--gilt-line)" }}>
-      <p className="text-[11px] font-mono flex items-center flex-wrap gap-x-1.5 gap-y-0.5" style={{ color: "var(--gilt)" }}>
+    <div className="flex flex-col gap-1.5 py-2 border-t first:border-t-0 first:pt-0" style={{ borderColor: "var(--gd-bronze-soft)" }}>
+      <p className="text-[11px] font-mono flex items-center flex-wrap gap-x-1.5 gap-y-0.5" style={{ color: "var(--gd-bronze)" }}>
         <span className="font-semibold">{pair.doc_a_title || pair.doc_a_id.slice(0, 8)}</span>
         <span className="opacity-60">↔</span>
         <span className="font-semibold">{pair.doc_b_title || pair.doc_b_id.slice(0, 8)}</span>
@@ -176,24 +196,24 @@ function DuplicatePairRow({
         <button
           onClick={() => resolve("mark_versions")}
           disabled={resolving !== null}
-          className="text-[10px] font-mono px-2 py-0.5 rounded border disabled:opacity-40 transition-opacity hover:opacity-80"
-          style={{ borderColor: "color-mix(in srgb, var(--gilt) 55%, transparent)", background: "var(--gilt-soft)", color: "var(--gilt)" }}
+          className="min-h-11 text-[10px] font-mono px-2 rounded border disabled:opacity-40 transition-opacity hover:opacity-80"
+          style={{ borderColor: "var(--gd-bronze-soft)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}
         >
           {resolving === "mark_versions" ? "…" : "Link as versions"}
         </button>
         <button
           onClick={() => resolve("mark_superseded")}
           disabled={resolving !== null}
-          className="text-[10px] font-mono px-2 py-0.5 rounded border bg-white/50 disabled:opacity-40 transition-opacity hover:opacity-80"
-          style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+          className="min-h-11 text-[10px] font-mono px-2 rounded border bg-card disabled:opacity-40 transition-opacity hover:opacity-80"
+          style={{ borderColor: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}
         >
           {resolving === "mark_superseded" ? "…" : "Mark older superseded"}
         </button>
         <button
           onClick={() => resolve("keep_both")}
           disabled={resolving !== null}
-          className="text-[10px] font-mono px-2 py-0.5 rounded disabled:opacity-40 transition-opacity hover:opacity-80"
-          style={{ color: "var(--gilt)" }}
+          className="min-h-11 text-[10px] font-mono px-2 rounded disabled:opacity-40 transition-opacity hover:opacity-80"
+          style={{ color: "var(--gd-bronze)" }}
         >
           {resolving === "keep_both" ? "…" : "Keep both"}
         </button>
@@ -230,7 +250,6 @@ function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
 
       toast.info(`Scanning ${queued} document${queued !== 1 ? "s" : ""}…`, { duration: 3000 });
 
-      // Poll for results; stop after ~45 s or once pairs appear
       const started = Date.now();
       const pairsBefore = count;
       const poll = setInterval(async () => {
@@ -270,11 +289,10 @@ function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
     queryClient.invalidateQueries({ queryKey: ["library", "duplicates"] });
   };
 
-  // When there are no pairs yet, show a compact scan prompt (if there are ready docs)
   if (count === 0) {
     if (readyDocCount === 0) return null;
     return (
-      <div className="rounded-lg border border-border/50 bg-muted/20 px-4 py-3 flex items-center justify-between gap-3">
+      <Panel className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <GitMerge className="w-4 h-4 shrink-0" />
           <span>No duplicate pairs found yet.</span>
@@ -284,40 +302,38 @@ function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
           variant="outline"
           disabled={scanning}
           onClick={handleScan}
-          className="gap-1.5 text-xs shrink-0"
+          className="gap-1.5 text-xs shrink-0 min-h-11"
         >
           {scanning
             ? <><RefreshCw className="w-3 h-3 animate-spin" /> Scanning…</>
             : <><Search className="w-3 h-3" /> Scan for duplicates</>}
         </Button>
-      </div>
+      </Panel>
     );
   }
 
   return (
-    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "color-mix(in srgb, var(--gilt) 40%, transparent)", background: "var(--gilt-soft)", color: "var(--gilt)" }}>
-      {/* Header row */}
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--gd-bronze-soft)", background: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}>
       <div className="flex items-center gap-2.5 px-4 py-2.5">
-        <GitMerge className="w-4 h-4 shrink-0" style={{ color: "var(--gilt)" }} />
+        <GitMerge className="w-4 h-4 shrink-0" style={{ color: "var(--gd-bronze)" }} />
         <p className="flex-1 text-sm font-medium">
           {count} near-duplicate pair{count !== 1 ? "s" : ""} detected
         </p>
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="text-[10px] font-mono transition-opacity hover:opacity-80"
-          style={{ color: "var(--gilt)" }}
+          className="min-h-11 text-[10px] font-mono transition-opacity hover:opacity-80 px-2"
+          style={{ color: "var(--gd-bronze)" }}
         >
           {collapsed ? "show" : "hide"}
         </button>
       </div>
-      {/* Expandable pair list */}
       {!collapsed && (
         <div className="px-4 pb-3 space-y-0">
           {(data?.pairs ?? []).slice(0, 5).map((p) => (
             <DuplicatePairRow key={p.id} pair={p} onResolved={handleResolved} />
           ))}
           {count > 5 && (
-            <p className="text-[10px] font-mono pt-1.5 border-t" style={{ color: "var(--gilt)", borderColor: "var(--gilt-line)" }}>
+            <p className="text-[10px] font-mono pt-1.5 border-t" style={{ color: "var(--gd-bronze)", borderColor: "var(--gd-bronze-soft)" }}>
               {count - 5} more pair{count - 5 !== 1 ? "s" : ""} not shown
             </p>
           )}
@@ -364,10 +380,6 @@ function MissingFileRow({ doc, onChanged }: { doc: MissingDoc; onChanged: () => 
   };
 
   const handleDelete = async () => {
-    if (!window.confirm(
-      `Remove "${doc.title || doc.id.slice(0, 8)}" from the library? ` +
-      "Its source file is already gone from disk — this deletes the dead record."
-    )) return;
     setBusy("delete");
     try {
       const resp = await apiFetch(`${BASE}/library/${doc.id}`, { method: "DELETE" });
@@ -383,9 +395,9 @@ function MissingFileRow({ doc, onChanged }: { doc: MissingDoc; onChanged: () => 
 
   return (
     <div className="flex items-center gap-2 py-2 border-t first:border-t-0 first:pt-0 flex-wrap"
-         style={{ borderColor: "color-mix(in srgb, var(--rust) 20%, transparent)" }}>
-      <FileQuestion className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--rust)" }} />
-      <span className="flex-1 min-w-0 text-[12px] font-mono truncate" style={{ color: "var(--rust)" }}>
+         style={{ borderColor: "var(--gd-danger-soft)" }}>
+      <FileQuestion className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gd-danger)" }} />
+      <span className="flex-1 min-w-0 text-[12px] font-mono truncate" style={{ color: "var(--gd-danger)" }}>
         {doc.title || doc.id.slice(0, 8)}
         {doc.kind ? <span className="opacity-60 ml-1.5">· {doc.kind}</span> : null}
       </span>
@@ -398,21 +410,29 @@ function MissingFileRow({ doc, onChanged }: { doc: MissingDoc; onChanged: () => 
       <button
         onClick={() => fileRef.current?.click()}
         disabled={busy !== null}
-        className="text-[10px] font-mono px-2 py-0.5 rounded border disabled:opacity-40 transition-opacity hover:opacity-80 flex items-center gap-1"
-        style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", background: "var(--rust-soft)", color: "var(--rust)" }}
+        className="min-h-11 text-[10px] font-mono px-2 rounded border disabled:opacity-40 transition-opacity hover:opacity-80 flex items-center gap-1"
+        style={{ borderColor: "var(--gd-danger-soft)", background: "var(--gd-danger-soft)", color: "var(--gd-danger)" }}
       >
         <Upload className="w-2.5 h-2.5" />
         {busy === "upload" ? "Uploading…" : "Re-upload file"}
       </button>
-      <button
-        onClick={handleDelete}
-        disabled={busy !== null}
-        className="text-[10px] font-mono px-2 py-0.5 rounded border bg-white/50 disabled:opacity-40 transition-opacity hover:opacity-80 flex items-center gap-1"
-        style={{ borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)", color: "var(--rust)" }}
-      >
-        <Trash2 className="w-2.5 h-2.5" />
-        {busy === "delete" ? "Removing…" : "Remove record"}
-      </button>
+      <ConfirmAction
+        destructive
+        title="Remove dead record?"
+        consequence={`"${doc.title || doc.id.slice(0, 8)}" has no source file on disk. This deletes the record permanently.`}
+        confirmLabel="Remove record"
+        onConfirm={handleDelete}
+        trigger={
+          <button
+            disabled={busy !== null}
+            className="min-h-11 text-[10px] font-mono px-2 rounded border bg-card disabled:opacity-40 transition-opacity hover:opacity-80 flex items-center gap-1"
+            style={{ borderColor: "var(--gd-danger-soft)", color: "var(--gd-danger)" }}
+          >
+            <Trash2 className="w-2.5 h-2.5" />
+            {busy === "delete" ? "Removing…" : "Remove record"}
+          </button>
+        }
+      />
     </div>
   );
 }
@@ -449,10 +469,10 @@ function CollectionsPanel() {
   if (collections.length === 0) return null;
 
   return (
-    <div className="rounded-lg border border-border/60 bg-card/40 overflow-hidden" data-testid="collections-panel">
+    <div className="rounded-lg border border-card-border bg-card overflow-hidden" data-testid="collections-panel">
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left hover:bg-muted/20 transition-colors"
+        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left min-h-11 hover:bg-accent transition-colors"
         aria-expanded={!collapsed}
         data-testid="collections-toggle"
       >
@@ -470,12 +490,12 @@ function CollectionsPanel() {
         </span>
       </button>
       {!collapsed && (
-        <div className="border-t border-border/60 divide-y divide-border/40">
+        <div className="border-t border-border divide-y divide-border">
           {collections.map((c) => (
             <div key={c.id} className="flex items-center gap-3 px-4 py-2" data-testid={`collection-row-${c.id}`}>
               <FolderOpen className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm truncate font-serif" title={c.label}>{c.label}</p>
+                <p className="text-sm truncate" title={c.label}>{c.label}</p>
                 <p className="text-[11px] text-muted-foreground truncate" title={c.source_ref}>
                   {c.source_ref || "—"}
                 </p>
@@ -525,14 +545,14 @@ function MissingFilesBanner() {
     <div
       className="rounded-lg border overflow-hidden"
       style={{
-        borderColor: "color-mix(in srgb, var(--rust) 40%, transparent)",
-        background: "var(--rust-soft)",
-        color: "var(--rust)",
+        borderColor: "var(--gd-danger-soft)",
+        background: "var(--gd-danger-soft)",
+        color: "var(--gd-danger)",
       }}
       data-testid="missing-files-banner"
     >
       <div className="flex items-center gap-2.5 px-4 py-2.5">
-        <AlertCircle className="w-4 h-4 shrink-0" style={{ color: "var(--rust)" }} />
+        <AlertCircle className="w-4 h-4 shrink-0" style={{ color: "var(--gd-danger)" }} />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium">
             {count} document{count !== 1 ? "s" : ""} missing {count !== 1 ? "their" : "its"} source file
@@ -543,8 +563,8 @@ function MissingFilesBanner() {
         </div>
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="text-[10px] font-mono transition-opacity hover:opacity-80 shrink-0"
-          style={{ color: "var(--rust)" }}
+          className="min-h-11 text-[10px] font-mono transition-opacity hover:opacity-80 shrink-0 px-2"
+          style={{ color: "var(--gd-danger)" }}
         >
           {collapsed ? "show" : "hide"}
         </button>
@@ -558,7 +578,7 @@ function MissingFilesBanner() {
             <button
               onClick={() => setShowAll((v) => !v)}
               className="text-[10px] font-mono pt-1.5 border-t w-full text-left transition-opacity hover:opacity-80"
-              style={{ color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 20%, transparent)" }}
+              style={{ color: "var(--gd-danger)", borderColor: "var(--gd-danger-soft)" }}
             >
               {showAll ? "show fewer" : `show all ${count}`}
             </button>
@@ -569,51 +589,52 @@ function MissingFilesBanner() {
   );
 }
 
-// ── Readiness config ─────────────────────────────────────────────────────────
+// ── Lifecycle status mapping ─────────────────────────────────────────────────
+//
+// Maps the EXISTING readiness field onto durable, dual-coded lifecycle labels.
+// The pipeline only tracks a coarse readiness value, so we map honestly:
+//   imported/transcribing → the processing pipeline (received → … → indexing)
+//   ready                 → ready
+//   no_text               → needs review (extracted nothing usable)
+//   error                 → failed
+// `stage` (from live SSE progress, detail page) refines the processing label
+// when available; the list only has readiness, so it shows "Processing".
 
-const READINESS: Record<string, {
-  label: string;
-  icon: React.ElementType;
-  cls: string;
-  style: React.CSSProperties;
-}> = {
-  ready:        {
-    label: "READY",        icon: CheckCircle2,
-    cls: "", style: { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)", background: "var(--green-soft)" },
-  },
-  imported:     {
-    label: "PROCESSING",   icon: Clock,
-    cls: "", style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
-  },
-  transcribing: {
-    label: "TRANSCRIBING", icon: Clock,
-    // No violet VELLUM token — gilt is the nearest processing-state equivalent
-    cls: "", style: { color: "var(--gilt)", borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" },
-  },
-  no_text:      {
-    label: "NO TEXT",      icon: FileQuestion,
-    cls: "", style: { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
-  },
-  error:        {
-    label: "ERROR",        icon: AlertCircle,
-    cls: "", style: { color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)", background: "var(--rust-soft)" },
-  },
+type LifecycleStage =
+  | "received" | "extracting" | "classifying" | "indexing"
+  | "ready" | "needs_review" | "failed";
+
+const LIFECYCLE_STATUS: Record<LifecycleStage, { kind: StatusKind; label: string }> = {
+  received:     { kind: "busy",   label: "Received" },
+  extracting:   { kind: "busy",   label: "Extracting" },
+  classifying:  { kind: "busy",   label: "Classifying" },
+  indexing:     { kind: "busy",   label: "Indexing" },
+  ready:        { kind: "ok",     label: "Ready" },
+  needs_review: { kind: "warn",   label: "Needs review" },
+  failed:       { kind: "danger", label: "Failed" },
 };
 
-type Readiness = keyof typeof READINESS;
+/** Map an existing readiness value (+ optional live SSE stage) onto a durable
+ *  lifecycle stage. Only readiness is tracked on the list; stage refines it. */
+export function lifecycleStageFor(readiness: string, stage?: string | null): LifecycleStage {
+  if (readiness === "ready") return "ready";
+  if (readiness === "error") return "failed";
+  if (readiness === "no_text") return "needs_review";
+  // processing states (imported / transcribing) — refine by stage if known
+  if (stage) {
+    const s = stage.toLowerCase();
+    if (s.includes("extract") || s.includes("transcrib") || s.includes("ocr")) return "extracting";
+    if (s.includes("classif") || s.includes("type")) return "classifying";
+    if (s.includes("index") || s.includes("embed") || s.includes("chunk")) return "indexing";
+  }
+  if (readiness === "transcribing") return "extracting";
+  return "received";
+}
 
-function ReadinessBadge({ readiness }: { readiness: string }) {
-  const cfg = READINESS[readiness] ?? READINESS.imported;
-  const Icon = cfg.icon;
-  return (
-    <span
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border ${cfg.cls}`}
-      style={cfg.style}
-    >
-      <Icon className="w-2.5 h-2.5" />
-      {cfg.label}
-    </span>
-  );
+function LifecycleStatus({ readiness, stage }: { readiness: string; stage?: string | null }) {
+  const lc = lifecycleStageFor(readiness, stage);
+  const cfg = LIFECYCLE_STATUS[lc];
+  return <Status kind={cfg.kind} label={cfg.label} />;
 }
 
 // ── Reprocess helper ──────────────────────────────────────────────────────────
@@ -626,9 +647,9 @@ async function reprocessDoc(docId: string): Promise<void> {
   }
 }
 
-// ── Import dialog ─────────────────────────────────────────────────────────────
+// ── Capture / Import sheet ────────────────────────────────────────────────────
 
-interface ImportDialogProps {
+interface CaptureSheetProps {
   onSuccess: () => void;
   defaultOpen?: boolean;
 }
@@ -648,23 +669,31 @@ function fmt(bytes: number) {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
+/**
+ * CaptureSheet — the single Add/Import entry point for the Library.
+ *
+ * Capture modes:
+ *   • Upload file(s)  — wired to the existing POST /library/upload XHR flow.
+ *   • Paste text / URL — NOT rendered: no existing backend mutation supports
+ *     them, so per the playbook these modes are omitted rather than faked.
+ *   • Scan/photo      — omitted (no capture path exists today).
+ *   • Watched folders — surfaced as a read-only pointer: the import
+ *     Collections panel below the toolbar shows watched-folder provenance;
+ *     there is no settings route to link to, so we just note it.
+ */
+function CaptureSheet({ onSuccess, defaultOpen = false }: CaptureSheetProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [queue, setQueue] = useState<FileStatus[]>([]);
   const [workId, setWorkId] = useState("");
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Abort support: cancelledRef is a stop-flag; xhrRef holds the in-flight XHR
-  // so it can be aborted synchronously from handleStop without a state update.
   const cancelledRef = useRef(false);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const [, navigateTo] = useLocation();
   const { data: worksResp } = useListWorks();
 
   const addFiles = (incoming: FileList | File[]) => {
-    // No client-side deduplication by name — two files can share a basename
-    // (e.g. from different folders). Content identity is the backend's job via SHA.
     const arr = Array.from(incoming);
     setQueue((prev) => [
       ...prev,
@@ -678,7 +707,6 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    // Reject drops while the queue is running — the loop snapshot would miss them.
     if (uploading) return;
     if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   };
@@ -688,7 +716,6 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
 
   const uploadOne = (status: FileStatus, idx: number, wId: string): Promise<void> =>
     new Promise((resolve) => {
-      // If the stop flag is already set, mark this file cancelled immediately.
       if (cancelledRef.current) {
         updateStatus(idx, { state: "cancelled", pct: 0 });
         resolve();
@@ -732,7 +759,7 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
       xhr.onerror = () => {
         xhrRef.current = null;
         updateStatus(idx, { state: "error", pct: 0, error: "Network error" });
-        resolve(); // continue queue even on failure
+        resolve();
       };
 
       xhr.onabort = () => {
@@ -744,8 +771,6 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
       xhr.send(form);
     });
 
-  // Shared finish logic — inspects the final queue snapshot after a run completes.
-  // Does not auto-close when any file was cancelled (user stopped deliberately).
   const finishRun = (final: FileStatus[]) => {
     const done      = final.filter((s) => s.state === "done").length;
     const dupes     = final.filter((s) => s.state === "duplicate");
@@ -753,8 +778,6 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
     const cancelled = final.filter((s) => s.state === "cancelled").length;
     const total     = final.length;
 
-    // Don't auto-close when files were cancelled — the user stopped the run on
-    // purpose and may want to inspect what happened before dismissing.
     if (cancelled > 0) return;
 
     if (errors === 0) {
@@ -788,8 +811,6 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const handleStop = () => {
     cancelledRef.current = true;
     xhrRef.current?.abort();
-    // uploading + setUploading(false) happen after the current uploadOne promise
-    // resolves (via onabort), so the loop in handleImport exits naturally.
   };
 
   const handleImport = async () => {
@@ -798,11 +819,8 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
     cancelledRef.current = false;
     setUploading(true);
 
-    // Upload sequentially using the closure snapshot — drops are blocked while
-    // uploading so queue.length is stable for the duration of this loop.
     for (let i = 0; i < queue.length; i++) {
       if (queue[i].state !== "pending") continue;
-      // If stop was requested mid-loop, mark remaining files cancelled immediately.
       if (cancelledRef.current) {
         updateStatus(i, { state: "cancelled", pct: 0 });
         continue;
@@ -814,7 +832,6 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
     setUploading(false);
 
     if (cancelledRef.current) {
-      // Show a summary toast but leave the dialog open so the user can see results.
       setQueue((final) => {
         const done = final.filter((s) => s.state === "done" || s.state === "duplicate").length;
         const total = final.length;
@@ -830,10 +847,8 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
     }
   };
 
-  // Immediately retry a single failed file without re-running the whole queue.
   const retryFile = async (status: FileStatus, idx: number) => {
     if (uploading) return;
-    // Clear any lingering stop flag so a single-file retry always sends the XHR.
     cancelledRef.current = false;
     setUploading(true);
     await uploadOne(status, idx, workId);
@@ -848,8 +863,6 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
     });
   };
 
-  // Retry all failed files at once — same loop as handleImport but scoped to
-  // error-state entries. Clears the stop flag first so the XHRs are sent.
   const handleRetryFailed = async () => {
     const errorIndices = queue
       .map((s, i) => (s.state === "error" ? i : -1))
@@ -892,181 +905,179 @@ function ImportDialog({ onSuccess, defaultOpen = false }: ImportDialogProps) {
   const doneCount = queue.filter((s) => s.state === "done" || s.state === "duplicate").length;
   const total = queue.length;
 
-  const stateIcon = (s: FileStatus) => {
-    if (s.state === "done")      return <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--green-2)" }} />;
-    if (s.state === "duplicate") return <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--gilt)" }} />;
-    if (s.state === "error")     return <AlertCircle  className="w-3.5 h-3.5 text-destructive shrink-0" />;
-    if (s.state === "uploading") return <Clock        className="w-3.5 h-3.5 text-primary animate-pulse shrink-0" />;
-    if (s.state === "cancelled") return <X            className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
-    return <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
+  const stateStatus = (s: FileStatus) => {
+    if (s.state === "done")      return <Status kind="ok" label="done" />;
+    if (s.state === "duplicate") return <Status kind="warn" label="exists" />;
+    if (s.state === "error")     return <Status kind="danger" label="failed" />;
+    if (s.state === "uploading") return <Status kind="busy" label={`${s.pct}%`} />;
+    if (s.state === "cancelled") return <Status kind="idle" label="cancelled" />;
+    return <Status kind="idle" label="queued" />;
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!uploading) { setOpen(v); if (!v) { setQueue([]); setWorkId(""); } } }}>
-      <DialogTrigger asChild>
-        <Button className="gap-2">
-          <Upload className="w-4 h-4" />
-          Import Documents
+    <Sheet open={open} onOpenChange={(v) => { if (!uploading) { setOpen(v); if (!v) { setQueue([]); setWorkId(""); } } }}>
+      <SheetTrigger asChild>
+        <Button className="gap-2 min-h-11" data-testid="library-add">
+          <Plus className="w-4 h-4" />
+          Add
         </Button>
-      </DialogTrigger>
+      </SheetTrigger>
 
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Import Documents</DialogTitle>
-        </DialogHeader>
+      <SheetContent side="bottom" className="max-h-[88dvh] overflow-y-auto pb-[calc(var(--sai-bottom,0px)+1rem)]">
+        <SheetHeader>
+          <SheetTitle>Add to Library</SheetTitle>
+        </SheetHeader>
 
-        {/* Drop zone */}
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={handleDrop}
-          onClick={() => !uploading && inputRef.current?.click()}
-          className={`mt-2 border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-            uploading ? "cursor-default opacity-60" :
-            dragging ? "border-primary bg-primary/5 cursor-copy" :
-            queue.length ? "border-primary/40 bg-muted/10 cursor-pointer hover:border-primary/60" :
-            "border-border hover:border-primary/50 hover:bg-muted/30 cursor-pointer"
-          }`}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            className="hidden"
-            accept=".pdf,application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.csv,text/csv,.pptx,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.txt,text/plain,.md,text/markdown,.png,.jpg,.jpeg,.webp,.gif,image/*,.mp3,audio/mpeg,.wav,audio/wav,.m4a,audio/mp4,.ogg,audio/ogg,.flac,audio/flac,audio/*,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.html,.htm,text/html,.json,application/json,.zip,application/zip,.rtf,.epub,.xml"
-            multiple
-            disabled={uploading}
-            onChange={(e) => { if (e.target.files?.length) { addFiles(e.target.files); e.target.value = ""; } }}
-          />
-          {queue.length === 0 ? (
-            <>
-              <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm font-medium">Drop files or click to browse</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Select multiple files — PDF, DOCX, XLSX, CSV, PPTX, TXT, MD, images, audio, code, ZIP, and more
+        <div className="space-y-4 py-2">
+          <p className="text-xs text-muted-foreground">
+            Upload files to capture them. Paste-text, URL, and photo capture are not
+            available yet. Watched-folder imports appear as collections below the toolbar.
+          </p>
+
+          {/* Drop zone */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => !uploading && inputRef.current?.click()}
+            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+              uploading ? "cursor-default opacity-60 border-border" :
+              dragging ? "border-primary bg-primary/5 cursor-copy" :
+              queue.length ? "border-primary/40 bg-muted/10 cursor-pointer hover:border-primary/60" :
+              "border-border hover:border-primary/50 hover:bg-muted/30 cursor-pointer"
+            }`}
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,application/pdf,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.csv,text/csv,.pptx,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.txt,text/plain,.md,text/markdown,.png,.jpg,.jpeg,.webp,.gif,image/*,.mp3,audio/mpeg,.wav,audio/wav,.m4a,audio/mp4,.ogg,audio/ogg,.flac,audio/flac,audio/*,.py,.js,.ts,.jsx,.tsx,.java,.cpp,.c,.cs,.go,.rs,.rb,.html,.htm,text/html,.json,application/json,.zip,application/zip,.rtf,.epub,.xml"
+              multiple
+              disabled={uploading}
+              onChange={(e) => { if (e.target.files?.length) { addFiles(e.target.files); e.target.value = ""; } }}
+            />
+            {queue.length === 0 ? (
+              <>
+                <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm font-medium">Drop files or click to browse</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Select multiple files — PDF, DOCX, XLSX, CSV, PPTX, TXT, MD, images, audio, code, ZIP, and more
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {uploading
+                  ? `Uploading ${doneCount + uploadingCount} of ${total}…`
+                  : `${total} file${total !== 1 ? "s" : ""} queued · click or drop to add more`}
               </p>
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              {uploading
-                ? `Uploading ${doneCount + uploadingCount} of ${total}…`
-                : `${total} file${total !== 1 ? "s" : ""} queued · click or drop to add more`}
-            </p>
-          )}
-        </div>
+            )}
+          </div>
 
-        {/* File queue */}
-        {queue.length > 0 && (
-          <div className="max-h-52 overflow-y-auto space-y-1.5 pr-0.5">
-            {queue.map((s, idx) => (
-              <div key={`${s.file.name}-${idx}`} className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                {stateIcon(s)}
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate" title={s.file.name}>{s.file.name}</p>
-                  {s.state === "uploading" ? (
-                    <div className="mt-1 h-1 w-full rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full bg-primary transition-all duration-200 rounded-full"
-                        style={{ width: `${s.pct}%` }}
-                      />
-                    </div>
-                  ) : s.state === "error" ? (
-                    <p className="text-[10px] text-destructive font-mono mt-0.5 truncate">{s.error}</p>
-                  ) : s.state === "duplicate" ? (
-                    <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--gilt)" }}>already in library</p>
-                  ) : s.state === "cancelled" ? (
-                    <p className="text-[10px] text-muted-foreground font-mono mt-0.5">cancelled</p>
-                  ) : (
-                    <p className="text-[10px] text-muted-foreground font-mono">{fmt(s.file.size)}</p>
+          {/* File queue */}
+          {queue.length > 0 && (
+            <div className="max-h-52 overflow-y-auto space-y-1.5 pr-0.5">
+              {queue.map((s, idx) => (
+                <div key={`${s.file.name}-${idx}`} className="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium truncate" title={s.file.name}>{s.file.name}</p>
+                    {s.state === "uploading" ? (
+                      <div className="mt-1 h-1 w-full rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-200 rounded-full"
+                          style={{ width: `${s.pct}%` }}
+                        />
+                      </div>
+                    ) : s.state === "error" ? (
+                      <p className="text-[10px] text-destructive font-mono mt-0.5 truncate">{s.error}</p>
+                    ) : s.state === "duplicate" ? (
+                      <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--gd-bronze)" }}>already in library</p>
+                    ) : s.state === "cancelled" ? (
+                      <p className="text-[10px] text-muted-foreground font-mono mt-0.5">cancelled</p>
+                    ) : (
+                      <p className="text-[10px] text-muted-foreground font-mono">{fmt(s.file.size)}</p>
+                    )}
+                  </div>
+                  <div className="shrink-0">{stateStatus(s)}</div>
+                  {s.state === "pending" && !uploading && (
+                    <button onClick={() => removeFile(idx)} className="min-h-11 px-1 text-muted-foreground hover:text-destructive shrink-0">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {s.state === "duplicate" && s.docId && (
+                    <button
+                      onClick={() => navigateTo(`/library/${s.docId}`)}
+                      className="min-h-11 px-1 text-[10px] font-mono hover:underline shrink-0"
+                      style={{ color: "var(--gd-bronze)" }}
+                    >
+                      View
+                    </button>
+                  )}
+                  {s.state === "error" && !uploading && (
+                    <button
+                      onClick={() => retryFile(s, idx)}
+                      className="min-h-11 px-1 text-[10px] font-mono text-muted-foreground hover:text-foreground shrink-0"
+                    >
+                      Retry now
+                    </button>
                   )}
                 </div>
-                {s.state === "pending" && !uploading && (
-                  <button onClick={() => removeFile(idx)} className="text-muted-foreground hover:text-destructive shrink-0">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                {s.state === "duplicate" && s.docId && (
-                  <button
-                    onClick={() => navigateTo(`/library/${s.docId}`)}
-                    className="text-[10px] font-mono hover:underline shrink-0"
-                    style={{ color: "var(--gilt)" }}
-                  >
-                    View
-                  </button>
-                )}
-                {s.state === "error" && !uploading && (
-                  <button
-                    onClick={() => retryFile(s, idx)}
-                    className="text-[10px] font-mono text-muted-foreground hover:text-foreground shrink-0"
-                  >
-                    Retry now
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Work link selector */}
-        <div className="space-y-1">
-          <label className="text-xs font-mono uppercase text-muted-foreground">
-            Link all to Work (optional)
-          </label>
-          <Select value={workId || "__none__"} onValueChange={(v) => setWorkId(v === "__none__" ? "" : v)} disabled={uploading}>
-            <SelectTrigger className="font-mono text-sm">
-              <SelectValue placeholder="— None —" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__" className="text-xs font-mono text-muted-foreground">— None —</SelectItem>
-              {(worksResp?.works ?? []).map((w) => (
-                <SelectItem key={w.id!} value={w.id!} className="text-xs font-mono">
-                  {w.title ?? w.id}
-                </SelectItem>
               ))}
-            </SelectContent>
-          </Select>
+            </div>
+          )}
+
+          {/* Work link selector */}
+          <div className="space-y-1">
+            <label className="text-xs font-mono uppercase text-muted-foreground">
+              Link all to Work (optional)
+            </label>
+            <Select value={workId || "__none__"} onValueChange={(v) => setWorkId(v === "__none__" ? "" : v)} disabled={uploading}>
+              <SelectTrigger className="font-mono text-sm min-h-11">
+                <SelectValue placeholder="— None —" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__" className="text-xs font-mono text-muted-foreground">— None —</SelectItem>
+                {(worksResp?.works ?? []).map((w) => (
+                  <SelectItem key={w.id!} value={w.id!} className="text-xs font-mono">
+                    {w.title ?? w.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => { setOpen(false); setQueue([]); setWorkId(""); }} disabled={uploading}>
+        <SheetFooter className="flex-row gap-2">
+          <Button variant="outline" className="min-h-11" onClick={() => { setOpen(false); setQueue([]); setWorkId(""); }} disabled={uploading}>
             Cancel
           </Button>
           {uploading ? (
-            <Button
-              variant="destructive"
-              onClick={handleStop}
-              className="gap-1.5"
-            >
+            <Button variant="destructive" onClick={handleStop} className="gap-1.5 min-h-11">
               <StopCircle className="w-4 h-4" />
               Stop
             </Button>
           ) : (
             <>
               {anyError && (
-                <Button
-                  variant="outline"
-                  onClick={handleRetryFailed}
-                  className="gap-1.5"
-                >
+                <Button variant="outline" onClick={handleRetryFailed} className="gap-1.5 min-h-11">
                   <RefreshCw className="w-3.5 h-3.5" />
                   Retry {errorCount} failed
                 </Button>
               )}
-              <Button onClick={handleImport} disabled={!anyPending}>
+              <Button onClick={handleImport} disabled={!anyPending} className="min-h-11">
                 {`Import ${queue.filter(s => s.state === "pending").length || ""} ${queue.filter(s => s.state === "pending").length === 1 ? "file" : "files"}`.trim()}
               </Button>
             </>
           )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Resume-listening badge ────────────────────────────────────────────────────
 
 /** "Resume listening — Part N of M" badge shown on cards for documents with a
- *  saved Read Aloud position. Clicking it opens the doc with ?listen=1, which
- *  starts Read Aloud there (the player then offers to resume at the spot). */
+ *  saved Read Aloud position. Clicking it opens the doc with ?listen=1. */
 function ResumeListeningBadge({ prog, onClick }: { prog: ListeningProgress; onClick: (e: React.MouseEvent) => void }) {
   return (
     <button
@@ -1075,7 +1086,7 @@ function ResumeListeningBadge({ prog, onClick }: { prog: ListeningProgress; onCl
       title="Resume listening"
       aria-label={`Resume listening — part ${prog.part + 1} of ${prog.partCount}`}
       className="text-[10px] flex items-center gap-1 font-mono border rounded px-1.5 py-0.5 hover:opacity-80 transition-opacity"
-      style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}
+      style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", borderColor: "var(--gd-bronze-soft)" }}
     >
       <BookHeadphones className="w-2.5 h-2.5" />
       Part {prog.part + 1} of {prog.partCount}
@@ -1083,51 +1094,226 @@ function ResumeListeningBadge({ prog, onClick }: { prog: ListeningProgress; onCl
   );
 }
 
+// ── Document row ──────────────────────────────────────────────────────────────
+
+function DocumentRow({
+  doc,
+  search,
+  workTitles,
+  listenProgress,
+  isReprocessing,
+  onOpen,
+  onReprocess,
+  onDownload,
+  onDelete,
+}: {
+  doc: any;
+  search: boolean;
+  workTitles: Record<string, string>;
+  listenProgress: Record<string, ListeningProgress>;
+  isReprocessing: boolean;
+  onOpen: () => void;
+  onReprocess: (e: React.MouseEvent) => void;
+  onDownload: (e: React.MouseEvent) => void;
+  onDelete: () => void;
+}) {
+  const readiness: string = doc.readiness ?? "imported";
+  const hasError = readiness === "error" || readiness === "no_text";
+  const title = doc.title || doc.source || "Untitled Document";
+
+  return (
+    <div
+      data-doc-id={doc.id}
+      data-interactive
+      className="group rounded-lg border bg-card text-card-foreground transition-colors hover:bg-accent"
+      style={hasError ? { borderColor: "var(--gd-danger)", background: "var(--gd-danger-soft)" } : { borderColor: "var(--gd-line)" }}
+    >
+      <div className="p-4 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        {/* Left: icon + meta (clickable to open) */}
+        <button
+          type="button"
+          onClick={onOpen}
+          className="flex items-start gap-4 min-w-0 text-left flex-1 min-h-11 touch-manipulation"
+        >
+          <div className="w-9 h-9 rounded flex items-center justify-center shrink-0 border"
+               style={hasError
+                 ? { background: "var(--gd-danger-soft)", borderColor: "var(--gd-danger)" }
+                 : { background: "var(--gd-recessed)", borderColor: "var(--gd-line)" }}>
+            {hasError
+              ? <AlertCircle className="w-4 h-4" style={{ color: "var(--gd-danger)" }} />
+              : <FileText className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+            }
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <h3 className="font-medium truncate">{title}</h3>
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              <Badge variant="secondary" className="font-mono text-[10px] uppercase">
+                {doc.kind ?? "file"}
+              </Badge>
+              <LifecycleStatus readiness={readiness} />
+              <LifecycleBadge lifecycle={doc.lifecycle} />
+              <DocTypeBadge docType={doc.doc_type} by={doc.doc_type_by} />
+              {listenProgress[doc.id] && (
+                <ResumeListeningBadge
+                  prog={listenProgress[doc.id]}
+                  onClick={(e) => { e.stopPropagation(); onOpen(); }}
+                />
+              )}
+              {doc.word_count > 0 && (
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  {doc.word_count.toLocaleString()} words
+                </span>
+              )}
+              {doc.work_id && (
+                <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
+                  <Database className="w-2.5 h-2.5" />
+                  {workTitles[doc.work_id] ?? "Linked Work"}
+                </span>
+              )}
+              {doc.meta?.zip_exploded && (
+                <span className="text-[10px] flex items-center gap-1 font-mono rounded px-1.5 py-0.5"
+                      style={{ color: "var(--gd-bronze)", background: "var(--gd-bronze-soft)", border: "1px solid var(--gd-bronze-soft)" }}>
+                  <Package className="w-2.5 h-2.5" />
+                  {doc.meta.zip_child_count ?? "?"} docs inside
+                </span>
+              )}
+              {doc.meta?.from_zip && !doc.meta?.zip_exploded && (
+                <span className="text-[10px] flex items-center gap-1 font-mono rounded px-1.5 py-0.5"
+                      style={{ color: "var(--gd-slate)", border: "1px solid var(--gd-line)" }}>
+                  <FolderOpen className="w-2.5 h-2.5" />
+                  {doc.meta.zip_folder ? `${doc.meta.zip_folder}/` : "archive"}
+                </span>
+              )}
+            </div>
+
+            {/* Search snippet */}
+            {search && doc.snippet && (
+              <p className="mt-2 text-[11px] font-mono text-muted-foreground line-clamp-2 leading-relaxed">
+                {String(doc.snippet).replace(/\[\[/g, "").replace(/\]\]/g, "")}
+              </p>
+            )}
+
+            {/* Error message */}
+            {hasError && doc.error_message && (
+              <p className="mt-2 text-xs font-mono rounded px-2 py-1 break-all"
+                 style={{ color: "var(--gd-danger)", background: "var(--gd-danger-soft)", border: "1px solid var(--gd-danger)" }}>
+                {doc.error_message}
+              </p>
+            )}
+
+            {/* Extraction warnings */}
+            {hasError && doc.warnings && doc.warnings.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {doc.warnings.map((w: any) => (
+                  <div
+                    key={w.id}
+                    className="flex items-start gap-1.5 text-xs font-mono border rounded px-2 py-1"
+                    style={{ color: "var(--gd-danger)", background: "var(--gd-danger-soft)", borderColor: "var(--gd-danger-soft)" }}
+                  >
+                    <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" style={{ color: "var(--gd-danger)" }} />
+                    <span className="break-all">
+                      <span className="font-semibold uppercase text-[10px] mr-1" style={{ color: "var(--gd-danger)" }}>
+                        {w.kind}
+                      </span>
+                      {w.detail}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </button>
+
+        {/* Right: date + actions */}
+        <div className="flex sm:flex-col items-center sm:items-end gap-3 sm:gap-2 shrink-0">
+          <div className="text-xs font-mono text-muted-foreground">
+            {doc.created_at ? format(new Date(doc.created_at), "MMM d, yyyy") : ""}
+          </div>
+          <div className="text-[10px] font-mono opacity-40" title={doc.sha256}>
+            {doc.sha256?.slice(0, 8)}
+          </div>
+
+          <div className="flex items-center gap-1 mt-1">
+            {hasError && (
+              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-9 w-9 min-h-11 hover:opacity-80" style={{ color: "var(--gd-bronze)" }} onClick={onReprocess} disabled={isReprocessing}>
+                <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" aria-label="Download original file" className="h-9 w-9 min-h-11 text-muted-foreground"
+              onClick={onDownload}>
+              <Download className="w-3.5 h-3.5" />
+            </Button>
+            <ConfirmAction
+              destructive
+              title="Delete this document?"
+              consequence="This removes the document and its extracted text, knowledge, and versions. This cannot be undone."
+              confirmLabel="Delete"
+              onConfirm={onDelete}
+              trigger={
+                <Button variant="ghost" size="icon" aria-label="Delete document" className="h-9 w-9 min-h-11 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              }
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
 export default function Library() {
   const [search, setSearch] = useState("");
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
 
-  // Live resume-listening badges: localStorage merged with the server-synced
-  // positions, kept fresh by the player's position-change events (no tab
-  // switch needed) — see useListeningProgressBadges in lib/read-aloud.tsx.
   const listenProgress = useListeningProgressBadges();
   const searchStr = useSearch();
   const openImport = new URLSearchParams(searchStr).get("import") === "1";
-  // Tier filter pre-selected from URL (e.g. linked from dashboard scorecard tiles)
   const urlTier = new URLSearchParams(searchStr).get("tier") ?? "all";
 
-  const { data: listResp, isLoading: loadingList } = useListLibrary(
+  const { data: listResp, isLoading: loadingList, error: listError, refetch: refetchList } = useListLibrary(
     {},
     {
       query: {
         enabled: !search,
         queryKey: getListLibraryQueryKey({}),
-        // Poll every 3 s while any document is still processing so extraction
+        // Poll every 4 s while any document is still processing so extraction
         // failures surface automatically without a manual refresh.
         refetchInterval: (query) => {
           const docs: any[] = query.state.data?.documents ?? [];
-          return docs.some((d) => d.readiness === "imported") ? 3000 : false;
+          return docs.some((d) => d.readiness === "imported") ? 4000 : false;
         },
       },
     }
   );
   const [searchMode, setSearchMode] = useState<"keyword" | "semantic" | "hybrid">("hybrid");
-  const { data: searchResp, isLoading: loadingSearch } = useSearchLibrary(
+  const { data: searchResp, isLoading: loadingSearch, error: searchError, refetch: refetchSearch } = useSearchLibrary(
     { q: search, mode: searchMode },
     { query: { enabled: !!search, queryKey: ["librarySearch", search, searchMode] } }
   );
   const deleteDoc = useDeleteDocument();
+
+  // Filter state — draft values live in the FilterSheet, applied on Apply.
   const [readinessFilter, setReadinessFilter] = useState<"all" | "ready" | "processing" | "error">("all");
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [workFilter, setWorkFilter] = useState<string>("all");
   const [lifecycleFilter, setLifecycleFilter] = useState<string>("all");
-  // Tier filter — initialised from ?tier= URL param so dashboard scorecard links work
   const [tierFilter, setTierFilter] = useState<string>(
     ["canon", "source", "artifact"].includes(urlTier) ? urlTier : "all"
   );
-  const [showFilters, setShowFilters] = useState(false);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  // Draft filters mirror the applied ones while the sheet is open.
+  const [draft, setDraft] = useState({
+    readiness: "all" as "all" | "ready" | "processing" | "error",
+    kind: "all",
+    work: "all",
+    lifecycle: "all",
+  });
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "z-a">("newest");
   const [groupByWork, setGroupByWork] = useState(false);
   const [explodingZips, setExplodingZips] = useState(false);
@@ -1138,11 +1324,10 @@ export default function Library() {
   for (const w of worksResp?.works ?? []) {
     if (w.id) workTitles[w.id] = w.title ?? w.id.slice(0, 8);
   }
-  // Works that actually have at least one document in the list
   const worksWithDocs = Array.from(
     new Set((listResp?.documents ?? []).map((d: any) => d.work_id).filter(Boolean))
   ) as string[];
-  // Topic clusters — fetched only when "By Topic" grouping is active
+
   const { data: topicsResp } = useQuery<{
     topics: Array<{ id: string; name: string; doc_count: number; what_it_is?: string | null; doc_ids?: string[] }>;
     doc_titles?: Record<string, string>;
@@ -1153,7 +1338,6 @@ export default function Library() {
     enabled: groupByWork && !search,
     staleTime: 120_000,
   });
-  // Build a doc_id → topicName index and topicName → what_it_is index
   const docTopicIndex: Record<string, string> = {};
   const topicDescriptions: Record<string, string> = {};
   if (topicsResp) {
@@ -1166,14 +1350,13 @@ export default function Library() {
   }
 
   const isLoading = search ? loadingSearch : loadingList;
+  const loadError = search ? searchError : listError;
   const rawDocs: any[] = search
     ? (searchResp?.results ?? [])
     : (listResp?.documents ?? []);
 
-  // Derive available kinds from the list for dynamic filter chips
   const availableKinds = Array.from(new Set(rawDocs.map((d) => d.kind ?? "file").filter(Boolean))).sort();
 
-  // Counts per lifecycle for the filter chips
   const lifecycleCounts: Record<string, number> = { all: rawDocs.length };
   for (const d of rawDocs) {
     const lc = d.lifecycle ?? "draft";
@@ -1199,7 +1382,6 @@ export default function Library() {
       const matchesTier = (() => {
         if (tierFilter === "all") return true;
         const docTier = d.tier ?? "source";
-        // "artifact" scorecard tile covers both artifact + system tiers
         if (tierFilter === "artifact") return docTier === "artifact" || docTier === "system";
         return docTier === tierFilter;
       })();
@@ -1235,20 +1417,14 @@ export default function Library() {
     }
   };
 
-  const handleReprocessAll = async (force = false) => {
-    if (force && !window.confirm(
-      "Deep reprocess re-extracts EVERY document — including ones that already processed fine. " +
-      "Nothing is deleted, but a large library can take a long time to churn through. Continue?"
-    )) return;
+  const runReprocessAll = async (force = false) => {
     setReprocessingAll(true);
     try {
       const resp = await apiFetch(`${BASE}/library/reprocess-all${force ? "?force=true" : ""}`, { method: "POST" });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error((data as any).detail ?? "Failed");
-      const { queued, queued_zips, queued_stuck, skipped, message } = data as any;
+      const { queued, queued_zips, skipped, message } = data as any;
       if (queued === 0) {
-        // Never claim success when candidates were skipped — their source
-        // files are missing from disk and nothing was actually re-extracted.
         if ((skipped ?? 0) > 0) {
           toast.warning(
             `Nothing queued — ${skipped} document${skipped !== 1 ? "s" : ""} skipped because the source file is missing from disk.`,
@@ -1268,8 +1444,6 @@ export default function Library() {
           );
       }
       if ((skipped ?? 0) > 0) {
-        // Refresh the missing-files banner immediately so the affected list
-        // the toast points at is actually visible.
         queryClient.invalidateQueries({ queryKey: MISSING_FILES_KEY });
       }
       setTimeout(invalidate, 2000);
@@ -1312,556 +1486,389 @@ export default function Library() {
     }
   };
 
-  const handleDelete = (docId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDelete = (docId: string) => {
     deleteDoc.mutate({ docId }, {
       onSuccess: () => { invalidate(); toast.success("Document removed"); },
       onError: () => toast.error("Delete failed"),
     });
   };
 
+  // Active-filter chips summarised in the toolbar
+  const activeChips: { key: string; label: string; clear: () => void }[] = [];
+  if (readinessFilter !== "all") activeChips.push({ key: "status", label: `Status: ${readinessFilter}`, clear: () => setReadinessFilter("all") });
+  if (kindFilter !== "all") activeChips.push({ key: "kind", label: `Type: ${kindFilter}`, clear: () => setKindFilter("all") });
+  if (workFilter !== "all") activeChips.push({ key: "work", label: `Work: ${workFilter === "__none__" ? "Unlinked" : (workTitles[workFilter] ?? workFilter.slice(0, 8))}`, clear: () => setWorkFilter("all") });
+  if (lifecycleFilter !== "all") activeChips.push({ key: "lifecycle", label: `Lifecycle: ${lifecycleFilter}`, clear: () => setLifecycleFilter("all") });
+
+  const openFilterSheet = () => {
+    setDraft({ readiness: readinessFilter, kind: kindFilter, work: workFilter, lifecycle: lifecycleFilter });
+    setFilterSheetOpen(true);
+  };
+  const applyFilters = () => {
+    setReadinessFilter(draft.readiness);
+    setKindFilter(draft.kind);
+    setWorkFilter(draft.work);
+    setLifecycleFilter(draft.lifecycle);
+  };
+  const clearFilters = () => {
+    setDraft({ readiness: "all", kind: "all", work: "all", lifecycle: "all" });
+  };
+
+  const headerActions = (
+    <div className="flex items-center gap-2 flex-wrap justify-end">
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5 text-xs min-h-11"
+        onClick={() => runReprocessAll(false)}
+        disabled={reprocessingAll}
+        title="Re-extract all stuck, errored, or ZIP documents"
+      >
+        <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
+        {reprocessingAll ? "Processing…" : "Reprocess"}
+      </Button>
+      <ConfirmAction
+        title="Deep reprocess everything?"
+        consequence="This re-extracts EVERY document, including ones already processed fine. Nothing is deleted, but a large library can take a long time to churn through."
+        confirmLabel="Deep reprocess"
+        onConfirm={() => runReprocessAll(true)}
+        trigger={
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs min-h-11" disabled={reprocessingAll}>
+            <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
+            Deep
+          </Button>
+        }
+      />
+      {zipCount > 0 && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 text-xs hover:opacity-80 min-h-11"
+          style={{ borderColor: "var(--gd-bronze-soft)", color: "var(--gd-bronze)" }}
+          onClick={handleExplodeZips}
+          disabled={explodingZips}
+        >
+          <Package className={`w-3.5 h-3.5 ${explodingZips ? "animate-bounce" : ""}`} />
+          {explodingZips ? "Extracting…" : `Extract ${zipCount} ZIP${zipCount !== 1 ? "s" : ""}`}
+        </Button>
+      )}
+      <Button variant="outline" size="sm" className="gap-1.5 text-xs min-h-11" onClick={handleSmartOrganize} disabled={organizingDocs}>
+        <Sparkles className={`w-3.5 h-3.5 ${organizingDocs ? "animate-spin" : ""}`} />
+        {organizingDocs ? "Organising…" : "Smart Sort"}
+      </Button>
+      <Button
+        variant={groupByWork ? "secondary" : "outline"}
+        size="sm"
+        className="gap-1.5 text-xs min-h-11"
+        onClick={() => setGroupByWork((v) => !v)}
+      >
+        <Layers className="w-3.5 h-3.5" />
+        By Topic
+      </Button>
+      <Button variant="outline" size="sm" className="gap-1.5 text-xs min-h-11" onClick={() => navigate("/graph")} title="View the entity knowledge graph across your library">
+        <Network className="w-3.5 h-3.5" />
+        Graph
+      </Button>
+      <CaptureSheet onSuccess={invalidate} defaultOpen={openImport} />
+    </div>
+  );
+
+  const filtered = readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" || lifecycleFilter !== "all";
+
   return (
-    <TooltipProvider>
-      <div className="space-y-6 animate-in fade-in duration-500">
-        {/* Header */}
-        <div className="border-b border-border/50 pb-4">
-          <div className="flex items-start gap-4 flex-wrap justify-between">
-            <div className="min-w-0">
-              <span className="eyebrow mb-1">The Collection</span>
-              <h1 className="vellum-h1">Library</h1>
-              <div className="gilt-rule w-40" />
-              <p className="text-[13px] mt-1.5" style={{ color: 'var(--ink-soft)' }}>
-                {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || readinessFilter !== "all" || kindFilter !== "all" || workFilter !== "all" || lifecycleFilter !== "all" ? " matching filters" : ""}`}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap shrink-0">
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs border-primary/40 text-primary hover:bg-primary/5"
-                onClick={() => handleReprocessAll(false)}
-                disabled={reprocessingAll}
-                title="Re-extract all stuck, errored, or ZIP documents"
+    <Page
+      wide
+      eyebrow="The Collection"
+      title="Library"
+      actions={headerActions}
+    >
+      <p className="text-[13px] text-muted-foreground">
+        {isLoading ? "Loading…" : `${docs.length} document${docs.length !== 1 ? "s" : ""}${search || filtered ? " matching filters" : ""}`}
+      </p>
+
+      {/* Banners */}
+      <MissingFilesBanner />
+      <DuplicatesBanner readyDocCount={(listResp?.documents ?? []).filter((d: any) => d.readiness === "ready").length} />
+      <CollectionsPanel />
+
+      {/* Search + toolbar */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search all documents…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 min-h-11"
+            />
+          </div>
+          <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg shrink-0" title="Search mode">
+            {([
+              ["keyword", "Keyword"],
+              ["semantic", "Semantic"],
+              ["hybrid", "Hybrid"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setSearchMode(value)}
+                data-active={searchMode === value}
+                className="gd-chip min-h-11 px-2.5 text-xs font-mono touch-manipulation"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
-                {reprocessingAll ? "Processing…" : "Reprocess All"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs border-destructive/40 text-destructive hover:bg-destructive/5"
-                onClick={() => handleReprocessAll(true)}
-                disabled={reprocessingAll}
-                title="Re-extract EVERY document from scratch, including ones already marked ready"
+                {label}
+              </button>
+            ))}
+          </div>
+          <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+            <SelectTrigger className="w-auto min-h-11 text-xs font-mono text-muted-foreground shrink-0" aria-label="Sort order">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest</SelectItem>
+              <SelectItem value="oldest">Oldest</SelectItem>
+              <SelectItem value="a-z">A → Z</SelectItem>
+              <SelectItem value="z-a">Z → A</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant={activeChips.length ? "secondary" : "outline"}
+            size="sm"
+            className="gap-1.5 shrink-0 min-h-11"
+            onClick={openFilterSheet}
+            data-testid="library-filters"
+          >
+            <Filter className="w-4 h-4" />
+            Filters
+            {activeChips.length > 0 && (
+              <span className="ml-0.5 tabular-nums text-[10px] rounded-full bg-primary text-primary-foreground px-1.5">
+                {activeChips.length}
+              </span>
+            )}
+          </Button>
+        </div>
+
+        {/* Active-filter chips */}
+        {activeChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {activeChips.map((chip) => (
+              <button
+                key={chip.key}
+                onClick={chip.clear}
+                className="gd-chip flex items-center gap-1 min-h-11 px-2.5 text-xs font-mono"
+                data-active="true"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${reprocessingAll ? "animate-spin" : ""}`} />
-                Deep Reprocess
-              </Button>
-              {zipCount > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-xs hover:opacity-80"
-                  style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
-                  onClick={handleExplodeZips}
-                  disabled={explodingZips}
-                >
-                  <Package className={`w-3.5 h-3.5 ${explodingZips ? "animate-bounce" : ""}`} />
-                  {explodingZips ? "Extracting…" : `Extract ${zipCount} ZIP${zipCount !== 1 ? "s" : ""}`}
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={handleSmartOrganize}
-                disabled={organizingDocs}
+                {chip.label}
+                <X className="w-3 h-3" />
+              </button>
+            ))}
+            <button
+              onClick={() => { setReadinessFilter("all"); setKindFilter("all"); setWorkFilter("all"); setLifecycleFilter("all"); }}
+              className="min-h-11 px-2 text-xs font-mono text-muted-foreground hover:text-foreground"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* FilterSheet */}
+      <FilterSheet
+        open={filterSheetOpen}
+        onOpenChange={setFilterSheetOpen}
+        title="Filter documents"
+        onApply={applyFilters}
+        onClear={clearFilters}
+      >
+        <div className="space-y-2">
+          <span className="section-label-mono !m-0">Status</span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(["all", "ready", "processing", "error"] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setDraft((d) => ({ ...d, readiness: f }))}
+                data-active={draft.readiness === f}
+                className="gd-chip min-h-11 px-3 text-xs font-mono"
               >
-                <Sparkles className={`w-3.5 h-3.5 ${organizingDocs ? "animate-spin" : ""}`} />
-                {organizingDocs ? "Organising…" : "Smart Sort"}
-              </Button>
-              <Button
-                variant={groupByWork ? "secondary" : "outline"}
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setGroupByWork((v) => !v)}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                By Topic
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => navigate("/graph")}
-                title="View the entity knowledge graph across your library"
-              >
-                <Network className="w-3.5 h-3.5" />
-                Graph
-              </Button>
-              <ImportDialog onSuccess={invalidate} defaultOpen={openImport} />
-            </div>
+                {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Near-duplicates banner */}
-        <MissingFilesBanner />
-
-        <DuplicatesBanner readyDocCount={(listResp?.documents ?? []).filter((d: any) => d.readiness === "ready").length} />
-
-        {/* Import provenance — collections */}
-        <CollectionsPanel />
-
-        {/* Search */}
-        <div className="space-y-3">
-          <div className="flex items-center gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search all documents…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 bg-background/50"
-              />
-            </div>
-            <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg shrink-0" title="Search mode">
-              {([
-                ["keyword", "Keyword"],
-                ["semantic", "Semantic"],
-                ["hybrid", "Hybrid"],
-              ] as const).map(([value, label]) => (
+        {availableKinds.length > 1 && (
+          <div className="space-y-2">
+            <span className="section-label-mono !m-0">Type</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {["all", ...availableKinds].map((k) => (
                 <button
-                  key={value}
-                  onClick={() => setSearchMode(value)}
-                  className={`px-2.5 py-1.5 rounded text-xs font-mono transition-colors min-h-[34px] touch-manipulation ${
-                    searchMode === value
-                      ? "bg-background shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
+                  key={k}
+                  onClick={() => setDraft((d) => ({ ...d, kind: k }))}
+                  data-active={draft.kind === k}
+                  className="gd-chip min-h-11 px-3 text-xs font-mono uppercase"
                 >
-                  {label}
+                  {k === "all" ? "All" : k}
                 </button>
               ))}
             </div>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-              className="h-9 rounded-md border border-input bg-background px-2 text-xs font-mono text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring shrink-0"
-              title="Sort order"
-              aria-label="Sort order"
-            >
-              <option value="newest">Newest</option>
-              <option value="oldest">Oldest</option>
-              <option value="a-z">A → Z</option>
-              <option value="z-a">Z → A</option>
-            </select>
-            <Button
-              variant={showFilters ? "secondary" : "outline"}
-              size="icon"
-              className="shrink-0"
-              onClick={() => setShowFilters((v) => !v)}
-              title="Toggle filters"
-            >
-              <Filter className="w-4 h-4" />
-            </Button>
           </div>
-          {showFilters && (
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-muted-foreground uppercase">Status:</span>
-                <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg">
-                  {(["all", "ready", "processing", "error"] as const).map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => setReadinessFilter(f)}
-                      className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
-                        readinessFilter === f
-                          ? "bg-background shadow-sm text-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {f === "all" ? "All" : f === "processing" ? "Processing" : f.charAt(0).toUpperCase() + f.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {availableKinds.length > 1 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-muted-foreground uppercase">Type:</span>
-                  <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg">
-                    {["all", ...availableKinds].map((k) => (
-                      <button
-                        key={k}
-                        onClick={() => setKindFilter(k)}
-                        className={`px-2.5 py-1 rounded text-xs font-mono uppercase transition-colors ${
-                          kindFilter === k
-                            ? "bg-background shadow-sm text-foreground"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        {k === "all" ? "All" : k}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {worksWithDocs.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-muted-foreground uppercase">Work:</span>
-                  <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg flex-wrap">
-                    {["all", "__none__", ...worksWithDocs].map((w) => (
-                      <button
-                        key={w}
-                        onClick={() => setWorkFilter(w)}
-                        className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
-                          workFilter === w
-                            ? "bg-background shadow-sm text-foreground"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        {w === "all" ? "All" : w === "__none__" ? "Unlinked" : (workTitles[w] ?? w.slice(0, 8))}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-muted-foreground uppercase">Lifecycle:</span>
-                <div className="flex items-center gap-1 p-0.5 bg-muted/30 rounded-lg">
-                  {(["all", "canonical", "draft", "reference", "superseded"] as const).map((lc) => {
-                    const count = lifecycleCounts[lc] ?? 0;
-                    if (lc !== "all" && count === 0) return null;
-                    return (
-                      <button
-                        key={lc}
-                        onClick={() => setLifecycleFilter(lc)}
-                        className={`px-2.5 py-1 rounded text-xs font-mono transition-colors flex items-center gap-1 ${
-                          lifecycleFilter === lc
-                            ? "bg-background shadow-sm text-foreground"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        {lc === "all" ? "All" : lc}
-                        {count > 0 && (
-                          <span className={`text-[10px] tabular-nums ${lifecycleFilter === lc ? "text-muted-foreground" : "text-muted-foreground/60"}`}>
-                            {count}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+        )}
 
-        {/* Document list */}
-        <div className="grid gap-3">
-          {isLoading ? (
-            [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 w-full" />)
-          ) : groupByWork && !search ? (
-            // ── Grouped by semantic topic cluster ────────────────────────────
-            (() => {
-              // If we have real topic clusters, use them; otherwise fall back to work-based grouping
-              const hasTopics = topicsResp && topicsResp.topics.length > 0;
-              const grouped = new Map<string, any[]>();
-              const unclassified: any[] = [];
-              if (hasTopics) {
-                // Group by the topic this document belongs to (via docTopicIndex)
-                for (const doc of docs) {
-                  const topicName = docTopicIndex[doc.id];
-                  if (topicName) {
-                    const arr = grouped.get(topicName) ?? [];
-                    arr.push(doc);
-                    grouped.set(topicName, arr);
-                  } else {
-                    unclassified.push(doc);
-                  }
-                }
-              } else {
-                // Fallback: group by work
-                for (const doc of docs) {
-                  if (doc.work_id) {
-                    const label = workTitles[doc.work_id] ?? doc.work_id.slice(0, 8);
-                    const arr = grouped.get(label) ?? [];
-                    arr.push(doc);
-                    grouped.set(label, arr);
-                  } else {
-                    unclassified.push(doc);
-                  }
-                }
-              }
-              const groups: Array<{ title: string; color: string; colorStyle?: React.CSSProperties; docs: any[] }> = [];
-              for (const [label, gdocs] of grouped) {
-                // No violet VELLUM token — gilt is the nearest accent for grouped works.
-                groups.push({ title: label, color: hasTopics ? "text-primary" : "", colorStyle: hasTopics ? undefined : { color: "var(--gilt)" }, docs: gdocs });
-              }
-              if (unclassified.length > 0) {
-                groups.push({ title: hasTopics ? "Unclassified" : "Unassigned", color: "text-muted-foreground", docs: unclassified });
-              }
-              if (groups.length === 0) return (
-                <div className="vellum-card text-center py-16 px-8" style={{ border: '1px dashed var(--gilt-line)' }}>
-                  <LibraryIcon className="w-10 h-10 mx-auto mb-4" style={{ color: 'var(--ink-faint)', opacity: 0.5 }} />
-                  <div className="gilt-rule w-16 mx-auto mb-3" />
-                  <h3 className="text-lg font-serif font-medium text-balance">No documents found</h3>
-                </div>
-              );
-              return groups.map((group) => (
-                <div key={group.title} className="space-y-2">
-                  <div className={`pt-2 pb-1 border-b border-border/40`}>
-                    <div className="flex items-center gap-2">
-                      <FolderOpen className={`w-4 h-4 ${group.color} shrink-0`} style={group.colorStyle} />
-                      <span className={`text-sm font-semibold font-serif ${group.color}`} style={group.colorStyle}>{group.title}</span>
-                      <span className="text-xs font-mono text-muted-foreground">
-                        {group.docs.length} doc{group.docs.length !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    {topicDescriptions[group.title] && (
-                      <p className="text-[11px] text-muted-foreground mt-0.5 ml-6 line-clamp-1">
-                        {topicDescriptions[group.title]}
-                      </p>
-                    )}
-                  </div>
-                  {group.docs.map((doc: any) => {
-                    const readiness: string = doc.readiness ?? "imported";
-                    const hasError = readiness === "error" || readiness === "no_text";
-                    const isReprocessing = reprocessingIds.has(doc.id);
-                    return (
-                      <Card
-                        key={doc.id}
-                        data-doc-id={doc.id}
-                        onClick={() => navigate(`/library/${doc.id}`)}
-                        className={`vellum-card tap spring-scale group cursor-pointer ${hasError ? "" : ""}`}
-                        style={hasError ? { borderColor: 'var(--rust)', background: 'var(--rust-soft)' } : {}}
-                        data-interactive
-                      >
-                        <CardContent className="p-3 sm:p-4 flex items-center justify-between gap-4">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 border ${hasError ? "" : "bg-muted/50 border-border/50"}`} style={hasError ? { background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 28%, transparent)" } : undefined}>
-                              {hasError ? <AlertCircle className="w-3.5 h-3.5" style={{ color: "var(--rust)" }} /> : <FileText className="w-3.5 h-3.5 text-muted-foreground" />}
-                            </div>
-                            <div className="min-w-0">
-                              <h3 className="font-medium truncate text-sm">{doc.title || doc.source || "Untitled"}</h3>
-                              <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                                <Badge variant="secondary" className="font-mono text-[10px] uppercase">{doc.kind ?? "file"}</Badge>
-                                <ReadinessBadge readiness={readiness} />
-                                <LifecycleBadge lifecycle={doc.lifecycle} />
-                                <DocTypeBadge docType={doc.doc_type} by={doc.doc_type_by} />
-                                {listenProgress[doc.id] && (
-                                  <ResumeListeningBadge
-                                    prog={listenProgress[doc.id]}
-                                    onClick={(e) => { e.stopPropagation(); navigate(`/library/${doc.id}?listen=1`); }}
-                                  />
-                                )}
-                                {doc.word_count > 0 && <span className="text-[10px] font-mono text-muted-foreground">{doc.word_count.toLocaleString()} words</span>}
-                                {doc.meta?.zip_exploded && (
-                                  <span className="text-[10px] flex items-center gap-1 font-mono border rounded px-1.5 py-0.5" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
-                                    <Package className="w-2.5 h-2.5" />{doc.meta.zip_child_count ?? "?"} inside
-                                  </span>
-                                )}
-                                {doc.meta?.from_zip && !doc.meta?.zip_exploded && (
-                                  <span className="text-[10px] flex items-center gap-1 font-mono border rounded px-1.5 py-0.5" style={{ color: "var(--ink-soft)", borderColor: "var(--line)", background: "transparent" }}>
-                                    <FolderOpen className="w-2.5 h-2.5" />archive
-                                  </span>
-                                )}
-                              </div>
-                              {search && doc.snippet && (
-                                <p className="mt-1.5 text-[11px] font-mono text-muted-foreground/70 line-clamp-2 leading-relaxed">
-                                  {String(doc.snippet).replace(/\[\[/g, "").replace(/\]\]/g, "")}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {hasError && (
-                              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-7 w-7 hover:opacity-80" style={{ color: "var(--gilt)" }} onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
-                                <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
-                              </Button>
-                            )}
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" title="Download original file"
-                              onClick={(e) => { e.stopPropagation(); window.open(`${BASE}/library/${doc.id}/download`, "_blank"); }}>
-                              <Download className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon" aria-label="Delete document" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              ));
-            })()
-          ) : docs.length > 0 ? (
-            docs.map((doc: any) => {
-              const readiness: string = doc.readiness ?? "imported";
-              const hasError = readiness === "error" || readiness === "no_text";
-              const isReprocessing = reprocessingIds.has(doc.id);
-
-              return (
-                <Card
-                  key={doc.id}
-                  data-doc-id={doc.id}
-                  onClick={() => navigate(`/library/${doc.id}`)}
-                  className="vellum-card tap spring-scale group cursor-pointer"
-                  style={hasError ? { borderColor: 'var(--rust)', background: 'var(--rust-soft)' } : {}}
-                  data-interactive
+        {worksWithDocs.length > 0 && (
+          <div className="space-y-2">
+            <span className="section-label-mono !m-0">Work</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {["all", "__none__", ...worksWithDocs].map((w) => (
+                <button
+                  key={w}
+                  onClick={() => setDraft((d) => ({ ...d, work: w }))}
+                  data-active={draft.work === w}
+                  className="gd-chip min-h-11 px-3 text-xs font-mono"
                 >
-                  <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                    {/* Left: icon + meta */}
-                    <div className="flex items-start gap-4 min-w-0">
-                      <div className="w-9 h-9 rounded flex items-center justify-center shrink-0 border"
-                           style={hasError
-                             ? { background: 'var(--rust-soft)', borderColor: 'var(--rust)' }
-                             : { background: 'hsl(var(--muted) / 0.5)', borderColor: 'hsl(var(--border) / 0.5)' }}>
-                        {hasError
-                          ? <AlertCircle className="w-4 h-4" style={{ color: 'var(--rust)' }} />
-                          : <FileText className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
-                        }
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <h3 className="font-medium truncate">
-                          {doc.title || doc.source || "Untitled Document"}
-                        </h3>
-                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          <Badge variant="secondary" className="font-mono text-[10px] uppercase">
-                            {doc.kind ?? "file"}
-                          </Badge>
-                          <ReadinessBadge readiness={readiness} />
-                          <LifecycleBadge lifecycle={doc.lifecycle} />
-                          <DocTypeBadge docType={doc.doc_type} by={doc.doc_type_by} />
-                          {listenProgress[doc.id] && (
-                            <ResumeListeningBadge
-                              prog={listenProgress[doc.id]}
-                              onClick={(e) => { e.stopPropagation(); navigate(`/library/${doc.id}?listen=1`); }}
-                            />
-                          )}
-                          {doc.word_count > 0 && (
-                            <span className="text-[10px] font-mono text-muted-foreground">
-                              {doc.word_count.toLocaleString()} words
-                            </span>
-                          )}
-                          {doc.work_id && (
-                            <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
-                              <Database className="w-2.5 h-2.5" />
-                              {workTitles[doc.work_id] ?? "Linked Work"}
-                            </span>
-                          )}
-                          {doc.meta?.zip_exploded && (
-                            <span className="text-[10px] flex items-center gap-1 font-mono rounded px-1.5 py-0.5"
-                                  style={{ color: 'var(--gilt)', background: 'var(--gilt-soft)', border: '1px solid var(--gilt-line)' }}>
-                              <Package className="w-2.5 h-2.5" />
-                              {doc.meta.zip_child_count ?? "?"} docs inside
-                            </span>
-                          )}
-                          {doc.meta?.from_zip && !doc.meta?.zip_exploded && (
-                            <span className="text-[10px] flex items-center gap-1 font-mono rounded px-1.5 py-0.5"
-                                  style={{ color: 'var(--t-artifact)', border: '1px solid var(--t-artifact)' }}>
-                              <FolderOpen className="w-2.5 h-2.5" />
-                              {doc.meta.zip_folder ? `${doc.meta.zip_folder}/` : "archive"}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Search snippet */}
-                        {search && doc.snippet && (
-                          <p className="mt-2 text-[11px] font-mono text-muted-foreground/70 line-clamp-2 leading-relaxed">
-                            {String(doc.snippet).replace(/\[\[/g, "").replace(/\]\]/g, "")}
-                          </p>
-                        )}
-
-                        {/* Error message */}
-                        {hasError && doc.error_message && (
-                          <p className="mt-2 text-xs font-mono rounded px-2 py-1 break-all"
-                             style={{ color: 'var(--rust)', background: 'var(--rust-soft)', border: '1px solid var(--rust)' }}>
-                            {doc.error_message}
-                          </p>
-                        )}
-
-                        {/* Extraction warnings */}
-                        {hasError && doc.warnings && doc.warnings.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {doc.warnings.map((w: any) => (
-                              <div
-                                key={w.id}
-                                className="flex items-start gap-1.5 text-xs font-mono border rounded px-2 py-1"
-                                style={{ color: "var(--rust)", background: "var(--rust-soft)", borderColor: "color-mix(in srgb, var(--rust) 20%, transparent)" }}
-                              >
-                                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" style={{ color: "var(--rust)" }} />
-                                <span className="break-all">
-                                  <span className="font-semibold uppercase text-[10px] mr-1" style={{ color: "var(--rust)" }}>
-                                    {w.kind}
-                                  </span>
-                                  {w.detail}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Right: date + actions */}
-                    <div className="flex sm:flex-col items-center sm:items-end gap-3 sm:gap-2 shrink-0">
-                      <div className="text-xs font-mono text-muted-foreground">
-                        {doc.created_at ? format(new Date(doc.created_at), "MMM d, yyyy") : ""}
-                      </div>
-                      <div className="text-[10px] font-mono opacity-40" title={doc.sha256}>
-                        {doc.sha256?.slice(0, 8)}
-                      </div>
-
-                      {/* Action buttons */}
-                      <div className="flex items-center gap-1 mt-1">
-                        {hasError && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button variant="ghost" size="icon" aria-label="Retry extraction" className="h-7 w-7 hover:opacity-80" style={{ color: "var(--gilt)" }} onClick={(e) => handleReprocess(doc.id, e)} disabled={isReprocessing}>
-                                <RefreshCw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Retry extraction</TooltipContent>
-                          </Tooltip>
-                        )}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="ghost" size="icon" aria-label="Download original file" className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={(e) => { e.stopPropagation(); window.open(`${BASE}/library/${doc.id}/download`, "_blank"); }}>
-                              <Download className="w-3.5 h-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Download original file</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="ghost" size="icon" aria-label="Delete document" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(doc.id, e)}>
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Delete</TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          ) : (
-            <div className="vellum-card text-center py-16 px-8" style={{ border: '1px dashed var(--gilt-line)' }}>
-              <LibraryIcon className="w-10 h-10 mx-auto mb-4" style={{ color: 'var(--ink-faint)', opacity: 0.5 }} />
-              <div className="gilt-rule w-16 mx-auto mb-3" />
-              <h3 className="text-lg font-serif font-medium text-balance">No documents found</h3>
-              <p className="mt-1 text-[13px] text-balance" style={{ color: 'var(--ink-soft)' }}>
-                {search
-                  ? "No full-text matches for your query."
-                  : "Import a PDF, DOCX, CSV, or text file to start building your library."}
-              </p>
+                  {w === "all" ? "All" : w === "__none__" ? "Unlinked" : (workTitles[w] ?? w.slice(0, 8))}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <span className="section-label-mono !m-0">Lifecycle</span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(["all", "canonical", "draft", "reference", "superseded"] as const).map((lc) => {
+              const count = lifecycleCounts[lc] ?? 0;
+              if (lc !== "all" && count === 0) return null;
+              return (
+                <button
+                  key={lc}
+                  onClick={() => setDraft((d) => ({ ...d, lifecycle: lc }))}
+                  data-active={draft.lifecycle === lc}
+                  className="gd-chip flex items-center gap-1 min-h-11 px-3 text-xs font-mono"
+                >
+                  {lc === "all" ? "All" : lc}
+                  {count > 0 && <span className="text-[10px] tabular-nums opacity-70">{count}</span>}
+                </button>
+              );
+            })}
+          </div>
         </div>
+      </FilterSheet>
+
+      {/* Document list */}
+      <div className="grid gap-3">
+        {isLoading ? (
+          <LoadingState rows={4} label="Loading documents" />
+        ) : loadError ? (
+          <ErrorState
+            title="Couldn't load the library"
+            detail="The document list failed to load. Check your connection and try again."
+            onRetry={() => { search ? refetchSearch() : refetchList(); }}
+          />
+        ) : groupByWork && !search ? (
+          // ── Grouped by semantic topic cluster ────────────────────────────
+          (() => {
+            const hasTopics = topicsResp && topicsResp.topics.length > 0;
+            const grouped = new Map<string, any[]>();
+            const unclassified: any[] = [];
+            if (hasTopics) {
+              for (const doc of docs) {
+                const topicName = docTopicIndex[doc.id];
+                if (topicName) {
+                  const arr = grouped.get(topicName) ?? [];
+                  arr.push(doc);
+                  grouped.set(topicName, arr);
+                } else {
+                  unclassified.push(doc);
+                }
+              }
+            } else {
+              for (const doc of docs) {
+                if (doc.work_id) {
+                  const label = workTitles[doc.work_id] ?? doc.work_id.slice(0, 8);
+                  const arr = grouped.get(label) ?? [];
+                  arr.push(doc);
+                  grouped.set(label, arr);
+                } else {
+                  unclassified.push(doc);
+                }
+              }
+            }
+            const groups: Array<{ title: string; color: string; colorStyle?: React.CSSProperties; docs: any[] }> = [];
+            for (const [label, gdocs] of grouped) {
+              groups.push({ title: label, color: hasTopics ? "text-primary" : "", colorStyle: hasTopics ? undefined : { color: "var(--gd-bronze)" }, docs: gdocs });
+            }
+            if (unclassified.length > 0) {
+              groups.push({ title: hasTopics ? "Unclassified" : "Unassigned", color: "text-muted-foreground", docs: unclassified });
+            }
+            if (groups.length === 0) return (
+              <EmptyState
+                icon={<LibraryIcon />}
+                title="No documents found"
+                description="Nothing matches the current filters."
+              />
+            );
+            return groups.map((group) => (
+              <div key={group.title} className="space-y-2">
+                <div className="pt-2 pb-1 border-b border-border">
+                  <div className="flex items-center gap-2">
+                    <FolderOpen className={`w-4 h-4 ${group.color} shrink-0`} style={group.colorStyle} />
+                    <span className={`text-sm font-semibold ${group.color}`} style={group.colorStyle}>{group.title}</span>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {group.docs.length} doc{group.docs.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  {topicDescriptions[group.title] && (
+                    <p className="text-[11px] text-muted-foreground mt-0.5 ml-6 line-clamp-1">
+                      {topicDescriptions[group.title]}
+                    </p>
+                  )}
+                </div>
+                {group.docs.map((doc: any) => (
+                  <DocumentRow
+                    key={doc.id}
+                    doc={doc}
+                    search={!!search}
+                    workTitles={workTitles}
+                    listenProgress={listenProgress}
+                    isReprocessing={reprocessingIds.has(doc.id)}
+                    onOpen={() => navigate(`/library/${doc.id}`)}
+                    onReprocess={(e) => handleReprocess(doc.id, e)}
+                    onDownload={(e) => { e.stopPropagation(); downloadOriginal(doc.id, doc.title || doc.id); }}
+                    onDelete={() => handleDelete(doc.id)}
+                  />
+                ))}
+              </div>
+            ));
+          })()
+        ) : docs.length > 0 ? (
+          docs.map((doc: any) => (
+            <DocumentRow
+              key={doc.id}
+              doc={doc}
+              search={!!search}
+              workTitles={workTitles}
+              listenProgress={listenProgress}
+              isReprocessing={reprocessingIds.has(doc.id)}
+              onOpen={() => navigate(`/library/${doc.id}`)}
+              onReprocess={(e) => handleReprocess(doc.id, e)}
+              onDownload={(e) => { e.stopPropagation(); downloadOriginal(doc.id, doc.title || doc.id); }}
+              onDelete={() => handleDelete(doc.id)}
+            />
+          ))
+        ) : (
+          <EmptyState
+            icon={<LibraryIcon />}
+            title="No documents found"
+            description={search
+              ? "No full-text matches for your query."
+              : "Import a PDF, DOCX, CSV, or text file to start building your library."}
+            action={search ? undefined : (
+              <Button variant="outline" className="gap-2 min-h-11" onClick={() => navigate("/library?import=1")}>
+                <Plus className="w-4 h-4" /> Add a document
+              </Button>
+            )}
+          />
+        )}
       </div>
-    </TooltipProvider>
+    </Page>
   );
 }

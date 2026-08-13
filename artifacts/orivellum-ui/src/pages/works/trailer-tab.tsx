@@ -9,7 +9,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +23,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import { toast } from "sonner";
 import { useReadAloud } from "@/lib/read-aloud";
 import {
@@ -184,7 +184,7 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
       onClick={copy}
       className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
     >
-      {copied ? <Check className="w-3 h-3" style={{ color: "var(--green-2)" }} /> : <Copy className="w-3 h-3" />}
+      {copied ? <Check className="w-3 h-3" style={{ color: "var(--gd-success)" }} /> : <Copy className="w-3 h-3" />}
       {copied ? "Copied!" : label}
     </button>
   );
@@ -460,7 +460,7 @@ function ShotlistPanel({
                         ? "bg-primary/15 text-primary border-primary/30"
                         : "bg-muted text-muted-foreground border-border"
                   }`}
-                  style={shot.beat_type === "hook" ? { background: "var(--rust-soft)", color: "var(--rust)", borderColor: "color-mix(in srgb, var(--rust) 30%, transparent)" } : undefined}
+                  style={shot.beat_type === "hook" ? { background: "var(--gd-danger-soft)", color: "var(--gd-danger)", borderColor: "color-mix(in srgb, var(--gd-danger) 30%, transparent)" } : undefined}
                   variant="outline"
                 >
                   {shot.beat_type.toUpperCase()}
@@ -793,7 +793,7 @@ function MusicGenControls({
         )}
       </div>
       {unreachable && (
-        <p className="text-[10px] font-mono" style={{ color: "var(--gilt)" }}>
+        <p className="text-[10px] font-mono" style={{ color: "var(--gd-caution)" }}>
           Music engine configured but not responding — start the sidecar (scripts\start-music-sidecar.ps1).
         </p>
       )}
@@ -1200,11 +1200,11 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           {valOk ? (
-            <span className="flex items-center gap-1.5 text-xs font-mono rounded-full px-2.5 py-1 border" style={{ color: "var(--green-2)", background: "var(--green-soft)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}>
+            <span className="flex items-center gap-1.5 text-xs font-mono rounded-full px-2.5 py-1 border" style={{ color: "var(--gd-success)", background: "var(--gd-primary-soft)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}>
               <CheckCircle className="w-3.5 h-3.5" /> READY
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-xs font-mono rounded-full px-2.5 py-1 border" style={{ color: "var(--gilt)", background: "var(--gilt-soft)", borderColor: "var(--gilt-line)" }}>
+            <span className="flex items-center gap-1.5 text-xs font-mono rounded-full px-2.5 py-1 border" style={{ color: "var(--gd-caution)", background: "var(--gd-caution-soft)", borderColor: "var(--gd-line-control)" }}>
               <AlertCircle className="w-3.5 h-3.5" /> BLOCKED · {criticalCount} critical
             </span>
           )}
@@ -1214,7 +1214,7 @@ function TrailerPackageDetail({ trailer }: { trailer: TrailerPackage }) {
           <span className="text-xs font-mono text-muted-foreground">
             {shots.length} shots · ~{duration}s
             {activeFmt === "short"  && <span className="ml-1 text-sky-600">· 9:16</span>}
-            {activeFmt === "square" && <span className="ml-1" style={{ color: "var(--gilt)" }}>· 1:1</span>}
+            {activeFmt === "square" && <span className="ml-1" style={{ color: "var(--gd-caution)" }}>· 1:1</span>}
           </span>
         </div>
         <Button
@@ -1338,12 +1338,12 @@ function TrailerHistoryRow({ trailer, workId }: { trailer: TrailerListItem; work
           {isRunning && <PhaseProgress phase={livePhase} />}
         </div>
         {liveStatus === "ready" && (
-          <span className="flex items-center gap-1 text-[10px] font-mono shrink-0" style={{ color: "var(--green-2)" }}>
+          <span className="flex items-center gap-1 text-[10px] font-mono shrink-0" style={{ color: "var(--gd-success)" }}>
             <CheckCircle className="w-3 h-3" /> READY
           </span>
         )}
         {liveStatus === "blocked" && (
-          <span className="flex items-center gap-1 text-[10px] font-mono shrink-0" style={{ color: "var(--gilt)" }}>
+          <span className="flex items-center gap-1 text-[10px] font-mono shrink-0" style={{ color: "var(--gd-caution)" }}>
             <AlertCircle className="w-3 h-3" /> BLOCKED
           </span>
         )}
@@ -1395,7 +1395,7 @@ export function TrailerTab({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const [genFormat, setGenFormat] = useState<"full" | "short" | "square" | "both" | "all">("all");
 
-  const { data, isLoading } = useQuery<{ trailers: TrailerListItem[]; count: number }>({
+  const { data, isLoading, isError, refetch } = useQuery<{ trailers: TrailerListItem[]; count: number }>({
     queryKey: ["trailers", workId],
     queryFn: async () => {
       const r = await apiFetch(`${BASE}/works/${workId}/trailers`);
@@ -1476,34 +1476,29 @@ export function TrailerTab({ workId }: { workId: string }) {
         </div>
       </div>
 
+      {/* Recoverable error */}
+      {!isLoading && isError && (
+        <ErrorState
+          title="Could not load trailers"
+          detail="The trailer list is temporarily unavailable. Check your connection and try again."
+          onRetry={() => refetch()}
+        />
+      )}
+
       {/* How it works — shown when empty */}
-      {!isLoading && (!data || data.count === 0) && (
-        <Card className="border-border/50 border-dashed bg-muted/10">
-          <CardContent className="py-8 text-center space-y-3">
-            <Film className="w-8 h-8 text-muted-foreground/40 mx-auto" />
-            <p className="text-sm text-muted-foreground font-serif italic">
-              No trailer packages yet.
-            </p>
-            <p className="text-xs text-muted-foreground max-w-md mx-auto">
-              Click <strong>Generate Trailer</strong> to run the six-stage pipeline: book analysis → concept scoring → model selection → shotlist & narration → validation → production package.
-            </p>
-            <p className="text-xs text-muted-foreground/60">
-              Requires at least one processed document with extracted text.
-            </p>
-          </CardContent>
-        </Card>
+      {!isLoading && !isError && (!data || data.count === 0) && (
+        <EmptyState
+          icon={<Film />}
+          title="No trailer packages yet"
+          description="Generate a trailer to run the six-stage pipeline: book analysis → concept scoring → model selection → shotlist & narration → validation → production package. Requires at least one processed document with extracted text."
+        />
       )}
 
       {/* Loading skeleton */}
-      {isLoading && (
-        <div className="space-y-2">
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-        </div>
-      )}
+      {isLoading && <LoadingState rows={2} label="Loading trailers" />}
 
       {/* Trailer history */}
-      {data && data.count > 0 && (
+      {!isError && data && data.count > 0 && (
         <div className="space-y-3">
           <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
             {data.count} Package{data.count !== 1 ? "s" : ""} — Newest First

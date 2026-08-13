@@ -105,12 +105,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { KnowledgeGraph, GNode } from "@/components/knowledge-graph";
 import { LearnTab } from "@/pages/learning/learn-tab";
+import { LoadingState, EmptyState, ErrorState } from "@/components/primitives";
 
 
 export function ConversationsTab({ workId }: { workId: string }) {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
-  const { data: convResp, isLoading } = useGetWorkConversations(workId, {
+  const { data: convResp, isLoading, isError, refetch } = useGetWorkConversations(workId, {
     query: { enabled: !!workId, queryKey: getGetWorkConversationsQueryKey(workId) },
   });
   const createConv = useCreateConversation();
@@ -129,17 +130,16 @@ export function ConversationsTab({ workId }: { workId: string }) {
     );
   };
 
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
   const conversations = convResp?.conversations ?? [];
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <h3 className="text-xl font-serif font-medium">Conversations</h3>
         <Button
           size="sm"
           variant="outline"
-          className="gap-2"
+          className="gap-2 min-h-11"
           onClick={handleNewDiscussion}
           disabled={createConv.isPending}
         >
@@ -152,14 +152,22 @@ export function ConversationsTab({ workId }: { workId: string }) {
         </Button>
       </div>
 
-      {conversations.length > 0 ? (
+      {isLoading ? (
+        <LoadingState rows={4} label="Loading conversations" />
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load conversations"
+          detail="The conversations for this work failed to load."
+          onRetry={() => refetch()}
+        />
+      ) : conversations.length > 0 ? (
         <div className="grid gap-3">
           {conversations.map((conv) => (
             <Link key={conv.id} href={`/chat?id=${conv.id}`}>
               <Card className="hover-elevate cursor-pointer">
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="space-y-1">
-                    <h4 className="font-medium text-lg">{conv.title || "Untitled Conversation"}</h4>
+                <CardContent className="p-4 flex items-center justify-between gap-3 min-h-11">
+                  <div className="space-y-1 min-w-0">
+                    <h4 className="font-medium text-lg truncate">{conv.title || "Untitled Conversation"}</h4>
                     <p className="text-sm text-muted-foreground truncate max-w-xl">
                       {conv.last_message || "No messages yet."}
                     </p>
@@ -168,7 +176,7 @@ export function ConversationsTab({ workId }: { workId: string }) {
                     <div>{conv.message_count || 0} msgs</div>
                     <div>{conv.updated_at ? format(new Date(conv.updated_at), "MMM d") : ""}</div>
                     {(conv as any).model && (
-                      <div className="text-[10px] opacity-60 font-mono">
+                      <div className="text-[10px] opacity-60 font-mono truncate max-w-[8rem]">
                         {String((conv as any).model).split("/").pop()?.split("-").slice(0, 3).join("-")}
                       </div>
                     )}
@@ -179,13 +187,16 @@ export function ConversationsTab({ workId }: { workId: string }) {
           ))}
         </div>
       ) : (
-        <div className="text-center py-12 bg-muted/10 border border-dashed rounded-lg">
-          <MessageSquare className="w-8 h-8 mx-auto mb-3 opacity-20" />
-          <p className="text-muted-foreground">No conversations linked to this work.</p>
-          <Button size="sm" variant="outline" className="gap-2 mt-4" onClick={handleNewDiscussion} disabled={createConv.isPending}>
-            <Plus className="w-4 h-4" /> Start a Discussion
-          </Button>
-        </div>
+        <EmptyState
+          icon={<MessageSquare />}
+          title="No conversations linked to this work"
+          description="Start a discussion to explore this work with the assistant."
+          action={
+            <Button size="sm" variant="outline" className="gap-2 min-h-11" onClick={handleNewDiscussion} disabled={createConv.isPending}>
+              <Plus className="w-4 h-4" /> Start a Discussion
+            </Button>
+          }
+        />
       )}
     </div>
   );

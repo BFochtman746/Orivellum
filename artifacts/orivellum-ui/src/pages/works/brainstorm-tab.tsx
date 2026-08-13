@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState, ErrorState } from "@/components/primitives";
 import { apiFetch } from "@/lib/auth";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -71,9 +72,9 @@ const N_DOMAINS_OPTIONS = [3, 5, 7, 10] as const;
 function OriginalityBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const barStyle: React.CSSProperties =
-    pct >= 70 ? { background: "var(--green-2)" } :
-    pct >= 45 ? { background: "var(--gilt)" }    :
-                { background: "var(--ink-faint)", opacity: 0.6 };
+    pct >= 70 ? { background: "var(--gd-success)" } :
+    pct >= 45 ? { background: "var(--gd-caution)" }    :
+                { background: "var(--gd-dim)", opacity: 0.6 };
   return (
     <div className="flex items-center gap-1.5 min-w-0">
       <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
@@ -93,7 +94,7 @@ function UsefulnessStars({ value }: { value: number }) {
         <Star
           key={n}
           className="w-2.5 h-2.5"
-          style={n <= value ? { color: "var(--gilt)", fill: "var(--gilt)" } : undefined}
+          style={n <= value ? { color: "var(--gd-bronze)", fill: "var(--gd-bronze)" } : undefined}
         />
       ))}
     </div>
@@ -185,7 +186,7 @@ function IdeaCard({
           <Badge
             variant="outline"
             className="h-5 text-[10px]"
-            style={{ color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" }}
+            style={{ color: "var(--gd-success)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" }}
           >
             ✓ In knowledge
           </Badge>
@@ -315,7 +316,7 @@ function PastSessions({
         <button
           key={s.id}
           onClick={() => onSelect(s)}
-          className="w-full text-left flex items-center gap-2 p-2 rounded-lg hover:bg-muted/40 transition-colors"
+          className="w-full text-left flex items-center gap-2 p-2 min-h-11 rounded-lg hover:bg-muted/40 transition-colors"
         >
           <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           <span className="text-xs truncate flex-1">
@@ -328,9 +329,9 @@ function PastSessions({
             variant="outline"
             className="h-4 text-[9px] px-1 shrink-0"
             style={
-              s.status === "done"   ? { color: "var(--green-2)", borderColor: "color-mix(in srgb, var(--green-2) 28%, transparent)" } :
+              s.status === "done"   ? { color: "var(--gd-success)", borderColor: "color-mix(in srgb, var(--gd-success) 28%, transparent)" } :
               s.status === "failed" ? {} :
-                                      { color: "var(--gilt)", borderColor: "var(--gilt-line)" }
+                                      { color: "var(--gd-caution)", borderColor: "var(--gd-line-control)" }
             }
           >
             {s.status}
@@ -351,11 +352,11 @@ export function BrainstormTab({ workId, initialSeed = "", initialContext = "gene
   const [activeSession, setActiveSession] = useState<BrainstormSession | null>(null);
 
   // Fetch session history
-  const { data: history = [] } = useQuery<BrainstormSession[]>({
+  const { data: history = [], isError: historyError, refetch: refetchHistory } = useQuery<BrainstormSession[]>({
     queryKey: ["brainstorm-history", workId],
     queryFn:  async () => {
       const r = await apiFetch(`${BASE}/works/${workId}/brainstorm`);
-      if (!r.ok) return [];
+      if (!r.ok) throw new Error("Failed to load brainstorm history");
       return r.json();
     },
     staleTime: 60_000,
@@ -392,7 +393,7 @@ export function BrainstormTab({ workId, initialSeed = "", initialContext = "gene
       {/* Header */}
       <div className="space-y-1">
         <div className="flex items-center gap-2">
-          <Lightbulb className="w-4 h-4" style={{ color: "var(--gilt)" }} />
+          <Lightbulb className="w-4 h-4" style={{ color: "var(--gd-bronze)" }} />
           <h3 className="font-medium text-sm">Divergent Thinking</h3>
         </div>
         <p className="text-xs text-muted-foreground max-w-prose">
@@ -494,35 +495,39 @@ export function BrainstormTab({ workId, initialSeed = "", initialContext = "gene
         </div>
       )}
 
+      {/* Recoverable error — history could not load */}
+      {!activeSession && historyError && !runMutation.isPending && (
+        <ErrorState
+          title="Could not load brainstorm history"
+          detail="Past sessions are temporarily unavailable. You can still generate new ideas above."
+          onRetry={() => refetchHistory()}
+        />
+      )}
+
       {/* Empty state (no active session, no history) */}
-      {!activeSession && history.length === 0 && !runMutation.isPending && (
-        <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "var(--gilt-soft)" }}>
-            <Lightbulb className="w-6 h-6" style={{ color: "var(--gilt)" }} />
-          </div>
-          <div className="space-y-1">
-            <p className="text-sm font-medium">No brainstorm sessions yet</p>
-            <p className="text-xs text-muted-foreground max-w-xs">
-              Write a structural challenge above and generate ideas to explore it through
-              radically different conceptual lenses.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap justify-center">
-            {[
-              "How should the book's central argument unfold?",
-              "What structure supports the climax?",
-              "How to sequence the chapters?",
-            ].map(s => (
-              <button
-                key={s}
-                onClick={() => setSeed(s)}
-                className="text-[11px] px-2.5 py-1 rounded-full border border-border/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
+      {!activeSession && !historyError && history.length === 0 && !runMutation.isPending && (
+        <EmptyState
+          icon={<Lightbulb />}
+          title="No brainstorm sessions yet"
+          description="Write a structural challenge above and generate ideas to explore it through radically different conceptual lenses."
+          action={
+            <div className="flex items-center gap-2 flex-wrap justify-center">
+              {[
+                "How should the book's central argument unfold?",
+                "What structure supports the climax?",
+                "How to sequence the chapters?",
+              ].map(s => (
+                <button
+                  key={s}
+                  onClick={() => setSeed(s)}
+                  className="min-h-11 text-[11px] px-2.5 py-1 rounded-full border border-border/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          }
+        />
       )}
 
       {/* Past sessions */}
@@ -580,12 +585,12 @@ export function BrainstormB3Panel({ workId, workTitle }: { workId: string; workT
   });
 
   return (
-    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--gilt-line)", background: "var(--gilt-soft)" }}>
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--gd-line-control)", background: "var(--gd-bronze-soft)" }}>
       <button
-        className="w-full flex items-center gap-2 p-3 text-left hover:opacity-80 transition-opacity"
+        className="w-full flex items-center gap-2 p-3 text-left hover:opacity-80 transition-opacity min-h-11"
         onClick={() => setExpanded(v => !v)}
       >
-        <Lightbulb className="w-4 h-4 shrink-0" style={{ color: "var(--gilt)" }} />
+        <Lightbulb className="w-4 h-4 shrink-0" style={{ color: "var(--gd-bronze)" }} />
         <div className="flex-1 min-w-0">
           <p className="text-xs font-medium">Explore architecture approaches first</p>
           <p className="text-[10px] text-muted-foreground">
@@ -598,7 +603,7 @@ export function BrainstormB3Panel({ workId, workTitle }: { workId: string; workT
       </button>
 
       {expanded && (
-        <div className="px-3 pb-3 space-y-3 border-t" style={{ borderColor: "var(--gilt-line)" }}>
+        <div className="px-3 pb-3 space-y-3 border-t" style={{ borderColor: "var(--gd-line-control)" }}>
           {!sessionResult ? (
             <>
               <Textarea
@@ -611,7 +616,7 @@ export function BrainstormB3Panel({ workId, workTitle }: { workId: string; workT
                 size="sm"
                 variant="outline"
                 className="h-7 gap-1.5 text-xs w-full"
-                style={{ borderColor: "var(--gilt-line)", color: "var(--gilt)" }}
+                style={{ borderColor: "var(--gd-line-control)", color: "var(--gd-bronze)" }}
                 onClick={() => runMutation.mutate()}
                 disabled={runMutation.isPending}
               >
