@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { useLocation, useSearch } from "wouter";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { toast } from "sonner";
@@ -14,9 +14,8 @@ import {
   type ActivityStep, type ServerActivityEvent, type CodeProgressEvent,
 } from "./activity";
 import { randomUUID, copyToClipboard } from "@/lib/uuid";
+import { setBusyFlag } from "@/lib/app-busy";
 import { useReadAloud, stripForSpeech } from "@/lib/read-aloud";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   useListConversations,
   useGetConversation,
@@ -61,10 +60,27 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { EmptyState, ErrorState, LoadingState } from "@/components/primitives";
 import { VoiceControls } from "./voice-controls";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/atom-one-dark.css";
+
+// Markdown + syntax highlighting are the heaviest non-editor dependencies —
+// they load as their own chunk at first render, with plain text as the
+// momentary fallback (WP5).
+const LazyMarkdown = lazy(() => import("@/components/rich-markdown"));
+
+/** Suspense wrapper: shows the raw text (correctly line-broken) for the
+ * instant the markdown chunk is still in flight, so nothing blanks out. */
+function MarkdownContent({ text }: { text: string }) {
+  return (
+    <Suspense fallback={<div className="whitespace-pre-wrap leading-relaxed">{text}</div>}>
+      <LazyMarkdown text={text} />
+    </Suspense>
+  );
+}
 
 const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// WP5: long conversations render only the trailing window of messages;
+// "Show earlier messages" extends the window in steps of this size.
+const MESSAGE_WINDOW = 80;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -831,109 +847,6 @@ function ReasoningBlock({ streaming }: { streaming?: boolean }) {
   );
 }
 
-// ─── Code block with copy button ─────────────────────────────────────────────
-
-function CodeBlock({ lang, className, children }: { lang: string; className?: string; children: React.ReactNode }) {
-  const codeRef = useRef<HTMLElement>(null);
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    const text = codeRef.current?.textContent ?? "";
-    copyToClipboard(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    });
-  };
-
-  return (
-    <span className="block my-3 rounded-lg overflow-hidden border border-white/10 shadow-md">
-      <span className="flex items-center justify-between px-3 py-1.5 bg-zinc-800 border-b border-white/10">
-        <span className="text-[10px] font-mono uppercase tracking-wide text-zinc-400">{lang || " "}</span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          title="Copy code"
-          className="flex items-center gap-1 text-[10px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
-        >
-          {copied ? <Check className="w-3 h-3" style={{ color: "var(--gd-success)" }} /> : <Copy className="w-3 h-3" />}
-          <span>{copied ? "Copied" : "Copy"}</span>
-        </button>
-      </span>
-      <code
-        ref={codeRef}
-        className={`block bg-zinc-900 text-zinc-100 px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto ${className ?? ""}`}
-      >
-        {children}
-      </code>
-    </span>
-  );
-}
-
-// ─── Markdown renderer ────────────────────────────────────────────────────────
-
-function MarkdownContent({ text }: { text: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlight]}
-      components={{
-        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
-        code: ({ className, children }) => {
-          const lang = className?.replace("language-", "").replace(/\s*hljs.*/, "") ?? "";
-          const isBlock = className?.startsWith("language-") || className?.startsWith("hljs");
-          return isBlock ? (
-            <CodeBlock lang={lang} className={className}>
-              {children}
-            </CodeBlock>
-          ) : (
-            <code className="bg-zinc-800 text-zinc-200 rounded px-1.5 py-0.5 text-[0.8em] font-mono">
-              {children}
-            </code>
-          );
-        },
-        pre: ({ children }) => <div className="my-0">{children}</div>,
-        ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
-        li: ({ children }) => <li className="text-sm">{children}</li>,
-        h1: ({ children }) => <h1 className="text-base font-semibold mb-1 mt-2">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-sm font-semibold mb-1 mt-2">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-sm font-medium mb-1 mt-1">{children}</h3>,
-        blockquote: ({ children }) => (
-          <blockquote className="border-l-2 border-border pl-3 italic text-muted-foreground my-2">{children}</blockquote>
-        ),
-        a: ({ href, children }) => (
-          <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:opacity-70">
-            {children}
-          </a>
-        ),
-        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-        em: ({ children }) => <em className="italic">{children}</em>,
-        hr: () => <hr className="border-border my-3" />,
-        // Allow data:image/... base64 URLs (generated images) while keeping
-        // the default sanitizer for all other URL types.
-        img: ({ src, alt }) => {
-          const safe =
-            typeof src === "string" &&
-            (/^data:image\/(png|jpeg|webp|gif);base64,/.test(src) ||
-              /^https?:\/\//.test(src) ||
-              src.startsWith("/") ||
-              src.startsWith("./"));
-          if (!safe) return null;
-          return (
-            <img
-              src={src}
-              alt={alt ?? ""}
-              className="max-w-full rounded-lg border border-border/40 my-2"
-            />
-          );
-        },
-      }}
-    >
-      {text}
-    </ReactMarkdown>
-  );
-}
-
 // ─── Streaming helper ─────────────────────────────────────────────────────────
 
 async function* streamChat(
@@ -1630,6 +1543,9 @@ export default function Chat() {
   const activeId = searchParams.get("id");
   // When arriving from a message-search result, this holds the target message id.
   const highlightMsgId = searchParams.get("msg");
+  // WP5 windowing: how many trailing messages render. Resets per conversation.
+  const [messageWindow, setMessageWindow] = useState(MESSAGE_WINDOW);
+  useEffect(() => { setMessageWindow(MESSAGE_WINDOW); }, [activeId]);
 
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
@@ -1643,6 +1559,16 @@ export default function Chat() {
     } catch { return ""; }
   });
   const [sending, setSending] = useState(false);
+  // Update-safety (WP5): an unsent draft or a streaming reply blocks the PWA
+  // "Update now" reload so in-flight work can never be lost.
+  useEffect(() => {
+    setBusyFlag("chat-draft", draft.trim().length > 0);
+    return () => setBusyFlag("chat-draft", false);
+  }, [draft]);
+  useEffect(() => {
+    setBusyFlag("chat-stream", sending);
+    return () => setBusyFlag("chat-stream", false);
+  }, [sending]);
   const [pendingImage, setPendingImage] = useState<{ data: string; type: string } | null>(null);
   const [pendingFile, setPendingFile] = useState<{ name: string; size: number; type: string; data: string } | null>(null);
   // ── Voice mode ─────────────────────────────────────────────────────────────
@@ -2793,6 +2719,17 @@ export default function Chat() {
         };
       });
 
+  // ── Long-conversation windowing (WP5) ─────────────────────────────────────
+  // Only the most recent messages render; earlier ones stay one tap away.
+  // Deep-linking to a specific message (?msg=) expands the full history so
+  // the highlight target is always in the DOM.
+  const hiddenMessageCount = highlightMsgId
+    ? 0
+    : Math.max(0, displayMessages.length - messageWindow);
+  const windowedMessages = hiddenMessageCount > 0
+    ? displayMessages.slice(hiddenMessageCount)
+    : displayMessages;
+
   // ID of the last non-streaming AI message — compass footer renders here
   const lastAiMsgId = [...displayMessages].reverse().find(
     m => m.role === "assistant" && !m.streaming
@@ -3144,7 +3081,19 @@ export default function Chat() {
                       <div className="flex-1 h-px bg-border/40" />
                     </div>
                   )}
-                  {displayMessages.map((msg, msgIdx) => (
+                  {hiddenMessageCount > 0 && (
+                    <div className="flex justify-center py-1">
+                      <button
+                        type="button"
+                        onClick={() => setMessageWindow((n) => n + MESSAGE_WINDOW)}
+                        className="chat-icon-btn px-3 py-1.5 rounded-full border border-border/50 bg-muted/30 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                        data-testid="show-earlier-messages"
+                      >
+                        Show earlier messages ({hiddenMessageCount})
+                      </button>
+                    </div>
+                  )}
+                  {windowedMessages.map((msg, msgIdx) => (
                     <div key={msg.id} data-msg-id={msg.id} data-role={msg.role} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
                       <div
                         className={`w-7 h-7 shrink-0 rounded-sm flex items-center justify-center

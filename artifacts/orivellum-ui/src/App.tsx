@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster as SonnerToaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -11,58 +11,64 @@ import { useOutboxSync } from '@/hooks/use-outbox';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-import WorksList from '@/pages/works/index';
-import WorkDetail from '@/pages/works/detail';
-import WorkIntelligence from '@/pages/works/intelligence';
-import GapOraclePage from '@/pages/works/gap-oracle';
-import ContinuityPage from '@/pages/works/continuity';
-import HandoffPage from '@/pages/works/handoff';
-import PacingPage from '@/pages/works/pacing';
-import SeriesList from '@/pages/series/index';
-import SeriesDetail from '@/pages/series/detail';
-import CollectionsPage from '@/pages/collections/index';
-import CollectionDetail from '@/pages/collections/detail';
-import { useParams, useLocation } from 'wouter';
-import Chat from '@/pages/chat/index';
-import Library from '@/pages/library/index';
-import NotesPage from '@/pages/notes/index';
-import DocumentDetail from '@/pages/library/detail';
-import Projects from '@/pages/projects/index';
-import ProjectDetail from '@/pages/projects/detail';
-import Studio from '@/pages/studio/index';
-import WriteDeskPage from '@/pages/write/index';
-import WritingHub from '@/pages/writing/index';
-import LearningHub from '@/pages/learning/index';
-import LearningSession from '@/pages/learning/session';
-import KnowledgeReview from '@/pages/learning/review';
-import Backups from '@/pages/backups/index';
-import System from '@/pages/system/index';
-import CommandHub from '@/pages/command/index';
-import GovernancePage from '@/pages/governance/index';
-import ReviewPage from '@/pages/review/index';
-import Mcos from '@/pages/mcos/index';
-import AssayPromotion from '@/pages/assay/index';
-import BooksPage from '@/pages/books/index';
-import CanonPage from '@/pages/canon/index';
-import WritingArchitectPage from '@/pages/writing-architect/index';
-import FinishingPage from '@/pages/finishing/index';
-import LearnPage from '@/pages/learn/index';
-import IntakePage from '@/pages/intake/index';
-import TopicsPage from '@/pages/topics/index';
-import ActionsPage from '@/pages/actions/index';
-import OperationsPage from '@/pages/operations/index';
-import GraphPage from '@/pages/graph/index';
-import ForgePage from '@/pages/forge/index';
-import ForgeDetail from '@/pages/forge/detail';
-import WorkbenchPage from '@/pages/workbench/index';
-import WorkbenchDetail from '@/pages/workbench/detail';
-import MailPage from '@/pages/mail/index';
-import MailConnectPage from '@/pages/mail/connect';
-import ComposePage from '@/pages/mail/compose';
-import MailSettingsPage from '@/pages/mail/settings';
-import NotFound from '@/pages/not-found';
+// ── Route modules ─────────────────────────────────────────────────────────────
+// Home is the only statically-imported screen: it is the initial route and must
+// paint without a second network round-trip. Every other destination loads as
+// its own bundle via React.lazy, so Home never pays for editor / Studio / mail
+// / analysis code (WP5 gate).
 import HomeScreen from '@/pages/home/index';
+
+const WorksList = React.lazy(() => import('@/pages/works/index'));
+const WorkDetail = React.lazy(() => import('@/pages/works/detail'));
+const WorkIntelligence = React.lazy(() => import('@/pages/works/intelligence'));
+const GapOraclePage = React.lazy(() => import('@/pages/works/gap-oracle'));
+const ContinuityPage = React.lazy(() => import('@/pages/works/continuity'));
+const HandoffPage = React.lazy(() => import('@/pages/works/handoff'));
+const PacingPage = React.lazy(() => import('@/pages/works/pacing'));
+const SeriesList = React.lazy(() => import('@/pages/series/index'));
+const SeriesDetail = React.lazy(() => import('@/pages/series/detail'));
+const CollectionsPage = React.lazy(() => import('@/pages/collections/index'));
+const CollectionDetail = React.lazy(() => import('@/pages/collections/detail'));
+const Chat = React.lazy(() => import('@/pages/chat/index'));
+const Library = React.lazy(() => import('@/pages/library/index'));
+const NotesPage = React.lazy(() => import('@/pages/notes/index'));
+const DocumentDetail = React.lazy(() => import('@/pages/library/detail'));
+const Projects = React.lazy(() => import('@/pages/projects/index'));
+const ProjectDetail = React.lazy(() => import('@/pages/projects/detail'));
+const Studio = React.lazy(() => import('@/pages/studio/index'));
+const WriteDeskPage = React.lazy(() => import('@/pages/write/index'));
+const WritingHub = React.lazy(() => import('@/pages/writing/index'));
+const LearningHub = React.lazy(() => import('@/pages/learning/index'));
+const LearningSession = React.lazy(() => import('@/pages/learning/session'));
+const KnowledgeReview = React.lazy(() => import('@/pages/learning/review'));
+const Backups = React.lazy(() => import('@/pages/backups/index'));
+const System = React.lazy(() => import('@/pages/system/index'));
+const CommandHub = React.lazy(() => import('@/pages/command/index'));
+const GovernancePage = React.lazy(() => import('@/pages/governance/index'));
+const ReviewPage = React.lazy(() => import('@/pages/review/index'));
+const Mcos = React.lazy(() => import('@/pages/mcos/index'));
+const AssayPromotion = React.lazy(() => import('@/pages/assay/index'));
+const BooksPage = React.lazy(() => import('@/pages/books/index'));
+const CanonPage = React.lazy(() => import('@/pages/canon/index'));
+const WritingArchitectPage = React.lazy(() => import('@/pages/writing-architect/index'));
+const FinishingPage = React.lazy(() => import('@/pages/finishing/index'));
+const LearnPage = React.lazy(() => import('@/pages/learn/index'));
+const IntakePage = React.lazy(() => import('@/pages/intake/index'));
+const TopicsPage = React.lazy(() => import('@/pages/topics/index'));
+const ActionsPage = React.lazy(() => import('@/pages/actions/index'));
+const OperationsPage = React.lazy(() => import('@/pages/operations/index'));
+const GraphPage = React.lazy(() => import('@/pages/graph/index'));
+const ForgePage = React.lazy(() => import('@/pages/forge/index'));
+const ForgeDetail = React.lazy(() => import('@/pages/forge/detail'));
+const WorkbenchPage = React.lazy(() => import('@/pages/workbench/index'));
+const WorkbenchDetail = React.lazy(() => import('@/pages/workbench/detail'));
+const MailPage = React.lazy(() => import('@/pages/mail/index'));
+const MailConnectPage = React.lazy(() => import('@/pages/mail/connect'));
+const ComposePage = React.lazy(() => import('@/pages/mail/compose'));
+const MailSettingsPage = React.lazy(() => import('@/pages/mail/settings'));
+const NotFound = React.lazy(() => import('@/pages/not-found'));
 import { ResponsiveShell } from '@/components/shell/responsive-shell';
+import { UpdatePrompt } from '@/components/update-prompt';
 import { ReadAloudProvider } from '@/lib/read-aloud';
 import { ReadAloudDock } from '@/components/read-aloud-dock';
 import { toast } from 'sonner';
@@ -87,12 +93,32 @@ const queryClient = new QueryClient({
 });
 
 
+/** Shown while a lazily-loaded route bundle is in flight. Fills the content
+ * host with the same surface the destination will paint on, so the swap is a
+ * fade-in rather than a layout shift. */
+function RouteLoading() {
+  return (
+    <div
+      className="flex items-center justify-center min-h-[40vh]"
+      role="status"
+      aria-label="Loading page"
+    >
+      <span className="text-sm text-muted-foreground animate-pulse">Loading…</span>
+    </div>
+  );
+}
+
 function RouteWithBoundary({ component: Page }: { component: React.ComponentType }) {
   return (
     <ErrorBoundary
       fallback={(err, reset) => <RouteErrorFallback error={err} reset={reset} />}
     >
-      <Page />
+      {/* Destination-level Suspense: each lazily-loaded route suspends here,
+          inside the shell, so the tab bar / rail stay interactive while the
+          bundle loads. */}
+      <Suspense fallback={<RouteLoading />}>
+        <Page />
+      </Suspense>
     </ErrorBoundary>
   );
 }
@@ -175,7 +201,7 @@ function RoutedPages() {
         <Route path="/mail/connect">{() => <RouteWithBoundary component={MailConnectPage} />}</Route>
         <Route path="/mail/compose/:actionRequestId">{() => <RouteWithBoundary component={ComposePage} />}</Route>
         <Route path="/mail/settings">{() => <RouteWithBoundary component={MailSettingsPage} />}</Route>
-        <Route component={NotFound} />
+        <Route>{() => <RouteWithBoundary component={NotFound} />}</Route>
       </Switch>
   );
 }
@@ -305,6 +331,7 @@ function App() {
             <ReadAloudDock />
           </ReadAloudProvider>
           <CommandPalette />
+          <UpdatePrompt />
           <BrowserNotificationsWatcher />
           <OutboxSyncWatcher />
         </WouterRouter>

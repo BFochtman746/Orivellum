@@ -10,7 +10,9 @@
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:budgets": "node scripts/check_bundle_budgets.mjs",
+    "check:vitals": "node scripts/measure_web_vitals.mjs"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -80,6 +82,7 @@
     "vite": "catalog:",
     "vite-plugin-pwa": "^1.3.0",
     "vitest": "^4.1.10",
+    "workbox-window": "^7.4.1",
     "wouter": "^3.3.5",
     "zod": "catalog:"
   },

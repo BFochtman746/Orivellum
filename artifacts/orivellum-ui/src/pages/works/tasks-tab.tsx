@@ -186,7 +186,11 @@ export function TasksTab({ workId }: { workId: string }) {
   const [taskFilter, setTaskFilter] = useState<"all" | "pending" | "completed">("all");
 
   const allTasks = tasksResp?.tasks ?? [];
-  const tasks = taskFilter === "all" ? allTasks : allTasks.filter((t) => t.status === taskFilter);
+  const filteredTasks = taskFilter === "all" ? allTasks : allTasks.filter((t) => t.status === taskFilter);
+  // WP5: window the task list so huge backlogs don't mount thousands of rows.
+  const [taskWindow, setTaskWindow] = useState(60);
+  const tasks = filteredTasks.slice(0, taskWindow);
+  const hiddenTaskCount = filteredTasks.length - tasks.length;
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -328,6 +332,17 @@ export function TasksTab({ workId }: { workId: string }) {
             title="No tasks yet for this work"
             description="Add a task above to start tracking work items."
           />
+        )}
+        {hiddenTaskCount > 0 && (
+          <div className="flex justify-center pt-1">
+            <Button
+              variant="outline"
+              className="min-h-11 font-mono text-xs"
+              onClick={() => setTaskWindow((n) => n + 60)}
+            >
+              Show more tasks ({hiddenTaskCount} hidden)
+            </Button>
+          </div>
         )}
       </div>
     </div>

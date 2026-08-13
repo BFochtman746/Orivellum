@@ -1,5 +1,6 @@
 import { useGetSystemHealth, useListCapabilities, getGetSystemHealthQueryKey } from "@workspace/api-client-react";
 import { apiFetch } from "@/lib/auth";
+import { BUILD_ID } from "@/lib/pwa-update";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -3025,7 +3026,12 @@ export default function System() {
 
   return (
     <Page wide eyebrow="Under the Hood" title="The Engine">
-      <p className="text-[13px] -mt-2" style={{ color: 'var(--gd-dim)' }}>Infrastructure health and local AI capabilities.</p>
+      <p className="text-[13px] -mt-2" style={{ color: 'var(--gd-dim)' }}>
+        Infrastructure health and local AI capabilities.
+        <span className="ml-2 font-mono text-[11px]" data-testid="build-id" style={{ color: 'var(--gd-dim)', opacity: 0.8 }}>
+          build {BUILD_ID}
+        </span>
+      </p>
 
       <ProfileCard />
       <AppearanceCard />

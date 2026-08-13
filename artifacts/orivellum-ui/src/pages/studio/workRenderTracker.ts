@@ -108,6 +108,9 @@ export class WorkRenderTracker {
         clearInterval(iv);
         return;
       }
+      // WP5: skip network polls while the tab is hidden; the render keeps
+      // going server-side and the next visible tick catches up.
+      if (typeof document !== "undefined" && document.hidden) return;
       const stopThis = () => {
         clearInterval(iv);
         if (this.timer === iv) this.timer = null;

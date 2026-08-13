@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from "react";
+import { setBusyFlag } from "@/lib/app-busy";
 import { useLocation, useSearch } from "wouter";
 import { apiFetch } from "@/lib/auth";
 import {
@@ -35,6 +36,9 @@ import {
 import { toast } from "sonner";
 
 const BASE = `${import.meta.env.BASE_URL}api`.replace(/\/+/g, "/").replace(/\/$/, "");
+
+// WP5: how many document rows render at once; "Show more" extends in steps.
+const DOC_WINDOW = 60;
 
 /**
  * Download the original file through apiFetch (blob) rather than window.open,
@@ -253,6 +257,7 @@ function DuplicatesBanner({ readyDocCount = 0 }: { readyDocCount?: number }) {
       const started = Date.now();
       const pairsBefore = count;
       const poll = setInterval(async () => {
+        if (document.hidden) return; // WP5: pause polling while hidden
         try {
           const pr = await apiFetch(`${BASE}/library/duplicates`);
           const pd = await pr.json();
@@ -687,6 +692,11 @@ function CaptureSheet({ onSuccess, defaultOpen = false }: CaptureSheetProps) {
   const [workId, setWorkId] = useState("");
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // Update-safety (WP5): an in-flight upload blocks the PWA update reload.
+  useEffect(() => {
+    setBusyFlag("library-upload", uploading);
+    return () => setBusyFlag("library-upload", false);
+  }, [uploading]);
   const inputRef = useRef<HTMLInputElement>(null);
   const cancelledRef = useRef(false);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
@@ -1316,6 +1326,10 @@ export default function Library() {
   });
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "z-a">("newest");
   const [groupByWork, setGroupByWork] = useState(false);
+  // WP5 windowing: how many documents render at once (resets when the query
+  // context changes so a new search never starts scrolled deep).
+  const [docWindow, setDocWindow] = useState(DOC_WINDOW);
+  useEffect(() => { setDocWindow(DOC_WINDOW); }, [search, groupByWork]);
   const [explodingZips, setExplodingZips] = useState(false);
   const [organizingDocs, setOrganizingDocs] = useState(false);
   const [reprocessingAll, setReprocessingAll] = useState(false);
@@ -1396,6 +1410,11 @@ export default function Library() {
       if (sortBy === "z-a") return bTitle.localeCompare(aTitle);
       return 0;
     });
+
+  // WP5: render only a window of the document list — big libraries otherwise
+  // mount thousands of rows at once. "Show more" extends the window.
+  const visibleDocs = docs.slice(0, docWindow);
+  const hiddenDocCount = docs.length - visibleDocs.length;
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: getListLibraryQueryKey({}) });
@@ -1770,7 +1789,7 @@ export default function Library() {
             const grouped = new Map<string, any[]>();
             const unclassified: any[] = [];
             if (hasTopics) {
-              for (const doc of docs) {
+              for (const doc of visibleDocs) {
                 const topicName = docTopicIndex[doc.id];
                 if (topicName) {
                   const arr = grouped.get(topicName) ?? [];
@@ -1781,7 +1800,7 @@ export default function Library() {
                 }
               }
             } else {
-              for (const doc of docs) {
+              for (const doc of visibleDocs) {
                 if (doc.work_id) {
                   const label = workTitles[doc.work_id] ?? doc.work_id.slice(0, 8);
                   const arr = grouped.get(label) ?? [];
@@ -1840,7 +1859,7 @@ export default function Library() {
             ));
           })()
         ) : docs.length > 0 ? (
-          docs.map((doc: any) => (
+          visibleDocs.map((doc: any) => (
             <DocumentRow
               key={doc.id}
               doc={doc}
@@ -1867,6 +1886,18 @@ export default function Library() {
               </Button>
             )}
           />
+        )}
+        {hiddenDocCount > 0 && !isLoading && !loadError && (
+          <div className="flex justify-center pt-2">
+            <Button
+              variant="outline"
+              className="min-h-11 font-mono text-xs"
+              onClick={() => setDocWindow((n) => n + DOC_WINDOW)}
+              data-testid="show-more-documents"
+            >
+              Show more documents ({hiddenDocCount} hidden)
+            </Button>
+          </div>
         )}
       </div>
     </Page>

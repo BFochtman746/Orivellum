@@ -130,7 +130,12 @@ export function ConversationsTab({ workId }: { workId: string }) {
     );
   };
 
-  const conversations = convResp?.conversations ?? [];
+  const allConversations = convResp?.conversations ?? [];
+  // WP5: window the activity list — Works with hundreds of conversations
+  // otherwise mount them all at once.
+  const [convWindow, setConvWindow] = useState(40);
+  const conversations = allConversations.slice(0, convWindow);
+  const hiddenConvCount = allConversations.length - conversations.length;
 
   return (
     <div className="space-y-4">
@@ -185,6 +190,15 @@ export function ConversationsTab({ workId }: { workId: string }) {
               </Card>
             </Link>
           ))}
+          {hiddenConvCount > 0 && (
+            <Button
+              variant="outline"
+              className="min-h-11 font-mono text-xs mx-auto"
+              onClick={() => setConvWindow((n) => n + 40)}
+            >
+              Show more conversations ({hiddenConvCount} hidden)
+            </Button>
+          )}
         </div>
       ) : (
         <EmptyState

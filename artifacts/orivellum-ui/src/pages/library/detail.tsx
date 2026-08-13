@@ -1107,6 +1107,7 @@ export default function DocumentDetail() {
       // Poll every 2 s until readiness leaves "imported" state (max 30 s)
       let attempts = 0;
       const poll = setInterval(async () => {
+        if (document.hidden) return; // WP5: pause polling while hidden
         attempts++;
         const result = await refetch();
         const newReadiness = (result.data?.document as any)?.readiness;
@@ -1250,6 +1251,7 @@ export default function DocumentDetail() {
 
       // Poll for progress every 2 s.
       abPollRef.current = setInterval(async () => {
+        if (document.hidden) return; // WP5: pause polling while hidden
         try {
           const sr = await apiFetch(`${BASE}/studio/tts/document/${job_id}/status`);
           if (!sr.ok) return;

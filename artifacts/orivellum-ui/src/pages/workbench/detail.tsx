@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useLocation, useRoute } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/auth";
@@ -18,7 +18,16 @@ import {
   AlertCircle, FileSpreadsheet, Code2, Trash2, Send, ScanSearch, Upload,
   FileText, Activity, Sparkles, PauseCircle, PlayCircle, GraduationCap,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+// Markdown renderer loads as its own chunk at first use (WP5) — the report
+// tab is the only consumer on this page.
+const MarkdownLazy = React.lazy(() => import("@/components/rich-markdown"));
+function ReactMarkdown({ children }: { children: string }) {
+  return (
+    <React.Suspense fallback={<div className="whitespace-pre-wrap">{children}</div>}>
+      <MarkdownLazy text={children} />
+    </React.Suspense>
+  );
+}
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { HealthBadge, type WbHealth, type WbProject } from "./index";

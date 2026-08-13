@@ -15,6 +15,7 @@ import React, {
   useCallback, useEffect, useRef, useState,
 } from 'react';
 import { apiFetch } from '@/lib/auth';
+import { setBusyFlag } from '@/lib/app-busy';
 import { enqueueOp, isNetworkError } from '@/lib/outbox';
 import { toast } from 'sonner';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -719,6 +720,9 @@ export default function WriteDeskPage() {
   const scheduleSave = useCallback((ed: typeof editor) => {
     if (!activeDoc || !ed) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    // Update-safety (WP5): from the first unsaved keystroke until the save
+    // lands (or reaches the durable outbox), a PWA update reload is blocked.
+    setBusyFlag('write-draft', true);
     saveTimer.current = setTimeout(async () => {
       const json = ed.getJSON();
       const text = ed.getText();
@@ -745,7 +749,7 @@ export default function WriteDeskPage() {
         }
         /* otherwise silent — next save will retry */
       }
-      finally { setSaving(false); }
+      finally { setSaving(false); setBusyFlag('write-draft', false); }
     }, 1500);
   }, [activeDoc]);
 

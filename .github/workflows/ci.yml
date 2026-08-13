@@ -154,5 +154,17 @@ jobs:
       - name: Typecheck UI
         run: pnpm --filter @workspace/orivellum-ui exec tsc --noEmit
 
+      - name: Build UI (production)
+        run: pnpm --filter @workspace/orivellum-ui run build
+
+      - name: Bundle byte budgets (WP5)
+        run: pnpm --filter @workspace/orivellum-ui run check:budgets
+
+      - name: Install Chromium for vitals
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Core Web Vitals (WP5)
+        run: pnpm --filter @workspace/orivellum-ui run check:vitals
+
       - name: Audit production dependencies
         run: pnpm audit --prod

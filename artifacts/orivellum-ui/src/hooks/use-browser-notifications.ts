@@ -73,6 +73,9 @@ export function useBrowserNotifications(): void {
 
     const poll = async () => {
       if (busyRef.current || cancelled) return;
+      // WP5: no background network work while the tab is hidden — the
+      // visibilitychange handler below catches up the moment it returns.
+      if (document.hidden) return;
       busyRef.current = true;
       try {
         // Cross-tab mutual exclusion: with several tabs open, only the one

@@ -15,7 +15,9 @@ import App from './App';
 
 import './index.css';
 import { initTheme } from './lib/theme';
+import { initPwaUpdates } from './lib/pwa-update';
 
 initTheme();
+initPwaUpdates();
 
 createRoot(document.getElementById('root')!).render(<App />);
